@@ -6,6 +6,7 @@ ne font ensuite que poser le contenu préparé sur la page.
 """
 
 import hashlib
+import json
 import re
 import zlib
 from typing import Any, Final, cast
@@ -47,9 +48,9 @@ from loom_ia.tools_builtin._document.content import (
 )
 from loom_ia.tools_builtin._document.picture import Picture, PictureError, dimensions
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
+from loom_ia.tools_builtin._templates import fixed_paragraphs
 from loom_ia.tools_builtin._templates import key as template_key
 from loom_ia.tools_builtin._templates import parse as parse_template
-from loom_ia.tools_builtin._templates import plan_faults
 from loom_ia.tools_builtin.pdf_params import PdfParams
 from loom_ia.tools_builtin.word_params import WordParams
 
@@ -672,57 +673,86 @@ def test_variants_add_only_what_is_asked() -> None:
 
 # --- Modèles de document ---------------------------------------------------------------
 
-RAPPORT: Final = """---
-description: Rapport d'intervention chez un client.
----
-Consignes générales : sobre et factuel.
+RAPPORT: Final = """description: Rapport d'intervention chez un client.
+instructions: |
+  Sobre et factuel.
+sections:
+  Contexte:
+    instructions: |
+      Le client, le site, la demande.
+  Constat:
+  Photos:
+    optional: true
+  Travaux réalisés:
+  Conditions:
+    text: |
+      **Garantie** : un an,
+      pièces et main-d'œuvre.
 
-# Contexte
-Le client, le site, la demande.
-
-# Constat
-## Une sous-partie : pas une section
-```
-# Pas une section non plus : dans un bloc de code
-```
-
-# Photos (facultatif)
-# Travaux réalisés
-# Suite à donner
+      Rapport établi sur place.
 """
 
 
-def test_a_template_is_its_headings() -> None:
+def test_a_template_is_its_sections() -> None:
     found = parse_template("rapport", RAPPORT)
     assert found.description == "Rapport d'intervention chez un client."
-    assert [(s.title, s.optional) for s in found.sections] == [
-        ("Contexte", False),
-        ("Constat", False),
-        ("Photos", True),
-        ("Travaux réalisés", False),
-        ("Suite à donner", False),
+    assert found.instructions == "Sobre et factuel.\n"
+    assert [(s.name, s.position, s.optional, s.fixed) for s in found.sections] == [
+        ("Contexte", 1, False, False),
+        ("Constat", 2, False, False),
+        ("Photos", 3, True, False),
+        ("Travaux réalisés", 4, False, False),
+        ("Conditions", 5, False, True),
     ]
     assert found.outline() == (
-        "Contexte · Constat · Photos (facultatif) · Travaux réalisés · Suite à donner"
+        "Contexte · Constat · Photos (optional) · Travaux réalisés · Conditions (fixed)"
     )
-    assert found.text == RAPPORT
-    # Sans titre, un modèle n'a que des consignes : aucun plan à vérifier.
-    assert parse_template("libre", "Écrire court.").sections == ()
+    assert found.text == RAPPORT and found.style is None and found.layout == []
+    assert found.section("2. CONSTAT") is not None and found.section("Annexe") is None
+    assert fixed_paragraphs(found.sections[4].spec.text or "") == [
+        "**Garantie** : un an,\npièces et main-d'œuvre.",
+        "Rapport établi sur place.",
+    ]
+
+
+SECTIONS: Final = "sections:\n  A:\n  B:\n"
 
 
 @pytest.mark.parametrize(
     ("name", "text", "said"),
     [
-        ("Rapport", "# A", "minuscules, chiffres et tirets"),
-        ("none", "# A", "pas « none »"),
-        ("r", "", "vide"),
-        ("r", "---\ndescription: x\n# A", "jamais fermé"),
-        ("r", "---\nauteur: moi\n---\n# A", "seule « description » est lue"),
-        ("r", "# Constat\n# 2. constat", "section donnée deux fois"),
-        ("r", "#   \n", "titre de section vide"),
+        ("Rapport", SECTIONS, "minuscules, chiffres et tirets"),
+        ("none", SECTIONS, "pas « none »"),
+        ("r", "", "un modèle a des sections"),
+        ("r", "description: x\n", "un modèle a des sections"),
+        ("r", "---\ndescription: x\n---\n# A\n", "un modèle est un fichier YAML depuis 2.1.0"),
+        ("r", "Consignes.\n\n# Contexte\nLe client.\n", "chaque titre « # Section » devient"),
+        ("r", "sections:\n  Constat:\n  2. constat:\n", "section donnée deux fois"),
+        ("r", "sections:\n  A:\n  A:\n", "clé donnée deux fois : A"),
+        ("r", "sections: {}\n", "sections — Dictionary should have at least 1 item"),
+        ("r", "sections:\n  A: {boxx: true}\n", "sections.A.boxx — Extra inputs"),
+        ("r", "sections:\n  A:\n    instructions: Qui joindre : le standard\n", "entre guillemets"),
         ("r", "x" * 20_001, "au-delà de 20000"),
+        ("r", "sections:\n  A: {beside: true}\n", "la première n'en a pas"),
+        ("r", "sections:\n  A:\n  B: {beside: true, columns: 2}\n", "ni columns, ni landscape"),
+        ("r", "sections:\n  A:\n  B: {beside: true, page_break: true}\n", "vont à la première"),
+        ("r", "sections:\n  A: {width: 50}\n  B:\n", "width ne sert qu'à des sections côte"),
+        ("r", "sections:\n  A: {width: 60}\n  B: {beside: true}\n", "à toutes les sections"),
+        ("r", "sections:\n  A: {width: 60}\n  B: {beside: true, width: 30}\n", "font 100"),
+        (
+            "r",
+            "sections:\n  A:\n  B: {beside: true}\n  C: {beside: true}\n  D: {beside: true}\n",
+            "3 sections côte à côte au plus",
+        ),
+        ("r", "sections:\n  A:\n  B: {cover: true}\n", "va à la première section, « A »"),
+        ("r", "sections:\n  A: {cover: true, box: true}\n", "ni landscape, ni columns, ni box"),
+        ("r", "sections:\n  A: {cover: true}\n  B: {beside: true}\n", "« A » est côte à côte"),
+        ("r", "sections:\n  A: {text: x, instructions: y}\n", "pas les deux"),
+        ("r", "sections:\n  A: {text: x, optional: true}\n", "toujours écrite"),
+        ("r", "sections:\n  A: {styles: {heading1: Titre}}\n", "n'est pas un nom de style"),
+        ("r", "sections:\n  A: {styles: {header: x}}\n", "sections.A.styles.header"),
     ],
-)
+)  # fmt: skip
 def test_templates_refused(name: str, text: str, said: str) -> None:
     with pytest.raises(ValueError, match=re.escape(said)):
         parse_template(name, text)
@@ -742,76 +772,151 @@ def test_templates_refused(name: str, text: str, said: str) -> None:
         ("Mix : produits", "mix : produits"),
     ],
 )
-def test_headings_are_compared_loosely(heading: str, found: str) -> None:
+def test_section_names_are_compared_loosely(heading: str, found: str) -> None:
     assert template_key(heading) == found
 
 
-def test_the_plan_of_a_document() -> None:
-    template = parse_template("rapport", RAPPORT)
-    assert (
-        plan_faults(template, ["1. Contexte", "2. Constat", "Travaux réalisés", "Suite à donner"])
-        == []
-    )
-    assert plan_faults(
-        template, ["Contexte", "Annexe", "Travaux réalisés", "Constat", "Constat"]
-    ) == [
-        "section hors du modèle « Annexe »",
-        "section donnée deux fois « Constat »",
-        "section(s) absente(s) : « Suite à donner »",
-        "« Travaux réalisés » avant « Constat » : le modèle les met dans l'autre ordre",
-    ]
-    assert plan_faults(parse_template("libre", "Écrire court."), ["N'importe quoi"]) == []
-
-
-def test_prepare_checks_the_plan_of_the_template() -> None:
-    template = parse_template("rapport", RAPPORT)
-    request = parse(
-        DocumentCall, {"path": "s/a", "blocks": [{"type": "heading", "text": "Contexte"}]}
-    )
+def written(model: type[DocumentCall], **arguments: Any) -> WriteArguments:
+    request = parse(model, {"path": "s/a", **arguments})
     assert isinstance(request, WriteArguments)
+    return request
+
+
+def test_prepare_places_the_sections_of_the_template() -> None:
+    template = parse_template("rapport", RAPPORT)
+    model = variant(DocumentCall, templates=("rapport",))
+    paragraph: list[Any] = [{"type": "paragraph", "text": "Fait."}]
+    request = written(
+        model,
+        template="rapport",
+        title="Rapport",
+        sections={"travaux realises": paragraph, "1. Contexte": paragraph, "Constat": paragraph},
+    )
+    found = prepare(request, PARIS, template=template)
+    assert found.template == "rapport" and found.sections is not None
+    # Dans l'ordre du modèle, quel que soit l'ordre de l'appel ; le titre de chaque section
+    # écrit par l'outil ; Photos (facultative) absente ; le texte fixe des conditions.
+    assert [(s.position, s.name, s.fixed) for s in found.sections] == [
+        (1, "Contexte", False),
+        (2, "Constat", False),
+        (4, "Travaux réalisés", False),
+        (5, "Conditions", True),
+    ]
+    titles = [b for b in found.blocks if isinstance(b, HeadingOut)]
+    assert [(t.level, t.section, t.runs[0].text) for t in titles][:2] == [
+        (1, 1, "Contexte"),
+        (1, 2, "Constat"),
+    ]
+    assert found.sections[3].blocks == (
+        ParagraphOut((Run("Garantie", bold=True), Run(" : un an,\npièces et main-d'œuvre."))),
+        ParagraphOut((Run("Rapport établi sur place."),)),
+    )
+    assert isinstance(found.blocks[0], TitleOut) and len(found.blocks) == 1 + 4 + 3 + 2
+
+
+def test_prepare_says_what_the_sections_miss() -> None:
+    template = parse_template("rapport", RAPPORT)
+    model = variant(DocumentCall, templates=("rapport",))
+    paragraph: list[Any] = [{"type": "paragraph", "text": "Fait."}]
+    request = written(
+        model,
+        template="rapport",
+        sections={
+            "Contexte": [{"type": "heading", "text": "Le site"}],
+            "Annexe": paragraph,
+            "Conditions": paragraph,
+            "Photos": [],
+            "contexte": paragraph,
+        },
+    )
     with pytest.raises(ToolError) as caught:
         prepare(request, PARIS, template=template)
     assert str(caught.value).splitlines() == [
         "Document refusé :",
-        "- modèle rapport : section(s) absente(s) : « Constat », « Travaux réalisés », "
-        "« Suite à donner »",
-        "- modèle rapport, plan attendu (titres de niveau 1, dans l'ordre) : Contexte · Constat · "
-        "Photos (facultatif) · Travaux réalisés · Suite à donner",
+        "- modèle rapport : section inconnue « Annexe »",
+        "- modèle rapport : « Conditions » est une section au texte fixe, écrite par l'outil : "
+        "ne pas la remplir",
+        "- modèle rapport : « Photos » est vide — la retirer (elle est facultative)",
+        "- modèle rapport : section donnée deux fois : « Contexte » et « contexte »",
+        "- modèle rapport : section(s) absente(s) : « Constat », « Travaux réalisés »",
+        "- modèle rapport, sections attendues : Contexte · Constat · Photos (optional) · "
+        "Travaux réalisés · Conditions (fixed)",
+        "- section « Contexte », bloc 1 (heading) : le niveau 1 est le titre de la section, que "
+        "l'outil écrit ; dans une section, les titres sont de niveau 2 ou 3",
     ]
-    whole: list[Any] = [
-        {"type": "heading", "text": t}
-        for t in ("Contexte", "Constat", "Travaux réalisés", "Suite à donner")
-    ]
-    request = parse(DocumentCall, {"path": "s/a", "blocks": whole})
-    assert isinstance(request, WriteArguments)
-    assert prepare(request, PARIS, template=template).template == "rapport"
-    assert prepare(request, PARIS).template is None
 
 
-def test_templates_add_an_action_and_a_field() -> None:
+def test_a_section_without_its_title() -> None:
+    template = parse_template("note", "sections:\n  À:\n    show_title: false\n  Message:\n")
+    model = variant(DocumentCall, templates=("note",))
+    paragraph: list[Any] = [{"type": "paragraph", "text": "x"}]
+    found = prepare(
+        written(model, template="note", sections={"À": paragraph, "Message": paragraph}),
+        PARIS,
+        template=template,
+    )
+    assert found.sections is not None and found.sections[0].title is None
+    assert [type(b).__name__ for b in found.blocks] == [
+        "ParagraphOut",
+        "HeadingOut",
+        "ParagraphOut",
+    ]
+
+
+def test_templates_add_an_action_and_two_fields() -> None:
     model = variant(DocumentCall, templates=("rapport", "devis"))
     schema = input_schema(model)
     properties = cast(dict[str, Any], schema["properties"])
     assert properties["template"]["anyOf"][0]["enum"] == ["rapport", "devis", "none"]
+    assert properties["sections"]["anyOf"][0]["type"] == "object"
     assert "required" not in schema
     blocks: list[Any] = [{"type": "paragraph", "text": "x"}]
     assert parse(model, {"action": "template", "template": "devis"}) == TemplateArguments(
         name="devis"
     )
-    written = parse(model, {"path": "s/a", "blocks": blocks, "template": "none"})
-    assert isinstance(written, WriteArguments) and written.template == "none"
+    free = parse(model, {"path": "s/a", "blocks": blocks, "template": "none"})
+    assert isinstance(free, WriteArguments) and free.template == "none"
+    following = parse(model, {"path": "s/a", "sections": {"A": blocks}, "template": "devis"})
+    assert isinstance(following, WriteArguments) and following.sections is not None
+    assert following.all_blocks() == following.sections["A"]
     for arguments, said in (
         ({"path": "s/a", "blocks": blocks}, "write attend 'template'"),
         ({"path": "s/a", "blocks": blocks, "template": "facture"}, "template"),
         ({"blocks": blocks, "template": "none"}, "write attend 'path'"),
+        ({"path": "s/a", "blocks": blocks, "template": "devis"}, "s'écrit par 'sections'"),
+        ({"path": "s/a", "template": "devis"}, "write attend 'blocks'"),
+        ({"path": "s/a", "sections": {"A": blocks}, "template": "none"}, "par 'blocks', pas"),
         ({"action": "template"}, "action template attend 'template'"),
         ({"action": "template", "template": "none"}, "action template attend 'template'"),
         ({"action": "template", "template": "devis", "path": "s/a"}, "path ne sert pas à template"),
         ({"action": "template", "template": "devis", "title": "T"}, "title ne sert pas à template"),
         ({"action": "read", "path": "s/a", "template": "devis"}, "template ne sert pas à read"),
-    ):
+        ({"action": "read", "path": "s/a", "sections": {"A": blocks}}, "sections ne sert pas"),
+    ):  # fmt: skip
         with pytest.raises(ToolError, match=re.escape(said)):
             parse(model, cast(dict[str, Any], arguments))
+
+
+def test_proposed_styles_are_a_field_of_their_blocks() -> None:
+    model = variant(DocumentCall, styles={"note": ["important_note"], "heading": ["big"]})
+    schema = json.dumps(input_schema(model))
+    assert '"important_note"' in schema and '"big"' in schema
+    note = {"type": "note", "text": "x", "style": "important_note"}
+    request = written(model, blocks=[note])
+    with pytest.raises(ToolError, match="Input should be 'important_note'"):
+        written(model, blocks=[{**note, "style": "other"}])
+    with pytest.raises(ToolError, match="Extra inputs"):
+        written(model, blocks=[{"type": "paragraph", "text": "x", "style": "important_note"}])
+    # Permis par le schéma, mais pas proposé à ce document : prepare le dit.
+    with pytest.raises(ToolError, match=r"style « important_note » : pas proposé pour un bloc "):
+        prepare(request, PARIS)
+    found = prepare(request, PARIS, allowed={"note": {"important_note": 0}})
+    assert found.blocks == (NoteOut(None, (Run("x"),), "important_note"),)
+    heading = written(model, blocks=[{"type": "heading", "text": "T", "level": 2, "style": "big"}])
+    with pytest.raises(ToolError, match="un titre de niveau 1, pas 2"):
+        prepare(heading, PARIS, allowed={"heading": {"big": 1}})
+    # Sans style proposé, le schéma est celui d'avant.
+    assert variant(DocumentCall, styles={"note": []}) is DocumentCall
 
 
 def test_windows_line_endings_are_line_breaks() -> None:

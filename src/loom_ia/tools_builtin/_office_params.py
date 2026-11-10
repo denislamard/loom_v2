@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, model_validator
 
-from loom_ia.tools_builtin._style_params import StyleField
+from loom_ia.tools_builtin._style_params import Style, StyleField
 from loom_ia.tools_builtin._templates import MAX_TEMPLATES, Template, check_name
 from loom_ia.tools_builtin._templates import parse as parse_template
 from loom_ia.tools_builtin.local_files_params import FolderSpec
@@ -146,20 +146,34 @@ def no_old_keys(value: object) -> object:
 
 
 class TemplateRef(BaseModel):
-    """Un modèle de document : son fichier (relatif à ``resources_dir``), puis son texte.
+    """Un modèle de document : son fichier YAML (relatif à ``resources_dir``), puis son texte.
 
     Le chargeur de config lit le fichier et range son texte dans ``text``, comme un
-    ``skill_file`` dans ``skill`` ; ``file`` n'est alors plus gardé. En config, la forme
-    courte est le chemin seul : ``cahier-des-charges: modele-cdc.md``.
+    ``skill_file`` dans ``skill`` ; ``file`` n'est alors plus gardé. Le style que nomme le
+    modèle (``style:`` dans son fichier) est lu en même temps et rangé dans ``style``. En
+    config, le chemin seul : ``note: templates/note.yaml``.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     file: Path | None = None
     text: str | None = None
-    # Le style du modèle (``loom.word``) : un fichier de style, lu au chargement, ou écrit en
-    # ligne ; il complète la charte, et dispose les sections du modèle.
+    # Le style du modèle, lu par le chargeur de config (``loom.word``).
     style: StyleField = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _style_in_the_template(cls, value: object) -> object:
+        """La forme longue de la 2.0 (``{file, style}``) : le modèle nomme son style."""
+        if isinstance(value, Mapping):
+            entries = cast(Mapping[object, object], value)
+            if "file" in entries and "style" in entries:
+                raise ValueError(
+                    "le modèle nomme son style dans son fichier depuis 2.1.0 (style: …, à "
+                    "côté de sections) : templates.<nom> est le chemin du modèle seul"
+                )
+            return entries
+        return value
 
     @model_validator(mode="after")
     def _one(self) -> Self:
@@ -169,7 +183,7 @@ class TemplateRef(BaseModel):
 
 
 def _short_form(value: object) -> object:
-    """``nom: fichier.md`` : la forme courte d'un modèle."""
+    """``nom: fichier.yaml`` : la forme courte d'un modèle."""
     if not isinstance(value, Mapping):
         return value
     entries = cast(Mapping[object, object], value)
@@ -202,6 +216,27 @@ def read_templates(templates: Mapping[str, TemplateRef], reference: str) -> dict
             )
         found[name] = parse_template(name, ref.text)
     return found
+
+
+def check_section_styles(template: Template, style: Style, where: str) -> None:
+    """Les styles que choisissent les sections (``styles``) : connus du style du modèle, et
+    partis de l'élément qu'ils mettent en forme ; ``ValueError`` qui dit lequel."""
+    for section in template.sections:
+        for element, name in section.spec.styles.items():
+            fault = style.element_fault(element, name)
+            if fault is not None:
+                raise ValueError(f"{where} : « {section.name} ».styles.{element} : {fault}")
+
+
+def word_only(template: Template, reference: str) -> None:
+    """Un modèle de ``loom.pdf`` : ni style, ni mise en page de section, pour l'instant."""
+    said = template.layout
+    if said:
+        raise ValueError(
+            f"{reference} : modèle {template.name} : {', '.join(said)} : le style et la mise "
+            "en page des sections ne servent qu'à loom.word pour l'instant (loom.pdf écrit "
+            "dans son style maison)"
+        )
 
 
 type Templates = Annotated[

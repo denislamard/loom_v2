@@ -36,14 +36,13 @@ from loom_ia.core.model import (
     checked_skill,
 )
 from loom_ia.core.template import Template, TemplateError
-from loom_ia.tools_builtin._office_params import TemplateRef
+from loom_ia.tools_builtin._office_params import TemplateRef, check_section_styles, word_only
 from loom_ia.tools_builtin._style_params import (
     MAX_LOGO_BYTES,
     MAX_STYLE_CHARS,
+    Style,
     StyleFile,
     StyleRef,
-    check_charte,
-    check_layout,
     describe,
     resolve,
 )
@@ -396,9 +395,10 @@ def _templates_read(
 ) -> PythonTool:
     """Les modèles de document d'un outil fourni (``loom.word``, ``loom.pdf``), lus.
 
-    Comme un ``skill_file`` : chaque fichier, relatif à ``resources_dir`` et contenu dans
-    ce dossier, est lu une fois au chargement, et son texte rangé à la place du chemin.
-    Son plan est vérifié ici (``templates.parse``) : une faute se voit dès ``loom validate``.
+    Comme un ``skill_file`` : chaque fichier YAML, relatif à ``resources_dir`` et contenu
+    dans ce dossier, est lu une fois au chargement, et son texte rangé à la place du
+    chemin. Ses sections et leur mise en page sont vérifiées ici (``templates.parse``), et
+    le style qu'il nomme est lu avec lui : une faute se voit dès ``loom validate``.
     """
     templates = cast(object, getattr(declared, "templates", None))
     if not isinstance(templates, dict) or not templates:
@@ -417,26 +417,44 @@ def _templates_read(
             )
         try:
             text = path.read_text(encoding="utf-8")
-            parse_template(name, text)
+            template = parse_template(name, text)
+            if declared.python == "loom.pdf":
+                word_only(template, declared.python)
         except (OSError, UnicodeDecodeError) as exc:
             raise ConfigError(f"{where} — modèle illisible : {exc}", source=source) from exc
         except ValueError as exc:
             raise ConfigError(f"{where} — {exc} : {path}", source=source) from exc
-        read[name] = TemplateRef(text=text, style=ref.style)
+        style: StyleRef | None = None
+        if template.style is not None:
+            written = _template_style(template.style, f"{where}.style", path, source=source)
+            spec = _style_read(written, resources_dir, f"{where}.style", source=source)
+            style = StyleRef(spec=spec)
+        read[name] = TemplateRef(text=text, style=style)
     return declared.model_copy(update={"templates": read})
+
+
+def _template_style(given: object, where: str, path: Path, *, source: Path) -> StyleRef:
+    """Le style que nomme un modèle : un chemin, ou un style écrit en ligne."""
+    if isinstance(given, str):
+        return StyleRef(file=Path(given))
+    try:
+        return StyleRef(spec=StyleFile.model_validate(given))
+    except ValidationError as exc:
+        lines = "\n".join(describe(exc, where))
+        raise ConfigError(f"{lines}\n({path})", source=source) from exc
 
 
 def _styles_read(
     declared: PythonTool, resources_dir: Path, label: str, *, source: Path
 ) -> PythonTool:
-    """Les styles d'un outil ``loom.word``, lus : sa charte et le style de ses modèles.
+    """La charte d'un outil ``loom.word``, lue, et la cascade de chaque modèle vérifiée.
 
-    Chaque fichier YAML, relatif à ``resources_dir`` et contenu dans ce dossier, est lu
-    une fois au chargement avec ses logos, et validé ici : une faute (clé inconnue,
-    couleur inconnue, base en boucle, section hors du plan du modèle, logo absent) se
-    voit dès ``loom validate``. Les modèles sont déjà lus (``_templates_read``) : la
-    disposition se compare à leur plan. La cascade est résolue comme à l'écriture :
-    ``default.yaml``, la charte, le style du modèle.
+    La charte, relative à ``resources_dir`` et contenue dans ce dossier, est lue une fois
+    au chargement avec ses logos, et validée ici ; le style de chaque modèle l'a été avec
+    lui (``_templates_read``). La cascade est résolue comme à l'écriture —
+    ``default.yaml``, la charte, le style du modèle — et les styles que choisissent les
+    sections y sont cherchés : une faute (clé inconnue, couleur inconnue, base en boucle,
+    style de section inconnu, logo absent) se voit dès ``loom validate``.
     """
     charte = cast(object, getattr(declared, "style", None))
     templates = cast(object, getattr(declared, "templates", None))
@@ -446,33 +464,29 @@ def _styles_read(
         where = f"{label}.style"
         read_charte = _style_read(charte, resources_dir, where, source=source)
         try:
-            check_charte(read_charte, where)
             _resolved(where, read_charte)
         except ValueError as exc:
             raise ConfigError(str(exc), source=source) from exc
         update["style"] = StyleRef(spec=read_charte)
-    if isinstance(templates, dict) and templates:
-        read: dict[str, TemplateRef] = {}
+    if isinstance(templates, dict):
         for name, ref in cast(dict[str, TemplateRef], templates).items():
-            if ref.style is None:
-                read[name] = ref
+            if ref.text is None:
                 continue
-            where = f"{label}.templates[{name}].style"
-            spec = _style_read(ref.style, resources_dir, where, source=source)
+            where = f"{label}.templates[{name}]"
+            own = ref.style.spec if ref.style is not None else None
             try:
-                check_layout(spec, parse_template(name, ref.text or ""), where)
-                _resolved(where, read_charte, spec)
+                template = parse_template(name, ref.text)
+                style = _resolved(f"{where}.style" if own else where, read_charte, own)
+                check_section_styles(template, style, where)
             except ValueError as exc:
                 raise ConfigError(str(exc), source=source) from exc
-            read[name] = ref.model_copy(update={"style": StyleRef(spec=spec)})
-        update["templates"] = read
     return declared.model_copy(update=update) if update else declared
 
 
-def _resolved(where: str, *files: StyleFile | None) -> None:
+def _resolved(where: str, *files: StyleFile | None) -> Style:
     """La cascade résolue, pour dire ses fautes au chargement (couleur, base)."""
     try:
-        resolve(*files)
+        return resolve(*files)
     except ValueError as exc:
         raise ValueError(f"{where} : {exc}") from None
 

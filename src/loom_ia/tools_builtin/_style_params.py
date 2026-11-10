@@ -15,11 +15,12 @@ propriété par propriété. **L'héritage ensuite** : un style prend les propri
 ``base`` (``text`` sans base), déjà complétée par les fichiers, puis les siennes. Le
 code des outils n'a aucune valeur visuelle : tout vient de ces fichiers.
 
-Jusqu'au lot 3 de la refonte, le style d'un modèle porte aussi la disposition de ses
-sections (``sections``, ``beside``), que la charte n'a pas.
+Un style à toi qui a une ``description`` est **proposé au modèle de langage**, sur le type
+de bloc dont il descend (``important_note``, ``base: note`` : le champ ``style`` d'un bloc
+``note``) ; il n'en voit que le nom et la description. Du reste, il ne voit rien.
 
-Le modèle de langage n'en voit rien. Module léger — Pydantic, PyYAML et ``_templates``
-— : la config l'importe pour valider une référence, sans importer l'outil.
+Module léger — Pydantic et PyYAML — : la config l'importe pour valider une référence,
+sans importer l'outil.
 """
 
 import difflib
@@ -40,8 +41,6 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
-
-from loom_ia.tools_builtin._templates import Template, key
 
 DEFAULT_FILE: Final = Path(__file__).with_name("styles") / "default.yaml"
 MAX_STYLE_CHARS: Final = 20_000
@@ -84,9 +83,6 @@ type Numbering = Literal["none", "decimal", "article"]
 type PageSize = Literal["A4", "A5", "Letter"]
 type Orientation = Literal["portrait", "landscape"]
 type Language = Literal["fr", "en"]
-# La disposition d'une section (jusqu'au lot 3) : son titre, la taille de son texte.
-type TitleMode = Literal["visible", "hidden", "quiet"]
-type TextSize = Literal["normal", "small"]
 
 # Un centimètre en vingtièmes de point (twips).
 CM: Final = 567
@@ -134,8 +130,21 @@ _OWNERS: Final[Mapping[str, frozenset[str]]] = {
 }
 # Les réglages : des clés du fichier qui ne sont pas des styles.
 SETTINGS: Final = frozenset({"colors", "page", "numbering", "language", "labels", "image", "chart"})
-# La disposition des sections d'un modèle, jusqu'au lot 3.
+# La disposition des sections d'un modèle : dans le modèle de document depuis 2.1.0.
 LAYOUT: Final = frozenset({"sections", "beside"})
+# Les styles de bloc : un style à toi qui en descend peut être proposé au modèle de langage
+# (``description``), sur ce type de bloc.
+BLOCK_STYLES: Final[Mapping[str, str]] = {
+    "heading1": "heading",
+    "heading2": "heading",
+    "heading3": "heading",
+    "paragraph": "paragraph",
+    "list": "list",
+    "note": "note",
+    "quote": "quote",
+    "table": "table",
+}
+MAX_STYLE_DESCRIPTION: Final = 200
 # Les clés du format de la 2.0, refusées avec ce qui les remplace.
 OLD_KEYS: Final[Mapping[str, str]] = {
     "title": "document_title",
@@ -315,6 +324,8 @@ class Props(_Spec):
     levels: Annotated[int, Field(ge=1, le=3)] | None = None
     page_numbers: bool | None = None
     text: Annotated[str, Field(max_length=40)] | None = None
+    # Le sens d'un style à toi : il est proposé au modèle de langage, sur son type de bloc.
+    description: Annotated[str, Field(min_length=1, max_length=MAX_STYLE_DESCRIPTION)] | None = None
 
 
 class PageSpec(_Spec):
@@ -350,69 +361,13 @@ class ChartSpec(_Spec):
     title: Color | None = None
 
 
-class SectionTable(_Spec):
-    """Les tableaux d'une section (disposition, jusqu'au lot 3) : les propriétés de ``table``."""
-
-    size: Annotated[float, Field(ge=6, le=72)] | None = None
-    borders: Borders | None = None
-    line: Rule | None = None
-    bands: Fill | None = None
-    width: TableWidth | None = None
-    position: Position | None = None
-    border_top: Rule | None = None
-    border_bottom: Rule | None = None
-
-
-class SectionSpec(_Spec):
-    """La disposition d'une section du modèle (jusqu'au lot 3)."""
-
-    title: TitleMode | None = None
-    align: Align | None = None
-    size: TextSize | None = None
-    box: bool | None = None
-    columns: Annotated[int, Field(ge=1, le=3)] | None = None
-    page_break: bool | None = None
-    landscape: bool | None = None
-    cover: bool | None = None
-    space_before: Annotated[float, Field(ge=0, le=20)] | None = None
-    table: SectionTable | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _old(cls, value: object) -> object:
-        if isinstance(value, Mapping):
-            entries = cast(Mapping[object, object], value)
-            if "tables" in entries:
-                raise ValueError("tables s'écrit table depuis 2.1.0, avec les propriétés de table")
-            return entries
-        return value
-
-
-class BesideSpec(_Spec):
-    """Des sections posées côte à côte, et la part de chacune (en %, 100 en tout)."""
-
-    sections: Annotated[list[str], Field(min_length=2, max_length=3)]
-    widths: list[int] | None = None
-
-    @model_validator(mode="after")
-    def _widths(self) -> Self:
-        if self.widths is None:
-            return self
-        if len(self.widths) != len(self.sections):
-            raise ValueError("beside : une largeur par section")
-        if any(width < 10 for width in self.widths) or sum(self.widths) != 100:
-            raise ValueError("beside : des largeurs en %, de 10 au moins, qui font 100 en tout")
-        return self
-
-
 def _closest(name: str) -> str:
     found = difflib.get_close_matches(name, [*BASES, *SETTINGS], n=1, cutoff=0.6)
     return f" — vouliez-vous dire {found[0]} ?" if found else ""
 
 
 class StyleFile(_Spec):
-    """Un fichier de style lu : ses réglages, ses styles nommés, et (jusqu'au lot 3) la
-    disposition des sections d'un modèle."""
+    """Un fichier de style lu : ses réglages et ses styles nommés."""
 
     colors: dict[ColorName, Hex] | None = None
     page: PageSpec | None = None
@@ -422,8 +377,6 @@ class StyleFile(_Spec):
     image: ImageSpec | None = None
     chart: ChartSpec | None = None
     styles: dict[StyleName, Props] = {}
-    sections: dict[str, SectionSpec] = {}
-    beside: list[BesideSpec] = []
 
     @model_validator(mode="before")
     @classmethod
@@ -432,6 +385,13 @@ class StyleFile(_Spec):
         if not isinstance(value, Mapping):
             return value
         entries = cast(Mapping[object, object], value)
+        layout = sorted(name for name in LAYOUT if name in entries)
+        if layout:
+            raise ValueError(
+                f"{', '.join(layout)} : la disposition des sections se déclare dans le modèle "
+                "de document depuis 2.1.0 (sections.<nom> : box, beside, width, page_break, "
+                "columns, landscape, cover, styles)"
+            )
         old = [f"{name} → {OLD_KEYS[name]}" for name in OLD_KEYS if name in entries]
         if old:
             raise ValueError(
@@ -443,7 +403,7 @@ class StyleFile(_Spec):
         for name, given in entries.items():
             if not isinstance(name, str):
                 raise ValueError(f"clé {name!r} : un nom de style ou de réglage")
-            if name in SETTINGS or name in LAYOUT:
+            if name in SETTINGS:
                 data[name] = given
                 continue
             if name == "watermark" and isinstance(given, str):
@@ -533,72 +493,6 @@ type StyleField = Annotated[StyleRef | None, BeforeValidator(short_style)]
 
 
 # --- Contrôles, au chargement -------------------------------------------------------------
-
-
-def check_charte(spec: StyleFile, where: str) -> None:
-    """La charte de l'outil : ni ``sections`` ni ``beside``, qui disposent un modèle."""
-    if spec.sections or spec.beside:
-        raise ValueError(
-            f"{where} : sections et beside disposent les sections d'un modèle ; ils se "
-            "déclarent dans le style du modèle (templates.<nom>.style), pas dans la charte"
-        )
-
-
-def check_layout(spec: StyleFile, template: Template, where: str) -> None:
-    """La disposition d'un modèle, comparée à son plan ; ``ValueError`` qui dit quoi corriger."""
-    plan = [section.key for section in template.sections]
-    titles = {section.key: section.title for section in template.sections}
-    outline = " · ".join(section.title for section in template.sections) or "(aucune section)"
-    unknown = [name for name in spec.sections if key(name) not in titles]
-    for group in spec.beside:
-        unknown += [name for name in group.sections if key(name) not in titles]
-    if unknown:
-        raise ValueError(
-            f"{where} : section(s) hors du modèle {template.name} : "
-            f"{', '.join(f'« {n} »' for n in dict.fromkeys(unknown))} (plan : {outline})"
-        )
-    by_key: dict[str, SectionSpec] = {}
-    for name, section in spec.sections.items():
-        if key(name) in by_key:
-            raise ValueError(f"{where} : section « {name} » donnée deux fois")
-        by_key[key(name)] = section
-    placed: set[str] = set()
-    for group in spec.beside:
-        keys = [key(name) for name in group.sections]
-        if len(set(keys)) != len(keys) or placed & set(keys):
-            raise ValueError(f"{where} : beside, une section n'est posée qu'une fois")
-        placed |= set(keys)
-        positions = [plan.index(k) for k in keys]
-        if positions != list(range(positions[0], positions[0] + len(positions))):
-            raise ValueError(
-                f"{where} : beside, {' et '.join(f'« {titles[k]} »' for k in keys)} doivent "
-                "se suivre dans le plan du modèle"
-            )
-        for index, k in enumerate(keys):
-            section = by_key.get(k)
-            if section is None:
-                continue
-            if section.columns not in (None, 1) or section.landscape or section.cover:
-                raise ValueError(
-                    f"{where} : « {titles[k]} » est côte à côte (beside) : ni columns, ni "
-                    "landscape, ni cover"
-                )
-            if index and (section.page_break or section.space_before):
-                raise ValueError(
-                    f"{where} : « {titles[k]} » suit une autre section sur la même ligne "
-                    "(beside) : page_break et space_before vont à la première"
-                )
-    for k, section in by_key.items():
-        if section.cover:
-            if plan.index(k) != 0:
-                raise ValueError(
-                    f"{where} : cover (page de garde) va à la première section du modèle, "
-                    f"« {titles[plan[0]]} »"
-                )
-            if section.landscape or section.columns not in (None, 1) or section.box:
-                raise ValueError(
-                    f"{where} : une page de garde (cover) n'a ni landscape, ni columns, ni box"
-                )
 
 
 def logos(spec: StyleFile) -> list[tuple[str, str | bytes]]:
@@ -703,34 +597,6 @@ class ChartLook:
 
 
 @dataclass(frozen=True, slots=True)
-class SectionLook:
-    """La disposition d'une section (jusqu'au lot 3)."""
-
-    title: TitleMode = "visible"
-    align: Align | None = None
-    size: TextSize = "normal"
-    box: bool = False
-    columns: int = 1
-    page_break: bool = False
-    landscape: bool = False
-    cover: bool = False
-    # Espace avant la section, en twips.
-    space_before: int = 0
-    # Le style des tableaux de la section, s'il diffère de ``table``.
-    table: Look | None = None
-
-
-PLAIN_SECTION: Final = SectionLook()
-
-
-@dataclass(frozen=True, slots=True)
-class Beside:
-    # Les clés des sections (``_templates.key``) et la part de chacune (somme 1).
-    keys: tuple[str, ...]
-    widths: tuple[float, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class Style:
     """Un style complet, prêt à rendre : chaque style nommé résolu, et les réglages."""
 
@@ -747,9 +613,6 @@ class Style:
     labels: Labels = FRENCH
     image_grid: bool = False
     chart: ChartLook = ChartLook((), "", "", "")
-    # La disposition des sections, par clé de titre (``_templates.key``), jusqu'au lot 3.
-    sections: Mapping[str, SectionLook] = field(default_factory=dict[str, SectionLook])
-    beside: tuple[Beside, ...] = ()
 
     @property
     def language(self) -> Language:
@@ -763,9 +626,6 @@ class Style:
 
     def look(self, name: str) -> Look:
         return self.looks[name]
-
-    def section(self, title: str) -> SectionLook:
-        return self.sections.get(key(title), PLAIN_SECTION)
 
     def chain(self, name: str) -> list[str]:
         """Le style et ses bases, du plus précis à ``text``."""
@@ -792,6 +652,34 @@ class Style:
             if before is None or before is False or before == NONE:
                 del said[prop]
         return said
+
+    def block_type(self, name: str) -> tuple[str, int] | None:
+        """Le type de bloc d'un style et, pour un titre, son niveau : (« note », 0),
+        (« heading », 2) ; ``None`` pour un style qui ne part d'aucun style de bloc."""
+        for step in self.chain(name):
+            kind = BLOCK_STYLES.get(step)
+            if kind is not None:
+                return kind, int(step[-1]) if kind == "heading" else 0
+        return None
+
+    def proposed(self) -> dict[str, list[tuple[str, str]]]:
+        """Les styles proposés au modèle de langage, par type de bloc : (nom, description)."""
+        found: dict[str, list[tuple[str, str]]] = {}
+        for name, props in self.declared.items():
+            description = props.get("description")
+            kind = self.block_type(name)
+            if isinstance(description, str) and kind is not None:
+                found.setdefault(kind[0], []).append((name, description))
+        return {kind: sorted(names) for kind, names in sorted(found.items())}
+
+    def element_fault(self, element: str, name: str) -> str | None:
+        """Ce qui empêche ``name`` d'être le style de ``element`` (``styles`` d'une section) :
+        un style inconnu, ou qui ne part pas de l'élément."""
+        if name not in self.looks:
+            return f"style « {name} » inconnu"
+        if element not in self.chain(name):
+            return f"« {name} » ne part pas de {element} (base : {self.bases.get(name)})"
+        return None
 
     def band(self, name: Literal["header", "footer"]) -> Band | None:
         """L'en-tête ou le pied de page ; ``None`` s'il n'écrit rien."""
@@ -842,6 +730,7 @@ def resolve(*files: StyleFile | None) -> Style:
             props[prop] = _named_colors(name, prop, value, colors, faults)
     bases = _bases(declared, faults)
     _check_owners(declared, bases, faults)
+    _check_descriptions(declared, bases, faults)
     chart = _chart(given, colors, faults)
     if faults:
         raise ValueError(" ; ".join(dict.fromkeys(faults)))
@@ -865,7 +754,6 @@ def resolve(*files: StyleFile | None) -> Style:
         if file.labels is not None:
             labels.update(file.labels.model_dump(exclude_none=True))
     said = Labels(language=language, **{**LABELS[language], **labels})
-    sections, beside = _layout(given, looks.get("table", Look()))
     return Style(
         looks=looks,
         declared=declared,
@@ -882,8 +770,6 @@ def resolve(*files: StyleFile | None) -> Style:
         labels=said,
         image_grid=grid,
         chart=chart,
-        sections=sections,
-        beside=beside,
     )
 
 
@@ -958,6 +844,32 @@ def _check_owners(
                 )
 
 
+def _chain(name: str, bases: Mapping[str, str | None]) -> list[str]:
+    chain: list[str] = []
+    current: str | None = name
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = bases.get(current)
+    return chain
+
+
+def _check_descriptions(
+    declared: Mapping[str, Mapping[str, Any]],
+    bases: Mapping[str, str | None],
+    faults: list[str],
+) -> None:
+    """Une description ne va qu'à un style à toi qui part d'un style de bloc."""
+    for name, props in declared.items():
+        if "description" not in props:
+            continue
+        if name in BASES or not any(step in BLOCK_STYLES for step in _chain(name, bases)):
+            faults.append(
+                f"style {name} : une description ne sert qu'à un style à toi qui part d'un "
+                f"style de bloc ({', '.join(BLOCK_STYLES)}) : il est alors proposé au modèle "
+                "de langage"
+            )
+
+
 def _look(
     name: str,
     declared: Mapping[str, Mapping[str, Any]],
@@ -1010,48 +922,6 @@ def _chart(given: Iterable[StyleFile], colors: Mapping[str, str], faults: list[s
         grid=color(said.get("grid", "")),
         title=color(said.get("title", "")),
     )
-
-
-def _layout(
-    given: Iterable[StyleFile], table: Look
-) -> tuple[dict[str, SectionLook], tuple[Beside, ...]]:
-    """La disposition des sections (le style d'un modèle), jusqu'au lot 3."""
-    sections: dict[str, SectionLook] = {}
-    beside: tuple[Beside, ...] = ()
-    for file in given:
-        for name, spec in file.sections.items():
-            tables = spec.table.model_dump(exclude_none=True) if spec.table else {}
-            sections[key(name)] = SectionLook(
-                title=spec.title or "visible",
-                align=spec.align,
-                size=spec.size or "normal",
-                box=bool(spec.box),
-                columns=spec.columns or 1,
-                page_break=bool(spec.page_break),
-                landscape=bool(spec.landscape),
-                cover=bool(spec.cover),
-                space_before=round((spec.space_before or 0) * CM),
-                table=_with(table, tables) if tables else None,
-            )
-        if file.beside:
-            beside = tuple(
-                Beside(
-                    keys=tuple(key(name) for name in group.sections),
-                    widths=tuple(
-                        (width / 100 for width in group.widths)
-                        if group.widths
-                        else (1 / len(group.sections) for _ in group.sections)
-                    ),
-                )
-                for group in file.beside
-            )
-    return sections, beside
-
-
-def _with(look: Look, changes: Mapping[str, Any]) -> Look:
-    values = {prop: getattr(look, prop) for prop in _LOOK_FIELDS}
-    values.update(changes)
-    return Look(**values)
 
 
 def unsafe_fonts(style: Style) -> list[str]:

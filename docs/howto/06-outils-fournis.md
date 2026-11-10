@@ -1002,7 +1002,7 @@ tools:
     blocks: [chart, image, signature, toc, checkboxes]   # les blocs facultatifs ; aucun par défaut
     style: styles/charte.yaml        # la charte des documents (facultatif)
     templates:                       # modèles de document, relatifs à resources_dir
-      devis: devis.md
+      devis: templates/devis.yaml
     folders:
     - name: maquettes                # les images à mettre dans les documents
       path: maquettes
@@ -1207,47 +1207,72 @@ Sont aussi refusés : un GIF, un WebP ou un SVG (« la convertir en PNG ») ; un
 
 #### Des modèles de document
 
-Avec `templates`, l'outil connaît les modèles des documents que l'agent écrit : un devis, un rapport d'intervention, un cahier des charges. Chaque modèle est un fichier markdown du dossier des ressources (`resources_dir`), lu au chargement comme un `skill_file`. Le modèle de langage n'en voit que le nom et une ligne de description, et lit le texte quand il en a besoin. À l'écriture, **l'outil vérifie que le document suit le plan du modèle**, et refuse un document qui s'en écarte. Un skill est une consigne que le modèle de langage peut oublier ; un modèle, l'outil le fait respecter.
+Avec `templates`, l'outil connaît les modèles des documents que l'agent écrit : un devis, un rapport d'intervention, une facture. Chaque modèle est un fichier YAML du dossier des ressources (`resources_dir`), lu au chargement comme un `skill_file`. Le modèle de langage n'en voit que le nom et une ligne de description, et lit le reste quand il en a besoin. À l'écriture, **il remplit les sections du modèle, par leur nom, et l'outil écrit leurs titres**, dans l'ordre du modèle : le plan ne peut pas dériver. Un skill est une consigne que le modèle de langage peut oublier ; un modèle, l'outil le fait respecter.
 
 ```yaml
   - python: loom.word
     templates:                       # relatifs à resources_dir
-      devis: devis.md
-      rapport-intervention: rapport-intervention.md
+      devis: templates/devis.yaml
+      rapport-intervention: templates/rapport-intervention.yaml
     folders: …
 ```
 
-Un modèle s'écrit comme un skill. **Ses titres `#` sont les sections du document**, dans l'ordre, et le texte sous un titre est la consigne de la section :
+Depuis loom-ia 2.1.0, un modèle est un fichier YAML (avant, un fichier markdown dont les titres `#` étaient les sections) :
 
-```markdown
----
+```yaml
+# prompts/templates/devis.yaml
 description: Devis de travaux pour un particulier.
----
-Fichier : sortie/devis-<numéro>.docx ; title : « Devis n° <numéro> — <objet> ».
 
-# Objet des travaux
-Une liste des travaux ; en sous-liste, les fournitures.
+instructions: |
+  Fichier : sortie/devis-<numéro>.docx ; title : « Devis n° <numéro> — <objet> ».
+  N'invente rien : travaux, quantités et prix viennent de l'utilisateur.
 
-# Détail du devis
-Un tableau : Désignation, Quantité (integer), Montant HT (amount_eur), TVA (percent), avec la somme des montants.
+sections:
+  Objet des travaux:
+    instructions: |
+      Une liste des travaux ; en sous-liste, les fournitures.
+  Détail du devis:
+    instructions: |
+      Un tableau : Désignation, Quantité (integer), Montant HT (amount_eur),
+      TVA (percent), avec la somme des montants.
+  Conditions de paiement:
+    text: |
+      Acompte de 30 % à la signature, solde à la fin du chantier, par virement.
 
-# Conditions de paiement
-Une liste numérotée : l'acompte à la signature, le solde.
-
-# Remarques (facultatif)
-Ce qui ne rentre pas ailleurs : accès au chantier, délais.
+      Ce devis est valable **3 mois**.
+  Remarques:
+    optional: true
+    instructions: |
+      Ce qui ne rentre pas ailleurs : accès au chantier, délais.
 ```
 
-- **`description`** (facultative, 200 caractères au plus) : la ligne que la description de l'outil montre pour ce modèle ; seule clé lue de l'en-tête.
-- **« (facultatif) »** en fin de titre : la section peut manquer.
-- **Seuls les titres `#` comptent** : un `##` reste de la consigne, et un `#` dans un bloc de code est ignoré. Un modèle sans titre `#` n'a que des consignes, et son plan n'est pas vérifié.
-- **Ce qui se répète** (un écran, une exigence, un lot de travaux) n'est pas une section : c'est du contenu d'une section, sous des titres de niveau 2, que le plan ne vérifie pas.
-- **Noms** : minuscules, chiffres et tirets, 40 caractères au plus, et pas `none`. **Bornes** : 20 modèles par outil, 20 000 caractères par modèle.
+**Les clés du modèle :**
 
-La description de l'outil gagne ces lignes, et le schéma l'action `template` et le champ `template` :
+| Clé | Ce que c'est |
+| --- | --- |
+| `description` | La ligne que la description de l'outil montre pour ce modèle (200 caractères au plus) |
+| `instructions` | Les consignes générales, que le modèle de langage lit avec le modèle |
+| `style` | Le style des documents de ce modèle (voir « Des styles de document ») : un fichier, ou un style écrit dans le modèle |
+| `sections` | Les sections, dans l'ordre du document ; le nom d'une section est son titre imprimé |
+
+**Les clés d'une section** (toutes facultatives ; `Contexte:` seul est une section) :
+
+| Clé | Ce que c'est |
+| --- | --- |
+| `instructions` | Ce que le modèle de langage y met |
+| `optional` | `true` : la section peut manquer |
+| `text` | Un texte fixe, que l'outil écrit lui-même (voir plus bas) |
+| `show_title` | `false` : le nom de la section n'est pas imprimé |
+| `styles`, `box`, `beside`, `width`, `page_break`, `columns`, `landscape`, `cover`, `space_before` | La forme de la section, pour `loom.word` (voir « La mise en page des sections ») |
+
+- **Les textes s'écrivent après `|`, à la ligne.** Écrit sans guillemets, un texte qui contient une espace suivie de « : » est une erreur YAML, et une espace suivie de « # » le coupe sans prévenir. Le chargeur le dit : `YAML illisible : mapping values are not allowed here … — un texte qui contient « : » ou « # » s'écrit entre guillemets, ou après | à la ligne`.
+- **Ce qui se répète** (un écran, une exigence, un lot de travaux) n'est pas une section : c'est du contenu d'une section, sous des titres de niveau 2.
+- **Noms** : minuscules, chiffres et tirets, 40 caractères au plus, et pas `none`. **Bornes** : 20 modèles par outil, 20 000 caractères par modèle, 30 sections, 80 caractères par nom de section.
+
+La description de l'outil gagne ces lignes, et le schéma l'action `template` et les champs `template` et `sections` :
 
 ```text
-Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou none pour un document libre ; les titres de niveau 1 du document suivent alors le plan du modèle, dans l'ordre. Avant d'écrire, lire le modèle : action=template, template=<nom> (ses consignes et son plan).
+Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou none pour un document libre ('blocks'). Un document qui suit un modèle s'écrit par 'sections' : le contenu de chaque section, par son nom ; l'outil écrit les titres de section, dans l'ordre du modèle, et dans une section les titres sont de niveau 2 ou 3. Avant d'écrire, lire le modèle : action=template, template=<nom> (ses consignes et ses sections).
 - devis : Devis de travaux pour un particulier.
 ```
 
@@ -1259,62 +1284,156 @@ Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou non
 
 ```json
 {"template": "devis", "description": "Devis de travaux pour un particulier.",
- "plan": ["Objet des travaux", "Détail du devis", "Conditions de paiement", "Remarques (facultatif)"],
- "text": "---\ndescription: Devis de travaux pour un particulier.\n---\nFichier : sortie/devis-<numéro>.docx ; …"}
+ "instructions": "Fichier : sortie/devis-<numéro>.docx ; title : « Devis n° <numéro> — <objet> ».\nN'invente rien : …",
+ "sections": [{"name": "Objet des travaux", "instructions": "Une liste des travaux ; en sous-liste, les fournitures."},
+              {"name": "Détail du devis", "instructions": "Un tableau : Désignation, Quantité (integer), …"},
+              {"name": "Remarques", "optional": true, "instructions": "Ce qui ne rentre pas ailleurs : accès au chantier, délais."}]}
 ```
 
-**Écrire** : `template` est obligatoire, le nom d'un modèle déclaré, ou `none` pour un document libre.
+Le modèle de langage n'y voit que ce qui le concerne : ni la forme des sections, ni le style, ni les sections au texte fixe. Il y voit les styles qui lui sont proposés (voir « Des styles de document »).
 
-```text
-Arguments invalides :
-- (racine) : Value error, write attend 'template' : le modèle suivi, ou none pour un document libre
+**Écrire** : `template` est obligatoire, le nom d'un modèle déclaré, ou `none` pour un document libre, qui s'écrit par `blocks`. Un document qui suit un modèle s'écrit par `sections` : le contenu de chaque section, par son nom.
+
+```json
+{"path": "sortie/devis-D-2026-042.docx", "template": "devis",
+ "title": "Devis n° D-2026-042 — Rénovation salle de bains",
+ "sections": {
+  "Objet des travaux": [{"type": "list", "items": ["Dépose de la baignoire",
+                         {"text": "Pose d'une douche à l'italienne", "items": ["receveur extra-plat", "paroi vitrée 120 cm"]}]}],
+  "Détail du devis": [{"type": "table",
+   "columns": [{"header": "Désignation"}, {"header": "Quantité", "type": "integer"},
+               {"header": "Montant HT", "type": "amount_eur"}, {"header": "TVA", "type": "percent"}],
+   "rows": [["Dépose baignoire", 1, 180, 0.1], ["Receveur extra-plat 120x90", 1, "1 250,50", 0.1]],
+   "totals": {"Montant HT": "sum"}}]}}
 ```
 
-Avec un modèle, les titres de niveau 1 du document doivent être ses sections : toutes celles qui ne sont pas facultatives, aucune autre, pas deux fois, dans l'ordre. La comparaison ignore la numérotation (« 2. », « 2.3 - », « b) », « IV. »), la casse, les accents, les espaces et l'emphase : « 2. Détail du devis » est la section « Détail du devis ». Les titres de niveau 2 et 3 sont libres. Un écart est refusé avec les autres fautes du document, et le plan attendu suit, pour que le modèle de langage se corrige même s'il n'a pas lu le modèle :
+```json
+{"path": "sortie/devis-D-2026-042.docx", "bytes": 5331, "written": true, "replaced": false,
+ "sha256": "0599520805dfe988d246110d8d9367e878576877e6b81bcd3d4cc146c21a8314",
+ "blocks": 2, "sections": 3, "template": "devis", "warnings": []}
+```
+
+- **L'outil pose les sections dans l'ordre du modèle et écrit leurs titres**, en titres de niveau 1 ; l'ordre des clés de l'appel ne compte pas. Dans une section, les titres sont de niveau 2 ou 3 : un niveau 1 est refusé.
+- **Le nom d'une section se compare souplement** : sans numérotation (« 2. », « 2.3 - », « b) », « IV. »), casse, accents, espaces ni emphase. « 2. objet des travaux » est la section « Objet des travaux » ; l'outil écrit le nom du modèle.
+- **Les refus du plan** : une section obligatoire absente, une section inconnue, une section au texte fixe remplie, une section vide, une section donnée deux fois. Ils sont dits avec les autres fautes du document, et les sections attendues suivent, pour que le modèle de langage se corrige même s'il n'a pas lu le modèle :
 
 ```text
 Document refusé :
+- modèle devis : « Conditions de paiement » est une section au texte fixe, écrite par l'outil : ne pas la remplir
+- modèle devis : section inconnue « Annexe »
 - modèle devis : section(s) absente(s) : « Détail du devis »
-- modèle devis, plan attendu (titres de niveau 1, dans l'ordre) : Objet des travaux · Détail du devis · Conditions de paiement · Remarques (facultatif)
+- modèle devis, sections attendues : Objet des travaux · Détail du devis · Conditions de paiement (fixed) · Remarques (optional)
+- section « Objet des travaux », bloc 1 (heading) : le niveau 1 est le titre de la section, que l'outil écrit ; dans une section, les titres sont de niveau 2 ou 3
 ```
-
-Une section en trop (« section hors du modèle « Annexe » »), donnée deux fois, ou à la mauvaise place (« « Conditions de paiement » avant « Détail du devis » : le modèle les met dans l'autre ordre ») est refusée de même. Une section libre se déclare : `# Annexes (facultatif)`. Le résultat d'une écriture gagne `"template": "devis"` (ou `"none"`).
-
-Le `.docx` garde le modèle suivi dans sa **catégorie** (Fichier > Informations > Propriétés dans Word), que LibreOffice garde aussi ; la relecture le rend (voir « Lire un document Word »). Un document libre, `none`, est le même fichier qu'un document écrit par un outil sans modèles. `pdf` vérifie le plan de la même façon, mais un PDF ne garde pas son modèle.
-
-Un fichier de modèle introuvable, hors du dossier des ressources, ou mal formé arrête le chargement, et `loom validate` le dit :
 
 ```text
-tools[loom.word].templates[devis] — modèle introuvable : …/prompts/prompts/devis.md — le chemin est relatif à resources_dir : écrire devis.md
-tools[loom.word].templates[devis] — modèle devis : section donnée deux fois : 4. Remarques : …/prompts/devis.md
+Arguments invalides :
+- (racine) : Value error, un document qui suit le modèle devis s'écrit par 'sections' (le contenu de chaque section, par son nom), pas 'blocks'
 ```
 
-Sans `templates`, rien ne change : ni action ni champ `template`, ni ligne dans la description. Un outil à modèles doit avoir un dossier `write`.
+**Une section au texte fixe** (`text`) est écrite par l'outil : mentions légales, conditions générales, coordonnées de l'émetteur. Elle ne coûte aucun token, et le modèle de langage ne peut rien y inventer, puisqu'il ne la voit pas. Le texte prend le balisage d'un bloc (`**gras**`, `*italique*`, `<u>souligné</u>`) ; une ligne vide sépare deux paragraphes, un retour à la ligne simple va à la ligne dans le même paragraphe. Une section au texte fixe n'est jamais facultative, et n'a pas d'`instructions`.
+
+Le `.docx` garde le modèle suivi dans sa **catégorie** (Fichier > Informations > Propriétés dans Word), que LibreOffice garde aussi, et chaque section commence par un signet caché (`_loom_s1`, `_loom_s2`…) : la relecture rend le document par sections (voir « Lire un document Word »). Un document libre, `none`, est le même fichier qu'un document écrit par un outil sans modèles. `pdf` suit les modèles de la même façon, sans leur forme (voir plus bas), et un PDF ne garde pas son modèle.
+
+Un fichier de modèle introuvable, hors du dossier des ressources, ou mal formé arrête le chargement, et `loom validate` le dit. Un modèle markdown de la 2.0 est refusé avec la forme nouvelle :
+
+```text
+tools[loom.word].templates[devis] — modèle introuvable : …/prompts/prompts/templates/devis.yaml — le chemin est relatif à resources_dir : écrire templates/devis.yaml
+tools[loom.word].templates[devis] — modèle devis : un modèle est un fichier YAML depuis 2.1.0 (description, instructions, sections) : chaque titre « # Section » devient une clé de sections, et son texte, ses instructions (après |) : …/prompts/templates/devis.yaml
+tools[loom.word].templates[devis] — modèle devis : « Remarques » : text (un texte fixe, écrit par l'outil) ou instructions (pour le modèle de langage), pas les deux : …/prompts/templates/devis.yaml
+tools[loom.word].templates[devis] — modèle devis : sections.Remarques.show_titel — Extra inputs are not permitted : …/prompts/templates/devis.yaml
+```
+
+Sans `templates`, rien ne change : ni action ni champs `template` et `sections`, ni ligne dans la description. Un outil à modèles doit avoir un dossier `write`.
+
+**La mise en page des sections**, pour `loom.word` : une section dit sa forme dans le modèle, et le modèle de langage n'en voit rien.
+
+| Clé d'une section | Effet |
+| --- | --- |
+| `show_title` | `false` : le nom de la section n'est pas imprimé (une section d'adresse, une page de garde) |
+| `styles` | Le style nommé de chaque élément dans cette section : `{ heading1: quiet_title, paragraph: small_text, table: summary_table, box: red_box }` (voir « Des styles de document ») |
+| `box` | La section dans un cadre (le style `box`, ou celui que donne `styles`) |
+| `beside` | La section posée à côté de la précédente (3 côte à côte au plus) |
+| `width` | Pour des sections côte à côte : la part de la ligne, en %, 100 en tout (des parts égales sans elle) |
+| `page_break` | La section commence une page |
+| `columns` | Le texte sur 2 ou 3 colonnes, équilibrées |
+| `landscape` | La section sur des pages en paysage |
+| `cover` | Page de garde : la première section du modèle, avec le titre du document, centrée, sans en-tête ni pied de page, suivie d'une nouvelle page |
+| `space_before` | Un espace avant la section, en cm (l'adresse d'un courrier dans la fenêtre de l'enveloppe) |
+
+```yaml
+# prompts/templates/facture.yaml
+description: Facture de travaux à un particulier.
+style:
+  quiet_title: { base: heading1, size: 10, uppercase: false, space_before: 10, space_after: 3 }
+  small_text: { base: paragraph, size: 8, align: justify }
+  summary_table: { base: table, width: content, position: right }
+sections:
+  Émetteur:
+    show_title: false
+    width: 55
+    text: |
+      **Dupont Plomberie SARL**
+      12 rue des Lilas, 69003 Lyon
+  Client:
+    show_title: false
+    beside: true
+    width: 45
+    box: true
+    instructions: |
+      Un paragraphe : le nom du client, puis son adresse.
+  Description:
+    show_title: false
+    styles: { table: summary_table }
+    instructions: |
+      Le tableau des prestations, puis le récapitulatif : Rubrique, Montant.
+  Informations de paiement:
+    styles: { heading1: quiet_title }
+  Conditions et termes:
+    styles: { heading1: quiet_title, paragraph: small_text }
+    text: |
+      Paiement à 30 jours. Indemnité forfaitaire pour frais de recouvrement : 40 €.
+```
+
+L'émetteur et le client se posent côte à côte, sans leurs titres, le client encadré. Les tableaux de la description prennent `summary_table` : le récapitulatif, étroit, se pose à droite, et les prestations, plus larges que la demi-page, gardent toute la largeur. Les deux dernières sections ont un titre discret, les conditions un petit texte justifié. Le modèle de langage ne remplit que trois sections, et ne voit ni l'émetteur ni les conditions. Une section `beside` est par construction la section d'après ; une section facultative absente laisse l'autre seule, en pleine largeur. Une section côte à côte n'a ni `columns`, ni `landscape`, ni `cover`, et `page_break` et `space_before` vont à la première de la ligne. Une page de garde n'a ni `landscape`, ni `columns`, ni `box`. Un style de `styles` doit partir de l'élément qu'il met en forme (`quiet_title` de `heading1`), et se trouver dans la charte ou le style du modèle :
+
+```text
+tools[loom.word].templates[facture] : « Informations de paiement ».styles.heading1 : « small_text » ne part pas de heading1 (base : paragraph)
+tools[loom.word].templates[facture] — modèle facture : « Client » est côte à côte (beside) : ni columns, ni landscape, ni cover : …/prompts/templates/facture.yaml
+```
+
+`loom.pdf` lit les mêmes modèles, mais refuse pour l'instant leur style et la forme de leurs sections ; `show_title`, `optional`, `instructions` et le texte fixe y valent :
+
+```text
+tools[loom.pdf].templates[facture] — loom.pdf : modèle facture : style, Émetteur.width, Client.box, Client.beside, … : le style et la mise en page des sections ne servent qu'à loom.word pour l'instant (loom.pdf écrit dans son style maison)
+```
 
 #### Des styles de document
 
-Depuis loom-ia 2.0.20, pour `loom.word` ; un format plus simple depuis 2.1.0. Sans charte, l'outil écrit tous ses documents dans le style maison : Calibri 11, titres bleu nuit, tableaux à grille. Une facture d'artisan demande autre chose : son logo, ses couleurs, l'émetteur et le client côte à côte, un récapitulatif étroit à droite, les mentions légales en pied de page. **Le style se décrit dans des fichiers YAML de l'agent**, et l'outil n'en fixe rien : il pose les mêmes blocs, à la manière que le style décrit.
+Depuis loom-ia 2.0.20, pour `loom.word` ; un format plus simple depuis 2.1.0. Sans charte, l'outil écrit tous ses documents dans le style maison : Calibri 11, titres bleu nuit, tableaux à grille. Une facture d'artisan demande autre chose : son logo, ses couleurs, un récapitulatif étroit à droite, les mentions légales en pied de page. **Le style se décrit dans des fichiers YAML de l'agent**, et l'outil n'en fixe rien : il pose les mêmes blocs, à la manière que le style décrit. La disposition des sections (côte à côte, encadrées, en colonnes) se décrit dans le modèle de document (voir « La mise en page des sections »).
 
 **Un fichier de style est une liste de styles nommés** (`text`, `document_title`, `heading1`…), chacun avec ses propriétés, plus quelques réglages (`colors`, `page`, `language`…). Trois fichiers, du plus général au plus précis :
 
 1. **`default.yaml`**, livré avec loom (`loom_ia/tools_builtin/styles/default.yaml`) : le style maison, au même format que les deux autres ;
 2. **la charte**, sur l'outil (`style:`) : elle vaut pour tous ses documents ;
-3. **le style d'un modèle de document** (`templates.<nom>.style`) : pour les documents qui suivent ce modèle.
+3. **le style d'un modèle de document** (`style:` dans le fichier du modèle) : pour les documents qui suivent ce modèle.
 
 ```yaml
   - python: loom.word
     style: styles/charte.yaml                # la charte (facultatif)
     templates:
-      facture:
-        file: templates/modele-facture.md
-        style: styles/facture.yaml           # le style du modèle (facultatif)
-      courrier: templates/modele-courrier.md # la charte seule
+      facture: templates/facture.yaml        # son style : « style: styles/facture.yaml » dans le modèle
+      courrier: templates/courrier.yaml      # sans style : la charte seule
     folders: …
 ```
 
-`style` prend un fichier, relatif à `resources_dir` et lu au chargement, ou le style écrit dans la config : `style: { heading1: { color: 0B5D3B } }`.
+`style` prend un fichier, relatif à `resources_dir` et lu au chargement, ou le style écrit sur place : `style: { heading1: { color: 0B5D3B } }` sur l'outil, ou une table `style:` dans le modèle, comme la facture plus haut. Le modèle nomme son style depuis 2.1.0 ; la forme longue de la 2.0 est refusée :
 
-**Le modèle de langage n'en voit rien** : ni le schéma ni la description ne changent, et le style ne coûte aucun token. Un document qui suit un modèle prend `default.yaml`, la charte, puis le style du modèle ; un document libre (`none`), ou un outil sans modèles, s'arrête à la charte ; un outil sans `style` écrit dans `default.yaml` seul, le même fichier qu'avant, octet pour octet.
+```text
+tools.0.loom.word.templates.facture — le modèle nomme son style dans son fichier depuis 2.1.0 (style: …, à côté de sections) : templates.<nom> est le chemin du modèle seul
+```
+
+**Le modèle de langage n'en voit rien**, sauf les styles qui lui sont proposés (plus bas) : ni le schéma ni la description ne changent, et le style ne coûte aucun token. Un document qui suit un modèle prend `default.yaml`, la charte, puis le style du modèle ; un document libre (`none`), ou un outil sans modèles, s'arrête à la charte ; un outil sans `style` écrit dans `default.yaml` seul, le même fichier qu'avant, octet pour octet.
 
 **Les fichiers d'abord, l'héritage ensuite.** Chaque style complète le même style des fichiers précédents, propriété par propriété : une charte qui écrit `heading1: { color: brand }` garde la taille, le gras et les espacements de `default.yaml`. Puis chaque style prend les propriétés de sa base (`text`, sauf `quote_source`, qui part de `quote`, et `table_header` et `table_total`, qui partent de `table`), déjà complétée par les fichiers, puis les siennes : la police de `text` vaut pour les titres sans être répétée.
 
@@ -1347,7 +1466,7 @@ footer:                    # « Page n / N » vient de default.yaml
 | `paragraph`, `list`, `note`, `caption` | Les blocs du même nom ; `caption` est la légende d'un tableau, d'une image, d'un graphique |
 | `quote`, `quote_source` | Une citation et sa source |
 | `table`, `table_header`, `table_total` | Le tableau, sa ligne d'en-tête, sa ligne de total |
-| `box` | Le cadre d'une section encadrée |
+| `box` | Le cadre d'une section encadrée (`box: true`) |
 | `toc` | Le titre du sommaire (il part de `heading1`), ses niveaux, ses numéros de page |
 | `signature`, `signature_mention` | Le libellé d'un signataire, la mention (« Bon pour accord ») |
 | `header`, `footer` | Le haut et le bas de page |
@@ -1394,39 +1513,38 @@ Une couleur s'écrit en six chiffres hexadécimaux, sans `#` (un `#` ouvre un co
 
 Dans un texte écrit sans guillemets, deux caractères posent problème en YAML : une espace suivie de « : » est une erreur (« Qui joindre : le standard »), une espace suivie de « # » coupe le texte sans prévenir. Un texte qui en contient s'écrit entre guillemets.
 
-**Un style à toi** porte un nom de ton choix et dit de quel style il part : `message_title: { base: heading1, size: 14, uppercase: true }`. Il prend tout ce que les trois fichiers donnent à sa base, et il est vérifié au chargement ; un modèle de document pourra le choisir pour une section (à venir).
+**Un style à toi** porte un nom de ton choix (minuscules, chiffres et `_`) et dit de quel style il part : `message_title: { base: heading1, size: 14, uppercase: true }`. Il prend tout ce que les trois fichiers donnent à sa base, et il est vérifié au chargement. Dans le `.docx`, c'est un style Word de son nom, basé sur le style Word de sa base : il paraît dans la galerie de styles de Word, et un titre qui le porte entre au sommaire. Il sert de deux façons.
 
-**La disposition des sections.** Le style d'un modèle porte aussi, pour l'instant, la mise en page de ses sections : `sections`, par le titre de la section (comparé comme le plan : sans numérotation, casse ni accents), et `beside` : des sections posées côte à côte. La charte n'en a pas.
-
-| Clé d'une section | Effet |
-| --- | --- |
-| `title` | `visible` (par défaut) ; `hidden` : relu, jamais imprimé ; `quiet` : à la taille du texte, dans la couleur de `heading3` |
-| `align` | `left`, `center`, `right`, `justify` : les paragraphes et listes de la section |
-| `size` | `small` : le texte de la section deux points plus petit (conditions, mentions) |
-| `box` | La section dans un cadre (le style `box`) |
-| `columns` | Le texte sur 2 ou 3 colonnes, équilibrées |
-| `page_break` | La section commence une page |
-| `landscape` | La section sur des pages en paysage |
-| `cover` | Page de garde : la première section du modèle, avec le titre du document, centrée, sans en-tête ni pied de page, suivie d'une nouvelle page |
-| `space_before` | Un espace avant la section, en cm (l'adresse d'un courrier dans la fenêtre de l'enveloppe) |
-| `table` | Les tableaux de la section : les propriétés de `table` (`size`, `borders`, `line`, `bands`, `width`, `position`, `border_top`, `border_bottom`) |
+- **Une section le choisit**, pour un élément, par `styles` dans le modèle (voir « La mise en page des sections ») : `styles: { heading1: quiet_title, paragraph: small_text }`. Le style doit partir de l'élément qu'il met en forme. Les éléments : `heading1` à `heading3`, `paragraph`, `list`, `note`, `quote`, `caption`, `table`, `box`.
+- **Le modèle de langage le choisit**, pour un bloc, quand le style a une `description` : il lui est alors proposé, sur le type de bloc dont il part.
 
 ```yaml
-# prompts/styles/facture.yaml
-box: { border: 0.75pt brand }
-beside:
-- { sections: [Émetteur, Client], widths: [55, 45] }   # en %, 100 en tout
-sections:
-  Émetteur: { title: hidden }
-  Client: { title: hidden, box: true }
-  Description: { title: hidden, table: { width: content, position: right } }
-  Informations de paiement: { title: quiet }
-  Conditions et termes: { title: quiet, size: small, align: justify }
+# prompts/styles/charte.yaml
+important_note:
+  base: note
+  description: Une mise en garde que le lecteur ne doit pas manquer (délai, sécurité, obligation).
+  fill: FDECEA
+  border_left: 3pt C0392B
 ```
 
-La facture garde son plan : le modèle de langage écrit `# Émetteur`, `# Client`… comme avant, l'outil vérifie le plan, et le style pose l'émetteur et le client côte à côte, sans leurs titres, le client encadré, les prestations en pleine largeur et le récapitulatif à droite. Les sections de `beside` doivent se suivre dans le plan ; une section facultative absente laisse l'autre seule, en pleine largeur. Une section côte à côte n'a ni `columns`, ni `landscape`, ni `cover`, et `page_break` et `space_before` vont à la première de la ligne. Une page de garde n'a ni `landscape`, ni `columns`, ni `box`.
+```json
+{"type": "note", "style": "important_note", "text": "Le dépôt sera fermé le <u>vendredi 13 novembre</u>."}
+```
 
-**La relecture** rend les blocs, jamais la mise en page, que le style repose à la réécriture : les titres masqués reviennent en titres, les sections côte à côte ou encadrées en blocs dans l'ordre, les images d'une grille en blocs `image`, une légende numérotée sans son numéro (« Avant », non « Figure 1 — Avant »), un titre numéroté sans le sien. Le plan d'un document relu est celui de son modèle.
+Le modèle de langage ne voit que le nom et la description, jamais les propriétés : une description dit le sens, pas le rendu (200 caractères au plus). Un style qui part de `heading2` ne va qu'à un titre de niveau 2. Un style de la charte paraît dans la description de l'outil, à chaque appel ; un style du modèle de document, à la lecture du modèle seulement (`"styles": {"note": {"important_note": "Une mise en garde…"}}` dans le résultat d'`action: template`), et il ne vaut que pour les documents de ce modèle. Le schéma gagne un champ `style` sur les blocs qui en ont un, avec les noms permis pour ce type de bloc ; un nom inconnu, d'un autre type ou d'un autre modèle est refusé, avec la liste des noms permis :
+
+```text
+Styles proposés ('style' d'un bloc, facultatif ; ceux d'un modèle se lisent par action=template) : note : important_note (Une mise en garde que le lecteur ne doit pas manquer (délai, sécurité, obligation).)
+```
+
+```text
+Document refusé :
+- bloc 2 (paragraph) : style « key_figure » : pas proposé pour un bloc paragraph dans ce document (styles : aucun)
+```
+
+Quand plusieurs styles s'appliquent, le plus précis gagne : le `style` du bloc, puis celui de la section (`styles`), puis le style de l'élément. Une description ne va qu'à un style à toi qui part d'un style de bloc (`heading1` à `heading3`, `paragraph`, `list`, `note`, `quote`, `table`). Le coût : environ 80 tokens pour le premier style proposé de la charte (sa ligne de description et le champ `style` du schéma), environ 60 pour un autre type de bloc, environ 10 pour un autre style d'un type déjà proposé.
+
+**La relecture** rend les blocs, jamais la mise en page, que le style et le modèle reposent à la réécriture : les sections côte à côte ou encadrées en blocs de leur section, les images d'une grille en blocs `image`, une légende numérotée sans son numéro (« Avant », non « Figure 1 — Avant »), un titre numéroté sans le sien. Un style proposé au modèle de langage revient dans `style` ; un style choisi par une section ne revient pas, puisque le modèle le repose. Dans un document libre, un titre au style d'un style à toi revient au niveau de sa base.
 
 Une faute de style arrête le chargement, et `loom validate` la dit, avec le style de chaque outil. Un fichier au format de la 2.0 est refusé avec ce qui remplace ses clés :
 
@@ -1434,7 +1552,8 @@ Une faute de style arrête le chargement, et `loom validate` la dit, avec le sty
 tools[loom.word].style : style au format de la 2.0 : title → document_title ; headings → heading1, heading2, heading3 (et numbering : decimal, article). Un fichier de style est depuis 2.1.0 une liste de styles nommés (text, document_title, heading1…)
 tools[loom.word].style : heading_1 : ni un style prévu, ni un réglage ; un style à toi dit de quel style il part (base: note) — vouliez-vous dire heading1 ?
 tools[loom.word].templates[facture].style : heading2.color : couleur « red » inconnue (colors : brand)
-tools[loom.word].templates[facture].style : section(s) hors du modèle facture : « Annexes » (plan : Émetteur · Client · Description · Informations de paiement · Conditions et termes)
+tools[loom.word].templates[facture].style : sections : la disposition des sections se déclare dans le modèle de document depuis 2.1.0 (sections.<nom> : box, beside, width, page_break, columns, landscape, cover, styles)
+tools[loom.word].templates[facture].style : style note : une description ne sert qu'à un style à toi qui part d'un style de bloc (heading1, heading2, heading3, paragraph, list, note, quote, table) : il est alors proposé au modèle de langage
 tools[loom.word].style.header.logo — logo introuvable : …/prompts/images/logo.png
 ```
 
@@ -1446,7 +1565,7 @@ tools[loom.word].style.header.logo — logo introuvable : …/prompts/images/log
 
 Une police hors des polices de tous les postes (Arial, Calibri, Cambria, Georgia, Times New Roman, Verdana, Tahoma, Trebuchet MS, Garamond, Courier New) s'affiche dans une police de remplacement chez qui ne l'a pas : Word ne l'embarque pas. `loom validate` le signale (`polices : Inter : hors des polices de tous les postes, remplacée(s) chez qui ne les a pas`).
 
-Les styles ne servent qu'à `loom.word` pour l'instant : `style` est refusé sur `loom.pdf`, qui écrit dans son style maison.
+Les styles ne servent qu'à `loom.word` pour l'instant : `style` est refusé sur `loom.pdf`, et sur ses modèles, qui écrivent dans son style maison.
 
 #### Signature, sommaire, liste à cocher
 
@@ -1466,7 +1585,7 @@ Depuis loom-ia 2.0.20, pour `loom.word`, avec `signature`, `toc` et `checkboxes`
 ```
 
 - **`signature`** : une colonne par signataire (4 au plus, 80 caractères chacun), sans cadre : le libellé en gras, la mention en italique (200 caractères au plus ; les styles `signature` et `signature_mention`), « Date : », « Signature : » (`labels`) et 2 cm pour signer.
-- **`toc`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si le style numérote les titres ; un titre de section masqué n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». Le style `toc` règle le sommaire : `toc: {levels: 2, page_numbers: true}` (les niveaux de titre repris, 1 à 3 ; `page_numbers: false` pour des liens sans numéros de page).
+- **`toc`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si le style numérote les titres ; une section dont le nom ne s'imprime pas, `show_title: false`, n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». Le style `toc` règle le sommaire : `toc: {levels: 2, page_numbers: true}` (les niveaux de titre repris, 1 à 3 ; `page_numbers: false` pour des liens sans numéros de page).
 - **Liste à cocher** : `checkboxes: true` sur une `list`, et chaque élément, sous-éléments compris, commence par `[x]` (coché) ou `[ ]` (vide), la convention markdown. Une case ☒ ou ☐ se pose devant. Une liste à cocher n'est pas numérotée.
 
 ```text
@@ -1506,7 +1625,7 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 - **Coupe** : au-delà de 40 000 caractères, `"truncated": true`, `"next_start"` (le bloc où reprendre, avec `start`) et `"outline"`, le plan entier avec l'indice de chaque titre, pour aller droit à une section.
 - **Graphiques** : un graphique du `.docx` revient en bloc `chart`, à sa place, avec ses libellés et ses séries (ce que Word garde dans le graphique) ; un type que l'outil n'écrit pas (aires, nuage de points…) revient avec son nom technique en `kind`. Le rapport ci-dessus, relu : `{"type": "chart", "kind": "horizontal_bar", "title": "Total TTC par client", "categories": ["Julien Barre", "Chauffage Lemaire Rénovation", "Guillot SARL"], "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}]}`. La lecture rend les graphiques même sans `chart` dans `blocks` ; une note dit alors que l'outil n'en écrit pas, et de les retirer avant de réécrire le document.
 - **Images** : avec `image` dans `blocks`, une image revient en bloc `image`, à sa place : `{"type": "image", "path": "maquettes/depot-demande.png", "width": "full", "caption": "Écran 1 — Dépôt de la demande par le manager"}`. `path` est le fichier que l'outil a lu en écrivant le document : il le garde dans le nom de l'image (visible dans le volet de sélection de Word). Relu puis réécrit tel quel, le document redonne le même fichier, tant que les images sont là. Une image insérée ailleurs revient sans `path`, avec sa largeur et son texte alternatif, et une note le dit : pour réécrire le document, lui donner un fichier, ou retirer le bloc. La légende qui suit l'image revient en `caption`. Sans lui, les images sont seulement comptées.
-- **Modèle** : avec `templates`, un document écrit avec un modèle le rend (`"template": "devis"`), pour qu'une réécriture le reprenne. S'il dit suivre un modèle que l'outil ne déclare pas, une note le dit. Sans `templates`, rien n'est rendu.
+- **Modèle** : avec `templates`, un document écrit avec un modèle revient **par sections**, comme il s'écrit : `"template": "devis"` et `"sections": {"Objet des travaux": [...], "Détail du devis": [...]}`, à la place de `blocks`. Chaque section court de son signet (`_loom_s<n>`) à celui de la suivante ; son titre, que l'outil écrit, ne revient pas, ni une section au texte fixe, ni le titre du document (dans `title`). Le document relu se réécrit tel quel, même après un passage dans LibreOffice. Un bloc hors de toute section (ajouté à la main avant la première) revient dans `blocks`, avec une note. Un document dont les signets ont disparu (une section coupée et recollée dans Word, ou un document écrit avant 2.1.0) est relu en document libre, avec une note qui le dit ; un document qui dit suivre un modèle que l'outil ne déclare pas aussi. Sans `templates`, ni `template` ni `sections`.
 - **Notes** : les images non lues (un graphique n'en est pas une), les modifications suivies (le texte inséré est rendu, le texte supprimé ou déplacé omis), les commentaires présents.
 
 #### Lire un PDF
@@ -1537,11 +1656,11 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 - Pas d'en-tête de page personnalisé, pas de lien cliquable.
 - **Graphiques** : quatre types, ni aires, ni nuage de points, ni barres empilées, ni deux axes ; `from_table` ne vise que le dernier tableau qui précède ; pas de classeur dans le `.docx`. `pdf` ne relit pas un graphique : un PDF n'en garde que le dessin, dont le texte donne les libellés.
 - **On écrit un document neuf, ou on en lit un** : on ne modifie pas un document existant, et on ne remplit ni un modèle `.dotx` ni un formulaire PDF.
-- **Modèles de document** (avec `templates`) : seuls les titres de niveau 1 sont vérifiés, ni les sous-parties, ni les tableaux attendus, ni les textes fixes. La consigne d'un modèle sur l'apparence (alignement, police) ne peut pas être suivie : le style est celui de l'outil.
+- **Modèles de document** (avec `templates`) : l'outil vérifie les sections, pas leur contenu (ni les sous-parties, ni les tableaux attendus). Une consigne sur l'apparence (alignement, police) ne peut pas être suivie par le modèle de langage : la forme est celle du style et du modèle.
 - **La lecture d'un `.docx` ne voit pas** les images sans `image` dans `blocks` (ni, avec, celles d'un tableau ou d'une zone de texte), les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
 - **Le style ne se règle pas**, comme pour `excel`.
 - **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
-- **Coût** : environ 1,4 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 130 avec `templates` et 30 de plus par modèle déclaré (son nom et sa description). Le texte d'un modèle ne coûte qu'à sa lecture.
+- **Coût** : environ 1,4 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 250 avec `templates` (dont le champ `sections`) et 30 de plus par modèle déclaré (son nom et sa description), environ 80 pour un premier style proposé dans la charte. Le texte d'un modèle et ses styles proposés ne coûtent qu'à sa lecture.
 
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 

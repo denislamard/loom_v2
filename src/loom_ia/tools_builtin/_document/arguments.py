@@ -12,7 +12,7 @@ Pydantic seulement : ni disque, ni bibliothèque de rendu.
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import cache
-from typing import Annotated, Any, ClassVar, Final, Literal, Self, cast
+from typing import Annotated, Any, ClassVar, Final, Literal, Self, TypeAliasType, cast
 
 from pydantic import (
     BaseModel,
@@ -197,9 +197,30 @@ type WrittenBlock = Annotated[
 ]
 
 
-def block_union(blocks: Iterable[str]) -> object:
-    """Les blocs du schéma pour ces blocs facultatifs, dans un ordre fixe."""
+# Les blocs qui prennent un style proposé (``style``), par leur type.
+STYLED_BLOCKS: Final = ("heading", "paragraph", "list", "table", "note", "quote")
+STYLE_SAID: Final = "Un style proposé pour ce bloc (voir Styles proposés) ; sinon, rien."
+
+type Proposed = tuple[tuple[str, tuple[str, ...]], ...]
+
+
+@cache
+def _styled(kind: type[_Model], names: tuple[str, ...]) -> type[_Model]:
+    """Le bloc, avec un champ ``style`` : un des styles qui lui sont proposés."""
+    choices: Any = cast(Any, Literal)[names]
+    return create_model(
+        f"{kind.__name__}Styled",
+        __base__=kind,
+        __module__=kind.__module__,
+        style=(Annotated[choices | None, Field(description=STYLE_SAID)], None),
+    )
+
+
+def block_union(blocks: Iterable[str], styles: Proposed = ()) -> object:
+    """Les blocs du schéma pour ces blocs facultatifs, dans un ordre fixe ; ``styles`` : les
+    styles proposés, par type de bloc (le champ ``style`` des blocs qui en ont)."""
     chosen = set(blocks)
+    proposed = dict(styles)
     kinds: list[type[_Model]] = [
         Heading,
         Paragraph,
@@ -207,6 +228,10 @@ def block_union(blocks: Iterable[str]) -> object:
         Table,
         Note,
         Quote,
+    ]
+    kinds = [
+        _styled(kind, proposed[name]) if (name := _TYPES[kind]) in proposed else kind
+        for kind in kinds
     ]
     kinds += [
         kind
@@ -224,18 +249,43 @@ def block_union(blocks: Iterable[str]) -> object:
     return Annotated[union, Field(discriminator="type")]
 
 
+_TYPES: Final[Mapping[type[_Model], str]] = {
+    Heading: "heading",
+    Paragraph: "paragraph",
+    ListBlock: "list",
+    CheckList: "list",
+    Table: "table",
+    Note: "note",
+    Quote: "quote",
+}
+
+
+def style_of(block: object) -> str | None:
+    """Le style proposé qu'un bloc a choisi ; ``None`` sans style."""
+    said = getattr(block, "style", None)
+    return said if isinstance(said, str) else None
+
+
 # --- Appels --------------------------------------------------------------------------
 
 
 class WriteArguments(_Model):
-    """Une écriture : le document et ses blocs."""
+    """Une écriture : le document, ses blocs (document libre) ou ses sections (modèle)."""
 
     path: str
     title: str | None
-    blocks: list[WrittenBlock]
+    blocks: list[WrittenBlock] = []
     overwrite: bool = False
     # Le modèle suivi (son nom) ou ``none`` ; ``None`` : l'outil n'a pas de modèles.
     template: str | None = None
+    # Le contenu de chaque section, par son nom, pour un document qui suit un modèle.
+    sections: dict[str, list[WrittenBlock]] | None = None
+
+    def all_blocks(self) -> list[WrittenBlock]:
+        """Tous les blocs, sections comprises, dans l'ordre où ils sont donnés."""
+        if self.sections is None:
+            return list(self.blocks)
+        return [block for blocks in self.sections.values() for block in blocks]
 
 
 class ReadArguments(_Model):
@@ -296,7 +346,8 @@ class DocumentCall(_Model):
         )
         if stray:
             raise ValueError(f"{', '.join(stray)} ne sert pas à {self.action}")
-        if self.action == "write" and self.blocks is None:
+        sections = getattr(self, "sections", None)
+        if self.action == "write" and self.blocks is None and sections is None:
             raise ValueError("write attend 'blocks', le contenu du document")
         return self
 
@@ -310,12 +361,14 @@ class DocumentCall(_Model):
                 start=cast(int | None, getattr(self, "start", None)),
                 pages=cast(str | None, getattr(self, "pages", None)),
             )
+        sections = cast(dict[str, list[WrittenBlock]] | None, getattr(self, "sections", None))
         return WriteArguments(
             path=self.path,
             title=self.title,
-            blocks=cast(list[WrittenBlock], self.blocks),
+            blocks=cast(list[WrittenBlock], self.blocks or []),
             overwrite=bool(self.overwrite),
             template=template,
+            sections=sections,
         )
 
 
@@ -325,6 +378,10 @@ ACTION_SAID: Final = (
 )
 TEMPLATE_SAID: Final = (
     "Pour write : le modèle suivi, ou none (document libre) ; pour template : le modèle à lire."
+)
+SECTIONS_SAID: Final = (
+    "Pour write avec un modèle : le contenu de chaque section, par son nom (voir action "
+    "template) ; l'outil écrit les titres de section."
 )
 # Le nom de l'appel selon ses blocs facultatifs : ``WordChartImageCall``…
 _SUFFIXES: Final[Mapping[str, str]] = {
@@ -341,29 +398,46 @@ def variant(
     *,
     blocks: tuple[str, ...] = (),
     templates: tuple[str, ...] = (),
+    styles: Mapping[str, Iterable[str]] | None = None,
 ) -> type[DocumentCall]:
     """L'appel d'un format (``WordCall``…), élargi aux réglages de l'outil.
 
     ``blocks`` (les blocs facultatifs déclarés, dans n'importe quel ordre) : ``blocks`` du
     schéma gagne les leurs. ``templates`` (les noms des modèles déclarés) : l'action
-    ``template`` et le champ ``template``, obligatoire à l'écriture. Sans réglage, ``base``
-    lui-même. Le nom du modèle ne paraît pas dans le schéma allégé (``input_schema``).
+    ``template``, le champ ``template``, obligatoire à l'écriture, et ``sections``.
+    ``styles`` (les styles proposés, par type de bloc) : le champ ``style`` de ces blocs.
+    Sans réglage, ``base`` lui-même. Le nom du modèle ne paraît pas dans le schéma allégé
+    (``input_schema``).
     """
     chosen = tuple(name for name in OPTIONAL_BLOCKS if name in blocks)
-    return _variant(base, chosen, templates)
+    proposed: Proposed = tuple(
+        (kind, tuple(sorted(set(names))))
+        for kind, names in sorted((styles or {}).items())
+        if kind in STYLED_BLOCKS and names
+    )
+    return _variant(base, chosen, templates, proposed)
 
 
 @cache
 def _variant(
-    base: type[DocumentCall], chosen: tuple[str, ...], templates: tuple[str, ...]
+    base: type[DocumentCall],
+    chosen: tuple[str, ...],
+    templates: tuple[str, ...],
+    proposed: Proposed = (),
 ) -> type[DocumentCall]:
-    if not (chosen or templates):
+    if not (chosen or templates or proposed):
         return base
     fields: dict[str, Any] = {}
-    if chosen:
+    union: Any = block_union(chosen, proposed)
+    if templates:
+        # Les blocs servent à 'blocks' et à 'sections' : nommés, le schéma les dit une fois.
+        # (un alias construit à l'exécution : pyright ne sait pas le nommer.)
+        named: Any = TypeAliasType
+        union = Block if not (chosen or proposed) else named("Block", union)
+    if chosen or proposed:
         fields["blocks"] = (
             Annotated[
-                list[block_union(chosen)] | None,  # type: ignore[valid-type]
+                list[union] | None,  # type: ignore[valid-type]
                 Field(max_length=MAX_BLOCKS, description=BLOCKS_SAID),
             ],
             None,
@@ -376,13 +450,24 @@ def _variant(
             "write",
         )
         fields["template"] = (Annotated[names | None, Field(description=TEMPLATE_SAID)], None)
+        fields["sections"] = (
+            Annotated[
+                dict[str, list[union]] | None,  # type: ignore[valid-type]
+                Field(description=SECTIONS_SAID),
+            ],
+            None,
+        )
         # Lire un modèle ne vise aucun fichier : ``path`` n'est demandé que par write et read.
         fields["path"] = (
             Annotated[str | None, Field(description=base.model_fields["path"].description)],
             None,
         )
         validators["_template_of_the_action"] = model_validator(mode="after")(_template_rule)
-    suffix = "".join(_SUFFIXES[name] for name in chosen) + ("Template" if templates else "")
+    suffix = (
+        "".join(_SUFFIXES[name] for name in chosen)
+        + ("Template" if templates else "")
+        + ("Styled" if proposed else "")
+    )
     return create_model(
         f"{base.__name__.removesuffix('Call')}{suffix}Call",
         __base__=base,
@@ -405,15 +490,31 @@ def _template_rule[M: DocumentCall](self: M) -> M:
         raise ValueError(
             "write attend 'template' : le modèle suivi, ou none pour un document libre"
         )
+    sections = getattr(self, "sections", None)
+    if action == "write" and template == NO_TEMPLATE and sections is not None:
+        raise ValueError("un document libre (template none) s'écrit par 'blocks', pas 'sections'")
+    if action == "write" and template not in (None, NO_TEMPLATE):
+        if self.blocks is not None:
+            raise ValueError(
+                f"un document qui suit le modèle {template} s'écrit par 'sections' (le contenu "
+                "de chaque section, par son nom), pas 'blocks'"
+            )
+        if sections is None:
+            raise ValueError(
+                f"write avec le modèle {template} attend 'sections' : le contenu de chaque "
+                "section, par son nom (action template pour les lire)"
+            )
     if action == "read" and template is not None:
         raise ValueError("template ne sert pas à read")
+    if action == "read" and sections is not None:
+        raise ValueError("sections ne sert pas à read")
     if action == "template":
         if template is None or template == NO_TEMPLATE:
             raise ValueError("action template attend 'template' : le nom du modèle à lire")
         stray = sorted(
             name
-            for name in (*self.READ_FIELDS, "title", "blocks", "overwrite")
-            if getattr(self, name) not in (None, False)
+            for name in (*self.READ_FIELDS, "title", "blocks", "overwrite", "sections")
+            if getattr(self, name, None) not in (None, False)
         )
         if stray:
             raise ValueError(f"{', '.join(stray)} ne sert pas à template")

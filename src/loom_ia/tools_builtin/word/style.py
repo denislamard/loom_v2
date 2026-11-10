@@ -13,8 +13,11 @@ Ce module ne fixe aucune valeur visuelle : il traduit les propriétés des style
 l'ordre du schéma, et ajoute la mécanique (un titre reste avec ce qui le suit, son
 niveau de plan, la numérotation des titres, les retraits des listes).
 
-Les styles que seule une disposition demande (titre masqué, titre discret, en-tête,
-tableau de disposition) ne sont écrits que si le document s'en sert.
+Un style à toi que le document emploie (un modèle le choisit pour une section, ou le
+modèle de langage pour un bloc) devient un style Word du même nom, basé sur le style
+Word de sa base : il paraît dans la galerie de Word. Les styles que seule une
+disposition demande (en-tête, tableau de disposition) ne sont écrits que si le document
+s'en sert.
 """
 
 import re
@@ -41,8 +44,6 @@ _PLACEHOLDER: Final = re.compile(r"\{(page|pages|title)\}")
 # La numérotation des titres (réglage ``numbering``), à part des listes.
 HEADING_NUMBERING: Final = 900
 # Les styles que seule une disposition demande, par identifiant.
-HIDDEN: Final = "HeadingHidden"
-QUIET: Final = "HeadingQuiet"
 HEADER: Final = "Header"
 LAYOUT: Final = "LoomLayout"
 # Le nom du style de tableau de disposition : la relecture le reconnaît.
@@ -96,6 +97,8 @@ _DEFAULT_RUN: Final = frozenset({"font", "color", "size"})
 _DEFAULT_PARAGRAPH: Final = frozenset({"space_before", "space_after", "line_spacing"})
 
 type Pieces = list[tuple[str, str]]
+# Ce qu'un style de tableau dit du tableau et de ses cellules, et pas de leur texte.
+_CELL_PROPS: Final = frozenset({"border", "border_top", "border_bottom", "border_left", "fill"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,8 +262,11 @@ def _named(
     mechanics: Pieces | None = None,
 ) -> str:
     """Un style Word tiré d'un style nommé : ce qu'il écrit en plus de ``stop``, le style
-    loom de son style Word de base, et la mécanique (``mechanics``)."""
+    loom de son style Word de base, et la mécanique (``mechanics``). Les filets et le fond
+    d'un tableau sont ceux du tableau et de ses cellules, pas du texte d'une cellule."""
     props = style.between(loom, stop)
+    if "table" in style.chain(loom):
+        props = {prop: value for prop, value in props.items() if prop not in _CELL_PROPS}
     return _style(
         style_id,
         word_name,
@@ -303,9 +309,56 @@ def paragraph_style(style: Style) -> str:
     return BODY if style.between("paragraph", "text") else "Normal"
 
 
-def styles_xml(style: Style, used: Iterable[str] = ()) -> str:
+# Le style Word de chaque style prévu qui en a un (un paragraphe) : la base Word d'un style
+# à toi qui en part.
+WORD_IDS: Final[Mapping[str, str]] = {
+    "text": "Normal",
+    "document_title": "Title",
+    "heading1": "Heading1",
+    "heading2": "Heading2",
+    "heading3": "Heading3",
+    "list": "ListParagraph",
+    "note": "Note",
+    "caption": "Caption",
+    "quote": "Quote",
+    "quote_source": "QuoteSource",
+    "table": "TableText",
+    "toc": TOC_HEADING,
+    "signature": SIGNER,
+    "signature_mention": MENTION,
+    "header": HEADER,
+    "footer": "Footer",
+}
+
+
+def word_id(style: Style, name: str) -> str:
+    """Le style Word d'un style nommé : celui d'un style prévu, ou son nom pour un style à
+    toi (``paragraph`` : Normal, ou « Body Text » s'il dit autre chose que ``text``)."""
+    if name == "paragraph":
+        return paragraph_style(style)
+    return WORD_IDS.get(name, name)
+
+
+def _custom(style: Style, used: Iterable[str]) -> str:
+    """Les styles à toi que le document emploie, et leurs bases à toi : chacun basé sur le
+    style Word de sa base, n'écrivant que ce qui lui est propre."""
+    wanted: set[str] = set()
+    for name in used:
+        wanted.update(
+            step for step in style.chain(name) if step not in WORD_IDS and step != "paragraph"
+        )
+    said = ""
+    for name in sorted(wanted):
+        base = style.bases.get(name) or "text"
+        said += _named(
+            style, name, name, name, based=word_id(style, base), stop=base, next_style=None
+        )
+    return said
+
+
+def styles_xml(style: Style, used: Iterable[str] = (), custom: Iterable[str] = ()) -> str:
     """``styles.xml`` : un style Word par style nommé que l'outil emploie, et ceux que le
-    corps demande."""
+    corps demande ; ``custom`` : les styles à toi qu'il emploie."""
     wanted = set(used)
     text = style.between("text", None)
     language = LANGUAGES[style.language]
@@ -356,39 +409,12 @@ def styles_xml(style: Style, used: Iterable[str] = ()) -> str:
         said += _named(style, BODY, "Body Text", "paragraph")
     if HEADER in wanted:
         said += _named(style, HEADER, "header", "header")
-    # Un titre masqué ne prend pas de numéro : sa numérotation est annulée (numId 0).
-    cancel = '<w:numPr><w:numId w:val="0"/></w:numPr>' if style.numbering != "none" else ""
-    if HIDDEN in wanted:
-        said += _style(
-            HIDDEN,
-            "loom heading hidden",
-            based="Heading1",
-            next_style="Normal",
-            paragraph=cancel,
-            run="<w:vanish/>",
-        )
-    if QUIET in wanted:
-        # Le titre discret de la disposition (jusqu'au lot 3) : le niveau 1, à la taille du
-        # texte, dans la couleur du niveau 3.
-        quiet = {
-            "uppercase": False,
-            "color": style.look("heading3").color,
-            "size": style.look("text").size,
-        }
-        said += _style(
-            QUIET,
-            "loom heading quiet",
-            based="Heading1",
-            next_style="Normal",
-            paragraph='<w:spacing w:before="200" w:after="60"/>',
-            run=run_xml({p: v for p, v in quiet.items() if v is not None}),
-        )
     if LAYOUT in wanted:
         said += (
             f'<w:style w:type="table" w:styleId="{LAYOUT}"><w:name w:val="{LAYOUT_NAME}"/>'
             "<w:tblPr/></w:style>"
         )
-    return said + _extra_styles(style, wanted) + "</w:styles>"
+    return said + _extra_styles(style, wanted) + _custom(style, custom) + "</w:styles>"
 
 
 def _extra_styles(style: Style, wanted: set[str]) -> str:

@@ -43,7 +43,13 @@ from loom_ia.tools_builtin._document.arguments import (
     parse,
     variant,
 )
-from loom_ia.tools_builtin._document.content import Pictures, Prepared, prepare
+from loom_ia.tools_builtin._document.content import (
+    NO_STYLES,
+    Allowed,
+    Pictures,
+    Prepared,
+    prepare,
+)
 from loom_ia.tools_builtin._document.picture import Picture, PictureError
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin._folders import Folders, Located, write_bytes
@@ -134,7 +140,12 @@ class DocumentTool(ABC):
             )
         # Le schéma vu par le modèle n'a les blocs facultatifs, et les modèles, que s'ils
         # servent.
-        self._call = variant(self.CALL, blocks=self._blocks, templates=tuple(self._templates))
+        self._call = variant(
+            self.CALL,
+            blocks=self._blocks,
+            templates=tuple(self._templates),
+            styles=self._proposed_styles(),
+        )
         # Le pire de ses appels ; un outil qui ne fait que lire n'en a aucun, et se
         # rejoue donc en variante (une lecture sans effet s'y exécute).
         effects: SideEffects = (
@@ -261,7 +272,12 @@ class DocumentTool(ABC):
             else None
         )
         prepared = prepare(
-            request, self._zone, self._pictures(request), followed, self._labels(request.template)
+            request,
+            self._zone,
+            self._pictures(request),
+            followed,
+            self._labels(request.template),
+            self._allowed(request.template),
         )
         data, facts, warnings = self._render(prepared)
         if len(data) > MAX_OUTPUT_BYTES:
@@ -275,24 +291,36 @@ class DocumentTool(ABC):
             **outcome,
             "sha256": hashlib.sha256(data).hexdigest(),
             **facts,
-            "blocks": len(request.blocks),
+            "blocks": len(request.all_blocks()),
+            **({"sections": len(prepared.sections)} if prepared.sections is not None else {}),
             **({"images": len(list(_image_blocks(request)))} if self._images else {}),
             **({"template": request.template} if self._templates else {}),
             "warnings": list[JsonValue]([*prepared.warnings, *warnings]),
         }
 
     def _template(self, name: str) -> dict[str, JsonValue]:
-        """Un modèle déclaré : sa description, son plan, et ses consignes, telles qu'écrites."""
+        """Un modèle déclaré, tel que le modèle de langage le remplit : sa description, ses
+        consignes, et chaque section qu'il écrit (son nom, ses consignes) ; jamais le texte
+        fixe ni la mise en page."""
         template = self._templates[name]
-        return {
-            "template": name,
-            "description": template.description,
-            "plan": [
-                f"{section.title} (facultatif)" if section.optional else section.title
-                for section in template.sections
-            ],
-            "text": template.text,
-        }
+        sections: list[JsonValue] = []
+        for section in template.sections:
+            if section.fixed:
+                continue
+            said: dict[str, JsonValue] = {"name": section.name}
+            if section.optional:
+                said["optional"] = True
+            if section.spec.instructions:
+                said["instructions"] = section.spec.instructions.strip()
+            sections.append(said)
+        found: dict[str, JsonValue] = {"template": name, "description": template.description}
+        if template.instructions:
+            found["instructions"] = template.instructions.strip()
+        found["sections"] = sections
+        styles = self._template_styles(name)
+        if styles:
+            found["styles"] = styles
+        return found
 
     def _pictures(self, request: WriteArguments) -> Pictures:
         """Chaque image du document, lue et reconnue, ou ce qui l'en empêche.
@@ -337,6 +365,25 @@ class DocumentTool(ABC):
 
     # --- Ce que chaque format fournit -----------------------------------------------------
 
+    def _proposed_styles(self) -> Mapping[str, Iterable[str]]:
+        """Les styles proposés au modèle de langage, par type de bloc : la charte et tous les
+        modèles (le schéma) ; aucun sans style."""
+        return {}
+
+    def _allowed(self, template: str | None) -> Allowed:
+        """Les styles proposés qu'un document (celui de son modèle) peut choisir."""
+        del template
+        return NO_STYLES
+
+    def _template_styles(self, name: str) -> dict[str, JsonValue]:
+        """Les styles que propose le style d'un modèle, en plus de la charte."""
+        del name
+        return {}
+
+    def _styles_help(self) -> list[str]:
+        """Les styles que propose la charte : dans la description, à chaque appel."""
+        return []
+
     def _labels(self, template: str | None) -> Labels:
         """La langue et les libellés d'un document (celui de son modèle) : ceux du style ;
         le français, sans style."""
@@ -376,9 +423,11 @@ class DocumentTool(ABC):
             return []
         return [
             "Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou none "
-            "pour un document libre ; les titres de niveau 1 du document suivent alors le "
-            "plan du modèle, dans l'ordre. Avant d'écrire, lire le modèle : action=template, "
-            "template=<nom> (ses consignes et son plan).",
+            "pour un document libre ('blocks'). Un document qui suit un modèle s'écrit par "
+            "'sections' : le contenu de chaque section, par son nom ; l'outil écrit les titres "
+            "de section, dans l'ordre du modèle, et dans une section les titres sont de "
+            "niveau 2 ou 3. Avant d'écrire, lire le modèle : action=template, template=<nom> "
+            "(ses consignes et ses sections).",
             *(
                 f"- {name}" + (f" : {template.description}" if template.description else "")
                 for name, template in self._templates.items()
@@ -406,6 +455,7 @@ class DocumentTool(ABC):
                 *WRITING_HELP,
                 *(OPTIONAL_HELP[name] for name in self._blocks),
                 *self._templates_help(),
+                *self._styles_help(),
                 *self._writing_notes(),
                 f"Bornes : {MAX_BLOCKS} blocs, {MAX_ITEMS} éléments par liste. Résultat : le "
                 "chemin écrit et les avertissements ; jamais le contenu.",
@@ -420,7 +470,7 @@ class DocumentTool(ABC):
 
 
 def _image_blocks(request: WriteArguments) -> Iterable[Image]:
-    return (block for block in request.blocks if isinstance(block, Image))
+    return (block for block in request.all_blocks() if isinstance(block, Image))
 
 
 def _image_paths(request: WriteArguments) -> list[str]:

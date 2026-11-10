@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Styles de document de ``loom.word`` : la charte de l'outil, le style d'un modèle.
+"""Styles de document de ``loom.word`` : la charte de l'outil, le style et la mise en page
+d'un modèle.
 
 Un fichier de style est une liste de styles nommés (``text``, ``heading1``…) et quelques
 réglages ; ``default.yaml`` en est le point de départ, que la charte puis le style du
@@ -35,12 +36,10 @@ from loom_ia.tools_builtin._style_params import (
     DEFAULT_FILE,
     SAFE_FONTS,
     StyleFile,
-    check_charte,
     house,
     load_style,
     resolve,
 )
-from loom_ia.tools_builtin._templates import parse as parse_template
 from loom_ia.tools_builtin.pdf_params import PdfParams
 from loom_ia.tools_builtin.word import WordTool, build
 from loom_ia.tools_builtin.word import reader as reader_module
@@ -60,14 +59,18 @@ W: Final = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 FOLDER: Final = {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]}
 LOGO: Final = png(40, 14)
 
-FACTURE_MD: Final = """---
-description: Facture d'un artisan.
----
-# Émetteur
-# Client
-# Description
-# Informations de paiement
-# Conditions et termes
+FACTURE_YAML: Final = """description: Facture d'un artisan.
+style:
+  quiet_title:
+    { base: heading1, uppercase: false, color: 2F5496, size: 10, space_before: 10, space_after: 3 }
+  small_text: { base: paragraph, size: 8, align: justify }
+  summary_table: { base: table, width: content, position: right }
+sections:
+  Émetteur: { show_title: false, width: 55 }
+  Client: { show_title: false, beside: true, width: 45, box: true }
+  Description: { show_title: false, styles: { table: summary_table } }
+  Informations de paiement: { styles: { heading1: quiet_title } }
+  Conditions et termes: { styles: { heading1: quiet_title, paragraph: small_text } }
 """
 CHARTE: Final[dict[str, Any]] = {
     "colors": {"brand": "0B5D3B", "alert": "c0392b"},
@@ -85,16 +88,6 @@ CHARTE: Final[dict[str, Any]] = {
                "center": "", "right": "Page {page} / {pages}"},
     "watermark": "BROUILLON",
 }  # fmt: skip
-FACTURE_STYLE: Final[dict[str, Any]] = {
-    "beside": [{"sections": ["Émetteur", "Client"], "widths": [55, 45]}],
-    "sections": {
-        "Émetteur": {"title": "hidden"},
-        "Client": {"title": "hidden", "box": True},
-        "Description": {"title": "hidden", "table": {"width": "content", "position": "right"}},
-        "informations de paiement": {"title": "quiet"},
-        "Conditions et termes": {"title": "quiet", "size": "small", "align": "justify"},
-    },
-}
 FACTURE: Final[list[dict[str, Any]]] = [
     {"type": "heading", "text": "Émetteur"},
     {"type": "paragraph", "text": "**Dupont Plomberie**\n12 rue des Lilas, 69003 Lyon"},
@@ -124,17 +117,25 @@ FACTURE: Final[list[dict[str, Any]]] = [
     {"type": "heading", "text": "Conditions et termes"},
     {"type": "paragraph", "text": "Paiement à 30 jours ; indemnité forfaitaire : 40 €."},
 ]
-RAPPORT_MD: Final = "# Page de garde\n# Contexte\n# Mesures (facultatif)\n# Conditions générales\n"
-RAPPORT_STYLE: Final[dict[str, Any]] = {
-    "numbering": "decimal",
-    "caption": {"numbered": True},
-    "image": {"grid": True},
-    "sections": {
-        "Page de garde": {"title": "hidden", "cover": True},
-        "Mesures": {"landscape": True},
-        "Conditions générales": {"columns": 2, "size": "small"},
-    },
+# Les sections de la facture : ses blocs, sans les titres que l'outil écrit.
+FACTURE_SECTIONS: Final[dict[str, list[dict[str, Any]]]] = {
+    "Émetteur": [FACTURE[1]],
+    "Client": [FACTURE[3]],
+    "Description": FACTURE[5:7],
+    "Informations de paiement": [FACTURE[8]],
+    "Conditions et termes": [FACTURE[10]],
 }
+RAPPORT_YAML: Final = """style:
+  numbering: decimal
+  caption: { numbered: true }
+  image: { grid: true }
+  small_text: { base: paragraph, size: 9 }
+sections:
+  Page de garde: { show_title: false, cover: true }
+  Contexte:
+  Mesures: { optional: true, landscape: true }
+  Conditions générales: { columns: 2, styles: { paragraph: small_text } }
+"""
 RAPPORT: Final[list[dict[str, Any]]] = [
     {"type": "heading", "text": "Page de garde"},
     {"type": "paragraph", "text": "Chantier SCI Les Tilleuls"},
@@ -152,6 +153,12 @@ RAPPORT: Final[list[dict[str, Any]]] = [
     {"type": "heading", "text": "Conditions générales"},
     {"type": "paragraph", "text": "Article 1. Le rapport décrit l'état constaté."},
 ]
+RAPPORT_SECTIONS: Final[dict[str, list[dict[str, Any]]]] = {
+    "Page de garde": [RAPPORT[1]],
+    "Contexte": RAPPORT[3:6],
+    "Mesures": [RAPPORT[7]],
+    "Conditions générales": [RAPPORT[9]],
+}
 
 
 # Le dossier de sortie de chaque outil monté par ``make``.
@@ -171,10 +178,7 @@ def styled(tmp_path: Path, charte: dict[str, Any] | None = CHARTE) -> WordTool:
     return make(
         tmp_path,
         style={"spec": charte} if charte is not None else None,
-        templates={
-            "facture": {"text": FACTURE_MD, "style": {"spec": FACTURE_STYLE}},
-            "rapport": {"text": RAPPORT_MD, "style": {"spec": RAPPORT_STYLE}},
-        },
+        templates={"facture": {"text": FACTURE_YAML}, "rapport": {"text": RAPPORT_YAML}},
     )
 
 
@@ -186,6 +190,20 @@ async def call(tool: WordTool, **arguments: Any) -> dict[str, Any]:
 
 async def write(tool: WordTool, name: str, blocks: list[dict[str, Any]], **more: Any) -> Path:
     await call(tool, path=f"sortie/{name}.docx", blocks=blocks, overwrite=True, **more)
+    return OUTPUTS[id(tool)] / f"{name}.docx"
+
+
+async def write_sections(
+    tool: WordTool, name: str, template: str, sections: dict[str, Any], **more: Any
+) -> Path:
+    await call(
+        tool,
+        path=f"sortie/{name}.docx",
+        template=template,
+        sections=sections,
+        overwrite=True,
+        **more,
+    )
     return OUTPUTS[id(tool)] / f"{name}.docx"
 
 
@@ -342,22 +360,20 @@ async def test_an_underlined_title(tmp_path: Path) -> None:
 
 
 async def test_underlined_headings(tmp_path: Path) -> None:
-    """Un niveau souligné, les autres non ; un titre discret hérite du niveau 1."""
+    """Un niveau souligné, les autres non ; un style à toi qui part du niveau 1 en hérite."""
     charte = {"heading1": {"underline": True}}
-    tool = make(
-        tmp_path,
-        style={"spec": charte},
-        templates={"facture": {"text": FACTURE_MD, "style": {"spec": FACTURE_STYLE}}},
-    )
-    path = await write(tool, "facture", FACTURE, title="Facture", template="facture")
+    tool = make(tmp_path, style={"spec": charte}, templates={"facture": {"text": FACTURE_YAML}})
+    path = await write_sections(tool, "facture", "facture", FACTURE_SECTIONS, title="Facture")
     styles = part(path, "word/styles.xml")
     check_order(styles)
     for level, underlined in ((1, True), (2, False), (3, False)):
         heading = word_style(styles, f"Heading{level}")
         assert ('<w:u w:val="single"/>' in heading) is underlined
-    quiet = word_style(styles, "HeadingQuiet")
-    assert '<w:basedOn w:val="Heading1"/>' in quiet
+    quiet = word_style(styles, "quiet_title")
+    assert '<w:basedOn w:val="Heading1"/>' in quiet and '<w:name w:val="quiet_title"/>' in quiet
     assert "<w:u " not in quiet  # hérité, pas annulé
+    # uppercase: false n'écrit rien : le niveau 1 n'est pas en capitales.
+    assert "caps" not in quiet and '<w:color w:val="2F5496"/>' in quiet
 
 
 async def test_header_footer_logo_and_watermark(tmp_path: Path) -> None:
@@ -405,42 +421,42 @@ async def test_a_first_page_without_header(tmp_path: Path) -> None:
 
 
 async def test_numbered_headings_and_captions(tmp_path: Path) -> None:
-    path = await write(styled(tmp_path), "rapport", RAPPORT, title="Rapport", template="rapport")
+    tool = styled(tmp_path)
+    path = await write_sections(tool, "rapport", "rapport", RAPPORT_SECTIONS, title="Rapport")
     numbering = part(path, "word/numbering.xml")
     check_order(numbering)
     assert (
         '<w:pStyle w:val="Heading1"/><w:suff w:val="space"/><w:lvlText w:val="%1."/>' in numbering
     )
     assert '<w:num w:numId="900"><w:abstractNumId w:val="2"/></w:num>' in numbering
-    styles = part(path, "word/styles.xml")
-    # Le titre masqué ne prend pas de numéro.
-    assert '<w:numId w:val="0"/>' in word_style(styles, "HeadingHidden")
     document = part(path, "word/document.xml")
+    # La page de garde n'imprime pas son titre (show_title: false) : pas de titre masqué.
+    assert "Page de garde" not in document and "HeadingHidden" not in part(path, "word/styles.xml")
     assert re.search(
         r'Figure </w:t></w:r><w:fldSimple w:instr=" SEQ Figure \\\* ARABIC ">', document
     )
     assert ">2</w:t></w:r></w:fldSimple>" in document
     assert 'w:instr=" SEQ Tableau \\* ARABIC "' in document
-    read = await call(styled(tmp_path), action="read", path="sortie/rapport.docx")
-    blocks = read["blocks"]
-    # Relu sans numéros : ni « 1. » devant les titres, ni « Figure 1 — » dans les légendes.
-    assert {"type": "heading", "level": 1, "text": "Contexte"} in blocks
-    captions = [b.get("caption") for b in blocks if b["type"] == "image"]
+    read = await call(tool, action="read", path="sortie/rapport.docx")
+    sections = read["sections"]
+    # Relu sans numéros : ni « 1. » devant les titres, ni « Figure 1 — » dans les légendes ;
+    # les titres de section ne reviennent pas, l'outil les écrit.
+    assert list(sections) == ["Page de garde", "Contexte", "Mesures", "Conditions générales"]
+    assert sections["Contexte"][0] == {"type": "heading", "level": 2, "text": "Photos"}
+    captions = [b.get("caption") for b in sections["Contexte"] if b["type"] == "image"]
     assert captions == ["Avant", "Après"]
-    assert {"type": "paragraph", "text": "Pression mesurée"} in blocks
-    # Le titre masqué revient en titre, pas en liste (B-4).
-    assert {"type": "heading", "level": 1, "text": "Page de garde"} in blocks
+    assert {"type": "paragraph", "text": "Pression mesurée"} in sections["Mesures"]
 
 
-async def test_an_underlined_section_title_keeps_its_layout(tmp_path: Path) -> None:
-    """« <u>Client</u> » est la section Client : le plan l'accepte, la disposition la pose."""
-    blocks = [
-        dict(block, text=f"<u>{block['text']}</u>") if block["type"] == "heading" else block
-        for block in FACTURE
-    ]
-    path = await write(styled(tmp_path), "facture", blocks, title="Facture", template="facture")
+async def test_section_names_are_compared_loosely(tmp_path: Path) -> None:
+    """« <u>Client</u> », « 2. client » : la section Client ; l'outil écrit son nom."""
+    sections = {
+        f"<u>{name}</u>" if name == "Client" else name.upper(): blocks
+        for name, blocks in FACTURE_SECTIONS.items()
+    }
+    path = await write_sections(styled(tmp_path), "facture", "facture", sections)
     document = part(path, "word/document.xml")
-    assert document.count('<w:pStyle w:val="HeadingHidden"/>') == 3
+    assert ">Informations de paiement<" in document and "INFORMATIONS" not in document
     assert '<w:tblStyle w:val="LoomLayout"/>' in document
 
 
@@ -491,47 +507,54 @@ async def test_a_document_in_english(tmp_path: Path) -> None:
 
 async def test_a_facture_laid_out(tmp_path: Path) -> None:
     tool = styled(tmp_path)
-    path = await write(tool, "facture", FACTURE, title="Facture", template="facture")
+    path = await write_sections(tool, "facture", "facture", FACTURE_SECTIONS, title="Facture")
     document = part(path, "word/document.xml")
     check_order(document)
     styles = part(path, "word/styles.xml")
+    check_order(styles)
     assert '<w:name w:val="loom layout"/>' in styles
-    hidden = word_style(styles, "HeadingHidden")
-    assert "<w:vanish/>" in hidden
-    assert "numId" not in hidden  # pas de numérotation à annuler
-    assert document.count('<w:pStyle w:val="HeadingHidden"/>') == 3
-    assert document.count('<w:pStyle w:val="HeadingQuiet"/>') == 2
-    # Émetteur et client côte à côte, 55/45, le client encadré.
+    # Trois sections sans titre ; deux au titre discret, un style du modèle.
+    assert ">Émetteur<" not in document and ">Description<" not in document
+    assert document.count('<w:pStyle w:val="quiet_title"/>') == 2
+    # Émetteur et client côte à côte, 55/45, le client encadré au style box.
     layout = re.search(r'<w:tblStyle w:val="LoomLayout"/>.*?</w:tbl>', document)
     assert layout is not None
     assert '<w:gridCol w:w="5301"/><w:gridCol w:w="4337"/>' in layout.group()
     assert layout.group().count("<w:tcBorders>") == 1
     assert '<w:top w:val="single" w:sz="6" w:space="0" w:color="1F3864"/>' in layout.group()
-    assert layout.group().index("Émetteur") < layout.group().index("Client")
-    # Les prestations en pleine largeur ; le récapitulatif, étroit, à droite.
+    assert layout.group().index("Dupont Plomberie") < layout.group().index("SCI Les Tilleuls")
+    # Chaque section entre ses signets, ceux des sections côte à côte dans leur cellule.
+    marks = re.findall(r'w:name="(_loom_s\d)"', document)
+    assert marks == ["_loom_s1", "_loom_s2", "_loom_s3", "_loom_s4", "_loom_s5"]
+    assert layout.group().count("<w:bookmarkStart ") == 2
+    # Les prestations en pleine largeur ; le récapitulatif, étroit, à droite (summary_table) ;
+    # leur texte au style du tableau du modèle, basé sur Table Text.
     assert document.count('<w:tblW w:w="5000" w:type="pct"/>') == 1
     assert re.search(r'<w:tblW w:w="\d+" w:type="dxa"/><w:jc w:val="right"/>', document)
-    # Petit texte justifié dans les conditions.
-    assert '<w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:sz w:val="16"/>' in document
-    # Relu : le plan du modèle, dans l'ordre, et le texte des cellules.
+    assert '<w:pStyle w:val="summary_table"/>' in document
+    summary = word_style(styles, "summary_table")
+    assert '<w:basedOn w:val="TableText"/>' in summary and "pBdr" not in summary
+    # Petit texte justifié dans les conditions : un style du modèle, basé sur Normal.
+    small = word_style(styles, "small_text")
+    assert '<w:jc w:val="both"/>' in small and '<w:sz w:val="16"/>' in small
+    assert '<w:basedOn w:val="Normal"/>' in small
+    assert '<w:pStyle w:val="small_text"/>' in document
+    # Relu : les sections du modèle, dans l'ordre, et le texte des cellules.
     read = await call(tool, action="read", path="sortie/facture.docx")
-    titles = [b["text"] for b in read["blocks"] if b["type"] == "heading"]
-    assert titles == ["Facture", *(s.title for s in parse_template("facture", FACTURE_MD).sections)]
-    assert {"type": "paragraph", "text": "SCI Les Tilleuls\n4 avenue Foch, 69006 Lyon"} in read[
-        "blocks"
-    ]
-    # Réécrit tel que relu (sans le titre du document) : le plan passe la vérification.
-    again = [
-        block if block["type"] != "table" else FACTURE[index]
-        for index, block in enumerate(read["blocks"][1:])
-    ]
-    assert len(again) == len(FACTURE)
-    await call(tool, path="sortie/f2.docx", blocks=again, template="facture", title="Facture")
+    assert list(read["sections"]) == list(FACTURE_SECTIONS)
+    assert read["sections"]["Client"] == FACTURE_SECTIONS["Client"]
+    # Réécrit tel que relu (les tableaux relus sont des lignes, repris de l'original).
+    again = {name: blocks for name, blocks in read["sections"].items()}
+    again["Description"] = FACTURE_SECTIONS["Description"]
+    rewritten = await call(
+        tool, path="sortie/f2.docx", template="facture", title="Facture", sections=again
+    )
+    assert rewritten["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 async def test_a_report_laid_out(tmp_path: Path) -> None:
     tool = styled(tmp_path, None)
-    path = await write(tool, "rapport", RAPPORT, title="Rapport", template="rapport")
+    path = await write_sections(tool, "rapport", "rapport", RAPPORT_SECTIONS, title="Rapport")
     document = part(path, "word/document.xml")
     check_order(document)
     sections = re.findall(r"<w:sectPr>.*?</w:sectPr>", document)
@@ -555,11 +578,13 @@ async def test_a_report_laid_out(tmp_path: Path) -> None:
     assert "word/header2.xml" in names(path) and "word/footer2.xml" in names(path)
 
 
+PARAGRAPH: Final[list[dict[str, Any]]] = [{"type": "paragraph", "text": "x"}]
+
+
 async def test_columns_then_landscape_are_balanced(tmp_path: Path) -> None:
-    layout = {"sections": {"A": {"columns": 2}, "B": {"landscape": True}}}
-    tool = make(tmp_path, templates={"t": {"text": "# A\n# B\n", "style": {"spec": layout}}})
-    blocks = [{"type": "heading", "text": "A"}, {"type": "heading", "text": "B"}]
-    path = await write(tool, "d", blocks, template="t")
+    layout = "sections:\n  A: {columns: 2}\n  B: {landscape: true}\n"
+    tool = make(tmp_path, templates={"t": {"text": layout}})
+    path = await write_sections(tool, "d", "t", {"A": PARAGRAPH, "B": PARAGRAPH})
     sections = re.findall(r"<w:sectPr>.*?</w:sectPr>", part(path, "word/document.xml"))
     # Colonnes, fermeture continue d'une colonne, paysage sur nouvelle page.
     assert "cols" in sections[0]
@@ -568,38 +593,104 @@ async def test_columns_then_landscape_are_balanced(tmp_path: Path) -> None:
 
 
 async def test_a_boxed_section_and_a_page_break(tmp_path: Path) -> None:
-    layout = {
-        "box": {"border": "1pt 7F7F7F", "fill": "F7F7F7"},
-        "sections": {"B": {"box": True, "page_break": True, "space_before": 1}},
-    }
-    tool = make(tmp_path, templates={"t": {"text": "# A\n# B\n", "style": {"spec": layout}}})
-    blocks = [{"type": "heading", "text": "A"}, {"type": "heading", "text": "B"}]
-    path = await write(tool, "d", blocks, template="t")
+    layout = (
+        "style:\n  red_box: { base: box, border: 1pt 7F7F7F, fill: F7F7F7 }\n"
+        "sections:\n  A:\n  B: { box: true, page_break: true, space_before: 1,"
+        " styles: { box: red_box } }\n"
+    )
+    tool = make(tmp_path, templates={"t": {"text": layout}})
+    path = await write_sections(tool, "d", "t", {"A": PARAGRAPH, "B": PARAGRAPH})
     document = part(path, "word/document.xml")
     check_order(document)
     assert document.index('<w:br w:type="page"/>') < document.index('w:line="567"')
     assert document.index('w:line="567"') < document.index("<w:tcBorders>")
-    # Le cadre au style box du modèle : son filet, son fond.
+    # Le cadre au style que la section choisit : son filet, son fond.
     assert '<w:left w:val="single" w:sz="8" w:space="0" w:color="7F7F7F"/>' in document
     assert '<w:shd w:val="clear" w:color="auto" w:fill="F7F7F7"/>' in document
     read = await call(tool, action="read", path="sortie/d.docx")
-    assert [b["text"] for b in read["blocks"]] == ["A", "B"]
+    assert read["sections"] == {"A": PARAGRAPH, "B": PARAGRAPH}
 
 
 async def test_an_absent_optional_section_leaves_the_other_alone(tmp_path: Path) -> None:
-    md = "# A\n# B (facultatif)\n# C\n"
-    layout = {"beside": [{"sections": ["A", "B"]}]}
-    tool = make(tmp_path, templates={"t": {"text": md, "style": {"spec": layout}}})
-    blocks = [{"type": "heading", "text": "A"}, {"type": "heading", "text": "C"}]
-    path = await write(tool, "d", blocks, template="t")
+    layout = "sections:\n  A:\n  B: {optional: true, beside: true}\n  C:\n"
+    tool = make(tmp_path, templates={"t": {"text": layout}})
+    path = await write_sections(tool, "d", "t", {"A": PARAGRAPH, "C": PARAGRAPH})
     assert "LoomLayout" not in part(path, "word/document.xml")
 
 
 async def test_a_styled_document_is_reproducible(tmp_path: Path) -> None:
     tool = styled(tmp_path)
-    first = await call(tool, path="sortie/a.docx", blocks=FACTURE, template="facture")
-    second = await call(tool, path="sortie/b.docx", blocks=FACTURE, template="facture")
+    first = await call(tool, path="sortie/a.docx", sections=FACTURE_SECTIONS, template="facture")
+    second = await call(tool, path="sortie/b.docx", sections=FACTURE_SECTIONS, template="facture")
     assert first["sha256"] == second["sha256"]
+
+
+async def test_a_section_of_fixed_text(tmp_path: Path) -> None:
+    """Le texte fixe d'une section : écrit par l'outil, balisage compris ; jamais relu."""
+    layout = (
+        "sections:\n  Message:\n  Mentions:\n    show_title: false\n    text: |\n"
+        "      **Dupont Plomberie SARL**\n      SIRET 812 345 678 00021\n\n"
+        "      Document *interne*.\n"
+    )
+    tool = make(tmp_path, templates={"t": {"text": layout}})
+    path = await write_sections(tool, "d", "t", {"Message": PARAGRAPH})
+    body = ElementTree.fromstring(part(path, "word/document.xml"))
+    texts = ["".join(t.text or "" for t in p.iter(f"{W}t")) for p in body.iter(f"{W}p")]
+    # Une ligne par ligne du texte (un saut de ligne), un paragraphe par ligne vide.
+    lines = "Dupont Plomberie SARL" + "SIRET 812 345 678 00021"
+    assert texts == ["Message", "x", lines, "Document interne."]
+    assert "<w:br/>" in part(path, "word/document.xml")
+    read = await call(tool, action="read", path="sortie/d.docx")
+    assert read["sections"] == {"Message": PARAGRAPH}
+    with pytest.raises(ToolError, match="« Mentions » est une section au texte fixe"):
+        await call(
+            tool,
+            path="sortie/e.docx",
+            template="t",
+            sections={"Message": PARAGRAPH, "Mentions": PARAGRAPH},
+        )
+
+
+async def test_proposed_styles(tmp_path: Path) -> None:
+    """Un style à toi qui a une description : proposé au modèle de langage, sur son type de
+    bloc ; la charte dans la description de l'outil, le style d'un modèle à sa lecture."""
+    charte = {
+        "important_note": {
+            "base": "note",
+            "description": "Une mise en garde que le lecteur ne doit pas manquer.",
+            "fill": "FDECEA",
+            "border_left": "3pt C0392B",
+        }
+    }
+    note = (
+        "style:\n  key_figure:\n    base: paragraph\n    description: Un chiffre clé, seul.\n"
+        "    size: 16\n    bold: true\nsections:\n  Message:\n"
+    )
+    tool = make(tmp_path, style={"spec": charte}, templates={"note": {"text": note}})
+    assert "Styles proposés ('style' d'un bloc" in tool.spec.description
+    assert "note : important_note (Une mise en garde" in tool.spec.description
+    assert "key_figure" not in tool.spec.description
+    schema = json.dumps(tool.spec.input_schema)
+    assert '"important_note"' in schema and '"key_figure"' in schema
+    found = await call(tool, action="template", template="note")
+    assert found["styles"] == {"paragraph": {"key_figure": "Un chiffre clé, seul."}}
+    assert ("styles proposés", "note : important_note") in tool.settings().options
+    message = [
+        {"type": "paragraph", "text": "1 250 €", "style": "key_figure"},
+        {"type": "note", "text": "Fermé vendredi.", "style": "important_note"},
+    ]
+    path = await write_sections(tool, "n", "note", {"Message": message})
+    styles = part(path, "word/styles.xml")
+    assert '<w:basedOn w:val="Note"/>' in word_style(styles, "important_note")
+    assert '<w:basedOn w:val="Normal"/>' in word_style(styles, "key_figure")
+    check_order(styles)
+    read = await call(tool, action="read", path="sortie/n.docx")
+    assert read["sections"]["Message"] == message
+    # Le style d'un modèle ne vaut que pour ses documents.
+    with pytest.raises(
+        ToolError, match="style « key_figure » : pas proposé pour un bloc paragraph"
+    ):
+        await call(tool, path="sortie/libre.docx", template="none", blocks=message[:1])
 
 
 # --- Cascade, héritage, contrôles ----------------------------------------------------------
@@ -648,7 +739,7 @@ def test_the_files_first_then_the_bases() -> None:
         ({"footer": {"center": "{date}"}}, r"champ inconnu \{date\}"),
         ({"header": {"right": "{titre}"}}, r"\{titre\} s'écrit \{title\} depuis 2\.1\.0"),
         ({"text": {"font": "Arial<"}}, "un nom de police"),
-        ({"beside": [{"sections": ["A", "B"], "widths": [60, 30]}]}, "font 100 en tout"),
+        ({"beside": [{"sections": ["A", "B"]}]}, "se déclare dans le modèle de document"),
         ({"table": {"borders": "pointillés"}}, "'grid', 'horizontal' or 'none'"),
         ({"page": {"margins": 9}}, "less than or equal to 5"),
         ({"heading1": {"colour": "1F3864"}}, "Extra inputs"),
@@ -658,8 +749,7 @@ def test_the_files_first_then_the_bases() -> None:
         ({"important": {"fill": "FDECEA"}}, r"un style à toi dit de quel style il part \(base"),
         ({"title": {"size": 20}, "headings": {}}, "format de la 2.0 : title → document_title"),
         ({"header": {"logo": {"file": "logo.png"}}}, "logo : le fichier seul depuis 2.1.0"),
-        ({"sections": {"A": {"tables": {}}}}, "tables s'écrit table depuis 2.1.0"),
-        ({"sections": {"A": {"title": "masque"}}}, "'visible', 'hidden' or 'quiet'"),
+        ({"sections": {"A": {"box": True}}}, "sections : la disposition des sections"),
     ],
 )  # fmt: skip
 def test_a_style_file_is_checked(given: dict[str, Any], said: str) -> None:
@@ -682,31 +772,31 @@ def test_the_cascade_is_checked(given: dict[str, Any], said: str) -> None:
         resolve(style_of(given))
 
 
-def test_a_charte_has_no_layout() -> None:
-    with pytest.raises(ValueError, match="pas dans la charte"):
-        check_charte(style_of({"sections": {"A": {}}}), "loom.word.style")
+def test_properties_and_descriptions_of_your_styles() -> None:
     # Une propriété propre va aussi aux styles qui partent de son style.
     style = resolve(style_of({"brand_table": {"base": "table", "borders": "none"}}))
     assert style.look("brand_table").borders == "none" and style.look("brand_table").size == 10
-
-
-PAIR: Final[dict[str, Any]] = {"beside": [{"sections": ["Émetteur", "Client"]}]}
+    # Une description, à un style à toi qui part d'un style de bloc.
+    for given in (
+        {"note": {"description": "x"}},
+        {"red_box": {"base": "box", "description": "x"}},
+    ):
+        with pytest.raises(ValueError, match="une description ne sert qu'à un style à toi"):
+            resolve(style_of(given))
 
 
 @pytest.mark.parametrize(
-    ("layout", "said"),
+    ("styles", "said"),
     [
-        ({"sections": {"Annexes": {}}}, r"hors du modèle facture : « Annexes » \(plan : Émetteur"),
-        ({"beside": [{"sections": ["Émetteur", "Description"]}]}, "doivent se suivre"),
-        ({**PAIR, "sections": {"Client": {"landscape": True}}}, "ni columns, ni landscape"),
-        ({**PAIR, "sections": {"Client": {"page_break": True}}}, "vont à la première"),
-        ({"sections": {"Client": {"cover": True}}}, "première section du modèle, « Émetteur »"),
-        ({"sections": {"Émetteur": {"cover": True, "box": True}}}, "ni columns, ni box"),
+        ("{heading1: message_title}", "style « message_title » inconnu"),
+        ("{heading1: small_text}", "« small_text » ne part pas de heading1 (base : paragraph)"),
+        ("{box: heading1}", "« heading1 » ne part pas de box"),
     ],
-)  # fmt: skip
-def test_a_layout_follows_its_template(tmp_path: Path, layout: dict[str, Any], said: str) -> None:
-    with pytest.raises(ValueError, match=said):
-        make(tmp_path, templates={"facture": {"text": FACTURE_MD, "style": {"spec": layout}}})
+)
+def test_the_styles_of_a_section_are_checked(tmp_path: Path, styles: str, said: str) -> None:
+    text = f"style:\n  small_text: {{base: paragraph}}\nsections:\n  A: {{styles: {styles}}}\n"
+    with pytest.raises(ValueError, match=re.escape("« A ».styles.") + ".*" + re.escape(said)):
+        make(tmp_path, templates={"t": {"text": text}})
 
 
 def test_a_logo_must_be_an_image(tmp_path: Path) -> None:
@@ -750,24 +840,24 @@ def test_styles_are_read_when_the_config_loads(
     reference = {
         "folders": folders,
         "style": "styles/charte.yaml",
-        "templates": {"facture": {"file": "facture.md", "style": "styles/facture.yaml"}},
+        "templates": {"facture": "facture.yaml"},
     }
     path = demo(agents=[word_agent(**reference)], storage=JSONL)
     prompts = tmp_path / "prompts"
-    (prompts / "facture.md").write_text(FACTURE_MD, encoding="utf-8")
-    with pytest.raises(ConfigError, match=r"tools\[loom\.word\]\.style — style introuvable"):
+    facture = "style: styles/facture.yaml\nsections:\n  Émetteur: {show_title: false}\n  Client:\n"
+    (prompts / "facture.yaml").write_text(facture, encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"templates\[facture\]\.style — style introuvable"):
         load_config(path)
     (prompts / "styles").mkdir()
+    (prompts / "styles" / "facture.yaml").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"tools\[loom\.word\]\.style — style introuvable"):
+        load_config(path)
     (prompts / "styles" / "charte.yaml").write_text(
         "colors: {brand: 0B5D3B}\ntext: {font: Arial}\nheading1: {color: brand}\n"
         "header:\n  logo: logo.png\n  logo_width: 3\n  right: '{title}'\n",
         encoding="utf-8",
     )
-    (prompts / "styles" / "facture.yaml").write_text(
-        "heading2: {color: brand}\nbeside:\n- sections: [Émetteur, Client]\n"
-        "sections:\n  Émetteur: {title: hidden}\n",
-        encoding="utf-8",
-    )
+    (prompts / "styles" / "facture.yaml").write_text("heading2: {color: brand}\n", encoding="utf-8")
     with pytest.raises(ConfigError, match=r"style\.header\.logo — logo introuvable"):
         load_config(path)
     (prompts / "logo.png").write_bytes(LOGO)
@@ -776,10 +866,6 @@ def test_styles_are_read_when_the_config_loads(
     assert main(["--config", str(path), "validate"]) == 0
     assert "style : charte ; style de modèle : facture" in capsys.readouterr().out
     for written, said in (
-        (
-            "sections:\n  Annexes: {}\n",
-            r"templates\[facture\]\.style : section\(s\) hors du modèle",
-        ),
         ("table: {borders: pointillés}\n", r"templates\[facture\]\.style\.table\.borders"),
         ("table: {}\ntable: {}\n", "YAML invalide"),
         (
@@ -787,6 +873,7 @@ def test_styles_are_read_when_the_config_loads(
             "un texte qui contient « : » ou « # » s'écrit entre guillemets",
         ),
         ("title: {size: 20}\n", r"facture\]\.style : style au format de la 2\.0"),
+        ("sections:\n  Annexes: {}\n", "la disposition des sections se déclare dans le modèle"),
         (
             "heading2: {color: red}\n",
             r"templates\[facture\]\.style : heading2\.color : couleur « red » inconnue "
@@ -796,9 +883,26 @@ def test_styles_are_read_when_the_config_loads(
         (prompts / "styles" / "facture.yaml").write_text(written, encoding="utf-8")
         with pytest.raises(ConfigError, match=said):
             load_config(path)
-    (prompts / "styles" / "facture.yaml").write_text("sections: {}\n", encoding="utf-8")
-    (prompts / "styles" / "charte.yaml").write_text("sections: {A: {}}\n", encoding="utf-8")
-    with pytest.raises(ConfigError, match="pas dans la charte"):
+    (prompts / "styles" / "facture.yaml").write_text("{}\n", encoding="utf-8")
+    # Les styles des sections, cherchés dans la cascade du modèle.
+    (prompts / "facture.yaml").write_text(
+        "style: styles/facture.yaml\nsections:\n  A: {styles: {heading1: nope}}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"templates\[facture\] : « A »\.styles\.heading1"):
+        load_config(path)
+    # Un style écrit dans le modèle.
+    (prompts / "facture.yaml").write_text(
+        "style:\n  title_x: {base: heading1, color: brand}\n"
+        "sections:\n  A: {styles: {heading1: title_x}}\n",
+        encoding="utf-8",
+    )
+    load_config(path)
+    (prompts / "facture.yaml").write_text(
+        "style:\n  title_x: {base: heading1, colour: brand}\nsections:\n  A:\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"templates\[facture\]\.style\.title_x\.colour"):
         load_config(path)
 
 
@@ -822,22 +926,22 @@ async def test_a_style_written_in_yaml_writes_the_facture(
     (tmp_path / "sortie").mkdir()
     prompts = tmp_path / "prompts"
     prompts.mkdir(parents=True, exist_ok=True)
-    (prompts / "facture.md").write_text(FACTURE_MD, encoding="utf-8")
     (prompts / "facture.yaml").write_text(
-        "heading1: {size: 12}\nbeside:\n- {sections: [Émetteur, Client], widths: [50, 50]}\n",
+        FACTURE_YAML.replace("width: 55", "width: 50").replace("width: 45", "width: 50"),
         encoding="utf-8",
     )
+    (prompts / "facture-style.yaml").write_text("heading1: {size: 12}\n", encoding="utf-8")
     folders = [FOLDER]
-    reference = {"templates": {"facture": {"file": "facture.md", "style": "facture.yaml"}}}
+    reference = {"templates": {"facture": "facture.yaml"}}
     config = load_config(demo(agents=[word_agent(folders=folders, **reference)], storage=JSONL))
     declared = config.agents[0].tools[0]
     assert isinstance(declared, PythonTool)
     params = WordParams.model_validate(builtin_settings(declared, WordParams))
     tool = build(params, BuiltinContext(base_dir=tmp_path))
     OUTPUTS[id(tool)] = tmp_path / "sortie"
-    path = await write(tool, "f", FACTURE, template="facture")
+    path = await write_sections(tool, "f", "facture", FACTURE_SECTIONS)
     assert '<w:gridCol w:w="4819"/><w:gridCol w:w="4819"/>' in part(path, "word/document.xml")
-    assert '<w:sz w:val="24"/>' in part(path, "word/styles.xml")
+    assert '<w:sz w:val="20"/>' in word_style(part(path, "word/styles.xml"), "quiet_title")
 
 
 # --- La relecture --------------------------------------------------------------------------
@@ -920,7 +1024,8 @@ def convert(soffice: str, source: Path, out: Path, target: str) -> Path:
 
 async def test_libreoffice_prints_the_facture(tmp_path: Path, soffice: str) -> None:
     pypdf = pytest.importorskip("pypdf")
-    path = await write(styled(tmp_path), "facture", FACTURE, title="Facture", template="facture")
+    tool = styled(tmp_path)
+    path = await write_sections(tool, "facture", "facture", FACTURE_SECTIONS, title="Facture")
     pdf = pypdf.PdfReader(convert(soffice, path, tmp_path / "pdf", "pdf"))
     assert len(pdf.pages) == 1
     text = pdf.pages[0].extract_text()
@@ -934,7 +1039,7 @@ async def test_libreoffice_prints_the_facture(tmp_path: Path, soffice: str) -> N
 async def test_libreoffice_lays_out_the_report(tmp_path: Path, soffice: str) -> None:
     pypdf = pytest.importorskip("pypdf")
     tool = styled(tmp_path, None)
-    path = await write(tool, "rapport", RAPPORT, title="Rapport", template="rapport")
+    path = await write_sections(tool, "rapport", "rapport", RAPPORT_SECTIONS, title="Rapport")
     pages = pypdf.PdfReader(convert(soffice, path, tmp_path / "pdf", "pdf")).pages
     # Page de garde, texte, paysage, conditions générales en colonnes.
     assert len(pages) == 4
@@ -944,6 +1049,20 @@ async def test_libreoffice_lays_out_the_report(tmp_path: Path, soffice: str) -> 
     assert "1. Contexte" in pages[1].extract_text()
     assert "Figure 2 — Après" in pages[1].extract_text()
     assert "Tableau 1 — Pression mesurée" in pages[2].extract_text()
+
+
+async def test_sections_survive_libreoffice(tmp_path: Path, soffice: str) -> None:
+    """Un document repris par LibreOffice (docx → docx) : ses signets restent, ses sections
+    se relisent, côte à côte comprises."""
+    tool = styled(tmp_path)
+    path = await write_sections(tool, "facture", "facture", FACTURE_SECTIONS, title="Facture")
+    again = convert(soffice, path, tmp_path / "repris", "docx:MS Word 2007 XML")
+    (tmp_path / "sortie" / "repris.docx").write_bytes(again.read_bytes())
+    read = await call(tool, action="read", path="sortie/repris.docx")
+    assert read["template"] == "facture" and "notes" not in read
+    assert list(read["sections"]) == list(FACTURE_SECTIONS)
+    assert read["sections"]["Client"] == FACTURE_SECTIONS["Client"]
+    assert read["sections"]["Conditions et termes"] == FACTURE_SECTIONS["Conditions et termes"]
 
 
 # --- Étape 2 : signature, sommaire, liste à cocher (blocks) ---------------------------------
@@ -1060,21 +1179,30 @@ async def test_what_the_extra_blocks_refuse(tmp_path: Path) -> None:
 
 
 async def test_the_contents_lists_the_headings(tmp_path: Path) -> None:
-    layout = {"sections": {"Page de garde": {"title": "hidden", "cover": True}}}
-    md = "# Page de garde\n# Contexte\n# Mesures\n# Conditions générales\n"
+    rapport = (
+        "sections:\n  Page de garde: {show_title: false, cover: true}\n  Contexte:\n"
+        "  Mesures:\n  Conditions générales:\n"
+    )
     tool = extra(
         tmp_path,
         style={"spec": {"numbering": "decimal"}},
-        templates={"rapport": {"text": md, "style": {"spec": layout}}},
+        templates={"rapport": {"text": rapport}},
     )
-    path = await write(tool, "rapport", SOMMAIRE, title="Rapport", template="rapport")
+    text = [{"type": "paragraph", "text": "x"}]
+    sections = {
+        "Page de garde": [{"type": "toc"}],
+        "Contexte": [{**SOMMAIRE[3]}, {**SOMMAIRE[4]}, *text],
+        "Mesures": text,
+        "Conditions générales": text,
+    }
+    path = await write_sections(tool, "rapport", "rapport", sections, title="Rapport")
     document = part(path, "word/document.xml")
     check_order(document)
     assert '<w:fldChar w:fldCharType="begin" w:dirty="true"/>' in document
     assert ' TOC \\o "1-2" \\h \\z \\u </w:instrText>' in document
     labels = re.findall(r'<w:hyperlink w:anchor="(_Toc_loom_\d)" w:history="1"><w:r><w:t '
                         r'xml:space="preserve">([^<]*)</w:t>', document)  # fmt: skip
-    # Le titre masqué n'y est pas ; un titre de niveau 3, non plus (levels : 2).
+    # La page de garde, sans titre, n'y est pas ; un titre de niveau 3, non plus (levels : 2).
     assert labels == [
         ("_Toc_loom_1", "1. Contexte"),
         ("_Toc_loom_2", "1.1 Photos"),
@@ -1086,9 +1214,9 @@ async def test_the_contents_lists_the_headings(tmp_path: Path) -> None:
         assert f" PAGEREF {mark} \\h " in document
     assert document.count('<w:fldChar w:fldCharType="end"/>') == 5
     read = await call(tool, action="read", path="sortie/rapport.docx")
-    assert {"type": "toc"} in read["blocks"]
-    assert [b["type"] for b in read["blocks"]].count("toc") == 1
-    assert not any(b.get("text", "").startswith("1. ") for b in read["blocks"])
+    assert read["sections"]["Page de garde"] == [{"type": "toc"}]
+    blocks = [b for written in read["sections"].values() for b in written]
+    assert not any(b.get("text", "").startswith("1.") for b in blocks)
 
 
 async def test_the_charte_sets_the_contents(tmp_path: Path) -> None:

@@ -707,15 +707,36 @@ async def test_images_in_a_pdf(disk: Path) -> None:
 
 
 async def test_a_pdf_follows_its_template(disk: Path) -> None:
+    rapport = "sections:\n  Contexte:\n  Travaux réalisés:\n  Garantie:\n    text: Un an.\n"
     tool = make(
         disk,
         {"name": "sortie", "path": "sortie", "rights": ["write"]},
-        templates={"rapport": {"text": "# Contexte\n# Travaux réalisés"}},
+        templates={"rapport": {"text": rapport}},
     )
     assert "- rapport" in tool.spec.description
-    blocks: list[Any] = [{"type": "heading", "text": "Travaux réalisés"}]
+    done: list[Any] = [{"type": "paragraph", "text": "Fait."}]
     with pytest.raises(ToolError, match="section\\(s\\) absente\\(s\\) : « Contexte »"):
-        await call(tool, path="sortie/r.pdf", template="rapport", blocks=blocks)
-    blocks.insert(0, {"type": "heading", "text": "Contexte"})
-    written = await call(tool, path="sortie/r.pdf", template="rapport", blocks=blocks)
+        await call(
+            tool, path="sortie/r.pdf", template="rapport", sections={"Travaux réalisés": done}
+        )
+    sections = {"Contexte": done, "Travaux réalisés": done}
+    written = await call(tool, path="sortie/r.pdf", template="rapport", sections=sections)
     assert (written["template"], written["pages"]) == ("rapport", 1)
+    text = PdfReader(disk / "sortie" / "r.pdf").pages[0].extract_text()
+    # Les titres écrits par l'outil, et le texte fixe.
+    assert text.index("Contexte") < text.index("Travaux réalisés") < text.index("Un an.")
+
+
+def test_pdf_templates_have_no_layout_yet(disk: Path) -> None:
+    """Le style et la mise en page des sections ne servent qu'à loom.word pour l'instant."""
+    for written in (
+        "style: {heading1: {color: 0B5D3B}}\nsections:\n  A:\n",
+        "sections:\n  A:\n  B: {beside: true}\n",
+        "sections:\n  A: {styles: {heading1: heading1}}\n",
+    ):
+        with pytest.raises(ValueError, match=r"ne servent qu'à loom\.word pour l'instant"):
+            make(
+                disk,
+                {"name": "sortie", "path": "sortie", "rights": ["write"]},
+                templates={"r": {"text": written}},
+            )

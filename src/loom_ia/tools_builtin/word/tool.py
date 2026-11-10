@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, ClassVar, Final
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, JsonValue
+from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from loom_ia.core.ports import ToolError
 from loom_ia.core.tool_threads import in_thread
@@ -16,19 +16,18 @@ from loom_ia.tools_builtin._document.arguments import (
     DocumentCall,
     ReadArguments,
 )
-from loom_ia.tools_builtin._document.content import Prepared
+from loom_ia.tools_builtin._document.content import Allowed, Prepared
 from loom_ia.tools_builtin._document.picture import PictureError
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin._document.tool import DocumentTool
 from loom_ia.tools_builtin._folders import Folders, mount
-from loom_ia.tools_builtin._office_params import read_templates
+from loom_ia.tools_builtin._office_params import check_section_styles, read_templates
 from loom_ia.tools_builtin._style_params import (
     Labels,
     Style,
     StyleFile,
     StyleRef,
-    check_charte,
-    check_layout,
+    describe,
     house,
     logos,
     resolve,
@@ -95,10 +94,56 @@ class WordTool(DocumentTool):
         super().__init__(space, zone, blocks=blocks, templates=templates)
 
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
-        return writer.render(prepared, self._styles.of(prepared.template)), {}, []
+        style = self._styles.of(prepared.template)
+        template = self._templates.get(prepared.template or "")
+        return writer.render(prepared, style, template), {}, []
 
     def _labels(self, template: str | None) -> Labels:
         return self._styles.of(template).labels
+
+    def _proposed_styles(self) -> Mapping[str, Iterable[str]]:
+        found: dict[str, list[str]] = {}
+        styles = [self._styles.default, *self._styles.by_template.values()]
+        for style in styles:
+            for kind, names in (style.proposed() if style is not None else {}).items():
+                found.setdefault(kind, []).extend(name for name, _ in names)
+        return found
+
+    def _allowed(self, template: str | None) -> Allowed:
+        style = self._styles.of(template)
+        allowed: dict[str, dict[str, int]] = {}
+        for kind, names in style.proposed().items():
+            for name, _ in names:
+                level = (style.block_type(name) or (kind, 0))[1]
+                allowed.setdefault(kind, {})[name] = level
+        return allowed
+
+    def _template_styles(self, name: str) -> dict[str, JsonValue]:
+        own = self._styles.by_template.get(name)
+        if own is None:
+            return {}
+        charte = (self._styles.default or house()).proposed()
+        found: dict[str, JsonValue] = {}
+        for kind, names in own.proposed().items():
+            added = {
+                style: said for style, said in names if (style, said) not in charte.get(kind, [])
+            }
+            if added:
+                found[kind] = dict(added)
+        return found
+
+    def _styles_help(self) -> list[str]:
+        proposed = (self._styles.default or house()).proposed()
+        if not proposed:
+            return []
+        return [
+            "Styles proposés ('style' d'un bloc, facultatif ; ceux d'un modèle se lisent par "
+            "action=template) : "
+            + " ; ".join(
+                f"{kind} : " + ", ".join(f"{name} ({said})" for name, said in names)
+                for kind, names in proposed.items()
+            )
+        ]
 
     async def _read(self, request: ReadArguments, where: str, data: bytes) -> dict[str, JsonValue]:
         found = await in_thread(
@@ -107,7 +152,8 @@ class WordTool(DocumentTool):
             where,
             request.start or 0,
             images=self._images,
-            templates=tuple(self._templates) if self._templates else None,
+            templates=self._templates or None,
+            styles=frozenset(name for names in self._proposed_styles().values() for name in names),
         )
         _warn_unwritten(found, self._blocks)
         return found
@@ -186,22 +232,19 @@ def read_styles(params: WordParams, templates: Mapping[str, Template]) -> Styles
 
     Le chargeur de config a lu les fichiers (``spec``) et leurs logos ; une référence
     construite en Python sans passer par lui garde ``file`` : c'est une faute de montage.
-    Les logos sont reconnus ici (PNG ou JPEG), la cascade résolue (couleurs nommées,
-    bases) : une faute se voit dès ``loom validate``.
+    Un modèle qui écrit son style en ligne le donne ici. Les logos sont reconnus (PNG ou
+    JPEG), la cascade résolue (couleurs nommées, bases), et les styles que choisissent
+    les sections cherchés : une faute se voit dès ``loom validate``.
     """
     charte = _spec(params.style, f"{REFERENCE}.style")
-    if charte is not None:
-        check_charte(charte, f"{REFERENCE}.style")
-    layouts: dict[str, StyleFile] = {}
+    own: dict[str, StyleFile] = {}
     for name, ref in params.templates.items():
-        where = f"{REFERENCE}.templates[{name}].style"
-        spec = _spec(ref.style, where)
+        spec = _spec(ref.style, f"{REFERENCE}.templates[{name}].style") or _written(
+            templates[name], f"{REFERENCE}.templates[{name}].style"
+        )
         if spec is not None:
-            check_layout(spec, templates[name], where)
-            layouts[name] = spec
-    declared = [spec for spec in (charte, *layouts.values()) if spec is not None]
-    if not declared:
-        return NO_STYLES
+            own[name] = spec
+    declared = [spec for spec in (charte, *own.values()) if spec is not None]
     for spec in declared:
         for style, logo in logos(spec):
             if isinstance(logo, str):
@@ -213,13 +256,19 @@ def read_styles(params: WordParams, templates: Mapping[str, Template]) -> Styles
     default = _resolved(f"{REFERENCE}.style", charte)
     by_template = {
         name: _resolved(f"{REFERENCE}.templates[{name}].style", charte, spec)
-        for name, spec in layouts.items()
+        for name, spec in own.items()
     }
+    for name, template in templates.items():
+        check_section_styles(
+            template, by_template.get(name, default), f"{REFERENCE}.templates[{name}]"
+        )
+    if not declared:
+        return NO_STYLES
     said = [
         (
             "style",
             ("charte" if charte is not None else "style maison")
-            + (f" ; style de modèle : {', '.join(layouts)}" if layouts else ""),
+            + (f" ; style de modèle : {', '.join(own)}" if own else ""),
         )
     ]
     fonts = sorted(
@@ -233,7 +282,33 @@ def read_styles(params: WordParams, templates: Mapping[str, Template]) -> Styles
                 "remplacée(s) chez qui ne les a pas",
             )
         )
+    proposed = default.proposed()
+    if proposed:
+        said.append(
+            (
+                "styles proposés",
+                " · ".join(
+                    f"{kind} : {', '.join(name for name, _ in names)}"
+                    for kind, names in proposed.items()
+                ),
+            )
+        )
     return Styles(default=default, by_template=by_template, said=tuple(said))
+
+
+def _written(template: Template, where: str) -> StyleFile | None:
+    """Le style qu'un modèle écrit en ligne ; un chemin doit avoir été lu au chargement."""
+    if template.style is None:
+        return None
+    if isinstance(template.style, str):
+        raise ValueError(
+            f"{where} ({template.style}) non lu — les styles se lisent au chargement de la "
+            "config (load_config), ou se donnent par leur contenu (spec)"
+        )
+    try:
+        return StyleFile.model_validate(template.style)
+    except ValidationError as exc:
+        raise ValueError("\n".join(describe(exc, where))) from None
 
 
 def _resolved(where: str, *files: StyleFile | None) -> Style:

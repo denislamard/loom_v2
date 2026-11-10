@@ -20,7 +20,11 @@ réécrit tel quel. Ce qu'un style de document a posé ne revient pas, puisque l
 le repose à la réécriture : un tableau de disposition (style « loom layout » : des
 sections côte à côte, un encadré, une grille d'images) rend les blocs de ses
 cellules, dans l'ordre ; une légende numérotée (« Figure 2 — Avant ») rend son texte
-sans le numéro ; un titre masqué revient en titre. Une zone de signature revient en
+sans le numéro. Un document qui suit un modèle revient par sections (``template``,
+``sections``) : chaque section commence à son signet (``_loom_s<n>``) et court jusqu'au
+signet de la suivante ; son titre,
+que l'outil écrit, ne revient pas, ni une section au texte fixe ; un style proposé au
+modèle de langage revient dans ``style``. Une zone de signature revient en
 bloc ``signature``, un sommaire en bloc ``sommaire`` (ses entrées ne reviennent pas),
 une liste à cocher en ``liste`` avec ``checkboxes`` et ses cases en [x] ou [ ]. Avec
 ``images``, une image du corps revient en bloc ``image`` (``path`` : l'adresse du
@@ -34,7 +38,7 @@ import posixpath
 import re
 import time
 import zipfile
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Final, cast
@@ -51,6 +55,7 @@ from loom_ia.tools_builtin._document.arguments import (
 )
 from loom_ia.tools_builtin._document.content import IMAGE_WIDTHS, placed
 from loom_ia.tools_builtin._document.picture import dimensions
+from loom_ia.tools_builtin._templates import Template, key
 
 READABLE: Final = (".docx", ".docm", ".dotx")
 # Formats qui ne sont pas un zip OOXML : le dire plutôt que « pas un zip ».
@@ -427,6 +432,14 @@ class _Reading:
     last_image: dict[str, JsonValue] | None = None
     # Dans un sommaire : ses entrées ne sont pas des blocs, le bloc ``sommaire`` est rendu.
     in_toc: bool = False
+    # Le modèle que le document suit (si l'outil le déclare), et les styles proposés.
+    template: Template | None = None
+    proposed: frozenset[str] = frozenset()
+    # La section en cours (sa place dans le modèle), par son signet ; celles vues.
+    section: int | None = None
+    seen: set[int] = field(default_factory=set[int])
+    # La section de chaque bloc rendu (``None`` hors des sections).
+    where: list[int | None] = field(default_factory=list[int | None])
 
 
 def read(
@@ -436,21 +449,26 @@ def read(
     budget: int = READ_CHARS,
     *,
     images: bool = False,
-    templates: tuple[str, ...] | None = None,
+    templates: Mapping[str, Template] | None = None,
+    styles: frozenset[str] = frozenset(),
 ) -> dict[str, JsonValue]:
     """Les blocs du document à partir de ``start``, dans un budget de taille.
 
     ``budget`` : celui d'un résultat d'outil par défaut ; ``loom.memory``, qui lit
     le document entier, en donne un plus grand. ``images`` : les images du corps
     reviennent en blocs ``image`` (un outil monté avec ``images``) ; sinon, comptées.
-    ``templates`` : les modèles de l'outil ; le modèle que le document dit suivre revient
-    alors en ``template``. Sans modèles (``None``), il n'est pas rendu.
+    ``templates`` : les modèles de l'outil ; un document qui en suit un revient par
+    sections (``template``, ``sections``). Sans modèles (``None``), il revient à plat.
+    ``styles`` : les styles proposés au modèle de langage, rendus dans ``style``.
     """
     deadline = time.monotonic() + READ_DEADLINE
     with _guarded(where):
         package = _open(data, where)
         with package.archive:
-            reading = _Reading(start=start, budget=budget, pictures=images)
+            followed = (templates or {}).get(package.category or "")
+            reading = _Reading(
+                start=start, budget=budget, pictures=images, template=followed, proposed=styles
+            )
             _walk(package, reading, deadline, where)
     result: dict[str, JsonValue] = {
         "title": package.title,
@@ -462,10 +480,19 @@ def read(
     if reading.next_start is not None:
         result["next_start"] = reading.next_start
         result["outline"] = _bounded(reading.outline)
-    if templates is not None and package.category is not None:
-        result["template"] = package.category
     notes = _notes(package, reading, start)
-    if templates is not None and package.category not in (None, *templates):
+    template = reading.template
+    if template is not None and reading.seen:
+        _by_section(result, reading, template, notes)
+    elif template is not None:
+        notes.append(
+            f"Le document dit suivre le modèle « {template.name} », mais ses sections ne se "
+            "retrouvent pas (un document d'avant 2.1.0, ou des sections coupées et "
+            "recollées) : il est relu en document libre ; pour le réécrire, template none, ou "
+            "son contenu par sections."
+        )
+    elif templates is not None and package.category is not None:
+        result["template"] = package.category
         notes.append(
             f"Le document dit suivre le modèle « {package.category} », que cet outil ne "
             "déclare pas : pour le réécrire, nommer un modèle déclaré, ou none."
@@ -473,6 +500,62 @@ def read(
     if notes:
         result["notes"] = notes
     return result
+
+
+def _by_section(
+    result: dict[str, JsonValue], reading: _Reading, template: Template, notes: list[JsonValue]
+) -> None:
+    """Un document qui suit un modèle : ses blocs rangés par section, dans l'ordre ; le
+    titre du document est déjà dans ``title`` (il est dans la section d'une page de garde,
+    qui le porte : il n'en est pas un bloc)."""
+    names = {section.position: section.name for section in template.sections}
+    sections: dict[str, JsonValue] = {}
+    outside: list[JsonValue] = []
+    for block, at in zip(reading.blocks, reading.where, strict=True):
+        if isinstance(block, dict) and block.get("type") == "heading" and block.get("level") == 0:
+            continue
+        if at is not None:
+            found = sections.setdefault(names.get(at, f"section {at}"), list[JsonValue]())
+            cast(list[JsonValue], found).append(block)
+        else:
+            outside.append(block)
+    result["template"] = template.name
+    result["sections"] = sections
+    del result["blocks"]
+    if outside:
+        result["blocks"] = outside
+        notes.append(
+            f"{len(outside)} bloc(s) hors des sections du modèle (dans 'blocks') : à mettre "
+            "dans une section pour réécrire le document."
+        )
+
+
+def _mark(reading: _Reading, element: Element) -> None:
+    """Un signet : le début d'une section du modèle (``_loom_s<n>``), qui court jusqu'au
+    début de la suivante. Sa fin ne compte pas : LibreOffice, qui reprend un document,
+    dédouble un signet en plusieurs, certains vides ; le premier début est à sa place."""
+    if reading.template is None or _local(element.tag) != "bookmarkStart":
+        return
+    found = _SECTION_MARK.match(_attribute(element, "name") or "")
+    if found is None:
+        return
+    section = int(found.group(1))
+    if section != reading.section:
+        _close_list(reading)
+    reading.section = section
+    reading.seen.add(section)
+
+
+def _marks_in(reading: _Reading, element: Element) -> None:
+    """Les signets de section d'un tableau (dans le premier paragraphe d'une cellule,
+    quand la section commence par lui) : avant le tableau, qui est de la section."""
+    for child in element.iter():
+        if _local(child.tag) == "bookmarkStart":
+            _mark(reading, child)
+
+
+# Le signet d'une section du modèle : sa place.
+_SECTION_MARK: Final = re.compile(r"^_loom_s(\d+)$")
 
 
 def _walk(package: _Package, reading: _Reading, deadline: float, where: str) -> None:
@@ -519,11 +602,17 @@ def _walk(package: _Package, reading: _Reading, deadline: float, where: str) -> 
 
 def _block(package: _Package, reading: _Reading, element: Element, depth: int = 0) -> None:
     match _local(element.tag):
+        case "bookmarkStart" | "bookmarkEnd":
+            _mark(reading, element)
         case "p":
+            for child in element:
+                if _local(child.tag) == "bookmarkStart":
+                    _mark(reading, child)
             _paragraph(package, reading, element)
         case "tbl" if _table_style(package, element) == SIGNATURE_STYLE:
             _close_list(reading)
             reading.in_toc = False
+            _marks_in(reading, element)
             _emit(reading, _signature(package, element))
         case "tbl" if depth < MAX_LAYOUT_DEPTH and _table_style(package, element) == LAYOUT_STYLE:
             # Un tableau de disposition : ses cellules, dans l'ordre, sont des blocs.
@@ -534,7 +623,15 @@ def _block(package: _Package, reading: _Reading, element: Element, depth: int = 
         case "tbl":
             _close_list(reading)
             reading.in_toc = False
-            _emit(reading, {"type": "table", "rows": _table(package, reading, element)})
+            _marks_in(reading, element)
+            table: dict[str, JsonValue] = {
+                "type": "table",
+                "rows": _table(package, reading, element),
+            }
+            styled = _table_style_name(package, reading, element)
+            if styled is not None:
+                table["style"] = styled
+            _emit(reading, table)
         case "sdt":
             content = _child(element, "sdtContent")
             for child in list(content) if content is not None else []:
@@ -549,6 +646,22 @@ def _table_style(package: _Package, table: Element) -> str | None:
     style = _child(properties, "tblStyle") if properties is not None else None
     style_id = _attribute(style, "val") if style is not None else None
     return package.tables.get(style_id or "")
+
+
+def _table_style_name(package: _Package, reading: _Reading, table: Element) -> str | None:
+    """Le style proposé d'un tableau : celui du texte de sa première ligne de données."""
+    rows = [row for row in table if _local(row.tag) == "tr"]
+    for row in rows[1:2]:
+        for paragraph in row.iter():
+            if _local(paragraph.tag) != "p":
+                continue
+            properties = _child(paragraph, "pPr")
+            style = _child(properties, "pStyle") if properties is not None else None
+            name = _style_name(
+                package.styles, _attribute(style, "val") if style is not None else None
+            )
+            return name if name in reading.proposed else None
+    return None
 
 
 def _signature(package: _Package, table: Element) -> dict[str, JsonValue]:
@@ -631,29 +744,28 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
     if numbering is None and styled_list is not None:
         numbering = (styled_list, 0)
     level = outline if outline is not None else heading
+    own = name if name in reading.proposed else None
     if title:
         _close_list(reading)
         _emit(reading, {"type": "heading", "level": 0, "text": text}, heading=(0, text))
     elif level is not None and level < 9:
         _close_list(reading)
-        _emit(
-            reading,
-            {"type": "heading", "level": level + 1, "text": text},
-            heading=(level + 1, text),
-        )
+        if level == 0 and _section_title(reading, text):
+            # Le titre de la section : l'outil l'écrit, il ne revient pas.
+            return
+        block: dict[str, JsonValue] = {"type": "heading", "level": level + 1, "text": text}
+        _emit(reading, _styled(block, own), heading=(level + 1, text))
     elif numbering is not None:
         number_id, ilvl = numbering
         ordered = package.numbering.get(number_id, {}).get(ilvl, False)
         if reading.pending is not None and reading.pending_id != number_id:
             _close_list(reading)
         reading.pending_id = number_id
-        _list_item(reading, text, ilvl, ordered)
+        _list_item(reading, text, ilvl, ordered, own)
     else:
         _close_list(reading)
-        _emit(
-            reading,
-            {"type": _KIND.get(_style_name(package.styles, style_id), "paragraph"), "text": text},
-        )
+        kind = _kind(package.styles, style_id)
+        _emit(reading, _styled({"type": kind, "text": text}, own))
 
 
 # Une entrée de sommaire (« toc 1 » à « toc 9 »).
@@ -1020,10 +1132,14 @@ def _cell_text(cell: Element) -> str:
     return "\n".join(lines)
 
 
-def _list_item(reading: _Reading, text: str, level: int, ordered: bool) -> None:
+def _list_item(
+    reading: _Reading, text: str, level: int, ordered: bool, style: str | None = None
+) -> None:
     pending = reading.pending
     if pending is None:
-        pending = reading.pending = {"type": "list", "ordered": ordered, "items": []}
+        pending = reading.pending = _styled(
+            {"type": "list", "ordered": ordered, "items": []}, style
+        )
     items = cast(list[JsonValue], pending["items"])
     if level == 0 or not items:
         items.append(text)
@@ -1034,6 +1150,38 @@ def _list_item(reading: _Reading, text: str, level: int, ordered: bool) -> None:
         items[-1] = {"text": last, "items": [text]}
     else:
         cast(list[JsonValue], cast(dict[str, JsonValue], last)["items"]).append(text)
+
+
+def _styled(block: dict[str, JsonValue], style: str | None) -> dict[str, JsonValue]:
+    """Le bloc, avec le style proposé que le document lui a donné."""
+    if style is not None:
+        block["style"] = style
+    return block
+
+
+def _section_title(reading: _Reading, text: str) -> bool:
+    """Un titre de niveau 1 dans une section : son titre, si c'est son nom."""
+    template = reading.template
+    if template is None or reading.section is None:
+        return False
+    section = next((s for s in template.sections if s.position == reading.section), None)
+    return section is not None and key(text) == section.key
+
+
+def _kind(styles: dict[str, _Style], style_id: str | None) -> str:
+    """Le bloc que dit un style, en suivant ses bases : un style à toi qui part de Note est
+    une note."""
+    seen: set[str] = set()
+    current = style_id
+    while current is not None and current not in seen and len(seen) < 20:
+        seen.add(current)
+        style = styles.get(current)
+        if style is None:
+            break
+        if style.name in _KIND:
+            return _KIND[style.name]
+        current = style.based_on
+    return "paragraph"
 
 
 def _close_list(reading: _Reading) -> None:
@@ -1047,6 +1195,12 @@ def _emit(
 ) -> None:
     # Une légende ne se rattache qu'à l'image qui la précède immédiatement.
     reading.last_image = None
+    template = reading.template
+    if template is not None and reading.section is not None:
+        section = next((s for s in template.sections if s.position == reading.section), None)
+        if section is not None and section.fixed:
+            # Le texte fixe d'une section : l'outil l'écrit, il ne revient pas.
+            return
     index = reading.count
     reading.count += 1
     if heading is not None and len(reading.outline) < MAX_OUTLINE:
@@ -1064,6 +1218,7 @@ def _emit(
         block = _shortened(block, reading.budget)
         reading.cut += 1
     reading.blocks.append(block)
+    reading.where.append(reading.section)
     reading.used += size
 
 

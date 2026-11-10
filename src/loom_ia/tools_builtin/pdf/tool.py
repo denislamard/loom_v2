@@ -17,7 +17,8 @@ from loom_ia.tools_builtin._document.arguments import (
 from loom_ia.tools_builtin._document.content import Prepared
 from loom_ia.tools_builtin._document.tool import DocumentTool
 from loom_ia.tools_builtin._folders import Folders, mount
-from loom_ia.tools_builtin._office_params import read_templates
+from loom_ia.tools_builtin._office_params import read_templates, word_only
+from loom_ia.tools_builtin._templates import Template
 from loom_ia.tools_builtin.pdf import reader, writer
 from loom_ia.tools_builtin.pdf_params import REFERENCE, SAFE_PYPDF, PdfParams
 
@@ -98,5 +99,13 @@ def build(params: BaseModel, context: BuiltinContext) -> PdfTool:
         space,
         ZoneInfo(params.timezone),
         blocks=params.blocks,
-        templates=read_templates(params.templates, REFERENCE),
+        templates=_pdf_templates(params),
     )
+
+
+def _pdf_templates(params: PdfParams) -> dict[str, Template]:
+    """Les modèles de ``loom.pdf`` : sans style ni mise en page de section, pour l'instant."""
+    templates = read_templates(params.templates, REFERENCE)
+    for template in templates.values():
+        word_only(template, REFERENCE)
+    return templates

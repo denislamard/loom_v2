@@ -10,12 +10,17 @@ en-tête de tableau répété, ligne jamais coupée). Le document est dans la la
 du style (correcteur, césure, libellés). Une image est une partie ``word/media``
 rangée telle quelle, une seule fois par image distincte (``word/image.py``).
 
-La disposition s'applique **section par section** : une section est un titre de
-niveau 1 et ce qui le suit, jusqu'au suivant. Elle peut masquer le titre, poser
-des sections côte à côte (un tableau sans bordure, style « loom layout », que la
-relecture traverse), encadrer, réduire le texte, passer en colonnes, en paysage,
-ou faire de la première section une page de garde. Paysage et colonnes sont des
-sections Word : un saut de section les ouvre et les ferme.
+Un document qui suit un modèle s'écrit **section par section**, dans l'ordre du modèle :
+le titre de la section (sauf ``show_title: false``), puis ses blocs ; son premier
+paragraphe porte un signet caché (``_loom_s<n>``, n sa place dans le modèle) qui marque
+son début, et que la relecture retrouve. Le signet est un point, pas une étendue, et
+toujours dans un paragraphe (celui de la première cellule quand la section commence par
+un tableau) : LibreOffice déplace un signet posé hors d'un paragraphe et dédouble les
+fins de ceux qui couvrent plusieurs paragraphes. La
+section choisit ses styles (``styles``) et sa mise en page : à côté de la précédente
+(un tableau sans bordure, style « loom layout », que la relecture traverse), encadrée,
+en colonnes, en paysage, ou page de garde. Paysage et colonnes sont des sections Word :
+un saut de section les ouvre et les ferme.
 
 Deux documents identiques donnent le même fichier, octet pour octet : les
 dates des propriétés et de l'archive sont fixées, et rien ne dépend de
@@ -25,8 +30,9 @@ WordprocessingML, que Word, contrairement à LibreOffice, applique strictement.
 
 import dataclasses
 import io
+import re
 import zipfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 from xml.sax.saxutils import escape, quoteattr
@@ -50,17 +56,8 @@ from loom_ia.tools_builtin._document.content import (
 )
 from loom_ia.tools_builtin._document.picture import Picture
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
-from loom_ia.tools_builtin._style_params import (
-    PLAIN_SECTION,
-    Band,
-    Beside,
-    Look,
-    SectionLook,
-    Style,
-    house,
-    parse_rule,
-)
-from loom_ia.tools_builtin._templates import key
+from loom_ia.tools_builtin._style_params import Band, Look, Style, house, parse_rule
+from loom_ia.tools_builtin._templates import SectionSpec, Template
 from loom_ia.tools_builtin.word import chart, image
 from loom_ia.tools_builtin.word import style as look
 
@@ -86,6 +83,8 @@ BOX_PAD: Final = 170
 # L'espace en haut d'une page de garde, sans ``space_before`` : LibreOffice ignore le
 # centrage vertical d'une page (``vAlign``), un espace fixe marche partout.
 COVER_SPACE: Final = 6 * CM
+# Les signets des sections : leurs identifiants commencent ici, loin de ceux du sommaire.
+SECTION_MARKS: Final = 1000
 
 CONTENT_TYPES: Final = (
     _HEAD + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -268,6 +267,7 @@ class _Body:
 
     style: Style
     title: str
+    template: Template | None = None
     lists: list[bool] = field(default_factory=list[bool])
     charts: list[ChartOut] = field(default_factory=list[ChartOut])
     # Les images distinctes, dans l'ordre où elles paraissent la première fois.
@@ -277,11 +277,19 @@ class _Body:
     drawings: int = 0
     # Les styles que seule une disposition demande, et que le corps emploie.
     used: set[str] = field(default_factory=set[str])
+    # Les styles à toi que le corps emploie (``styles`` d'une section, ``style`` d'un bloc).
+    custom: set[str] = field(default_factory=set[str])
     # Les légendes numérotées : le dernier numéro, par sorte (« Tableau », « Figure »).
     numbers: dict[str, int] = field(default_factory=dict[str, int])
     # Le sommaire : ses entrées (niveau, texte, signet), et le signet de chaque titre repris.
     toc: list[tuple[int, str, str]] = field(default_factory=list[tuple[int, str, str]])
     marks: dict[int, tuple[int, str]] = field(default_factory=dict[int, tuple[int, str]])
+
+    def word(self, name: str) -> str:
+        """Le style Word d'un style nommé ; un style à toi est écrit s'il sert."""
+        if name not in look.WORD_IDS and name != "paragraph":
+            self.custom.add(name)
+        return look.word_id(self.style, name)
 
     def picture(self, picture: Picture) -> int:
         """Le numéro de la partie qui porte l'image : chaque image distincte une fois."""
@@ -291,7 +299,7 @@ class _Body:
         return self.stored[picture.digest]
 
 
-def _caption(body: _Body, kind: str, runs: Inline) -> str:
+def _caption(body: _Body, kind: str, runs: Inline, style_id: str = "Caption") -> str:
     """La légende ; numérotée (« Figure 2 — ») si le style ``caption`` le veut, par un champ
     ``SEQ`` que Word et LibreOffice recalculent, et que la relecture retire. ``kind`` : le
     libellé (``labels.table``, ``labels.figure``)."""
@@ -303,7 +311,7 @@ def _caption(body: _Body, kind: str, runs: Inline) -> str:
             + f'<w:fldSimple w:instr=" SEQ {kind} \\* ARABIC "><w:r><w:t>{number}</w:t></w:r>'
             "</w:fldSimple>" + _run(" — ")
         )
-    return _paragraph("Caption", prefix + _runs(runs))
+    return _paragraph(style_id, prefix + _runs(runs))
 
 
 def _border(value: str | None) -> str:
@@ -339,7 +347,15 @@ def _cell_fill(fill: str | None) -> str:
     return f'<w:shd w:val="clear" w:color="auto" w:fill="{fill}"/>'
 
 
-def _table(body: _Body, table: TableOut, width: int, tables: Look, size: int | None) -> str:
+def _table(
+    body: _Body,
+    table: TableOut,
+    width: int,
+    tables: Look,
+    *,
+    cell_style: str = "TableText",
+    caption: str = "Caption",
+) -> str:
     style = body.style
     header = style.look("table_header")
     total = style.look("table_total")
@@ -350,12 +366,7 @@ def _table(body: _Body, table: TableOut, width: int, tables: Look, size: int | N
     full = width if full_width else min(width, narrow)
     widths = [round(part * full) for part in table.widths]
     widths[-1] += full - sum(widths)
-    general = style.look("table").size
-    size = size or (
-        look.half_points(tables.size)
-        if tables.size is not None and tables.size != general
-        else None
-    )
+    size: int | None = None
     position = tables.position or "left"
     said = (
         "<w:tbl><w:tblPr>"
@@ -407,7 +418,7 @@ def _table(body: _Body, table: TableOut, width: int, tables: Look, size: int | N
             said += (
                 f'<w:tc><w:tcPr><w:tcW w:w="{widths[index]}" w:type="dxa"/>{top}'
                 f'{_cell_fill(filled)}<w:vAlign w:val="center"/></w:tcPr>'
-                + _paragraph("TableText", content, f'<w:jc w:val="{_JC[align]}"/>')
+                + _paragraph(cell_style, content, f'<w:jc w:val="{_JC[align]}"/>')
                 + "</w:tc>"
             )
         return said + "</w:tr>"
@@ -419,13 +430,13 @@ def _table(body: _Body, table: TableOut, width: int, tables: Look, size: int | N
     said += "</w:tbl>"
     # Toujours un paragraphe après le tableau : deux tableaux voisins ne fusionnent pas.
     if table.caption:
-        said += _caption(body, style.labels.table, table.caption)
+        said += _caption(body, style.labels.table, table.caption, caption)
     else:
         said += _paragraph("Normal", "", _AFTER_TABLE)
     return said
 
 
-def _image(body: _Body, block: ImageOut, width: int) -> str:
+def _image(body: _Body, block: ImageOut, width: int, caption: str = "Caption") -> str:
     """Une image, réduite à la place disponible (une colonne, une cellule), et sa légende."""
     room = width * 2540 // 1440
     if block.width > room:
@@ -436,7 +447,7 @@ def _image(body: _Body, block: ImageOut, width: int) -> str:
     relation = f"rIdImage{body.picture(block.picture)}"
     said = image.inline(relation, body.drawings, block, keep_next=bool(block.caption))
     if block.caption:
-        return said + _caption(body, body.style.labels.figure, block.caption)
+        return said + _caption(body, body.style.labels.figure, block.caption, caption)
     return said + _paragraph("Normal", "", _AFTER_TABLE)
 
 
@@ -445,17 +456,16 @@ def _layout(
     cells: Sequence[str],
     widths: Sequence[int],
     *,
-    boxed: Iterable[int] = (),
+    boxed: Mapping[int, Look] | None = None,
 ) -> str:
     """Un tableau de disposition : des contenus côte à côte (ou un seul, encadré).
 
     Sans bordure, au style « loom layout », que la relecture reconnaît : elle rend les
-    blocs de chaque cellule, dans l'ordre, et jamais le tableau.
+    blocs de chaque cellule, dans l'ordre, et jamais le tableau. ``boxed`` : les cellules
+    encadrées, et le style de leur cadre (``box``, ou celui que la section choisit).
     """
     body.used.add(look.LAYOUT)
-    framed = set(boxed)
-    box = body.style.look("box")
-    border = _border(box.border)
+    framed = dict(boxed or {})
     said = (
         f'<w:tbl><w:tblPr><w:tblStyle w:val="{look.LAYOUT}"/>'
         f'<w:tblW w:w="{sum(widths)}" w:type="dxa"/><w:tblLayout w:type="fixed"/>'
@@ -467,12 +477,15 @@ def _layout(
         + "</w:tblGrid><w:tr>"
     )
     for index, (content, width) in enumerate(zip(cells, widths, strict=True)):
+        box = framed.get(index)
         frame = (
             "<w:tcBorders>"
-            + "".join(f"<w:{side} {border}/>" for side in ("top", "left", "bottom", "right"))
+            + "".join(
+                f"<w:{side} {_border(box.border)}/>" for side in ("top", "left", "bottom", "right")
+            )
             + "</w:tcBorders>"
             + _cell_fill(box.fill)
-            if index in framed
+            if box is not None
             else ""
         )
         said += (
@@ -500,16 +513,53 @@ def _room(width: int, framed: bool, gap: bool) -> int:
     return width - (2 * BOX_PAD if framed else CELL_GAP if gap else 0)
 
 
-def _blocks(
-    body: _Body, blocks: Sequence[BlockOut], width: int, section: SectionLook = PLAIN_SECTION
-) -> str:
-    """Les blocs d'une section, dans ``width`` twips, selon sa disposition."""
+@dataclass(frozen=True, slots=True)
+class _Layout:
+    """Ce qu'une section du modèle dit de sa mise en page et de ses styles ; un document
+    libre est une seule section, sans rien de tout cela."""
+
+    styles: Mapping[str, str] = field(default_factory=dict[str, str])
+    box: bool = False
+    beside: bool = False
+    width: int | None = None
+    page_break: bool = False
+    columns: int = 1
+    landscape: bool = False
+    cover: bool = False
+    # Espace avant la section, en twips.
+    space_before: int = 0
+    # Une page de garde : son texte centré.
+    align: str | None = None
+
+
+PLAIN: Final = _Layout()
+
+
+def _layout_of(spec: SectionSpec) -> _Layout:
+    return _Layout(
+        styles={str(element): name for element, name in spec.styles.items()},
+        box=spec.box,
+        beside=spec.beside,
+        width=spec.width,
+        page_break=spec.page_break,
+        columns=spec.columns,
+        landscape=spec.landscape,
+        cover=spec.cover,
+        space_before=round((spec.space_before or 0) * CM),
+    )
+
+
+def _style_id(body: _Body, element: str, chosen: str | None, layout: _Layout) -> str:
+    """Le style Word d'un élément : celui que le bloc choisit (``style``), sinon celui que
+    la section choisit (``styles``), sinon le style prévu de l'élément."""
+    return body.word(chosen or layout.styles.get(element) or element)
+
+
+def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout = PLAIN) -> str:
+    """Les blocs d'une section, dans ``width`` twips, selon ses styles."""
     style = body.style
-    tables = section.table or style.look("table")
-    text_size = style.look("text").size or 11
-    size = look.half_points(max(7.0, text_size - 2)) if section.size == "small" else None
-    align = f'<w:jc w:val="{look.jc(section.align)}"/>' if section.align else ""
-    paragraph = look.paragraph_style(style)
+    align = f'<w:jc w:val="{look.jc(layout.align)}"/>' if layout.align else ""
+    caption = _style_id(body, "caption", None, layout)
     said = ""
     index = 0
     while index < len(blocks):
@@ -527,13 +577,13 @@ def _blocks(
             half = width // 2
             # La même place pour les deux : l'écart entre elles est pris sur la première cellule.
             room = _room(half, False, True)
-            cells = [_image(body, block, room), _image(body, second, room)]
+            cells = [_image(body, block, room, caption), _image(body, second, room, caption)]
             said += _layout(body, cells, [half, width - half])
             continue
         match block:
             case TitleOut(runs=runs):
                 said += _paragraph(
-                    "Title", _runs(runs), '<w:jc w:val="center"/>' if section.cover else ""
+                    "Title", _runs(runs), '<w:jc w:val="center"/>' if layout.cover else ""
                 )
             case HeadingOut(level=level, runs=runs):
                 content = _runs(runs)
@@ -544,15 +594,17 @@ def _blocks(
                         f'<w:bookmarkStart w:id="{number}" w:name="{name}"/>{content}'
                         f'<w:bookmarkEnd w:id="{number}"/>'
                     )
-                said += _paragraph(_heading_style(body, level, section), content)
+                heading = _style_id(body, f"heading{level}", block.style, layout)
+                said += _paragraph(heading, content)
             case ParagraphOut(runs=runs):
-                said += _paragraph(paragraph, _runs(runs, size=size), align)
+                paragraph = _style_id(body, "paragraph", block.style, layout)
+                said += _paragraph(paragraph, _runs(runs), align)
             case ListOut(entries=entries, checkboxes=True):
                 body.used.update((look.CHECK, look.CHECK_2))
                 for entry in entries:
-                    said += _checkbox(look.CHECK, entry.checked, entry.runs, size)
+                    said += _checkbox(look.CHECK, entry.checked, entry.runs, None)
                     said += "".join(
-                        _checkbox(look.CHECK_2, checked, child, size)
+                        _checkbox(look.CHECK_2, checked, child, None)
                         for child, checked in zip(
                             entry.children, entry.children_checked, strict=True
                         )
@@ -560,26 +612,30 @@ def _blocks(
             case ListOut(ordered=ordered, entries=entries):
                 body.lists.append(ordered)
                 number = len(body.lists)
+                items = _style_id(body, "list", block.style, layout)
                 for entry in entries:
-                    said += _list_item(number, 0, entry.runs, size, align)
+                    said += _list_item(number, 0, entry.runs, align, items)
                     said += "".join(
-                        _list_item(number, 1, child, size, align) for child in entry.children
+                        _list_item(number, 1, child, align, items) for child in entry.children
                     )
             case TableOut():
-                said += _table(body, block, width, tables, size)
+                name = block.style or layout.styles.get("table") or "table"
+                text = body.word(name)
+                said += _table(
+                    body, block, width, style.look(name), cell_style=text, caption=caption
+                )
             case NoteOut(title=title, runs=runs):
                 head = (
-                    _run(title, f"<w:rPr><w:b/><w:bCs/>{_size(size)}</w:rPr>")
-                    + "<w:r><w:br/></w:r>"
+                    _run(title, "<w:rPr><w:b/><w:bCs/></w:rPr>") + "<w:r><w:br/></w:r>"
                     if title
                     else ""
                 )
-                said += _paragraph("Note", head + _runs(runs, size=size))
+                note = _style_id(body, "note", block.style, layout)
+                said += _paragraph(note, head + _runs(runs))
             case QuoteOut(runs=runs, source=source):
-                said += _paragraph("Quote", _runs(runs, size=size))
+                said += _paragraph(_style_id(body, "quote", block.style, layout), _runs(runs))
                 if source:
-                    sized = f"<w:rPr>{_size(size)}</w:rPr>" if size else ""
-                    said += _paragraph("QuoteSource", _run(f"— {source}", sized))
+                    said += _paragraph("QuoteSource", _run(f"— {source}"))
             case ChartOut():
                 body.charts.append(block)
                 number = len(body.charts)
@@ -593,11 +649,11 @@ def _blocks(
                     room if room < chart.WIDTH else None,
                 )
                 if block.caption:
-                    said += _caption(body, style.labels.figure, block.caption)
+                    said += _caption(body, style.labels.figure, block.caption, caption)
                 else:
                     said += _paragraph("Normal", "", _AFTER_TABLE)
             case ImageOut():
-                said += _image(body, block, width)
+                said += _image(body, block, width, caption)
             case SignatureOut():
                 said += _signature(body, block, width)
             case ContentsOut():
@@ -696,8 +752,8 @@ def _contents(body: _Body, width: int) -> str:
 
 
 def _toc_entries(body: _Body, blocks: Sequence[BlockOut]) -> None:
-    """Les entrées du sommaire, s'il y en a un : les titres repris (jusqu'à ``toc.levels``,
-    sauf un titre de section masqué), leur numéro tel que Word l'écrira, et un signet."""
+    """Les entrées du sommaire, s'il y en a un : les titres repris (jusqu'à ``toc.levels``),
+    leur numéro tel que Word l'écrira, et un signet."""
     if not any(isinstance(block, ContentsOut) for block in blocks):
         return
     style = body.style
@@ -707,12 +763,11 @@ def _toc_entries(body: _Body, blocks: Sequence[BlockOut]) -> None:
         if not isinstance(block, HeadingOut):
             continue
         text = plain(block.runs)
-        hidden = block.level == 1 and style.section(text).title == "hidden"
-        numbered = style.numbering != "none" and not hidden
+        numbered = style.numbering != "none"
         if numbered:
             counters[block.level - 1] += 1
             counters[block.level :] = [0] * (3 - block.level)
-        if block.level > levels or hidden:
+        if block.level > levels:
             continue
         label = text
         if numbered:
@@ -730,18 +785,9 @@ def _heading_number(numbering: str, counters: Sequence[int], article: str) -> st
     return ".".join(str(number) for number in counters)
 
 
-def _heading_style(body: _Body, level: int, section: SectionLook) -> str:
-    """Le style d'un titre : celui de son niveau, sauf le titre d'une section masqué ou discret."""
-    if level != 1 or section.title == "visible":
-        return f"Heading{level}"
-    chosen = look.HIDDEN if section.title == "hidden" else look.QUIET
-    body.used.add(chosen)
-    return chosen
-
-
-def _list_item(number: int, level: int, runs: Inline, size: int | None, align: str) -> str:
+def _list_item(number: int, level: int, runs: Inline, align: str, style: str) -> str:
     numbering = f'<w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{number}"/></w:numPr>'
-    return _paragraph("ListParagraph", _runs(runs, size=size), numbering + align)
+    return _paragraph(style, _runs(runs), numbering + align)
 
 
 # --- Sections du modèle, sections Word ------------------------------------------------------
@@ -749,10 +795,12 @@ def _list_item(number: int, level: int, runs: Inline, size: int | None, align: s
 
 @dataclass(slots=True)
 class _Group:
-    """Une section du document : son titre de niveau 1 (sa clé) et ses blocs."""
+    """Une section du document : sa place dans le modèle (``None`` pour un document libre,
+    ou le titre du document avant les sections), sa ligne, sa mise en page, ses blocs."""
 
-    key: str | None
-    look: SectionLook
+    position: int | None
+    row: int | None
+    layout: _Layout
     blocks: list[BlockOut]
 
 
@@ -767,18 +815,23 @@ class _Unit:
     page_break: bool = False
 
 
-def _groups(blocks: Iterable[BlockOut], style: Style) -> list[_Group]:
+def _groups(prepared: Prepared, template: Template | None) -> list[_Group]:
+    """Un document libre : un seul groupe. Un document qui suit un modèle : le titre du
+    document, puis une section par groupe, dans l'ordre du modèle."""
+    if prepared.sections is None or template is None:
+        return [_Group(None, None, PLAIN, list(prepared.blocks))]
+    rows = template.rows()
+    specs = {section.position: section.spec for section in template.sections}
     groups: list[_Group] = []
-    for block in blocks:
-        if isinstance(block, HeadingOut) and block.level == 1:
-            name = key(plain(block.runs))
-            groups.append(_Group(name, style.sections.get(name, PLAIN_SECTION), [block]))
-        elif groups:
-            groups[-1].blocks.append(block)
-        else:
-            groups.append(_Group(None, PLAIN_SECTION, [block]))
+    head = [block for block in prepared.blocks if isinstance(block, TitleOut)]
+    if head:
+        groups.append(_Group(None, None, PLAIN, list[BlockOut](head)))
+    for section in prepared.sections:
+        blocks: list[BlockOut] = [*([section.title] if section.title else []), *section.blocks]
+        layout = _layout_of(specs[section.position])
+        groups.append(_Group(section.position, rows[section.position], layout, blocks))
     # Une page de garde porte aussi ce qui précède sa section : le titre du document.
-    if len(groups) > 1 and groups[0].key is None and groups[1].look.cover:
+    if len(groups) > 1 and groups[0].position is None and groups[1].layout.cover:
         groups[1].blocks[:0] = groups[0].blocks
         del groups[0]
     return groups
@@ -791,65 +844,86 @@ def _width(style: Style, landscape: bool, columns: int = 1) -> int:
 
 
 def _units(body: _Body, groups: Sequence[_Group]) -> list[_Unit]:
+    """Les groupes, posés : seuls, ou côte à côte quand ils sont sur la même ligne du
+    modèle (une section ``beside`` absente laisse l'autre seule, en pleine largeur)."""
     style = body.style
-    beside_of: dict[str, Beside] = {k: group for group in style.beside for k in group.keys}
     units: list[_Unit] = []
     index = 0
     while index < len(groups):
         group = groups[index]
         together = [group]
-        if group.key in beside_of:
-            row = beside_of[group.key]
-            while (
-                index + len(together) < len(groups)
-                and (following := groups[index + len(together)]).key in row.keys
-            ):
-                together.append(following)
+        while (
+            group.row is not None
+            and index + len(together) < len(groups)
+            and groups[index + len(together)].row == group.row
+        ):
+            together.append(groups[index + len(together)])
         index += len(together)
-        landscape = style.landscape or group.look.landscape
+        landscape = style.landscape or group.layout.landscape
         if len(together) > 1:
-            units.append(_beside(body, together, beside_of[_named(group.key)], landscape))
+            units.append(_beside(body, together, landscape))
             continue
         units.append(_alone(body, group, landscape))
     return units
 
 
-def _named(name: str | None) -> str:
-    """La clé d'une section qui a un titre (toute section d'une ligne côte à côte)."""
-    return name or ""
+# Le début du premier paragraphe : après ses propriétés, s'il en a.
+_FIRST_PARAGRAPH: Final = re.compile(r"<w:p>(?:<w:pPr>.*?</w:pPr>)?", re.DOTALL)
+
+
+def _marked(group: _Group, content: str) -> str:
+    """Le contenu d'une section, son début marqué d'un signet dans son premier paragraphe
+    (celui de la première cellule d'un tableau) : la relecture retrouve la section."""
+    if group.position is None:
+        return content
+    number = SECTION_MARKS + group.position
+    mark = (
+        f'<w:bookmarkStart w:id="{number}" w:name="_loom_s{group.position}"/>'
+        f'<w:bookmarkEnd w:id="{number}"/>'
+    )
+    found = _FIRST_PARAGRAPH.search(content)
+    if found is None:  # une section a toujours un paragraphe ; sinon, devant elle
+        return mark + content
+    return content[: found.end()] + mark + content[found.end() :]
+
+
+def _box(body: _Body, layout: _Layout) -> Look:
+    return body.style.look(layout.styles.get("box", "box"))
 
 
 def _alone(body: _Body, group: _Group, landscape: bool) -> _Unit:
-    section = group.look
-    columns = section.columns
+    layout = group.layout
+    columns = layout.columns
     width = _width(body.style, landscape, columns)
-    space = COVER_SPACE if section.cover and not section.space_before else section.space_before
+    space = COVER_SPACE if layout.cover and not layout.space_before else layout.space_before
     said = _spacer(space) if space else ""
-    if section.cover:
-        section = dataclasses.replace(section, align=section.align or "center")
-    if section.box:
-        content = _blocks(body, group.blocks, _room(width, True, False), section)
-        said += _layout(body, [content], [width], boxed=(0,))
+    if layout.cover:
+        layout = dataclasses.replace(layout, align="center")
+    if layout.box:
+        content = _marked(group, _blocks(body, group.blocks, _room(width, True, False), layout))
+        said += _layout(body, [content], [width], boxed={0: _box(body, layout)})
     else:
-        said += _blocks(body, group.blocks, width, section)
-    return _Unit(said, landscape, columns, section.cover, section.page_break)
+        said += _marked(group, _blocks(body, group.blocks, width, layout))
+    return _Unit(said, landscape, columns, layout.cover, layout.page_break)
 
 
-def _beside(body: _Body, together: Sequence[_Group], row: Beside, landscape: bool) -> _Unit:
-    """Des sections côte à côte : une cellule chacune, aux parts de la disposition."""
+def _beside(body: _Body, together: Sequence[_Group], landscape: bool) -> _Unit:
+    """Des sections côte à côte : une cellule chacune, à la part que dit ``width`` (des
+    parts égales sans elle)."""
     width = _width(body.style, landscape)
-    shares = [row.widths[row.keys.index(_named(group.key))] for group in together]
+    given = [group.layout.width for group in together]
+    shares = [float(share or 0) for share in given] if all(given) else [1.0] * len(together)
     widths = [round(width * share / sum(shares)) for share in shares]
     widths[-1] += width - sum(widths)
     cells: list[str] = []
-    boxed: list[int] = []
+    boxed: dict[int, Look] = {}
     for position, (group, cell) in enumerate(zip(together, widths, strict=True)):
         last = position == len(together) - 1
-        if group.look.box:
-            boxed.append(position)
-        room = _room(cell, group.look.box, not last)
-        cells.append(_blocks(body, group.blocks, room, group.look))
-    first = together[0].look
+        if group.layout.box:
+            boxed[position] = _box(body, group.layout)
+        room = _room(cell, group.layout.box, not last)
+        cells.append(_marked(group, _blocks(body, group.blocks, room, group.layout)))
+    first = together[0].layout
     said = _spacer(first.space_before) if first.space_before else ""
     said += _layout(body, cells, widths, boxed=boxed)
     return _Unit(said, landscape, 1, page_break=first.page_break)
@@ -960,7 +1034,7 @@ def _blank_first_page(style: Style, sections: Sequence[_Section]) -> bool:
 
 def _document(prepared: Prepared, body: _Body) -> tuple[str, _Bands]:
     style = body.style
-    units = _units(body, _groups(prepared.blocks, style))
+    units = _units(body, _groups(prepared, body.template))
     sections = _sections(units, style)
     bands = _Bands(
         header=style.header is not None or look.watermark(style) is not None,
@@ -1048,11 +1122,13 @@ def _band_parts(
     return parts, listed
 
 
-def render(prepared: Prepared, style: Style | None = None) -> bytes:
+def render(
+    prepared: Prepared, style: Style | None = None, template: Template | None = None
+) -> bytes:
     """Le fichier .docx, le même octet pour octet pour un même document et un même style
-    (le style maison, sans style)."""
+    (le style maison, sans style) ; ``template`` : le modèle que le document suit."""
     style = style or house()
-    body = _Body(style, plain(_title_runs(prepared)))
+    body = _Body(style, plain(_title_runs(prepared)), template=template)
     _toc_entries(body, prepared.blocks)
     document, bands = _document(prepared, body)
     body_media = len(body.media)
@@ -1067,7 +1143,7 @@ def render(prepared: Prepared, style: Style | None = None) -> bytes:
         ("docProps/app.xml", APP),
         ("word/document.xml", document),
         ("word/_rels/document.xml.rels", relations),
-        ("word/styles.xml", look.styles_xml(style, body.used)),
+        ("word/styles.xml", look.styles_xml(style, body.used, body.custom)),
         (
             "word/numbering.xml",
             look.numbering_xml(body.lists, style.numbering, style.labels.article),

@@ -14,6 +14,7 @@ Dans un texte, ``**gras**``, ``*italique*`` et ``<u>souligné</u>`` marquent l'e
 un saut de ligne reste un saut de ligne dans le même paragraphe.
 """
 
+import dataclasses
 import datetime as dt
 import math
 import re
@@ -48,10 +49,12 @@ from loom_ia.tools_builtin._document.arguments import (
     Signature,
     Table,
     WriteArguments,
+    WrittenBlock,
+    style_of,
 )
 from loom_ia.tools_builtin._document.picture import Picture
 from loom_ia.tools_builtin._style_params import FRENCH, Labels, Language
-from loom_ia.tools_builtin._templates import Template, plan_faults
+from loom_ia.tools_builtin._templates import Template, fixed_paragraphs
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Stored, convert
 
 MAX_TITLE: Final = 300
@@ -105,11 +108,16 @@ class TitleOut:
 class HeadingOut:
     level: int
     runs: Inline
+    # Le style proposé que le modèle de langage a choisi (``style`` du bloc).
+    style: str | None = None
+    # Le titre d'une section du modèle, que l'outil écrit : la place de la section.
+    section: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ParagraphOut:
     runs: Inline
+    style: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +135,7 @@ class ListOut:
     entries: tuple[Entry, ...]
     # Une liste à cocher (``blocks: [checkboxes]``) : une case devant chaque élément.
     checkboxes: bool = False
+    style: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,20 +161,23 @@ class TableOut:
     widths: tuple[float, ...]
     caption: Inline | None
     # La largeur que le contenu demande, en part de la largeur utile (1 au plus) : celle
-    # d'un tableau qu'un style veut à sa largeur naturelle (``width: contenu``).
+    # d'un tableau qu'un style veut à sa largeur naturelle (``width: content``).
     natural: float = 1.0
+    style: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class NoteOut:
     title: str | None
     runs: Inline
+    style: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class QuoteOut:
     runs: Inline
     source: str | None
+    style: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,14 +227,37 @@ type BlockOut = (
 
 
 @dataclass(frozen=True, slots=True)
+class SectionOut:
+    """Une section d'un document qui suit un modèle : sa place dans le modèle, son nom, son
+    titre (``None`` s'il n'est pas imprimé), ses blocs ; ``fixed`` : un texte fixe."""
+
+    position: int
+    name: str
+    title: HeadingOut | None
+    blocks: tuple[BlockOut, ...]
+    fixed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class Prepared:
-    """Le document validé : son titre (pour les propriétés), ses blocs, les avertissements."""
+    """Le document validé : son titre (pour les propriétés), ses blocs, les avertissements.
+
+    ``blocks`` : tous les blocs, à plat, dans l'ordre du document (le titre du document,
+    puis le titre et les blocs de chaque section) ; ``sections`` : les mêmes, par section,
+    pour un document qui suit un modèle."""
 
     title: str | None
     blocks: tuple[BlockOut, ...]
     warnings: tuple[str, ...]
     # Le modèle suivi, que le document garde dans ses propriétés ; ``None`` sans modèle.
     template: str | None = None
+    sections: tuple[SectionOut, ...] | None = None
+
+
+# Les styles proposés qu'un document peut choisir, par type de bloc : leur nom, et pour un
+# titre son niveau (0 pour les autres blocs).
+type Allowed = Mapping[str, Mapping[str, int]]
+NO_STYLES: Final[Allowed] = {}
 
 
 # Ce qu'a donné la lecture de chaque image, par chemin tel que donné : l'image, ou ce
@@ -231,20 +266,38 @@ type Pictures = Mapping[str, Picture | str]
 NO_PICTURES: Final[Pictures] = {}
 
 
+@dataclass(slots=True)
+class _State:
+    """Ce que la validation garde d'un bloc à l'autre, sections comprises."""
+
+    problems: Problems
+    zone: ZoneInfo
+    pictures: Pictures
+    labels: Labels
+    allowed: Allowed
+    # Le niveau du dernier titre, et le dernier tableau écrit : la source d'un graphique.
+    level: int = 0
+    last_table: tuple[Table, list[list[Stored]]] | None = None
+
+
 def prepare(
     arguments: WriteArguments,
     zone: ZoneInfo,
     pictures: Pictures = NO_PICTURES,
     template: Template | None = None,
     labels: Labels = FRENCH,
+    allowed: Allowed = NO_STYLES,
 ) -> Prepared:
     """Valide le document entier ; ``ToolError`` qui liste toutes les fautes trouvées.
 
     Sans disque : les images sont lues avant, par l'outil (``pictures``). ``template`` :
-    le modèle que le document dit suivre ; ses titres de niveau 1 doivent suivre son plan.
-    ``labels`` : la langue du style, et le libellé de la ligne de total.
+    le modèle que le document suit ; il s'écrit alors par sections (``sections``), et
+    l'outil pose les sections dans l'ordre du modèle, avec leurs titres et leur texte
+    fixe. ``labels`` : la langue du style, et le libellé de la ligne de total.
+    ``allowed`` : les styles proposés que les blocs peuvent choisir.
     """
-    problems = Problems()
+    state = _State(Problems(), zone, pictures, labels, allowed)
+    problems = state.problems
     blocks: list[BlockOut] = []
     title = lines(arguments.title).strip() if arguments.title else None
     if title is not None:
@@ -252,57 +305,19 @@ def prepare(
             problems.error(f"title : {len(title)} caractères, au-delà de {MAX_TITLE}")
         _clean(title, "title", problems)
         blocks.append(TitleOut(inline(title)))
-    level = 0
-    # Le dernier tableau écrit, et ses valeurs : la source d'un graphique ``from_table``.
-    last_table: tuple[Table, list[list[Stored]]] | None = None
-    for index, block in enumerate(arguments.blocks, start=1):
-        where = f"bloc {index} ({block.type})"
-        match block:
-            case Heading():
-                text = _text(block.text, where, problems, required=True)
-                if block.level > level + 1:
-                    problems.warn(
-                        f"{where} : titre de niveau {block.level} après un niveau {level} — "
-                        "un niveau sauté brouille le plan du document"
-                    )
-                level = block.level
-                blocks.append(HeadingOut(block.level, inline(text)))
-            case Paragraph():
-                text = _text(block.text, where, problems, required=True)
-                blocks.append(ParagraphOut(inline(text)))
-            case ListBlock():
-                blocks.append(_list(block, where, problems))
-            case Table():
-                table, stored = _table(block, where, problems, zone, labels)
-                blocks.append(table)
-                last_table = (block, stored)
-            case Chart():
-                blocks.append(_chart(block, last_table, where, problems, zone, labels.language))
-            case Note():
-                text = _text(block.text, where, problems, required=True)
-                note_title = _text(block.title, f"{where}, title", problems) or None
-                blocks.append(NoteOut(note_title, inline(text)))
-            case Quote():
-                text = _text(block.text, where, problems, required=True)
-                source = _text(block.source, f"{where}, source", problems) or None
-                blocks.append(QuoteOut(inline(text), source))
-            case Image():
-                found = _image(block, pictures, where, problems)
-                if found is not None:
-                    blocks.append(found)
-            case Signature():
-                blocks.append(_signature(block, where, problems))
-            case Contents():
-                if any(isinstance(b, ContentsOut) for b in blocks):
-                    problems.error(f"{where} : un seul sommaire par document")
-                blocks.append(ContentsOut())
+    sections: list[SectionOut] | None = None
+    if template is None:
+        blocks += _blocks(arguments.blocks, "bloc", state)
+    else:
+        sections = _sections(arguments, template, state)
+        for section in sections:
+            blocks += [*([section.title] if section.title else []), *section.blocks]
     _check_images(arguments, pictures, problems)
-    if any(isinstance(b, ContentsOut) for b in blocks) and not any(
-        isinstance(b, HeadingOut) for b in blocks
-    ):
+    contents = [b for b in blocks if isinstance(b, ContentsOut)]
+    if len(contents) > 1:
+        problems.error("un seul sommaire par document")
+    if contents and not any(isinstance(b, HeadingOut) for b in blocks):
         problems.warn("sommaire : le document n'a aucun titre, le sommaire sera vide")
-    if template is not None:
-        _check_plan(blocks, template, problems)
     if not blocks:
         problems.error("document vide : ni titre, ni bloc de contenu")
     problems.raise_if_any()
@@ -311,22 +326,160 @@ def prepare(
         blocks=tuple(blocks),
         warnings=tuple(problems.warnings),
         template=template.name if template is not None else None,
+        sections=tuple(sections) if sections is not None else None,
     )
 
 
-def _check_plan(blocks: Sequence[BlockOut], template: Template, problems: Problems) -> None:
-    """Les titres de niveau 1 du document, comparés au plan du modèle."""
-    headings = [
-        plain(block.runs) for block in blocks if isinstance(block, HeadingOut) and block.level == 1
+def _sections(arguments: WriteArguments, template: Template, state: _State) -> list[SectionOut]:
+    """Les sections du document, dans l'ordre du modèle : celles qu'il remplit, et celles au
+    texte fixe ; les fautes du plan sont dites avec les sections attendues."""
+    problems = state.problems
+    where = f"modèle {template.name}"
+    given: dict[int, tuple[str, list[WrittenBlock]]] = {}
+    named: set[int] = set()
+    faults = 0
+    for name, written in (arguments.sections or {}).items():
+        section = template.section(name)
+        if section is not None and section.position not in given:
+            named.add(section.position)
+        if section is None:
+            problems.error(f"{where} : section inconnue « {name} »")
+            faults += 1
+        elif section.position in given:
+            problems.error(
+                f"{where} : section donnée deux fois : « {given[section.position][0]} » et "
+                f"« {name} »"
+            )
+            faults += 1
+        elif section.fixed:
+            problems.error(
+                f"{where} : « {section.name} » est une section au texte fixe, écrite par "
+                "l'outil : ne pas la remplir"
+            )
+            faults += 1
+        elif not written:
+            problems.error(
+                f"{where} : « {section.name} » est vide — "
+                + ("la retirer (elle est facultative)" if section.optional else "la remplir")
+            )
+            faults += 1
+        else:
+            given[section.position] = (name, written)
+    missing = [
+        s.name
+        for s in template.sections
+        if not s.optional and not s.fixed and s.position not in named
     ]
-    faults = plan_faults(template, headings)
-    for fault in faults:
-        problems.error(f"modèle {template.name} : {fault}")
-    if faults:
+    if missing:
         problems.error(
-            f"modèle {template.name}, plan attendu (titres de niveau 1, dans l'ordre) : "
-            f"{template.outline()}"
+            f"{where} : section(s) absente(s) : {', '.join(f'« {m} »' for m in missing)}"
         )
+        faults += 1
+    if faults:
+        problems.error(f"{where}, sections attendues : {template.outline()}")
+    found: list[SectionOut] = []
+    for section in template.sections:
+        fixed = section.spec.text
+        if fixed is not None:
+            blocks: list[BlockOut] = [ParagraphOut(inline(p)) for p in fixed_paragraphs(fixed)]
+        elif section.position in given:
+            state.level = 1
+            label = f"section « {section.name} », bloc"
+            blocks = _blocks(given[section.position][1], label, state, in_section=True)
+        else:
+            continue
+        title = (
+            HeadingOut(1, inline(section.name), section=section.position)
+            if section.spec.show_title
+            else None
+        )
+        found.append(
+            SectionOut(section.position, section.name, title, tuple(blocks), section.fixed)
+        )
+    return found
+
+
+def _blocks(
+    written: Sequence[WrittenBlock], label: str, state: _State, *, in_section: bool = False
+) -> list[BlockOut]:
+    """Les blocs validés ; ``label`` nomme leur place dans les messages (« bloc »,
+    « section « Message », bloc »)."""
+    problems = state.problems
+    zone = state.zone
+    blocks: list[BlockOut] = []
+    for index, block in enumerate(written, start=1):
+        where = f"{label} {index} ({block.type})"
+        style = _style(block, where, state)
+        match block:
+            case Heading():
+                text = _text(block.text, where, problems, required=True)
+                if in_section and block.level == 1:
+                    problems.error(
+                        f"{where} : le niveau 1 est le titre de la section, que l'outil écrit ; "
+                        "dans une section, les titres sont de niveau 2 ou 3"
+                    )
+                elif block.level > state.level + 1:
+                    problems.warn(
+                        f"{where} : titre de niveau {block.level} après un niveau {state.level} "
+                        "— un niveau sauté brouille le plan du document"
+                    )
+                state.level = block.level
+                blocks.append(HeadingOut(block.level, inline(text), style))
+            case Paragraph():
+                text = _text(block.text, where, problems, required=True)
+                blocks.append(ParagraphOut(inline(text), style))
+            case ListBlock():
+                found = _list(block, where, problems)
+                blocks.append(dataclasses.replace(found, style=style) if style else found)
+            case Table():
+                table, stored = _table(block, where, problems, zone, state.labels)
+                blocks.append(dataclasses.replace(table, style=style) if style else table)
+                state.last_table = (block, stored)
+            case Chart():
+                blocks.append(
+                    _chart(block, state.last_table, where, problems, zone, state.labels.language)
+                )
+            case Note():
+                text = _text(block.text, where, problems, required=True)
+                note_title = _text(block.title, f"{where}, title", problems) or None
+                blocks.append(NoteOut(note_title, inline(text), style))
+            case Quote():
+                text = _text(block.text, where, problems, required=True)
+                source = _text(block.source, f"{where}, source", problems) or None
+                blocks.append(QuoteOut(inline(text), source, style))
+            case Image():
+                found_image = _image(block, state.pictures, where, problems)
+                if found_image is not None:
+                    blocks.append(found_image)
+            case Signature():
+                blocks.append(_signature(block, where, problems))
+            case Contents():
+                blocks.append(ContentsOut())
+    return blocks
+
+
+def _style(block: WrittenBlock, where: str, state: _State) -> str | None:
+    """Le style proposé qu'un bloc choisit : permis pour son type (et, pour un titre, son
+    niveau) dans ce document ; sinon une faute qui dit les styles permis."""
+    style = style_of(block)
+    if style is None:
+        return None
+    kind = "list" if block.type == "list" else block.type
+    names = state.allowed.get(kind, {})
+    if style not in names:
+        permitted = ", ".join(sorted(names)) or "aucun"
+        state.problems.error(
+            f"{where} : style « {style} » : pas proposé pour un bloc {kind} dans ce document "
+            f"(styles : {permitted})"
+        )
+        return None
+    level = names[style]
+    if isinstance(block, Heading) and level and block.level != level:
+        state.problems.error(
+            f"{where} : style « {style} » : un titre de niveau {level}, pas {block.level}"
+        )
+        return None
+    return style
 
 
 def lines(text: str) -> str:
@@ -680,7 +833,7 @@ def placed(wanted: ImageWidth, pixels_wide: int, pixels_high: int) -> tuple[int,
 
 def _check_images(arguments: WriteArguments, pictures: Pictures, problems: Problems) -> None:
     """Les bornes du document : nombre d'images, octets des images distinctes."""
-    count = sum(1 for block in arguments.blocks if isinstance(block, Image))
+    count = sum(1 for block in arguments.all_blocks() if isinstance(block, Image))
     if count > MAX_IMAGES:
         problems.error(f"{count} images, au-delà de {MAX_IMAGES}")
     distinct = {p.digest: len(p.data) for p in pictures.values() if isinstance(p, Picture)}

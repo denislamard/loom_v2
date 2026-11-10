@@ -899,7 +899,7 @@ Chaque lot est livrable seul, testé, avec sa documentation.
 | --- | --- | --- |
 | **1. Le vocabulaire en anglais** (fait, § 18) | Blocs, valeurs, `none`, rôles et types d'`excel`, `memory` ; `blocks` à la place de `charts`, `images` et `extra_blocks` ; `saut_de_page` retiré, `note` redécrite | Mécanique, mais touche tous les tests : le faire d'abord évite de renommer deux fois |
 | **2. Le style hors du code (Word)** (fait, § 19) | `default.yaml`, le format de style (styles nommés, `base`, cascade, couleurs, `language`, `labels`), le chargeur, `word/style.py` piloté par le style ; Word sans charte identique à l'octet ; test sans valeur visuelle | La base de tout le reste |
-| **3. Les modèles en YAML et les sections (Word)** | Le format du modèle, `sections` dans l'appel, titres écrits par l'outil, `show_title`, `styles`, disposition, texte fixe, signets, relecture ; styles proposés au modèle de langage | Corrige ce qu'ont montré les essais du 10 novembre |
+| **3. Les modèles en YAML et les sections (Word)** (fait, § 20) | Le format du modèle, `sections` dans l'appel, titres écrits par l'outil, `show_title`, `styles`, disposition, texte fixe, signets, relecture ; styles proposés au modèle de langage | Corrige ce qu'ont montré les essais du 10 novembre |
 | **4. La parité du PDF** | Le même style et les mêmes modèles en reportlab, polices TrueType, notes de fin, `checkboxes`, `signature`, `toc` | Clôt la rupture : les quatre premiers lots forment la 2.1.0 (O-5) |
 | **5. Le texte enrichi** | `fields`, `code`, liens, notes de bas de page, renvois, emphase dans les cellules, listes à trois niveaux (Word et PDF) | Ajouts sans rupture |
 | **6. Les calculs** | Colonnes calculées, groupes et sous-totaux, `invoice_totals` | Le cœur du devis et de la facture |
@@ -946,7 +946,7 @@ Pour comparer, les deux commits des styles du 9 novembre (`d8f025d`, `0f38f5f`) 
 
 ## 17. À vérifier sur ton poste
 
-1. **Dans Word, un style nommé** (`message_title`) paraît dans la galerie de styles, et un sommaire mis à jour reprend le titre qui le porte. Il faudra un fichier d'essai, au lot 3.
+1. **Dans Word, un style nommé** (`message_title`) paraît dans la galerie de styles, et un sommaire mis à jour reprend le titre qui le porte. Écrit depuis le lot 3 (§ 20) ; reste à l'ouvrir dans Word, LibreOffice seul l'a vu.
 2. **La règle d'arrondi de la TVA** avec ton expert-comptable (O-1).
 
 ## 18. Ce qui est écrit : le lot 1 (10 novembre 2026)
@@ -1079,6 +1079,102 @@ sections:
   Consignes: { title: quiet, size: small }
   Contact: { title: quiet, size: small }
 ```
+
+## 20. Ce qui est écrit : le lot 3 (10 novembre 2026)
+
+Codé sans commit sur `1fe6f7a` (le lot 2). La section `2.1.0 - non publiée` du CHANGELOG a un paragraphe de plus.
+
+**Ce qui change**
+
+- **Le modèle de document est un fichier YAML (§ 4.1, D-2)** : `_templates.py` est réécrit (`TemplateSpec`, `SectionSpec`, `Template`). Le chargeur lit le modèle, puis le style qu'il nomme (`style:`, un chemin ou une table), et range ce style à côté du texte du modèle. Un modèle markdown, la forme longue `{file, style}` et un style qui porte `sections` ou `beside` sont refusés avec la forme nouvelle.
+- **`sections` dans l'appel (§ 5, D-1)** : le champ n'existe que si l'outil a des modèles. `prepare` place les sections dans l'ordre du modèle, écrit leurs titres, refuse un niveau 1 dans une section, et dit les fautes du plan avec les sections attendues. `blocks` reste le champ du document libre (`template: none`) ; l'un pour l'autre est refusé par le schéma.
+- **Le texte fixe (§ 4.3)**, `show_title` (D-14), la disposition des sections (§ 4.1) et `styles` (D-12) : `word/writer.py` pose les sections par lignes du modèle (`_groups`, `_units`) ; le style d'un élément se choisit dans l'ordre bloc, section, élément (`_style_id`).
+- **Les styles à toi sont écrits dans `styles.xml`** (`word/style.py`, `_custom`) : un style Word de leur nom, basé sur le style Word de leur base, qui n'écrit que ce qu'il déclare de plus qu'elle (`Style.between`).
+- **Les styles proposés (§ 3.7, D-13)** : `description` est permise à un style à toi qui part d'un style de bloc. `variant()` ajoute aux blocs concernés un champ `style` (un `Literal` des noms proposés pour ce type) ; ceux de la charte vont dans la description de l'outil, ceux d'un modèle dans le résultat d'`action: template`. `prepare` vérifie qu'un style est permis pour ce document, ce type de bloc et ce niveau de titre.
+- **La relecture (§ 6)** : `word/reader.py` range les blocs par section et rend `template` et `sections` ; le titre d'une section, une section au texte fixe et le titre du document ne reviennent pas ; un style proposé revient dans `style`.
+- **`loom.pdf`** suit les modèles YAML et écrit par `sections`, sans leur forme (refusée au chargement jusqu'au lot 4).
+
+**Écarts avec l'analyse, à valider**
+
+1. **Le signet d'une section est un point, pas une enceinte (§ 6).** L'essai d'aller-retour dans LibreOffice l'a montré sur la facture, dont la section Description commence par un tableau : LibreOffice déplace un signet posé hors d'un paragraphe (avant un tableau) jusqu'au paragraphe qui suit le tableau, et dédouble la fin de ceux qui couvrent plusieurs paragraphes (un début sans fin, puis un signet vide). Le signet `_loom_s<n>` est donc posé dans le premier paragraphe de la section, celui de la première cellule quand elle commence par un tableau, et la section court jusqu'au signet de la suivante ; sa fin ne compte pas. L'essai A du § 12.1 n'avait que des sections qui commencent par un titre. Après un passage dans LibreOffice, la facture se relit par sections, côte à côte comprises.
+2. **`space_before` reste une clé de section** (l'adresse d'un courrier dans la fenêtre de l'enveloppe), absente du tableau du § 4.1.
+3. **Le titre discret et le petit texte ne sont plus calculés** : `title: quiet` prenait la taille de `text` et la couleur de `heading3`, `size: small` deux points de moins que `text`. Un modèle les déclare en styles nommés (`quiet_title`, `small_text`), choisis par `styles` (D-12). De même, `table: {size: …}` d'une section devient un style qui part de `table`.
+4. **`styles` met aussi en forme `caption` et `box`** (le cadre d'une section encadrée), en plus des titres et des blocs.
+5. **Un défaut du lot 2 corrigé** : les filets et le fond d'un style de la famille `table` (`border_top`, `border_bottom`, `border`, `border_left`, `fill`) s'écrivaient aussi dans le style de paragraphe des cellules, donc un filet dans chaque cellule. Ils ne vont plus qu'au tableau et à ses lignes. Rien de publié n'en a souffert.
+6. **Un style proposé coûte plus que l'estimation** du § 12.2 (80 caractères) : 325 pour le premier de la charte (la ligne « Styles proposés », le champ `style` et sa description dans le schéma), 239 pour un autre type de bloc, 40 pour un autre style d'un type déjà proposé. `sections` coûte 425 caractères (150 estimés) : le champ (environ 250, les blocs dits une fois dans `$defs/Block` pour `blocks` et `sections`) et une phrase de description.
+7. **Les messages disent `(optional)` et `(fixed)`** dans la liste des sections attendues, les clés du modèle, comme le § 5 le prévoit ; le reste du message est en français (O-4).
+8. **La pagination de la lecture** (`start`, `next_start`, `block_count`) compte toujours les blocs du document entier, titre compris : un document à modèle long se lit par fenêtres, chacune rendue par sections.
+9. **`_style_params.py` passe de 1 074 à 944 lignes** (la disposition provisoire du lot 2 en sort), `_templates.py` de 165 à 415 (estimé 250 : les règles de la disposition et leurs messages).
+
+**Non-régression (§ 14)**
+
+Les documents libres (avec ou sans modèles déclarés, `template: none`), les PDF et le classeur d'essai sont identiques, octet pour octet, au lot 2. Un document qui suit un modèle aussi, ses signets en plus : le `document.xml` du devis d'essai, sans ses deux signets, est celui du lot 2, et son PDF a la même empreinte. La facture et le rapport du lot 2, réécrits au format du lot 3, gardent leur mise en page (rendus LibreOffice : une page pour la facture, quatre pour le rapport dont une en paysage).
+
+**Essais**
+
+- `test_document.py` : 112 (20 de plus) : les sections placées dans l'ordre du modèle, les fautes du plan avec les sections attendues, une section sans titre, le schéma à modèles (action et deux champs), les styles proposés dans le schéma, chaque faute de modèle refusée au chargement.
+- `test_word.py` : un modèle écrit, relu par sections et réécrit à la même empreinte ; des sections perdues ; le chargement.
+- `test_word_styles.py` réécrit aux modèles YAML : la facture et le rapport mis en page par leurs sections, le texte fixe, les styles proposés de la charte et du modèle, les styles des sections vérifiés au chargement, les signets retrouvés après un aller-retour `.docx` → `.docx` dans LibreOffice.
+- `test_pdf.py` : un PDF qui suit son modèle ; la forme refusée.
+- Suite complète : 4 379 réussis, 201 sautés (21 de plus qu'au lot 2). ruff, format, `lint-imports` (6 contrats) et pyright passent sans erreur.
+
+**Ton agent `temp/agent`**
+
+Son modèle (`prompts/templates/note.yaml`) est encore en markdown, et ses deux styles au format de la 2.0 : la config est refusée au chargement. Récrits comme ci-dessous, ils donnent la même note, à deux détails près : les signets des sections, et une liste un peu plus serrée, ses puces prenant maintenant la taille du petit texte (9 pt). Les titres de section discrets et le petit texte valent pour toutes les sections : ils vont dans le style de la note, sans `styles` dans le modèle.
+
+```yaml
+# agents/agent.yaml : la référence du modèle, le chemin seul
+  templates:
+    note: templates/note.yaml
+```
+
+```yaml
+# prompts/styles/charte.yaml
+colors:
+  primary: 3A56E4
+document_title: { size: 24, color: primary, align: center, uppercase: true, underline: false }
+heading1: { color: primary }
+heading2: { color: primary }
+```
+
+```yaml
+# prompts/styles/note.yaml : les titres de section discrets, le petit texte
+heading1: { underline: true, size: 11, color: 2F5496, space_before: 10, space_after: 3 }
+paragraph: { size: 9 }
+list: { size: 9 }
+```
+
+```yaml
+# prompts/templates/note.yaml
+description: Note courte à l'équipe ou aux clients (fermeture, changement d'horaires, consigne).
+
+instructions: |
+  Écris la note en **un seul appel**.
+
+  - **Fichier** : `workspace/note-<objet>.docx` (l'objet en minuscules, mots reliés par des tirets), sauf si l'utilisateur donne un nom.
+  - **`title`** : l'objet de la note en quelques mots (« Fermeture du dépôt »).
+  - **N'invente rien** : dates, heures, lieux et noms viennent de l'utilisateur. S'il manque la date ou le lieu, demande-les avant d'écrire.
+  - **Souligne** (`<u>…</u>`) les dates, heures et lieux qui comptent ; rien d'autre.
+
+style: styles/note.yaml
+
+sections:
+  Destinataires:
+    instructions: |
+      Un `paragraph`, une information par ligne : « À : » les destinataires ; « De : » l'émetteur ; « Le : » la date de la note.
+  Message:
+    instructions: |
+      Un ou deux `paragraph` courts : ce qui se passe, quand, où, et pourquoi si l'utilisateur l'a dit.
+  Consignes:
+    optional: true
+    instructions: |
+      Une `list` de ce que les destinataires doivent faire, une action par élément.
+  Contact:
+    instructions: |
+      Un `paragraph` : qui joindre pour une question, et comment.
+```
+
+Les consignes perdent « dans l'ordre des sections ci-dessous » (l'outil range les sections) et « ne le répète pas en bloc `titre` » (le bloc n'existe plus, et un titre de niveau 1 est refusé dans une section) ; `paragraphe` et `liste` deviennent `paragraph` et `list`.
 
 ## Sources
 
