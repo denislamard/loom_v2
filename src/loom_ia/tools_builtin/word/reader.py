@@ -34,8 +34,8 @@ interne, vers un signet de ce titre) en ``§[Titre]`` ; dans un tableau, l'empha
 ligne d'en-tête ou d'une ligne toute en gras (un total) ne revient pas. Un tableau à
 groupes revient en ``{group, rows}``, sans ses sous-totaux, que l'outil recalcule ; un
 récapitulatif de TVA, en bloc ``invoice_totals`` (ce que l'outil en a gardé dans sa
-description). Avec ``shown`` (``loom.memory``), tout cela revient tel qu'affiché, en
-lignes de tableau. Avec
+description), une feuille d'émargement en bloc ``attendance``. Avec ``shown``
+(``loom.memory``), tout cela revient tel qu'affiché, en lignes de tableau. Avec
 ``images``, une image du corps revient en bloc ``image`` (``path`` : l'adresse du
 fichier lu à l'écriture, gardée dans le nom du dessin) ; sans, elle est comptée. Les
 en-têtes, pieds de page et commentaires ne sont pas lus ; le résultat le dit.
@@ -104,6 +104,7 @@ FIELDS_STYLE: Final = "loom fields"
 GROUP_STYLE: Final = "loom table group"
 SUBTOTAL_STYLE: Final = "loom table subtotal"
 INVOICE_STYLE: Final = "loom invoice totals"
+ATTENDANCE_STYLE: Final = "loom attendance"
 # Les styles des blocs signature et toc, et de la liste à cocher (``word/style.py``), par leur nom.
 SIGNATURE_STYLE: Final = "loom signature"
 SIGNER_STYLE: Final = "loom signer"
@@ -727,6 +728,11 @@ def _block(package: _Package, reading: _Reading, element: Element, depth: int = 
             reading.in_toc = False
             _marks_in(reading, element)
             _emit(reading, invoice)
+        case "tbl" if not reading.shown and (sheet := _attendance(package, element)) is not None:
+            _close_list(reading)
+            reading.in_toc = False
+            _marks_in(reading, element)
+            _emit(reading, sheet)
         case "tbl" if _table_style(package, element) == FIELDS_STYLE:
             _close_list(reading)
             reading.in_toc = False
@@ -789,6 +795,32 @@ def _row_style(package: _Package, row: Element) -> str:
                 package.styles, _attribute(style, "val") if style is not None else None
             )
     return ""
+
+
+def _attendance(package: _Package, table: Element) -> dict[str, JsonValue] | None:
+    """Une feuille d'émargement écrite par l'outil : ses sessions (l'en-tête, sans
+    « Participant »), ses participants (la première cellule de chaque ligne) ; ``None``
+    pour un autre tableau."""
+    rows = [row for row in table if _local(row.tag) == "tr"]
+    if not rows or _row_style(package, rows[0]) != ATTENDANCE_STYLE:
+        return None
+
+    def texts(row: Element, *, emphasis: bool = True) -> list[str]:
+        return [
+            _cell_markdown(
+                [_segments(p, package.inline) for p in cell.iter() if _local(p.tag) == "p"],
+                emphasis=emphasis,
+            )
+            for cell in row
+            if _local(cell.tag) == "tc"
+        ]
+
+    # L'en-tête est en gras par son style : son emphase ne revient pas.
+    sessions: list[JsonValue] = [*texts(rows[0], emphasis=False)[1:]]
+    participants: list[JsonValue] = [
+        found[0] for row in rows[1:] if (found := texts(row)) and found[0]
+    ]
+    return {"type": "attendance", "participants": participants, "sessions": sessions}
 
 
 def _invoice(package: _Package, table: Element) -> dict[str, JsonValue] | None:

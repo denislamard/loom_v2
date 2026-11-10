@@ -767,6 +767,7 @@ def test_a_style_file_is_checked(given: dict[str, Any], said: str) -> None:
         ({"a": {"base": "b"}, "b": {"base": "a"}}, r"base en boucle \(a → b → a\)"),
         ({"note": {"borders": "grid"}}, r"style note\.borders : propre à table"),
         ({"note": {"label_width": 3}}, r"style note\.label_width : propre à fields"),
+        ({"table": {"row_height": 2}}, r"style table\.row_height : propre à attendance"),
         ({"chart": {"colors": ["brand"]}}, r"chart\.color : couleur « brand » inconnue"),
     ],
 )  # fmt: skip
@@ -1411,3 +1412,29 @@ def test_invoice_totals_cost_only_when_declared(tmp_path: Path) -> None:
 
     # 745 caractères mesurés (§ 23 de l'analyse).
     assert 710 < cost(tool) - cost(plain) < 780
+
+
+async def test_the_style_of_an_attendance_sheet(tmp_path: Path) -> None:
+    charte = {"attendance": {"row_height": 2, "size": 9}, "labels": {"participant": "Stagiaire"}}
+    tool = make(tmp_path, blocks=("attendance",), style={"spec": charte})
+    sheet = {"type": "attendance", "participants": ["Léa", "Paul"], "sessions": ["Matin"]}
+    path = await write(tool, "emargement", [sheet])
+    document = part(path, "word/document.xml")
+    check_order(document)
+    assert document.count('<w:trHeight w:val="1134" w:hRule="atLeast"/>') == 2
+    assert ">Stagiaire</w:t>" in document
+    assert '<w:sz w:val="18"/>' in word_style(part(path, "word/styles.xml"), "LoomAttendance")
+
+
+def test_attendance_costs_only_when_declared(tmp_path: Path) -> None:
+    plain = make(tmp_path, blocks=())
+    tool = make(tmp_path, blocks=("attendance",))
+    said = "Feuille d'émargement ('type': 'attendance')"
+    assert said not in plain.spec.description and said in tool.spec.description
+
+    def cost(mounted: WordTool) -> int:
+        schema = json.dumps(mounted.spec.input_schema, ensure_ascii=False, separators=(",", ":"))
+        return len(schema) + len(mounted.spec.description)
+
+    # 530 caractères mesurés (§ 24 de l'analyse).
+    assert 500 < cost(tool) - cost(plain) < 560

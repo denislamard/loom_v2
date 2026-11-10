@@ -1090,3 +1090,18 @@ async def test_an_invoice_in_a_pdf(disk: Path) -> None:
         assert said in text, said
     # Le fond des lignes de groupe (EAF1DD).
     assert b".917647 .945098 .866667 rg" in drawn(page)
+
+
+# --- L'émargement (lot 7) ---------------------------------------------------------------
+
+
+async def test_an_attendance_sheet_in_a_pdf(disk: Path) -> None:
+    tool = make(disk, SORTIE, blocks=["attendance"])
+    people = [f"Participant {number}" for number in range(1, 25)]
+    sheet = {"type": "attendance", "participants": people, "sessions": ["Matin", "Soir"]}
+    written = await call(tool, path="sortie/e.pdf", title="Émargement", blocks=[sheet])
+    # 24 lignes de 1,5 cm (36 cm) : deux pages, l'en-tête répété sur la seconde.
+    assert written["pages"] == 2
+    first, second = (page.extract_text() for page in PdfReader(disk / "sortie" / "e.pdf").pages)
+    assert "Participant 1\n" in first and "Participant 24" in second
+    assert "Matin" in second and "Soir" in second

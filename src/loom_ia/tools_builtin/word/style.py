@@ -81,6 +81,8 @@ FOOTNOTE_REFERENCE: Final = "FootnoteReference"
 TABLE_GROUP: Final = "LoomTableGroup"
 TABLE_SUBTOTAL: Final = "LoomTableSubtotal"
 INVOICE_TOTALS: Final = "LoomInvoiceTotals"
+# La feuille d'émargement : le style de paragraphe de ses cellules.
+ATTENDANCE: Final = "LoomAttendance"
 TOC_HEADING: Final = "TOCHeading"
 TOC_LEVELS: Final = ("TOC1", "TOC2", "TOC3")
 # Le corps du texte, quand le style ``paragraph`` dit autre chose que ``text``.
@@ -350,6 +352,7 @@ WORD_IDS: Final[Mapping[str, str]] = {
     "table_group": TABLE_GROUP,
     "table_subtotal": TABLE_SUBTOTAL,
     "invoice_totals": INVOICE_TOTALS,
+    "attendance": ATTENDANCE,
 }
 
 
@@ -449,7 +452,8 @@ def _character(style_id: str, name: str, run: str) -> str:
 
 def _extra_styles(style: Style, wanted: set[str]) -> str:
     """Les styles des blocs signature, toc, code et champs, de la liste à cocher, du lien et
-    des notes, des groupes de tableau et du récapitulatif de TVA, que le document emploie."""
+    des notes, des groupes de tableau, du récapitulatif de TVA et de l'émargement, que le
+    document emploie."""
     said = ""
     if CODE in wanted:
         said += _named(
@@ -496,6 +500,10 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
             "invoice_totals",
             based="TableText",
             stop="table",
+        )
+    if ATTENDANCE in wanted:
+        said += _named(
+            style, ATTENDANCE, "loom attendance", "attendance", based="TableText", stop="table"
         )
     if HYPERLINK in wanted:
         said += _character(HYPERLINK, "Hyperlink", run_xml(style.between("link", "text")))

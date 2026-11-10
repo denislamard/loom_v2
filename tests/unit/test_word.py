@@ -561,7 +561,7 @@ def test_the_keys_of_2_0_say_the_new_form(demo: ConfigFactory, old: str, said: s
         (
             ["graphique"],
             "Input should be 'chart', 'image', 'signature', 'toc', 'checkboxes', 'fields', "
-            "'code' or 'invoice_totals'",
+            "'code', 'invoice_totals' or 'attendance'",
         ),
     ],
 )
@@ -1754,3 +1754,41 @@ async def test_libreoffice_prints_the_invoice(disk: Path, soffice: str) -> None:
     text = (out / "f.txt").read_text(encoding="utf-8-sig")
     for said in ("Lot 2 \u2013 Cuisine", "Sous-total", "Total TTC", "1\u00a0789,53\u00a0€"):
         assert said in text, said
+
+
+# --- L'émargement (lot 7) ---------------------------------------------------------------
+
+SHEET: Final[dict[str, Any]] = {
+    "type": "attendance",
+    "participants": ["Jeanne Martin", "Paul *Durand*", "Léa Petit"],
+    "sessions": ["Lundi matin", "Lundi après-midi"],
+}
+
+
+async def test_an_attendance_sheet_is_written_read_back_and_rewritten(disk: Path) -> None:
+    tool = make(
+        disk,
+        {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
+        blocks=["attendance"],
+    )
+    written = await call(tool, path="sortie/e.docx", title="Émargement", blocks=[SHEET])
+    path = disk / "sortie" / "e.docx"
+    with zipfile.ZipFile(path) as archive:
+        document = archive.read("word/document.xml").decode()
+        styles = archive.read("word/styles.xml").decode()
+    # Une ligne par participant, d'au moins 1,5 cm ; l'en-tête répété à chaque page.
+    assert document.count('<w:trHeight w:val="850" w:hRule="atLeast"/>') == 3
+    assert document.count("<w:tblHeader/>") == 1
+    assert '<w:name w:val="loom attendance"/>' in styles
+    texts = [t.text for t in part(path, "word/document.xml").iter(f"{W}t")]
+    assert texts[1:4] == ["Participant", "Lundi matin", "Lundi après-midi"]
+    found = await call(tool, action="read", path="sortie/e.docx")
+    assert found["blocks"][1] == SHEET
+    again = await call(tool, path="sortie/e2.docx", title="Émargement", blocks=[SHEET])
+    assert again["sha256"] == written["sha256"]
+    # Un outil qui n'écrit pas d'émargement le dit à la lecture.
+    read = await call(rich_tool(disk), action="read", path="sortie/e.docx")
+    assert "Lu : attendance (1)" in read["notes"][0]
+    # loom.memory lit les noms, en tableau.
+    shown = cast(Any, reader_module.read(path.read_bytes(), "e", 0, shown=True))
+    assert shown["blocks"][1]["rows"][2] == ["Paul *Durand*", "", ""]

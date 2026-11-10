@@ -129,6 +129,7 @@ BASES: Final[Mapping[str, str | None]] = {
     "table_group": "table",
     "table_subtotal": "table",
     "invoice_totals": "table",
+    "attendance": "table",
     "box": "text",
     "toc": "text",
     "signature": "text",
@@ -154,6 +155,7 @@ _OWNERS: Final[Mapping[str, frozenset[str]]] = {
     "page_numbers": frozenset({"toc"}),
     "text": frozenset({"watermark"}),
     "label_width": frozenset({"fields"}),
+    "row_height": frozenset({"attendance"}),
 }
 # Les réglages : des clés du fichier qui ne sont pas des styles.
 SETTINGS: Final = frozenset(
@@ -200,6 +202,7 @@ LABEL_KEYS: Final = (
     "total_incl_tax",
     "paid",
     "due",
+    "participant",
 )
 # Les champs du libellé d'une ligne de TVA : le taux (obligatoire) et sa base.
 TAX_FIELDS: Final = frozenset({"rate", "base"})
@@ -219,6 +222,7 @@ LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
         "total_incl_tax": "Total TTC",
         "paid": "Acompte versé",
         "due": "Net à payer",
+        "participant": "Participant",
     },
     "en": {
         "table": "Table",
@@ -235,6 +239,7 @@ LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
         "total_incl_tax": "Total incl. VAT",
         "paid": "Deposit paid",
         "due": "Amount due",
+        "participant": "Participant",
     },
 }
 
@@ -385,6 +390,8 @@ class Props(_Spec):
     text: Annotated[str, Field(max_length=40)] | None = None
     # Les champs : la largeur de la colonne des libellés, en cm.
     label_width: Annotated[float, Field(ge=1, le=10)] | None = None
+    # La hauteur d'une ligne d'émargement, en cm : la place de signer.
+    row_height: Annotated[float, Field(ge=0.5, le=5)] | None = None
     # Le sens d'un style à toi : il est proposé au modèle de langage, sur son type de bloc.
     description: Annotated[str, Field(min_length=1, max_length=MAX_STYLE_DESCRIPTION)] | None = None
 
@@ -427,6 +434,7 @@ class LabelsSpec(_Spec):
     total_incl_tax: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     paid: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     due: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
+    participant: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
 
 
 class ImageSpec(_Spec):
@@ -724,6 +732,7 @@ class Look:
     page_numbers: bool | None = None
     text: str | None = None
     label_width: float | None = None
+    row_height: float | None = None
 
 
 _LOOK_FIELDS: Final = frozenset(Look.__dataclass_fields__)
@@ -748,6 +757,7 @@ class Labels:
     total_incl_tax: str = "Total TTC"
     paid: str = "Acompte versé"
     due: str = "Net à payer"
+    participant: str = "Participant"
 
 
 FRENCH: Final = Labels()

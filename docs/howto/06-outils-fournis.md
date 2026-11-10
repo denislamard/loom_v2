@@ -1022,7 +1022,7 @@ tools:
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `blocks`, la liste des blocs facultatifs que voit le modèle — `chart` (voir « Des graphiques »), `image` (voir « Des images »), `signature`, `toc` et `checkboxes` (voir « Signature, sommaire, liste à cocher »), `fields` et `code` (voir « Des champs et du code »), `invoice_totals` (voir « Des calculs ») —, `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents (voir « Des styles de document »). Depuis loom-ia 2.1.0, `loom.pdf` a les mêmes : un même fichier de style et les mêmes modèles servent aux deux outils, la facture en Word pour l'artisan, en PDF pour l'envoi. Depuis loom-ia 2.1.0, `blocks` remplace `charts`, `images` et `extra_blocks`, refusés au chargement avec la forme qui les remplace (`charts → blocks: [chart]`). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `blocks`, la liste des blocs facultatifs que voit le modèle — `chart` (voir « Des graphiques »), `image` (voir « Des images »), `signature`, `toc` et `checkboxes` (voir « Signature, sommaire, liste à cocher »), `fields` et `code` (voir « Des champs et du code »), `invoice_totals` (voir « Des calculs »), `attendance` (voir « Une feuille d'émargement ») —, `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents (voir « Des styles de document »). Depuis loom-ia 2.1.0, `loom.pdf` a les mêmes : un même fichier de style et les mêmes modèles servent aux deux outils, la facture en Word pour l'artisan, en PDF pour l'envoi. Depuis loom-ia 2.1.0, `blocks` remplace `charts`, `images` et `extra_blocks`, refusés au chargement avec la forme qui les remplace (`charts → blocks: [chart]`). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
 `loom validate` montre les dossiers, puis le fuseau, les blocs facultatifs, les modèles, la lecture et, s'il y en a un, le style :
 
@@ -1488,7 +1488,7 @@ tools.0.loom.word.templates.facture — le modèle nomme son style dans son fich
 
 **Le modèle de langage n'en voit rien**, sauf les styles qui lui sont proposés (plus bas) : ni le schéma ni la description ne changent, et le style ne coûte aucun token. Un document qui suit un modèle prend `default.yaml`, la charte, puis le style du modèle ; un document libre (`none`), ou un outil sans modèles, s'arrête à la charte ; un outil sans `style` écrit dans `default.yaml` seul, le même fichier qu'avant, octet pour octet.
 
-**Les fichiers d'abord, l'héritage ensuite.** Chaque style complète le même style des fichiers précédents, propriété par propriété : une charte qui écrit `heading1: { color: brand }` garde la taille, le gras et les espacements de `default.yaml`. Puis chaque style prend les propriétés de sa base (`text`, sauf `quote_source`, qui part de `quote`, `fields_label`, qui part de `fields`, et `table_header`, `table_total`, `table_group`, `table_subtotal` et `invoice_totals`, qui partent de `table`), déjà complétée par les fichiers, puis les siennes : la police de `text` vaut pour les titres sans être répétée.
+**Les fichiers d'abord, l'héritage ensuite.** Chaque style complète le même style des fichiers précédents, propriété par propriété : une charte qui écrit `heading1: { color: brand }` garde la taille, le gras et les espacements de `default.yaml`. Puis chaque style prend les propriétés de sa base (`text`, sauf `quote_source`, qui part de `quote`, `fields_label`, qui part de `fields`, et `table_header`, `table_total`, `table_group`, `table_subtotal`, `invoice_totals` et `attendance`, qui partent de `table`), déjà complétée par les fichiers, puis les siennes : la police de `text` vaut pour les titres sans être répétée.
 
 ```yaml
 # prompts/styles/charte.yaml
@@ -1521,6 +1521,7 @@ footer:                    # « Page n / N » vient de default.yaml
 | `table`, `table_header`, `table_total` | Le tableau, sa ligne d'en-tête, sa ligne de total |
 | `table_group`, `table_subtotal` | La ligne d'un groupe, celle de son sous-total |
 | `invoice_totals` | Le récapitulatif de TVA (étroit, à droite) |
+| `attendance` | La feuille d'émargement |
 | `box` | Le cadre d'une section encadrée (`box: true`) |
 | `toc` | Le titre du sommaire (il part de `heading1`), ses niveaux, ses numéros de page |
 | `signature`, `signature_mention` | Le libellé d'un signataire, la mention (« Bon pour accord ») |
@@ -1555,6 +1556,7 @@ footer:                    # « Page n / N » vient de default.yaml
 | `caption` | `numbered` : « Tableau 1 — », « Figure 1 — » |
 | `toc` | `levels` : les niveaux de titre repris (1 à 3) ; `page_numbers` : `false` pour des liens sans numéros de page |
 | `fields` | `label_width` : la largeur des libellés, en cm (1 à 10) |
+| `attendance` | `row_height` : la hauteur d'une ligne, en cm (0,5 à 5) |
 | `watermark` | `text` |
 
 **Les réglages** ne sont pas des styles :
@@ -1565,7 +1567,7 @@ footer:                    # « Page n / N » vient de default.yaml
 | `page` | `size` : `A4`, `A5`, `Letter` ; `orientation` : `portrait`, `landscape` ; `margins`, ou `margin_top`, `margin_bottom`, `margin_left`, `margin_right`, en cm (0,5 à 5) |
 | `numbering` | La numérotation des titres : `none`, `decimal` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
 | `language` | `fr` ou `en` : la langue déclarée du document (correcteur, césure), l'écriture des nombres et des dates (« 1 250,50 € », « 10/11/2026 » ; « €1,250.50 », « 11/10/2026 »), les libellés |
-| `labels` | Les libellés que l'outil écrit, un par un : `table` (Tableau), `figure` (Figure), `contents` (Sommaire), `date` (Date :), `signature` (Signature :), `article` (Article), `total` (Total), `notes` (Notes, le titre des notes de fin d'un PDF), `subtotal` (Sous-total), `total_excl_tax` (Total HT), `tax` (TVA {rate} sur {base} : `{rate}`, le taux, obligatoire ; `{base}`, le montant HT de ce taux), `total_incl_tax` (Total TTC), `paid` (Acompte versé), `due` (Net à payer) |
+| `labels` | Les libellés que l'outil écrit, un par un : `table` (Tableau), `figure` (Figure), `contents` (Sommaire), `date` (Date :), `signature` (Signature :), `article` (Article), `total` (Total), `notes` (Notes, le titre des notes de fin d'un PDF), `subtotal` (Sous-total), `total_excl_tax` (Total HT), `tax` (TVA {rate} sur {base} : `{rate}`, le taux, obligatoire ; `{base}`, le montant HT de ce taux), `total_incl_tax` (Total TTC), `paid` (Acompte versé), `due` (Net à payer), `participant` (Participant) |
 | `image` | `grid` : deux images `half` qui se suivent se posent côte à côte, chacune avec sa légende |
 | `chart` | `colors` : la couleur de chaque série, dans l'ordre (12 au plus) ; `text`, `grid`, `title` : le texte, la grille, le titre |
 | `fonts` | Les fichiers TrueType d'une police, que le PDF embarque : `fonts: { Inter: { regular: fonts/Inter-Regular.ttf, bold: …, italic: …, bold_italic: … } }` (voir plus bas) |
@@ -1697,6 +1699,24 @@ Depuis loom-ia 2.1.1, pour `loom.word` et `loom.pdf`, avec `fields` et `code` da
 
 La relecture les rend tels qu'écrits : le tableau « loom fields » en `fields`, le paragraphe « loom code » en `code`. Un outil qui ne les déclare pas le dit dans `notes`, comme pour les blocs précédents.
 
+#### Une feuille d'émargement
+
+Depuis loom-ia 2.1.1, pour `loom.word` et `loom.pdf`, avec `attendance` dans `blocks` (aucun par défaut). Pour une formation, une réunion, une assemblée : une ligne par participant, une case à signer par session. Il coûte environ 130 tokens par appel de modèle (530 caractères de description et de schéma).
+
+```yaml
+  - python: loom.word
+    blocks: [attendance]
+    folders: …
+```
+
+```json
+{"type": "attendance", "participants": ["Jeanne Martin", "Paul Durand"], "sessions": ["Lundi matin", "Lundi après-midi"]}
+```
+
+- **Le rendu** : un tableau, une colonne « Participant » (`labels.participant`), à la largeur des noms (40 % de la largeur au plus), puis une colonne par session, qui se partagent le reste. Chaque ligne fait au moins `row_height` (1,5 cm dans `default.yaml`) : la place de signer. L'en-tête se répète à chaque page. Le style `attendance` part de `table` : `attendance: { row_height: 2, size: 9 }` dans la charte.
+- **Les bornes** : 100 participants, 10 sessions, 80 caractères par nom ou par session ; un nom a l'emphase, ni lien ni note. Dix sessions sur une page en portrait laissent des cases étroites : une section en paysage du modèle (`landscape: true`) leur donne de la place.
+- **La relecture** rend le bloc tel qu'écrit, reconnu à son style de paragraphe (« loom attendance »), et la réécriture redonne le même fichier. `loom.memory` lit les noms, en tableau.
+
 #### Lire un document Word
 
 Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossier qui a le droit `read`, et le rend **dans le vocabulaire de l'écriture** : ce qu'il lit peut être réécrit tel quel. Le devis ci-dessus, relu :
@@ -1763,7 +1783,7 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 - **La lecture d'un `.docx` ne voit pas** les images sans `image` dans `blocks` (ni, avec, celles d'un tableau ou d'une zone de texte), les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
 - **PDF** : un bloc qui ne tient pas dans une page (une ligne de tableau très haute) est refusé : le découper. Une section côte à côte ou encadrée, une note longue continuent sur la page suivante.
 - **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
-- **Coût** : environ 1,5 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 115 avec `fields`, environ 75 avec `code`, environ 185 avec `invoice_totals`, environ 250 avec `templates` (dont le champ `sections`) et 30 de plus par modèle déclaré (son nom et sa description), environ 80 pour un premier style proposé dans la charte. Le texte d'un modèle et ses styles proposés ne coûtent qu'à sa lecture.
+- **Coût** : environ 1,5 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 115 avec `fields`, environ 75 avec `code`, environ 185 avec `invoice_totals`, environ 130 avec `attendance`, environ 250 avec `templates` (dont le champ `sections`) et 30 de plus par modèle déclaré (son nom et sa description), environ 80 pour un premier style proposé dans la charte. Le texte d'un modèle et ses styles proposés ne coûtent qu'à sa lecture.
 
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 

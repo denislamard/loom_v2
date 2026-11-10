@@ -236,6 +236,25 @@ class InvoiceTotals(_Model):
     paid: Scalar | None = None
 
 
+MAX_PARTICIPANTS: Final = 100
+MAX_SESSIONS: Final = 10
+MAX_ATTENDANCE_LABEL: Final = 80
+
+
+class Attendance(_Model):
+    """Une feuille d'émargement : une ligne par participant, une case par session."""
+
+    type: Literal["attendance"]
+    participants: Annotated[
+        list[Annotated[str, Field(min_length=1)]],
+        Field(min_length=1, max_length=MAX_PARTICIPANTS),
+    ]
+    sessions: Annotated[
+        list[Annotated[str, Field(min_length=1)]],
+        Field(min_length=1, max_length=MAX_SESSIONS),
+    ]
+
+
 # Les blocs que le modèle voit sans bloc facultatif.
 type Block = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote,
@@ -256,7 +275,8 @@ type WrittenBlock = Annotated[
     | Contents
     | Fields
     | Code
-    | InvoiceTotals,
+    | InvoiceTotals
+    | Attendance,
     Field(discriminator="type"),
 ]
 
@@ -307,6 +327,7 @@ def block_union(blocks: Iterable[str], styles: Proposed = ()) -> object:
             ("fields", Fields),
             ("code", Code),
             ("invoice_totals", InvoiceTotals),
+            ("attendance", Attendance),
         )
         if name in chosen
     ]
@@ -460,6 +481,7 @@ _SUFFIXES: Final[Mapping[str, str]] = {
     "fields": "Fields",
     "code": "Code",
     "invoice_totals": "InvoiceTotals",
+    "attendance": "Attendance",
 }
 
 

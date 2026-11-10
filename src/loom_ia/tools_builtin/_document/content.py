@@ -38,6 +38,7 @@ from typing import Final, Literal
 from zoneinfo import ZoneInfo
 
 from loom_ia.tools_builtin._document.arguments import (
+    MAX_ATTENDANCE_LABEL,
     MAX_CATEGORIES,
     MAX_CODE_LINES,
     MAX_FIELD_LABEL,
@@ -50,6 +51,7 @@ from loom_ia.tools_builtin._document.arguments import (
     MAX_TABLE_COLUMNS,
     MAX_TABLE_ROWS,
     MAX_TEXT,
+    Attendance,
     Chart,
     ChartKind,
     CheckList,
@@ -518,6 +520,8 @@ def _blocks(
                 invoice = _invoice(block, where, state)
                 if invoice is not None:
                     blocks.append(invoice)
+            case Attendance():
+                blocks.append(_attendance(block, where, state))
             case Note():
                 text = _text(block.text, where, problems, required=True)
                 note_title = _text(block.title, f"{where}, title", problems) or None
@@ -1089,6 +1093,48 @@ def _invoice(block: InvoiceTotals, where: str, state: _State) -> TableOut | None
         style="invoice_totals",
         kinds=tuple(kind for *_, kind in found_lines),
         data=json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+# --- La feuille d'émargement ----------------------------------------------------------
+
+# La colonne des participants : la place de leurs noms (en caractères, bornée), et au plus
+# cette part de la page ; les sessions se partagent le reste, pour signer.
+MIN_NAME_CHARS: Final = 12
+MAX_NAME_CHARS: Final = 30
+MAX_NAME_SHARE: Final = 0.4
+
+
+def _attendance(block: Attendance, where: str, state: _State) -> TableOut:
+    """Une feuille d'émargement : « Participant » (``labels.participant``) puis une colonne
+    par session ; une ligne par participant, ses cases vides, pour signer."""
+    problems = state.problems
+    names: list[str] = []
+    for kind, given in (("participant", block.participants), ("session", block.sessions)):
+        for number, text in enumerate(given, start=1):
+            at = f"{where}, {kind} {number}"
+            said = _text(text, at, problems, required=True)
+            _bare(said, at, problems)
+            if len(said) > MAX_ATTENDANCE_LABEL:
+                problems.error(f"{at} : {len(said)} caractères, au-delà de {MAX_ATTENDANCE_LABEL}")
+            names.append(said)
+    participants, sessions = names[: len(block.participants)], names[len(block.participants) :]
+    label = state.labels.participant
+    longest = max(len(name) for name in [label, *participants])
+    first = min(
+        (min(max(longest, MIN_NAME_CHARS), MAX_NAME_CHARS) + COLUMN_PADDING) / PAGE_CHARS,
+        MAX_NAME_SHARE,
+    )
+    empty: tuple[Inline, ...] = tuple(() for _ in sessions)
+    return TableOut(
+        headers=(label, *(plain(inline(session)) for session in sessions)),
+        align=("left", *("center" for _ in sessions)),
+        rows=tuple((plain(inline(name)), *("" for _ in sessions)) for name in participants),
+        total=None,
+        widths=(first, *((1 - first) / len(sessions) for _ in sessions)),
+        caption=None,
+        cells=tuple((inline(name), *empty) for name in participants),
+        style="attendance",
     )
 
 

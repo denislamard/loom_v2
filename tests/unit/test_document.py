@@ -671,6 +671,7 @@ def test_variants_add_only_what_is_asked() -> None:
             "type": "invoice_totals",
             "from_table": {"amount": "Montant", "rate": "TVA"},
         },
+        "attendance": {"type": "attendance", "participants": ["Léa"], "sessions": ["Matin"]},
     }
     for chosen in ((), ("chart",), ("image", "toc"), ("signature", "checkboxes"), tuple(examples)):
         model = variant(DocumentCall, blocks=chosen)
@@ -1366,3 +1367,43 @@ def test_invoice_totals_faults() -> None:
         },
     )
     assert "paid : un acompte versé se donne en positif" in refused_paid
+
+
+# --- L'émargement (lot 7) ---------------------------------------------------------------
+
+
+def attendance(**sheet: Any) -> Prepared:
+    model = variant(DocumentCall, blocks=("attendance",))
+    request = parse(model, {"path": "s/a", "blocks": [{"type": "attendance", **sheet}]})
+    assert isinstance(request, WriteArguments)
+    return prepare(request, PARIS)
+
+
+def test_an_attendance_sheet() -> None:
+    found = attendance(participants=["Jeanne Martin", "Paul *Durand*"], sessions=["Matin", "Soir"])
+    [sheet] = found.blocks
+    assert isinstance(sheet, TableOut) and sheet.style == "attendance"
+    assert sheet.headers == ("Participant", "Matin", "Soir")
+    assert sheet.align == ("left", "center", "center")
+    assert sheet.rows == (("Jeanne Martin", "", ""), ("Paul Durand", "", ""))
+    assert sheet.cells[1] == ((Run("Paul "), Run("Durand", italic=True)), (), ())
+    # Les noms : leur place (le plus long, 13 caractères, et la marge) ; les sessions, le
+    # reste, à parts égales.
+    assert sheet.widths == pytest.approx((15 / 90, (1 - 15 / 90) / 2, (1 - 15 / 90) / 2))
+    assert sheet.total is None and sheet.kinds == ()
+
+
+def test_attendance_faults() -> None:
+    with pytest.raises(ToolError) as caught:
+        attendance(participants=["  ", "x" * 81, "[Léa](https://a.fr)"], sessions=["Matin"])
+    said = str(caught.value)
+    for part in (
+        "bloc 1 (attendance), participant 1 : texte vide",
+        "bloc 1 (attendance), participant 2 : 81 caractères, au-delà de 80",
+        "bloc 1 (attendance), participant 3 : ni lien, ni note",
+    ):
+        assert part in said, part
+    with pytest.raises(ToolError, match="sessions"):
+        attendance(participants=["Léa"], sessions=[f"S{n}" for n in range(11)])
+    with pytest.raises(ToolError, match="participants"):
+        attendance(participants=["Léa"] * 101, sessions=["Matin"])

@@ -508,11 +508,18 @@ def _table(
     subtotal = style.look("table_subtotal")
     lines = {"header": header, "total": total, "subtotal": subtotal}
 
+    # Une ligne d'émargement : au moins sa hauteur, pour signer.
+    tall = (
+        f'<w:trHeight w:val="{round(tables.row_height * CM)}" w:hRule="atLeast"/>'
+        if tables.row_height
+        else ""
+    )
+
     def row(cells: Sequence[str | Inline], kind: str = "body", band: bool = False) -> str:
         props = (
             "<w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>"
             if kind == "header"
-            else ("<w:trPr><w:cantSplit/></w:trPr>")
+            else (f"<w:trPr><w:cantSplit/>{tall if kind == 'body' else ''}</w:trPr>")
         )
         said = f"<w:tr>{props}"
         own = written[kind]
@@ -769,7 +776,7 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
             case TableOut():
                 name = block.style or layout.styles.get("table") or "table"
                 text = body.word(name)
-                if text == look.INVOICE_TOTALS:
+                if text in (look.INVOICE_TOTALS, look.ATTENDANCE):
                     body.used.add(text)
                 said += _table(
                     body, block, width, style.look(name), cell_style=text, caption=caption

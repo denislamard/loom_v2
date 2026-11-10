@@ -903,7 +903,7 @@ Chaque lot est livrable seul, testé, avec sa documentation.
 | **4. La parité du PDF** (fait, § 21) | Le même style et les mêmes modèles en reportlab, polices TrueType, notes de fin, `checkboxes`, `signature`, `toc` | Clôt la rupture : les quatre premiers lots forment la 2.1.0 (O-5) |
 | **5. Le texte enrichi** (fait, § 22) | `fields`, `code`, liens, notes de bas de page, renvois, emphase dans les cellules, listes à trois niveaux (Word et PDF) | Ajouts sans rupture |
 | **6. Les calculs** (fait, § 23) | Colonnes calculées, groupes et sous-totaux, `invoice_totals` | Le cœur du devis et de la facture |
-| **7. L'émargement** | `attendance` | Indépendant des autres ajouts |
+| **7. L'émargement** (fait, § 24) | `attendance` | Indépendant des autres ajouts |
 
 Pour comparer, les deux commits des styles du 9 novembre (`d8f025d`, `0f38f5f`) font +4 186 / −354 lignes, docs et tests compris. Ce chantier en vaut, à vue de nez, trois fois plus.
 
@@ -1297,6 +1297,38 @@ Les documents sans calcul sont identiques, octet pour octet, au lot 5, en Word c
 - `test_pdf.py` : 55 (1 de plus) : une facture calculée en PDF (groupes, sous-totaux, récapitulatif, fond des groupes).
 - `test_memory_tool.py` : 58 (1 de plus) : une facture de `loom.word` indexée telle qu'affichée.
 - Suite complète : 4 439 réussis, 201 sautés (26 de plus qu'au lot 5). ruff, format, `lint-imports` (6 contrats) et pyright passent sans erreur.
+
+## 24. Ce qui est écrit : le lot 7 (10 novembre 2026)
+
+Codé sans commit sur `15f5318` (le lot 6). La section `2.1.1 - non publiée` du CHANGELOG a un paragraphe de plus. Avec ce lot, les sept lots de la refonte sont écrits.
+
+**Ce qui change**
+
+- **`attendance` (§ 8.11)** : un bloc facultatif, préparé en `TableOut` au style `attendance` : l'en-tête « Participant » (`labels.participant`) et les sessions, une ligne par participant, ses cellules vides.
+- **Le style** : `attendance` part de `table`, avec `row_height` (en cm), une propriété qui lui est propre ; 1,5 cm dans `default.yaml`.
+- **Word** : `trHeight` « au moins » sur chaque ligne de participant, l'en-tête répété (`tblHeader`), les cellules au style de paragraphe « loom attendance ». **PDF** : la hauteur de chaque ligne de la `Table`, l'en-tête répété (`repeatRows`).
+- **La relecture** reconnaît le tableau à ce style et rend le bloc : les sessions de l'en-tête, sans « Participant », les noms de la première colonne.
+
+**Écarts avec l'analyse, à valider**
+
+1. **La relecture reconnaît un style de paragraphe** (« loom attendance »), pas un style de tableau (« loom émargement », dans l'analyse du 9 novembre) : comme les lignes de groupe et le récapitulatif de TVA du lot 6, et le style à toi qui en partirait garde ses propriétés de texte.
+2. **Les largeurs** : la colonne des noms prend la place du plus long (12 à 30 caractères, 40 % de la largeur au plus) ; les sessions se partagent le reste, à parts égales, pour que chaque case ait la même place pour signer.
+3. **Un nom a l'emphase** (`*Société*`), ni lien ni note ; une session est du texte seul, l'en-tête étant en gras par son style.
+4. **Dans le PDF, une ligne a sa hauteur, pas « au moins » sa hauteur** : reportlab fixe la hauteur d'une ligne ; 80 caractères au plus tiennent dans 1,5 cm.
+5. **Rien n'est gardé à part** : les noms et les sessions se relisent dans le tableau, et un nom corrigé dans Word revient corrigé.
+6. **Le coût** : 530 caractères (343 estimés pour le schéma seul ; l'aide en ajoute 150).
+
+**Non-régression (§ 14)**
+
+Les documents sans émargement sont identiques, octet pour octet, au lot 6, en Word comme en PDF : les 17 documents et la relecture du script d'empreintes, `DEVIS_SHA256` et `HOUSE_STYLES_SHA256`. Une feuille de 24 participants et 4 sessions passe les schémas XSD de l'ISO/IEC 29500, tient sur deux pages dans LibreOffice comme dans le PDF de l'outil, l'en-tête répété ; relue puis réécrite, elle redonne le même fichier.
+
+**Essais**
+
+- `test_document.py` : 143 (2 de plus) : l'émargement préparé (en-tête, alignements, emphase des noms, largeurs) ; ses fautes (nom vide, trop long, avec un lien ; trop de sessions, trop de participants) ; la variante avec `attendance`.
+- `test_word.py` : 77 (1 de plus) : écrit (hauteur des lignes, en-tête répété, style), relu, réécrit au même fichier ; un outil sans le bloc le dit ; lu tel qu'affiché.
+- `test_word_styles.py` : 77 (3 de plus) : la hauteur et la taille prises à la charte, `labels.participant` ; `row_height` propre à `attendance` ; le coût du bloc.
+- `test_pdf.py` : 56 (1 de plus) : 24 participants sur deux pages, l'en-tête répété.
+- Suite complète : 4 446 réussis, 201 sautés (7 de plus qu'au lot 6). ruff, format, `lint-imports` (6 contrats) et pyright passent sans erreur.
 
 ## Sources
 

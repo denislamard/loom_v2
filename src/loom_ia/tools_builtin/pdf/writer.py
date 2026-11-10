@@ -992,9 +992,16 @@ class _Body:
             if kind != "group" and (rule := _rule(line.border_top)) is not None:
                 commands.append(("LINEABOVE", (0, row), (-1, row), rule[0], rule[1]))
         position = tables.position or "left"
+        # Une ligne d'émargement : sa hauteur, pour signer ; l'en-tête, la sienne.
+        tall = tables.row_height * cm if tables.row_height else None
         found = Table(
             data,
             colWidths=widths,
+            rowHeights=[
+                None if index < len(data) - len(block.cells) else tall for index in range(len(data))
+            ]
+            if tall
+            else None,
             repeatRows=1 if block.headers else 0,
             hAlign=cast(Any, position.upper()),
         )

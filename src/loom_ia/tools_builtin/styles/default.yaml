@@ -60,6 +60,7 @@ table_total: { bold: true, border_top: 1.5pt 1F3864 }
 table_group: { bold: true, fill: F2F2F2 }
 table_subtotal: { italic: true, border_top: 0.5pt A6A6A6 }
 invoice_totals: { width: content, position: right }
+attendance: { row_height: 1.5 }
 box: { border: 0.75pt 1F3864 }
 code: { font: Courier New, size: 9, fill: F2F2F2, line_spacing: 1, indent: 0.3 }
 link: { color: 0563C1, underline: true }

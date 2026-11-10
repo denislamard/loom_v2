@@ -144,6 +144,10 @@ OPTIONAL_HELP: Final[Mapping[str, str]] = {
         "précède ; paid : l'acompte déjà versé. L'outil écrit le total HT, la TVA de chaque "
         "taux, le total TTC et le net à payer."
     ),
+    "attendance": (
+        "Feuille d'émargement ('type': 'attendance') : participants (les noms, 100 au plus), "
+        "sessions (une colonne à signer chacune, 10 au plus)."
+    ),
 }
 
 
