@@ -40,10 +40,12 @@ from loom_ia.tools_builtin._office_params import TemplateRef
 from loom_ia.tools_builtin._style_params import (
     MAX_LOGO_BYTES,
     MAX_STYLE_CHARS,
+    StyleFile,
     StyleRef,
-    StyleSpec,
     check_charte,
     check_layout,
+    describe,
+    resolve,
 )
 from loom_ia.tools_builtin._templates import parse as parse_template
 
@@ -427,24 +429,28 @@ def _templates_read(
 def _styles_read(
     declared: PythonTool, resources_dir: Path, label: str, *, source: Path
 ) -> PythonTool:
-    """Les styles d'un outil ``loom.word``, lus : sa charte et la disposition de ses modèles.
+    """Les styles d'un outil ``loom.word``, lus : sa charte et le style de ses modèles.
 
     Chaque fichier YAML, relatif à ``resources_dir`` et contenu dans ce dossier, est lu
     une fois au chargement avec ses logos, et validé ici : une faute (clé inconnue,
-    section hors du plan du modèle, logo absent) se voit dès ``loom validate``. Les
-    modèles sont déjà lus (``_templates_read``) : la disposition se compare à leur plan.
+    couleur inconnue, base en boucle, section hors du plan du modèle, logo absent) se
+    voit dès ``loom validate``. Les modèles sont déjà lus (``_templates_read``) : la
+    disposition se compare à leur plan. La cascade est résolue comme à l'écriture :
+    ``default.yaml``, la charte, le style du modèle.
     """
     charte = cast(object, getattr(declared, "style", None))
     templates = cast(object, getattr(declared, "templates", None))
     update: dict[str, object] = {}
+    read_charte: StyleFile | None = None
     if isinstance(charte, StyleRef):
         where = f"{label}.style"
-        spec = _style_read(charte, resources_dir, where, source=source)
+        read_charte = _style_read(charte, resources_dir, where, source=source)
         try:
-            check_charte(spec, where)
+            check_charte(read_charte, where)
+            _resolved(where, read_charte)
         except ValueError as exc:
             raise ConfigError(str(exc), source=source) from exc
-        update["style"] = StyleRef(spec=spec)
+        update["style"] = StyleRef(spec=read_charte)
     if isinstance(templates, dict) and templates:
         read: dict[str, TemplateRef] = {}
         for name, ref in cast(dict[str, TemplateRef], templates).items():
@@ -455,6 +461,7 @@ def _styles_read(
             spec = _style_read(ref.style, resources_dir, where, source=source)
             try:
                 check_layout(spec, parse_template(name, ref.text or ""), where)
+                _resolved(where, read_charte, spec)
             except ValueError as exc:
                 raise ConfigError(str(exc), source=source) from exc
             read[name] = ref.model_copy(update={"style": StyleRef(spec=spec)})
@@ -462,8 +469,20 @@ def _styles_read(
     return declared.model_copy(update=update) if update else declared
 
 
-def _style_read(ref: StyleRef, resources_dir: Path, where: str, *, source: Path) -> StyleSpec:
-    """Un fichier de style lu et validé, ses logos lus ; ou le style donné en Python."""
+def _resolved(where: str, *files: StyleFile | None) -> None:
+    """La cascade résolue, pour dire ses fautes au chargement (couleur, base)."""
+    try:
+        resolve(*files)
+    except ValueError as exc:
+        raise ValueError(f"{where} : {exc}") from None
+
+
+# Le message de PyYAML devant un texte qui contient « : » sans guillemets.
+_COLON: Final = "mapping values are not allowed here"
+
+
+def _style_read(ref: StyleRef, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
+    """Un fichier de style lu et validé, ses logos lus ; ou le style écrit en ligne."""
     if ref.spec is not None:
         return _logos_read(ref.spec, resources_dir, where, source=source)
     file = cast(Path, ref.file)
@@ -484,28 +503,34 @@ def _style_read(ref: StyleRef, resources_dir: Path, where: str, *, source: Path)
     try:
         data = load_yaml(text)
     except (yaml.YAMLError, DuplicateKey) as exc:
-        raise ConfigError(f"{where} — YAML invalide : {exc} : {path}", source=source) from exc
+        hint = (
+            " — un texte qui contient « : » ou « # » s'écrit entre guillemets, ou après | "
+            "à la ligne"
+            if _COLON in str(exc)
+            else ""
+        )
+        raise ConfigError(f"{where} — YAML invalide : {exc}{hint} : {path}", source=source) from exc
     try:
-        spec = StyleSpec.model_validate(data if data is not None else {})
+        spec = StyleFile.model_validate(data if data is not None else {})
     except ValidationError as exc:
-        error = from_validation(exc, root=None, data=data)
-        lines = "\n".join(f"{where}.{line}" for line in error.reason.splitlines())
+        lines = "\n".join(describe(exc, where))
         raise ConfigError(f"{lines}\n({path})", source=source) from exc
     return _logos_read(spec, resources_dir, where, source=source)
 
 
-def _logos_read(spec: StyleSpec, resources_dir: Path, where: str, *, source: Path) -> StyleSpec:
+def _logos_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
     """Les logos d'un style, lus : leurs octets à la place de leur fichier."""
-    bands: dict[str, object] = {}
-    for band in ("header", "footer"):
-        given = getattr(spec, band)
-        if given is None or given.logo is None or given.logo.file is None:
+    styles = dict(spec.styles)
+    changed = False
+    for name, props in spec.styles.items():
+        if not isinstance(props.logo, str):
             continue
-        label = f"{where}.{band}.logo"
-        path = _within_resources(resources_dir, given.logo.file, label, source=source)
+        label = f"{where}.{name}.logo"
+        written = Path(props.logo)
+        path = _within_resources(resources_dir, written, label, source=source)
         if not path.is_file():
             raise ConfigError(
-                f"{label} — logo introuvable : {path}{_hint(resources_dir, given.logo.file)}",
+                f"{label} — logo introuvable : {path}{_hint(resources_dir, written)}",
                 source=source,
             )
         try:
@@ -518,9 +543,9 @@ def _logos_read(spec: StyleSpec, resources_dir: Path, where: str, *, source: Pat
             data = path.read_bytes()
         except OSError as exc:
             raise ConfigError(f"{label} — logo illisible : {exc}", source=source) from exc
-        logo = given.logo.model_copy(update={"file": None, "data": data})
-        bands[band] = given.model_copy(update={"logo": logo})
-    return spec.model_copy(update=bands) if bands else spec
+        styles[name] = props.model_copy(update={"logo": data})
+        changed = True
+    return spec.model_copy(update={"styles": styles}) if changed else spec
 
 
 def _ref_label(ref: McpTools | SourceTools) -> str:

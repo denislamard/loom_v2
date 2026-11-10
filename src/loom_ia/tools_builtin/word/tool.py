@@ -23,14 +23,14 @@ from loom_ia.tools_builtin._document.tool import DocumentTool
 from loom_ia.tools_builtin._folders import Folders, mount
 from loom_ia.tools_builtin._office_params import read_templates
 from loom_ia.tools_builtin._style_params import (
-    HOUSE,
+    Labels,
     Style,
+    StyleFile,
     StyleRef,
-    StyleSpec,
     check_charte,
     check_layout,
+    house,
     logos,
-    merged,
     resolve,
     unsafe_fonts,
 )
@@ -55,16 +55,17 @@ class WordCall(DocumentCall):
 
 @dataclass(frozen=True, slots=True)
 class Styles:
-    """Les styles résolus d'un outil : la charte, et charte + disposition par modèle."""
+    """Les styles résolus d'un outil : la charte, et charte + style du modèle, par modèle ;
+    le style maison sans charte (``default`` vide)."""
 
-    default: Style = HOUSE
+    default: Style | None = None
     by_template: Mapping[str, Style] = field(default_factory=dict[str, Style])
     # Ce que ``loom validate`` en dit.
     said: tuple[tuple[str, str], ...] = ()
 
     def of(self, template: str | None) -> Style:
         """Le style d'un document : celui de son modèle, sinon la charte."""
-        return self.by_template.get(template or "", self.default)
+        return self.by_template.get(template or "", self.default or house())
 
 
 NO_STYLES: Final = Styles()
@@ -95,6 +96,9 @@ class WordTool(DocumentTool):
 
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
         return writer.render(prepared, self._styles.of(prepared.template)), {}, []
+
+    def _labels(self, template: str | None) -> Labels:
+        return self._styles.of(template).labels
 
     async def _read(self, request: ReadArguments, where: str, data: bytes) -> dict[str, JsonValue]:
         found = await in_thread(
@@ -182,12 +186,13 @@ def read_styles(params: WordParams, templates: Mapping[str, Template]) -> Styles
 
     Le chargeur de config a lu les fichiers (``spec``) et leurs logos ; une référence
     construite en Python sans passer par lui garde ``file`` : c'est une faute de montage.
-    Les logos sont reconnus ici (PNG ou JPEG) : une faute se voit dès ``loom validate``.
+    Les logos sont reconnus ici (PNG ou JPEG), la cascade résolue (couleurs nommées,
+    bases) : une faute se voit dès ``loom validate``.
     """
     charte = _spec(params.style, f"{REFERENCE}.style")
     if charte is not None:
         check_charte(charte, f"{REFERENCE}.style")
-    layouts: dict[str, StyleSpec] = {}
+    layouts: dict[str, StyleFile] = {}
     for name, ref in params.templates.items():
         where = f"{REFERENCE}.templates[{name}].style"
         spec = _spec(ref.style, where)
@@ -197,39 +202,48 @@ def read_styles(params: WordParams, templates: Mapping[str, Template]) -> Styles
     declared = [spec for spec in (charte, *layouts.values()) if spec is not None]
     if not declared:
         return NO_STYLES
-    fonts: list[str] = []
     for spec in declared:
-        fonts += unsafe_fonts(spec)
-        for band, logo in logos(spec):
-            if logo.data is None:
-                raise ValueError(f"{REFERENCE} : logo de {band} ({logo.file}) non lu")
+        for style, logo in logos(spec):
+            if isinstance(logo, str):
+                raise ValueError(f"{REFERENCE} : logo de {style} ({logo}) non lu")
             try:
-                parse_picture(logo.data)
+                parse_picture(logo)
             except PictureError as exc:
-                raise ValueError(f"{REFERENCE} : logo de {band} : {exc}") from None
+                raise ValueError(f"{REFERENCE} : logo de {style} : {exc}") from None
+    default = _resolved(f"{REFERENCE}.style", charte)
+    by_template = {
+        name: _resolved(f"{REFERENCE}.templates[{name}].style", charte, spec)
+        for name, spec in layouts.items()
+    }
     said = [
         (
             "style",
             ("charte" if charte is not None else "style maison")
-            + (f" ; disposition : {', '.join(layouts)}" if layouts else ""),
+            + (f" ; style de modèle : {', '.join(layouts)}" if layouts else ""),
         )
     ]
+    fonts = sorted(
+        {font for style in (default, *by_template.values()) for font in unsafe_fonts(style)}
+    )
     if fonts:
         said.append(
             (
                 "polices",
-                f"{', '.join(dict.fromkeys(fonts))} : hors des polices de tous les postes, "
+                f"{', '.join(fonts)} : hors des polices de tous les postes, "
                 "remplacée(s) chez qui ne les a pas",
             )
         )
-    return Styles(
-        default=resolve(merged(charte)),
-        by_template={name: resolve(merged(charte, spec)) for name, spec in layouts.items()},
-        said=tuple(said),
-    )
+    return Styles(default=default, by_template=by_template, said=tuple(said))
 
 
-def _spec(ref: StyleRef | None, where: str) -> StyleSpec | None:
+def _resolved(where: str, *files: StyleFile | None) -> Style:
+    try:
+        return resolve(*files)
+    except ValueError as exc:
+        raise ValueError(f"{where} : {exc}") from None
+
+
+def _spec(ref: StyleRef | None, where: str) -> StyleFile | None:
     if ref is None:
         return None
     if ref.spec is None:

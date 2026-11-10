@@ -6,7 +6,10 @@ formats de nombres, des étiquettes de valeur aux mêmes conditions, le même
 bout d'axe. Chaque format l'applique avec ses moyens — le XML DrawingML de
 Word, ``reportlab.graphics`` dans le PDF, ``openpyxl.chart`` dans un classeur.
 
-Module léger — la bibliothèque standard seulement — : un outil l'importe sans
+Les couleurs sont celles du style maison (``styles/default.yaml``, réglage ``chart``) :
+``word`` prend celles de son style, ``pdf`` et ``excel`` celles de la maison.
+
+Module léger — Pydantic et PyYAML, par ``_style_params`` — : un outil l'importe sans
 tirer les dépendances d'un autre.
 """
 
@@ -14,13 +17,14 @@ import math
 from collections.abc import Sequence
 from typing import Final
 
+from loom_ia.tools_builtin._style_params import default_style
 from loom_ia.tools_builtin._values import ColumnType
 
+_HOUSE: Final = default_style().chart
 # La palette de la maison : bleu nuit, puis des couleurs qui s'en distinguent bien.
-PALETTE: Final = ("1F3864", "C55A11", "8EA9DB", "548235", "7F7F7F", "BF9000",
-                  "2F5496", "843C0C", "A5A5A5", "4472C4", "70AD47", "FFC000")  # fmt: skip
-GRID: Final = "D9D9D9"
-TEXT: Final = "404040"
+PALETTE: Final = tuple(_HOUSE.colors if _HOUSE is not None and _HOUSE.colors else ())
+GRID: Final = _HOUSE.grid if _HOUSE is not None and _HOUSE.grid else ""
+TEXT: Final = _HOUSE.text if _HOUSE is not None and _HOUSE.text else ""
 # Au-delà, des étiquettes de valeur sur chaque barre se chevauchent.
 LABELLED_BARS: Final = 12
 # La place laissée au bout de la plus grande barre pour son étiquette.

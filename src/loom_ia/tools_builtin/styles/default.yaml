@@ -1,0 +1,67 @@
+# default.yaml — le style maison, livré avec loom.
+#
+# Le point de départ de tout document : la charte d'un outil (style:) et le style d'un
+# modèle de document reprennent ces noms et n'écrivent que ce qui change, propriété par
+# propriété. Tailles et espacements en points ; marges, retraits et largeurs en
+# centimètres ; couleurs en six chiffres hexadécimaux, ou par un nom défini dans colors.
+# Un style sans base part de text.
+
+colors: {}
+page: { size: A4, orientation: portrait, margins: 2 }
+numbering: none
+language: fr
+image: { grid: false }
+chart:
+  colors: [1F3864, C55A11, 8EA9DB, 548235, 7F7F7F, BF9000, 2F5496, 843C0C, A5A5A5, 4472C4, 70AD47, FFC000]
+  text: 404040
+  grid: D9D9D9
+  title: 1F3864
+
+text: { font: Calibri, size: 11, line_spacing: 1.15, space_after: 6 }
+document_title:
+  size: 20
+  bold: true
+  color: 1F3864
+  space_after: 15
+  border_bottom: 1pt 2F5496
+heading1: { size: 16, bold: true, color: 1F3864, space_before: 18, space_after: 6 }
+heading2: { size: 13, bold: true, color: 1F3864, space_before: 12, space_after: 4 }
+heading3: { size: 11.5, bold: true, color: 2F5496, space_before: 10, space_after: 3 }
+paragraph: {}
+list: { space_after: 3 }
+note: { fill: F2F2F2, indent: 0.3, space_before: 6, space_after: 10, border_left: 3pt 2F5496 }
+quote:
+  italic: true
+  color: 595959
+  indent: 1
+  space_before: 8
+  space_after: 4
+  border_left: 1.5pt A6A6A6
+quote_source: { italic: false, align: right, space_after: 10 }
+caption:
+  size: 9
+  italic: true
+  color: 595959
+  align: center
+  space_before: 3
+  space_after: 12
+  numbered: false
+
+table:
+  size: 10
+  line_spacing: 1
+  space_after: 0
+  borders: grid
+  line: 0.5pt A6A6A6
+  width: full
+  position: left
+table_header: { bold: true, fill: D9E1F2, align: center }
+table_total: { bold: true, border_top: 1.5pt 1F3864 }
+box: { border: 0.75pt 1F3864 }
+
+toc: { base: heading1, space_before: 12, space_after: 6, levels: 2, page_numbers: true }
+signature: { bold: true, space_before: 12, space_after: 3 }
+signature_mention: { italic: true, space_after: 3 }
+header: { size: 9, color: 595959, space_after: 0 }
+footer: { size: 9, color: 595959, space_after: 0, align: center, center: "Page {page} / {pages}" }
+watermark: { text: "", font: Arial, color: D9D9D9 }

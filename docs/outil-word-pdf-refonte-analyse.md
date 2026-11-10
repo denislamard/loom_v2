@@ -898,7 +898,7 @@ Chaque lot est livrable seul, testé, avec sa documentation.
 | Lot | Contenu | Pourquoi dans cet ordre |
 | --- | --- | --- |
 | **1. Le vocabulaire en anglais** (fait, § 18) | Blocs, valeurs, `none`, rôles et types d'`excel`, `memory` ; `blocks` à la place de `charts`, `images` et `extra_blocks` ; `saut_de_page` retiré, `note` redécrite | Mécanique, mais touche tous les tests : le faire d'abord évite de renommer deux fois |
-| **2. Le style hors du code (Word)** | `default.yaml`, le format de style (styles nommés, `base`, cascade, couleurs, `language`, `labels`), le chargeur, `word/style.py` piloté par le style ; Word sans charte identique à l'octet ; test sans valeur visuelle | La base de tout le reste |
+| **2. Le style hors du code (Word)** (fait, § 19) | `default.yaml`, le format de style (styles nommés, `base`, cascade, couleurs, `language`, `labels`), le chargeur, `word/style.py` piloté par le style ; Word sans charte identique à l'octet ; test sans valeur visuelle | La base de tout le reste |
 | **3. Les modèles en YAML et les sections (Word)** | Le format du modèle, `sections` dans l'appel, titres écrits par l'outil, `show_title`, `styles`, disposition, texte fixe, signets, relecture ; styles proposés au modèle de langage | Corrige ce qu'ont montré les essais du 10 novembre |
 | **4. La parité du PDF** | Le même style et les mêmes modèles en reportlab, polices TrueType, notes de fin, `checkboxes`, `signature`, `toc` | Clôt la rupture : les quatre premiers lots forment la 2.1.0 (O-5) |
 | **5. Le texte enrichi** | `fields`, `code`, liens, notes de bas de page, renvois, emphase dans les cellules, listes à trois niveaux (Word et PDF) | Ajouts sans rupture |
@@ -1011,6 +1011,74 @@ Résultats : 4 331 réussis, 201 sautés (extras de l'environnement de travail).
 - les exemples (§ 12.3).
 
 Dans `temp/agent`, `prompts/templates/note.yaml` nomme encore `paragraphe`, `liste` et `titre` dans ses consignes. Le schéma ne les accepte plus : le modèle de langage risque un premier appel refusé. Ce fichier sera de toute façon réécrit au format YAML au lot 3. La config de l'agent, elle, se charge telle quelle (`loom validate` : `blocs : aucun`).
+
+## 19. Ce qui est écrit : le lot 2 (10 novembre 2026)
+
+Codé sans commit sur `ec3a467` (le lot 1). La section `2.1.0 - non publiée` du CHANGELOG a un paragraphe de plus.
+
+**Ce qui change**
+
+- **Le format de style (§ 3)** : styles nommés, `base`, cascade puis héritage (§ 3.6), réglages (§ 3.4), `language` et `labels` (§ 9), pour ce que Word écrit aujourd'hui. `_style_params.py` est réécrit : la lecture (`StyleFile`), la résolution (`resolve` : `default.yaml`, la charte, le style du modèle), le style résolu (`Style`, un `Look` par style nommé).
+- **`tools_builtin/styles/default.yaml` (§ 3.5)** : le style maison, aux valeurs du code d'avant. Il est empaqueté avec loom (vérifié dans la roue).
+- **`word/style.py` traduit les styles** : un style Word écrit ce que son style nommé déclare en plus du style nommé de sa base Word (`Style.between`), dans l'ordre du schéma ; Word reprend le reste par `basedOn`. Le code n'ajoute que la mécanique : titre gardé avec la suite, niveau de plan, numérotation, retraits des listes. `word/writer.py` et `word/chart.py` prennent couleurs, filets, fonds, libellés et langue dans le style.
+- **Le chargeur** lit un chemin ou un style écrit en ligne (D-15), les logos (`logo` est un chemin), et résout la cascade au chargement pour dire ses fautes : couleur inconnue, base inconnue ou en boucle, propriété hors de son style. Un texte YAML qui contient « : » reçoit la règle des guillemets.
+- **La langue** : `prepare` reçoit les libellés et la langue du style du document (nombres, dates, booléens, « Total ») ; `loom.pdf` reste en français.
+- **Les couleurs des graphiques** des trois outils viennent de `default.yaml` (`_chart_style` le lit) ; Word prend celles de son style.
+- **Le seuil « tableau étroit »** se prend sur la page du style (piège 5 du § 12.5).
+
+**Écarts avec l'analyse, à valider**
+
+1. **`signature_mention`**, un style de plus que le § 3.2 : la mention en italique n'a pas les espacements du libellé.
+2. **`toc` part de `heading1`** dans `default.yaml` : le titre du sommaire suit les titres de la charte, comme avant.
+3. **`watermark` est un style** (`text`, `font`, `color`), plus un réglage ; `watermark: BROUILLON` reste permis.
+4. **`chart` a `text`, `grid` et `title`** en plus de `colors`.
+5. **Ce qui reste dans le code** : le blanc entre deux secteurs, la police de symboles des cases à cocher (un glyphe, comme une puce), la mise en forme des entrées du sommaire (`toc 1` à `toc 3`), le titre d'une note en gras, la place pour signer (2 cm).
+6. **Un style à toi déclare sa `base`** : sinon une faute de frappe (`heading_1`) serait un style à toi sans effet. Le message propose le nom proche.
+7. **Ce qui attend le lot 3** : les styles à toi ne sont pas encore écrits dans `styles.xml`, ni `description` permise (§ 3.7), faute d'un modèle qui les choisisse.
+8. **Ce qui attend les lots 4 à 7** : `fonts` (TrueType, § 10), refusé en clé de la 2.0 en attendant ; les styles des nouveaux blocs (`code`, `link`, `footnote`, `fields`, groupes, `invoice_totals`, `attendance`).
+9. **La disposition reste dans le style du modèle** jusqu'au lot 3, valeurs en anglais : `title: hidden` ou `quiet`, `size: small`, `align: left`…, `table` à la place de `tables`. Le titre discret prend la couleur de `heading3` et la taille de `text`.
+10. **`language: en`** écrit `en-US`, « €1,250.50 », les dates en MM/JJ/AAAA (§ 9), « Yes » et « No ».
+11. **`_style_params.py` fait 1 074 lignes**, plutôt que les 400 estimées : la disposition provisoire, les libellés et les messages de la 2.0 en font environ 250.
+
+**Non-régression (§ 14)**
+
+Sans charte, les 17 documents et le classeur d'essai du lot 1 sont identiques, octet pour octet, entre `ec3a467` et le lot 2. Le `styles.xml` du style maison aussi (`HOUSE_STYLES_SHA256`), et un style vide (`{}`) donne le même fichier que `default.yaml` seul.
+
+**Essais**
+
+- `test_word_styles.py` est réécrit au nouveau format : 67 essais, dont ceux qui suivent.
+  - Aucune couleur ni police dans `word/`.
+  - La cascade et l'héritage.
+  - 17 fautes de fichier et 5 fautes de cascade.
+  - Le style en ligne dans la config.
+  - Un document en anglais.
+  - Un pied de page qui garde ses numéros.
+  - Le cadre au style `box`.
+- Suite complète : 4 358 réussis, 201 sautés (27 de plus qu'au lot 1).
+- ruff, format, `lint-imports` et pyright passent sans erreur.
+
+**Ton agent `temp/agent`**
+
+Sa charte et le style de la note sont au format de la 2.0 : la config est refusée au chargement, avec la forme nouvelle. Récrits au nouveau format, ils donnent la même note, octet pour octet (avec et sans modèle). La couleur `primary` doit être posée sur les titres, puisqu'une couleur n'a plus de rôle :
+
+```yaml
+# prompts/styles/charte.yaml
+colors:
+  primary: 3A56E4
+document_title: { size: 24, color: primary, align: center, uppercase: true, underline: false }
+heading1: { color: primary }
+heading2: { color: primary }
+```
+
+```yaml
+# prompts/styles/note.yaml
+heading1: { underline: true }
+sections:
+  Destinataires: { title: quiet, size: small }
+  Message: { title: quiet, size: small }
+  Consignes: { title: quiet, size: small }
+  Contact: { title: quiet, size: small }
+```
 
 ## Sources
 

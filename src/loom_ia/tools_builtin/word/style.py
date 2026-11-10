@@ -1,30 +1,44 @@
 # SPDX-License-Identifier: Apache-2.0
 """Le style d'un .docx en WordprocessingML : ses styles, ses numérotations, ses en-têtes.
 
-Tout part d'un ``Style`` résolu (``_style_params``) : la charte de l'outil,
-complétée par la disposition du modèle suivi. ``Style()`` est le style maison, et
-ce qu'il donne est le même, octet pour octet, qu'avant les styles : ``styles.xml``,
-``numbering.xml`` et ``footer1.xml`` d'un document sans style ne changent pas.
+Tout part d'un ``Style`` résolu (``_style_params``) : ``default.yaml``, la charte de
+l'outil, le style du modèle suivi. Chaque style nommé devient un style Word, basé sur
+le style Word de sa base, qui n'écrit que ce qui lui est propre : Word reprend le reste
+de sa base. Sans charte, ce que donne ``default.yaml`` est le même, octet pour octet,
+qu'avant les fichiers de style : ``styles.xml``, ``numbering.xml`` et ``footer1.xml``
+d'un document sans style ne changent pas.
+
+Ce module ne fixe aucune valeur visuelle : il traduit les propriétés des styles
+(police, taille, couleur, espacements, filets) en éléments WordprocessingML, dans
+l'ordre du schéma, et ajoute la mécanique (un titre reste avec ce qui le suit, son
+niveau de plan, la numérotation des titres, les retraits des listes).
 
 Les styles que seule une disposition demande (titre masqué, titre discret, en-tête,
-tableau de disposition) ne sont écrits que si le document s'en sert : un style
-déclaré vide (``{}``) donne encore le fichier du style maison.
+tableau de disposition) ne sont écrits que si le document s'en sert.
 """
 
 import re
-from collections.abc import Iterable
-from typing import Final
-from xml.sax.saxutils import escape
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from typing import Any, Final
+from xml.sax.saxutils import escape, quoteattr
 
-from loom_ia.tools_builtin._style_params import Band, Level, Numbering, Style
+from loom_ia.tools_builtin._style_params import (
+    NONE,
+    Band,
+    Language,
+    Numbering,
+    Style,
+    parse_rule,
+)
 
 _W: Final = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _HEAD: Final = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 _VML: Final = (
     'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
 )
-_PLACEHOLDER: Final = re.compile(r"\{(page|pages|titre)\}")
-# La numérotation des titres (charte ``headings.numbering``), à part des listes.
+_PLACEHOLDER: Final = re.compile(r"\{(page|pages|title)\}")
+# La numérotation des titres (réglage ``numbering``), à part des listes.
 HEADING_NUMBERING: Final = 900
 # Les styles que seule une disposition demande, par identifiant.
 HIDDEN: Final = "HeadingHidden"
@@ -44,7 +58,8 @@ MENTION_NAME: Final = "loom mention"
 CHECK: Final = "LoomCheck"
 CHECK_2: Final = "LoomCheck2"
 CHECK_NAMES: Final = {CHECK: "loom checkbox", CHECK_2: "loom checkbox 2"}
-# La case : la police de symboles de Windows (LibreOffice en prend une autre qui l'a).
+# La case : un glyphe, et la police de symboles de Windows qui l'a (LibreOffice en prend
+# une autre qui l'a). Une mécanique, comme les puces : pas une valeur de charte.
 CHECK_FONT: Final = "Segoe UI Symbol"
 CHECKED: Final = "\u2612"
 UNCHECKED: Final = "\u2610"
@@ -52,16 +67,158 @@ UNCHECKED: Final = "\u2610"
 # à la mise à jour du champ.
 TOC_HEADING: Final = "TOCHeading"
 TOC_LEVELS: Final = ("TOC1", "TOC2", "TOC3")
-_JC: Final = {"gauche": "left", "centre": "center", "droite": "right", "justifie": "both"}
+# Le corps du texte, quand le style ``paragraph`` dit autre chose que ``text``.
+BODY: Final = "BodyText"
+_JC: Final = {"left": "left", "center": "center", "right": "right", "justify": "both"}
+# La langue déclarée du document (correcteur, césure).
+LANGUAGES: Final[Mapping[Language, str]] = {"fr": "fr-FR", "en": "en-US"}
+
+# L'ordre des enfants de ``pPr`` et de ``rPr`` que le schéma impose.
+_PPR: Final = (
+    "pStyle",
+    "keepNext",
+    "keepLines",
+    "pageBreakBefore",
+    "numPr",
+    "pBdr",
+    "shd",
+    "tabs",
+    "spacing",
+    "ind",
+    "jc",
+    "outlineLvl",
+)
+_RPR: Final = ("rFonts", "b", "i", "caps", "vanish", "color", "sz", "u", "lang")
+# L'écart entre un filet et le texte, en points : au-dessus et au-dessous, à gauche.
+_RULE_SPACE: Final = {"top": 4, "bottom": 4, "left": 8, "right": 8}
+# Ce que ``text`` met dans les valeurs par défaut du document, plutôt que dans Normal.
+_DEFAULT_RUN: Final = frozenset({"font", "color", "size"})
+_DEFAULT_PARAGRAPH: Final = frozenset({"space_before", "space_after", "line_spacing"})
+
+type Pieces = list[tuple[str, str]]
+
+
+@dataclass(frozen=True, slots=True)
+class Watermark:
+    """Le filigrane : son texte, sa police, sa couleur."""
+
+    text: str
+    font: str
+    color: str
+
+
+def watermark(style: Style) -> Watermark | None:
+    """Le filigrane du style ``watermark`` ; ``None`` sans texte."""
+    look = style.look("watermark")
+    if not look.text:
+        return None
+    return Watermark(look.text, look.font or "", look.color or "")
 
 
 def jc(align: str) -> str:
-    """L'alignement WordprocessingML d'un alignement de style (« centre » → « center »)."""
+    """L'alignement WordprocessingML d'un alignement de style (« justify » → « both »)."""
     return _JC[align]
 
 
 def half_points(size: float) -> int:
     return round(size * 2)
+
+
+def twips(points: float) -> int:
+    return round(points * 20)
+
+
+def _flag(name: str, value: bool, *, complex_script: bool = True) -> str:
+    off = "" if value else ' w:val="0"'
+    said = f"<w:{name}{off}/>"
+    return said + (f"<w:{name}Cs{off}/>" if complex_script else "")
+
+
+def fonts(name: str) -> str:
+    return f'<w:rFonts w:ascii="{name}" w:hAnsi="{name}" w:eastAsia="{name}" w:cs="{name}"/>'
+
+
+def _size(points: float) -> str:
+    value = half_points(points)
+    return f'<w:sz w:val="{value}"/><w:szCs w:val="{value}"/>'
+
+
+def run_pieces(props: Mapping[str, Any]) -> Pieces:
+    """Les propriétés de caractère d'un style : police, gras, italique, majuscules,
+    couleur, taille, soulignement."""
+    pieces: Pieces = []
+    if (font := props.get("font")) is not None:
+        pieces.append(("rFonts", fonts(font)))
+    if (bold := props.get("bold")) is not None:
+        pieces.append(("b", _flag("b", bold)))
+    if (italic := props.get("italic")) is not None:
+        pieces.append(("i", _flag("i", italic)))
+    if (uppercase := props.get("uppercase")) is not None:
+        pieces.append(("caps", _flag("caps", uppercase, complex_script=False)))
+    if (color := props.get("color")) is not None:
+        pieces.append(("color", f'<w:color w:val="{color}"/>'))
+    if (size := props.get("size")) is not None:
+        pieces.append(("sz", _size(size)))
+    if (underline := props.get("underline")) is not None:
+        pieces.append(("u", f'<w:u w:val="{"single" if underline else "none"}"/>'))
+    return pieces
+
+
+def _side(side: str, value: str) -> str:
+    rule = parse_rule(value)
+    if rule is None:
+        return f'<w:{side} w:val="nil"/>'
+    width, color = rule
+    return (
+        f'<w:{side} w:val="single" w:sz="{round(width * 8)}" w:space="{_RULE_SPACE[side]}" '
+        f'w:color="{color}"/>'
+    )
+
+
+def paragraph_pieces(props: Mapping[str, Any]) -> Pieces:
+    """Les propriétés de paragraphe d'un style : filets, fond, espacements, retrait,
+    alignement."""
+    pieces: Pieces = []
+    every = props.get("border")
+    sides = [
+        _side(side, value)
+        for side, prop in (
+            ("top", "border_top"),
+            ("left", "border_left"),
+            ("bottom", "border_bottom"),
+            ("right", None),
+        )
+        if (value := (props.get(prop) if prop else None) or every) is not None
+    ]
+    if sides:
+        pieces.append(("pBdr", f"<w:pBdr>{''.join(sides)}</w:pBdr>"))
+    if (fill := props.get("fill")) is not None:
+        shown = "auto" if fill == NONE else fill
+        pieces.append(("shd", f'<w:shd w:val="clear" w:color="auto" w:fill="{shown}"/>'))
+    spacing = ""
+    if (before := props.get("space_before")) is not None:
+        spacing += f' w:before="{twips(before)}"'
+    if (after := props.get("space_after")) is not None:
+        spacing += f' w:after="{twips(after)}"'
+    if (line := props.get("line_spacing")) is not None:
+        spacing += f' w:line="{round(line * 240)}" w:lineRule="auto"'
+    if spacing:
+        pieces.append(("spacing", f"<w:spacing{spacing}/>"))
+    if (indent := props.get("indent")) is not None:
+        amount = round(indent * 567)
+        pieces.append(("ind", f'<w:ind w:left="{amount}" w:right="{amount}"/>'))
+    if (align := props.get("align")) is not None:
+        pieces.append(("jc", f'<w:jc w:val="{jc(align)}"/>'))
+    return pieces
+
+
+def ordered(pieces: Pieces, order: tuple[str, ...]) -> str:
+    """Les éléments dans l'ordre du schéma (un tri stable : les mêmes, dans l'ordre donné)."""
+    return "".join(xml for _, xml in sorted(pieces, key=lambda piece: order.index(piece[0])))
+
+
+def run_xml(props: Mapping[str, Any]) -> str:
+    return ordered(run_pieces(props), _RPR)
 
 
 def _style(
@@ -90,132 +247,117 @@ def _style(
     return said + "</w:style>"
 
 
-def _fonts(name: str | None) -> str:
-    if name is None:
-        return ""
-    return f'<w:rFonts w:ascii="{name}" w:hAnsi="{name}" w:eastAsia="{name}" w:cs="{name}"/>'
-
-
-def _size(points: float) -> str:
-    value = half_points(points)
-    return f'<w:sz w:val="{value}"/><w:szCs w:val="{value}"/>'
-
-
-def _heading(style: Style, level: int, look: Level, before: int, after: int) -> str:
-    numbered = (
-        f'<w:numPr><w:ilvl w:val="{level - 1}"/><w:numId w:val="{HEADING_NUMBERING}"/></w:numPr>'
-        if style.numbering != "aucune"
-        else ""
-    )
+def _named(
+    style: Style,
+    style_id: str,
+    word_name: str,
+    loom: str,
+    *,
+    based: str = "Normal",
+    stop: str = "text",
+    next_style: str | None = None,
+    mechanics: Pieces | None = None,
+) -> str:
+    """Un style Word tiré d'un style nommé : ce qu'il écrit en plus de ``stop``, le style
+    loom de son style Word de base, et la mécanique (``mechanics``)."""
+    props = style.between(loom, stop)
     return _style(
+        style_id,
+        word_name,
+        based=based,
+        next_style=next_style,
+        paragraph=ordered([*(mechanics or []), *paragraph_pieces(props)], _PPR),
+        run=run_xml(props),
+    )
+
+
+def _heading(style: Style, level: int) -> str:
+    numbered: Pieces = (
+        [
+            (
+                "numPr",
+                f'<w:numPr><w:ilvl w:val="{level - 1}"/>'
+                f'<w:numId w:val="{HEADING_NUMBERING}"/></w:numPr>',
+            )
+        ]
+        if style.numbering != "none"
+        else []
+    )
+    return _named(
+        style,
         f"Heading{level}",
         f"heading {level}",
+        f"heading{level}",
         next_style="Normal",
-        paragraph=f'<w:keepNext/><w:keepLines/>{numbered}<w:spacing w:before="{before}" '
-        f'w:after="{after}"/><w:outlineLvl w:val="{level - 1}"/>',
-        run=f"{_fonts(style.heading_font)}<w:b/><w:bCs/>"
-        + ("<w:caps/>" if look.uppercase else "")
-        + f'<w:color w:val="{look.color}"/>{_size(look.size)}'
-        + ('<w:u w:val="single"/>' if look.underline else ""),
+        mechanics=[
+            ("keepNext", "<w:keepNext/>"),
+            ("keepLines", "<w:keepLines/>"),
+            *numbered,
+            ("outlineLvl", f'<w:outlineLvl w:val="{level - 1}"/>'),
+        ],
     )
+
+
+def paragraph_style(style: Style) -> str:
+    """Le style Word des paragraphes : Normal, ou « Body Text » si ``paragraph`` le règle."""
+    return BODY if style.between("paragraph", "text") else "Normal"
 
 
 def styles_xml(style: Style, used: Iterable[str] = ()) -> str:
-    """``styles.xml`` : les styles maison aux valeurs du style, et ceux que le corps demande."""
+    """``styles.xml`` : un style Word par style nommé que l'outil emploie, et ceux que le
+    corps demande."""
     wanted = set(used)
-    title = style.title
-    text_color = f'<w:color w:val="{style.text_color}"/>' if style.text_color else ""
+    text = style.between("text", None)
+    language = LANGUAGES[style.language]
+    defaults_run = ordered(
+        [
+            *run_pieces({p: v for p, v in text.items() if p in _DEFAULT_RUN}),
+            ("lang", f'<w:lang w:val="{language}" w:eastAsia="{language}" w:bidi="ar-SA"/>'),
+        ],
+        _RPR,
+    )
+    defaults_paragraph = ordered(
+        paragraph_pieces({p: v for p, v in text.items() if p in _DEFAULT_PARAGRAPH}), _PPR
+    )
+    normal = {p: v for p, v in text.items() if p not in _DEFAULT_RUN | _DEFAULT_PARAGRAPH}
     said = (
         _HEAD + f'<w:styles xmlns:w="{_W}">'
-        "<w:docDefaults><w:rPrDefault><w:rPr>"
-        f"{_fonts(style.font)}{text_color}{_size(style.font_size)}"
-        '<w:lang w:val="fr-FR" w:eastAsia="fr-FR" w:bidi="ar-SA"/></w:rPr></w:rPrDefault>'
-        f'<w:pPrDefault><w:pPr><w:spacing w:after="{style.after}" w:line="{style.line}" '
-        'w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>'
+        f"<w:docDefaults><w:rPrDefault><w:rPr>{defaults_run}</w:rPr></w:rPrDefault>"
+        f"<w:pPrDefault><w:pPr>{defaults_paragraph}</w:pPr></w:pPrDefault></w:docDefaults>"
         + _style(
             "Normal",
             "Normal",
             based=None,
             default=True,
-            paragraph='<w:jc w:val="both"/>' if style.justify else "",
+            paragraph=ordered(paragraph_pieces(normal), _PPR),
+            run=run_xml(normal),
         )
-        + _style(
-            "Title",
-            "Title",
-            next_style="Normal",
-            paragraph=(
-                f'<w:pBdr><w:bottom w:val="single" w:sz="8" w:space="4" w:color="{style.accent}"/>'
-                "</w:pBdr>"
-                if title.rule
-                else ""
-            )
-            + '<w:spacing w:after="300"/>'
-            + (f'<w:jc w:val="{jc(title.align)}"/>' if title.align != "gauche" else ""),
-            run=f"{_fonts(style.heading_font)}<w:b/><w:bCs/>"
-            + ("<w:caps/>" if title.uppercase else "")
-            + f'<w:color w:val="{title.color}"/>{_size(title.size)}'
-            + ('<w:u w:val="single"/>' if title.underline else ""),
-        )
-        + _heading(style, 1, style.levels[0], 360, 120)
-        + _heading(style, 2, style.levels[1], 240, 80)
-        + _heading(style, 3, style.levels[2], 200, 60)
-        + _style("ListParagraph", "List Paragraph", paragraph='<w:spacing w:after="60"/>')
-        + _style(
-            "Quote",
-            "Quote",
-            next_style="Normal",
-            paragraph='<w:pBdr><w:left w:val="single" w:sz="12" w:space="8" '
-            f'w:color="{style.rule}"/></w:pBdr><w:spacing w:before="160" w:after="80"/>'
-            '<w:ind w:left="567" w:right="567"/>',
-            run=f'<w:i/><w:iCs/><w:color w:val="{style.muted}"/>',
-        )
-        + _style(
+        + _named(style, "Title", "Title", "document_title", next_style="Normal")
+        + _heading(style, 1)
+        + _heading(style, 2)
+        + _heading(style, 3)
+        + _named(style, "ListParagraph", "List Paragraph", "list")
+        + _named(style, "Quote", "Quote", "quote", next_style="Normal")
+        + _named(
+            style,
             "QuoteSource",
             "Quote Source",
+            "quote_source",
             based="Quote",
+            stop="quote",
             next_style="Normal",
-            paragraph='<w:spacing w:after="200"/><w:jc w:val="right"/>',
-            run='<w:i w:val="0"/><w:iCs w:val="0"/>',
         )
-        + _style(
-            "Note",
-            "Note",
-            next_style="Normal",
-            paragraph=f'<w:pBdr><w:left w:val="single" w:sz="24" w:space="8" '
-            f'w:color="{style.note_border}"/></w:pBdr><w:shd w:val="clear" w:color="auto" '
-            f'w:fill="{style.note_fill}"/>'
-            '<w:spacing w:before="120" w:after="200"/><w:ind w:left="170" w:right="170"/>',
-        )
-        + _style(
-            "Caption",
-            "caption",
-            next_style="Normal",
-            paragraph='<w:spacing w:before="60" w:after="240"/><w:jc w:val="center"/>',
-            run=f'<w:i/><w:iCs/><w:color w:val="{style.muted}"/>'
-            '<w:sz w:val="18"/><w:szCs w:val="18"/>',
-        )
-        + _style(
-            "TableText",
-            "Table Text",
-            paragraph='<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>',
-            run=_size(style.tables.size),
-        )
-        + _style(
-            "Footer",
-            "footer",
-            paragraph='<w:spacing w:after="0"/><w:jc w:val="center"/>',
-            run=f'<w:color w:val="{style.muted}"/><w:sz w:val="18"/><w:szCs w:val="18"/>',
-        )
+        + _named(style, "Note", "Note", "note", next_style="Normal")
+        + _named(style, "Caption", "caption", "caption", next_style="Normal")
+        + _named(style, "TableText", "Table Text", "table")
+        + _named(style, "Footer", "footer", "footer")
     )
+    if paragraph_style(style) == BODY:
+        said += _named(style, BODY, "Body Text", "paragraph")
     if HEADER in wanted:
-        said += _style(
-            HEADER,
-            "header",
-            paragraph='<w:spacing w:after="0"/>',
-            run=f'<w:color w:val="{style.muted}"/><w:sz w:val="18"/><w:szCs w:val="18"/>',
-        )
+        said += _named(style, HEADER, "header", "header")
     # Un titre masqué ne prend pas de numéro : sa numérotation est annulée (numId 0).
-    cancel = '<w:numPr><w:numId w:val="0"/></w:numPr>' if style.numbering != "aucune" else ""
+    cancel = '<w:numPr><w:numId w:val="0"/></w:numPr>' if style.numbering != "none" else ""
     if HIDDEN in wanted:
         said += _style(
             HIDDEN,
@@ -226,13 +368,20 @@ def styles_xml(style: Style, used: Iterable[str] = ()) -> str:
             run="<w:vanish/>",
         )
     if QUIET in wanted:
+        # Le titre discret de la disposition (jusqu'au lot 3) : le niveau 1, à la taille du
+        # texte, dans la couleur du niveau 3.
+        quiet = {
+            "uppercase": False,
+            "color": style.look("heading3").color,
+            "size": style.look("text").size,
+        }
         said += _style(
             QUIET,
             "loom heading quiet",
             based="Heading1",
             next_style="Normal",
             paragraph='<w:spacing w:before="200" w:after="60"/>',
-            run=f'<w:caps w:val="0"/><w:color w:val="{style.accent}"/>{_size(style.font_size)}',
+            run=run_xml({p: v for p, v in quiet.items() if v is not None}),
         )
     if LAYOUT in wanted:
         said += (
@@ -250,20 +399,11 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
             f'<w:style w:type="table" w:styleId="{SIGNATURE}"><w:name w:val="{SIGNATURE_NAME}"/>'
             "<w:tblPr/></w:style>"
         )
+    keep: Pieces = [("keepNext", "<w:keepNext/>")]
     if SIGNER in wanted:
-        said += _style(
-            SIGNER,
-            SIGNER_NAME,
-            paragraph='<w:keepNext/><w:spacing w:before="240" w:after="60"/>',
-            run="<w:b/><w:bCs/>",
-        )
+        said += _named(style, SIGNER, SIGNER_NAME, "signature", mechanics=keep)
     if MENTION in wanted:
-        said += _style(
-            MENTION,
-            MENTION_NAME,
-            paragraph='<w:keepNext/><w:spacing w:after="60"/>',
-            run="<w:i/><w:iCs/>",
-        )
+        said += _named(style, MENTION, MENTION_NAME, "signature_mention", mechanics=keep)
     for check, level in ((CHECK, 0), (CHECK_2, 1)):
         if check in wanted:
             left = 680 + 340 * level
@@ -275,15 +415,8 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
                 f'<w:ind w:left="{left}" w:hanging="340"/>',
             )
     if TOC_HEADING in wanted:
-        look = style.levels[0]
-        said += _style(
-            TOC_HEADING,
-            "TOC Heading",
-            next_style="Normal",
-            paragraph='<w:keepNext/><w:spacing w:before="240" w:after="120"/>',
-            run=f"{_fonts(style.heading_font)}<w:b/><w:bCs/>"
-            + ("<w:caps/>" if look.uppercase else "")
-            + f'<w:color w:val="{look.color}"/>{_size(look.size)}',
+        said += _named(
+            style, TOC_HEADING, "TOC Heading", "toc", next_style="Normal", mechanics=keep
         )
     for level, toc in enumerate(TOC_LEVELS):
         if toc in wanted:
@@ -305,10 +438,13 @@ _LEVELS: Final = {
     False: (("bullet", "•"), ("bullet", "\u2013")),
     True: (("decimal", "%1."), ("lowerLetter", "%2)")),
 }
-_HEADING_TEXTS: Final[dict[Numbering, tuple[str, str, str]]] = {
-    "decimale": ("%1.", "%1.%2", "%1.%2.%3"),
-    "article": ("Article %1 \u2013", "%1.%2", "%1.%2.%3"),
-}
+
+
+def _heading_texts(numbering: Numbering, article: str) -> tuple[str, str, str]:
+    """Le numéro de chaque niveau de titre : « 1. », ou « Article 1 » et un tiret
+    (``labels.article``)."""
+    first = f"{article} %1 \u2013" if numbering == "article" else "%1."
+    return (first, "%1.%2", "%1.%2.%3")
 
 
 def _abstract(number: int, ordered: bool) -> str:
@@ -323,25 +459,27 @@ def _abstract(number: int, ordered: bool) -> str:
     return said + "</w:abstractNum>"
 
 
-def _heading_abstract(numbering: Numbering) -> str:
+def _heading_abstract(numbering: Numbering, article: str) -> str:
     """Les titres numérotés : un numéro suivi d'une espace, lié aux styles de titre."""
     said = '<w:abstractNum w:abstractNumId="2"><w:multiLevelType w:val="multilevel"/>'
-    for level, text in enumerate(_HEADING_TEXTS[numbering]):
+    for level, text in enumerate(_heading_texts(numbering, article)):
         said += (
             f'<w:lvl w:ilvl="{level}"><w:start w:val="1"/><w:numFmt w:val="decimal"/>'
             f'<w:pStyle w:val="Heading{level + 1}"/><w:suff w:val="space"/>'
-            f'<w:lvlText w:val="{text}"/><w:lvlJc w:val="left"/>'
-            '<w:pPr><w:ind w:left="0" w:firstLine="0"/></w:pPr></w:lvl>'
+            f"<w:lvlText w:val={quoteattr(text)}/>"
+            '<w:lvlJc w:val="left"/><w:pPr><w:ind w:left="0" w:firstLine="0"/></w:pPr></w:lvl>'
         )
     return said + "</w:abstractNum>"
 
 
-def numbering_xml(lists: Iterable[bool], headings: Numbering = "aucune") -> str:
+def numbering_xml(
+    lists: Iterable[bool], headings: Numbering = "none", article: str = "Article"
+) -> str:
     """Une numérotation par liste : chaque liste numérotée repart de 1. Les définitions
     (``abstractNum``) précèdent toutes les numérotations (``num``) : Word l'exige."""
     said = _HEAD + f'<w:numbering xmlns:w="{_W}">' + _abstract(0, False) + _abstract(1, True)
-    if headings != "aucune":
-        said += _heading_abstract(headings)
+    if headings != "none":
+        said += _heading_abstract(headings, article)
     for number, ordered in enumerate(lists, start=1):
         said += f'<w:num w:numId="{number}"><w:abstractNumId w:val="{int(ordered)}"/>'
         said += "".join(
@@ -349,7 +487,7 @@ def numbering_xml(lists: Iterable[bool], headings: Numbering = "aucune") -> str:
             for level in range(2)
         )
         said += "</w:num>"
-    if headings != "aucune":
+    if headings != "none":
         said += f'<w:num w:numId="{HEADING_NUMBERING}"><w:abstractNumId w:val="2"/></w:num>'
     return said + "</w:numbering>"
 
@@ -358,7 +496,7 @@ def numbering_xml(lists: Iterable[bool], headings: Numbering = "aucune") -> str:
 
 
 def _text(text: str, title: str) -> str:
-    """Un texte d'en-tête : ``{page}`` et ``{pages}`` en champs, ``{titre}`` le titre du
+    """Un texte d'en-tête : ``{page}`` et ``{pages}`` en champs, ``{title}`` le titre du
     document, le reste en segments."""
     said = ""
     position = 0
@@ -386,7 +524,7 @@ def band_xml(
     title: str,
     width: int,
     logo: str = "",
-    watermark: str | None = None,
+    watermark: Watermark | None = None,
 ) -> str:
     """Un en-tête (``hdr``) ou un pied de page (``ftr``).
 
@@ -405,7 +543,7 @@ def band_xml(
     position = band.logo.position if band and band.logo else None
     zones = {
         name: (logo if position == place else "") + _text(texts[name], title)
-        for name, place in (("left", "gauche"), ("center", "centre"), ("right", "droite"))
+        for name, place in (("left", "left"), ("center", "center"), ("right", "right"))
     }
     paragraphs: list[str] = []
     if zones["left"] or zones["right"]:
@@ -436,8 +574,9 @@ def band_xml(
     return _HEAD + f'<w:{kind} xmlns:w="{_W}"{space}>' + "".join(paragraphs) + f"</w:{kind}>"
 
 
-def _watermark(text: str) -> str:
-    """Le filigrane : un texte en diagonale, gris clair, derrière le texte de chaque page.
+def _watermark(watermark: Watermark) -> str:
+    """Le filigrane : un texte en diagonale, derrière le texte de chaque page (le style
+    ``watermark`` : sa police et sa couleur, à demi transparente).
 
     La forme VML qu'écrit Word lui-même (« PowerPlusWaterMarkObject ») ; LibreOffice la
     lit et l'imprime.
@@ -458,8 +597,8 @@ def _watermark(text: str) -> str:
         'style="position:absolute;margin-left:0;margin-top:0;width:440pt;height:110pt;'
         "rotation:315;z-index:-251657216;mso-position-horizontal:center;"
         "mso-position-horizontal-relative:margin;mso-position-vertical:center;"
-        'mso-position-vertical-relative:margin" o:allowincell="f" fillcolor="#D9D9D9" '
-        'stroked="f"><v:fill opacity=".5"/>'
-        '<v:textpath style="font-family:&quot;Arial&quot;;font-size:1pt" '
-        f'string="{escape(text, {chr(34): "&quot;"})}"/></v:shape></w:pict></w:r>'
+        'mso-position-vertical-relative:margin" o:allowincell="f" '
+        f'fillcolor="#{watermark.color}" stroked="f"><v:fill opacity=".5"/>'
+        f'<v:textpath style="font-family:&quot;{watermark.font}&quot;;font-size:1pt" '
+        f'string="{escape(watermark.text, {chr(34): "&quot;"})}"/></v:shape></w:pict></w:r>'
     )

@@ -157,7 +157,8 @@ class TemplateRef(BaseModel):
 
     file: Path | None = None
     text: str | None = None
-    # La disposition du modèle (``loom.word``) : un fichier de style, lu au chargement.
+    # Le style du modèle (``loom.word``) : un fichier de style, lu au chargement, ou écrit en
+    # ligne ; il complète la charte, et dispose les sections du modèle.
     style: StyleField = None
 
     @model_validator(mode="after")

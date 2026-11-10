@@ -18,7 +18,7 @@ l'importe pour valider la référence au chargement, sans importer l'outil.
       style: styles/charte.yaml        # la charte (facultatif), relative à resources_dir
       templates:                       # modèles de document, relatifs à resources_dir
         cahier-des-charges: modele-cdc.md
-        facture:                       # un modèle et sa disposition (facultatif)
+        facture:                       # un modèle et son style (facultatif)
           file: modele-facture.md
           style: styles/facture.yaml
 
@@ -65,8 +65,8 @@ class WordParams(BaseModel):
     blocks: Blocks = ()
     # Les modèles de document, par nom : fichiers relatifs à resources_dir, lus au chargement.
     templates: Templates = {}
-    # La charte : un fichier de style relatif à resources_dir, lu au chargement ; la
-    # disposition d'un modèle se déclare sur le modèle (templates.<nom>.style).
+    # La charte : un fichier de style relatif à resources_dir, lu au chargement, ou un style
+    # écrit en ligne ; le style d'un modèle se déclare sur le modèle (templates.<nom>.style).
     style: StyleField = None
 
     @classmethod

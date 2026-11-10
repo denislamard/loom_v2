@@ -2,13 +2,13 @@
 """Écrire un .docx : le document validé posé dans son style, en WordprocessingML.
 
 Sans bibliothèque : un .docx est un zip de quelques parties XML, que ce module
-écrit lui-même. Le style vient de la config (``_style_params``) : la charte de
-l'outil, complétée par la disposition du modèle suivi ; sans style, le style
-maison — A4, marges de 2 cm, Calibri 11, titres bleu nuit, tableaux à en-tête
-bleu pâle et ligne de total en gras, numéros de page en pied —, le même octet
-pour octet qu'avant les styles. Le document est en français (correcteur,
-césure). Une image est une partie ``word/media`` rangée telle quelle, une seule
-fois par image distincte (``word/image.py``).
+écrit lui-même. Le style vient de fichiers (``_style_params``) : ``default.yaml``,
+la charte de l'outil, le style du modèle suivi ; ce module n'a aucune valeur
+visuelle, seulement la mécanique (marges intérieures des cellules, écarts entre
+colonnes, place pour signer) et les règles de composition (nombres à droite,
+en-tête de tableau répété, ligne jamais coupée). Le document est dans la langue
+du style (correcteur, césure, libellés). Une image est une partie ``word/media``
+rangée telle quelle, une seule fois par image distincte (``word/image.py``).
 
 La disposition s'applique **section par section** : une section est un titre de
 niveau 1 et ce qui le suit, jusqu'au suivant. Elle peut masquer le titre, poser
@@ -51,13 +51,14 @@ from loom_ia.tools_builtin._document.content import (
 from loom_ia.tools_builtin._document.picture import Picture
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin._style_params import (
-    HOUSE,
     PLAIN_SECTION,
     Band,
     Beside,
+    Look,
     SectionLook,
     Style,
-    TableLook,
+    house,
+    parse_rule,
 )
 from loom_ia.tools_builtin._templates import key
 from loom_ia.tools_builtin.word import chart, image
@@ -181,10 +182,10 @@ SETTINGS: Final = (
     "</w:settings>"
 )
 # Le style maison, tel qu'écrit dans un document sans style.
-STYLES: Final = look.styles_xml(HOUSE)
+STYLES: Final = look.styles_xml(house())
 
 
-def _core(title: str | None, template: str | None = None) -> str:
+def _core(title: str | None, template: str | None = None, language: str = "fr-FR") -> str:
     named = f"<dc:title>{escape(title)}</dc:title>" if title else ""
     # Le modèle suivi : la catégorie du document (Fichier > Propriétés dans Word) ;
     # absente sans modèle, pour qu'un document sans modèle ne change pas.
@@ -196,7 +197,7 @@ def _core(title: str | None, template: str | None = None) -> str:
         'xmlns:dcterms="http://purl.org/dc/terms/" '
         'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
         f"{named}<dc:creator>loom-ia</dc:creator><cp:lastModifiedBy>loom-ia"
-        "</cp:lastModifiedBy><dc:language>fr-FR</dc:language>"
+        f"</cp:lastModifiedBy><dc:language>{language}</dc:language>"
         f'<dcterms:created xsi:type="dcterms:W3CDTF">{FIXED_DATE}</dcterms:created>'
         f'<dcterms:modified xsi:type="dcterms:W3CDTF">{FIXED_DATE}</dcterms:modified>'
         "</cp:coreProperties>"
@@ -208,6 +209,11 @@ def _core(title: str | None, template: str | None = None) -> str:
 
 def _size(size: int | None) -> str:
     return f'<w:sz w:val="{size}"/><w:szCs w:val="{size}"/>' if size else ""
+
+
+def _half(points: float | None) -> int | None:
+    """Une taille en points, en demi-points ; ``None`` sans taille."""
+    return look.half_points(points) if points is not None else None
 
 
 def _runs(runs: Inline, *, bold: bool = False, size: int | None = None) -> str:
@@ -286,10 +292,11 @@ class _Body:
 
 
 def _caption(body: _Body, kind: str, runs: Inline) -> str:
-    """La légende ; numérotée (« Figure 2 — ») si la charte le veut, par un champ ``SEQ``
-    que Word et LibreOffice recalculent, et que la relecture retire."""
+    """La légende ; numérotée (« Figure 2 — ») si le style ``caption`` le veut, par un champ
+    ``SEQ`` que Word et LibreOffice recalculent, et que la relecture retire. ``kind`` : le
+    libellé (``labels.table``, ``labels.figure``)."""
     prefix = ""
-    if body.style.captions_numbered:
+    if body.style.look("caption").numbered:
         number = body.numbers[kind] = body.numbers.get(kind, 0) + 1
         prefix = (
             _run(f"{kind} ")
@@ -299,36 +306,67 @@ def _caption(body: _Body, kind: str, runs: Inline) -> str:
     return _paragraph("Caption", prefix + _runs(runs))
 
 
-def _table(body: _Body, table: TableOut, width: int, tables: TableLook, size: int | None) -> str:
+def _border(value: str | None) -> str:
+    """Un filet de tableau ou de cellule (« épaisseur couleur ») : ses attributs ; ``nil``
+    sans filet."""
+    rule = parse_rule(value)
+    if rule is None:
+        return 'w:val="nil"'
+    width, color = rule
+    return f'w:val="single" w:sz="{round(width * 8)}" w:space="0" w:color="{color}"'
+
+
+def _table_borders(tables: Look) -> list[tuple[str, str]]:
+    """Les filets d'un tableau : ``borders`` (grille, horizontales, aucun) au trait ``line``,
+    puis ``border_top`` et ``border_bottom`` s'ils sont dits."""
+    every: tuple[str, ...] = ("top", "left", "bottom", "right", "insideH", "insideV")
+    sides: tuple[str, ...] = {
+        "grid": every,
+        "horizontal": ("top", "bottom", "insideH"),
+        "none": every,
+    }[tables.borders or "grid"]
+    line = 'w:val="nil"' if tables.borders == "none" else _border(tables.line)
+    drawn: dict[str, str] = dict.fromkeys(sides, line)
+    for side, value in (("top", tables.border_top), ("bottom", tables.border_bottom)):
+        if value is not None:
+            drawn[side] = _border(value)
+    return [(side, drawn[side]) for side in every if side in drawn]
+
+
+def _cell_fill(fill: str | None) -> str:
+    if fill is None or fill == "none":
+        return ""
+    return f'<w:shd w:val="clear" w:color="auto" w:fill="{fill}"/>'
+
+
+def _table(body: _Body, table: TableOut, width: int, tables: Look, size: int | None) -> str:
     style = body.style
-    # « contenu » : un tableau étroit (la moitié de la page au plus, un récapitulatif) prend
+    header = style.look("table_header")
+    total = style.look("table_total")
+    # « content » : un tableau étroit (la moitié de la page au plus, un récapitulatif) prend
     # sa largeur ; un plus large garde toute la largeur, plutôt qu'une largeur bâtarde.
-    narrow = round(table.natural * HOUSE.text_width)
-    pleine = tables.width == "pleine" or narrow > HOUSE.text_width // 2
-    full = width if pleine else min(width, narrow)
+    narrow = round(table.natural * style.text_width)
+    full_width = tables.width != "content" or narrow > style.text_width // 2
+    full = width if full_width else min(width, narrow)
     widths = [round(part * full) for part in table.widths]
     widths[-1] += full - sum(widths)
-    thin = f'w:val="single" w:sz="4" w:space="0" w:color="{style.rule}"'
-    strong = f'w:val="single" w:sz="8" w:space="0" w:color="{style.primary}"'
-    sides = {
-        "grille": (("top", thin), ("left", thin), ("bottom", thin), ("right", thin),
-                   ("insideH", thin), ("insideV", thin)),
-        "filets": (("top", strong), ("bottom", strong), ("insideH", thin)),
-        "horizontales": (("top", thin), ("bottom", thin), ("insideH", thin)),
-        "aucune": tuple((side, 'w:val="nil"') for side in
-                        ("top", "left", "bottom", "right", "insideH", "insideV")),
-    }[tables.borders]  # fmt: skip
-    size = size or (look.half_points(tables.size) if tables.size != style.tables.size else None)
+    general = style.look("table").size
+    size = size or (
+        look.half_points(tables.size)
+        if tables.size is not None and tables.size != general
+        else None
+    )
+    position = tables.position or "left"
     said = (
         "<w:tbl><w:tblPr>"
         + (
             '<w:tblW w:w="5000" w:type="pct"/>'
-            if pleine
+            if full_width
             else f'<w:tblW w:w="{full}" w:type="dxa"/>'
         )
-        + (f'<w:jc w:val="{look.jc(tables.align)}"/>' if tables.align != "gauche" else "")
+        + (f'<w:jc w:val="{look.jc(position)}"/>' if position != "left" else "")
         + "<w:tblBorders>"
-        + "".join(f"<w:{side} {border}/>" for side, border in sides)
+        + "".join(f"<w:{side} {border}/>" for side, border in _table_borders(tables))
         + '</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar>'
         '<w:top w:w="40" w:type="dxa"/><w:left w:w="85" w:type="dxa"/>'
         '<w:bottom w:w="40" w:type="dxa"/><w:right w:w="85" w:type="dxa"/>'
@@ -337,48 +375,51 @@ def _table(body: _Body, table: TableOut, width: int, tables: TableLook, size: in
         "<w:tblGrid>" + "".join(f'<w:gridCol w:w="{w}"/>' for w in widths) + "</w:tblGrid>"
     )
 
-    def row(
-        cells: Iterable[str], *, header: bool = False, total: bool = False, band: bool = False
-    ) -> str:
+    # Ce que l'en-tête et le total écrivent en plus du tableau (gras, couleur…).
+    written = {
+        "header": style.between("table_header", "table"),
+        "total": style.between("table_total", "table"),
+        "body": {},
+    }
+
+    def row(cells: Iterable[str], kind: str = "body", band: bool = False) -> str:
         props = (
             "<w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>"
-            if header
+            if kind == "header"
             else ("<w:trPr><w:cantSplit/></w:trPr>")
         )
         said = f"<w:tr>{props}"
+        own = written[kind]
+        line_look = header if kind == "header" else total if kind == "total" else None
         for index, text in enumerate(cells):
-            filled = tables.header_fill if header else tables.bands if band else None
-            fill = f'<w:shd w:val="clear" w:color="auto" w:fill="{filled}"/>' if filled else ""
+            filled = line_look.fill if line_look is not None else tables.bands if band else None
             top = (
-                f'<w:tcBorders><w:top w:val="single" w:sz="12" w:space="0" '
-                f'w:color="{style.primary}"/></w:tcBorders>'
-                if total
+                f"<w:tcBorders><w:top {_border(total.border_top)}/></w:tcBorders>"
+                if kind == "total" and total.border_top is not None
                 else ""
             )
-            align = "center" if header else table.align[index]
-            color = (
-                f'<w:color w:val="{tables.header_color}"/>'
-                if header and tables.header_color
-                else ""
-            )
-            props = ("<w:b/><w:bCs/>" if header or total else "") + color + _size(size)
+            align = (line_look.align if line_look is not None else None) or table.align[index]
+            if align == "justify":
+                align = table.align[index]
+            runs = {prop: value for prop, value in own.items() if prop != "size"}
+            props = look.run_xml(runs) + _size(size or _half(own.get("size")))
             content = _run(text, f"<w:rPr>{props}</w:rPr>" if props else "")
             said += (
-                f'<w:tc><w:tcPr><w:tcW w:w="{widths[index]}" w:type="dxa"/>{top}{fill}'
-                f'<w:vAlign w:val="center"/></w:tcPr>'
+                f'<w:tc><w:tcPr><w:tcW w:w="{widths[index]}" w:type="dxa"/>{top}'
+                f'{_cell_fill(filled)}<w:vAlign w:val="center"/></w:tcPr>'
                 + _paragraph("TableText", content, f'<w:jc w:val="{_JC[align]}"/>')
                 + "</w:tc>"
             )
         return said + "</w:tr>"
 
-    said += row(table.headers, header=True)
+    said += row(table.headers, "header")
     said += "".join(row(cells, band=index % 2 == 1) for index, cells in enumerate(table.rows))
     if table.total is not None:
-        said += row(table.total, total=True)
+        said += row(table.total, "total")
     said += "</w:tbl>"
     # Toujours un paragraphe après le tableau : deux tableaux voisins ne fusionnent pas.
     if table.caption:
-        said += _caption(body, "Tableau", table.caption)
+        said += _caption(body, style.labels.table, table.caption)
     else:
         said += _paragraph("Normal", "", _AFTER_TABLE)
     return said
@@ -395,7 +436,7 @@ def _image(body: _Body, block: ImageOut, width: int) -> str:
     relation = f"rIdImage{body.picture(block.picture)}"
     said = image.inline(relation, body.drawings, block, keep_next=bool(block.caption))
     if block.caption:
-        return said + _caption(body, "Figure", block.caption)
+        return said + _caption(body, body.style.labels.figure, block.caption)
     return said + _paragraph("Normal", "", _AFTER_TABLE)
 
 
@@ -413,7 +454,8 @@ def _layout(
     """
     body.used.add(look.LAYOUT)
     framed = set(boxed)
-    border = f'w:val="single" w:sz="6" w:space="0" w:color="{body.style.primary}"'
+    box = body.style.look("box")
+    border = _border(box.border)
     said = (
         f'<w:tbl><w:tblPr><w:tblStyle w:val="{look.LAYOUT}"/>'
         f'<w:tblW w:w="{sum(widths)}" w:type="dxa"/><w:tblLayout w:type="fixed"/>'
@@ -429,6 +471,7 @@ def _layout(
             "<w:tcBorders>"
             + "".join(f"<w:{side} {border}/>" for side in ("top", "left", "bottom", "right"))
             + "</w:tcBorders>"
+            + _cell_fill(box.fill)
             if index in framed
             else ""
         )
@@ -462,16 +505,18 @@ def _blocks(
 ) -> str:
     """Les blocs d'une section, dans ``width`` twips, selon sa disposition."""
     style = body.style
-    tables = section.tables or style.tables
-    size = look.half_points(max(7.0, style.font_size - 2)) if section.size == "petit" else None
+    tables = section.table or style.look("table")
+    text_size = style.look("text").size or 11
+    size = look.half_points(max(7.0, text_size - 2)) if section.size == "small" else None
     align = f'<w:jc w:val="{look.jc(section.align)}"/>' if section.align else ""
+    paragraph = look.paragraph_style(style)
     said = ""
     index = 0
     while index < len(blocks):
         block = blocks[index]
         index += 1
         if (
-            style.images_grid
+            style.image_grid
             and isinstance(block, ImageOut)
             and block.wanted == "half"
             and index < len(blocks)
@@ -501,7 +546,7 @@ def _blocks(
                     )
                 said += _paragraph(_heading_style(body, level, section), content)
             case ParagraphOut(runs=runs):
-                said += _paragraph("Normal", _runs(runs, size=size), align)
+                said += _paragraph(paragraph, _runs(runs, size=size), align)
             case ListOut(entries=entries, checkboxes=True):
                 body.used.update((look.CHECK, look.CHECK_2))
                 for entry in entries:
@@ -548,7 +593,7 @@ def _blocks(
                     room if room < chart.WIDTH else None,
                 )
                 if block.caption:
-                    said += _caption(body, "Figure", block.caption)
+                    said += _caption(body, style.labels.figure, block.caption)
                 else:
                     said += _paragraph("Normal", "", _AFTER_TABLE)
             case ImageOut():
@@ -599,8 +644,11 @@ def _signature(body: _Body, block: SignatureOut, width: int) -> str:
         content = _paragraph(look.SIGNER, _run(signer))
         if block.mention:
             content += _paragraph(look.MENTION, _run(block.mention))
-        content += _paragraph("Normal", _run("Date :"), '<w:spacing w:after="60"/>')
-        content += _paragraph("Normal", _run("Signature :"), f'<w:spacing w:after="{SIGN_SPACE}"/>')
+        labels = body.style.labels
+        content += _paragraph("Normal", _run(labels.date), '<w:spacing w:after="60"/>')
+        content += _paragraph(
+            "Normal", _run(labels.signature), f'<w:spacing w:after="{SIGN_SPACE}"/>'
+        )
         said += f'<w:tc><w:tcPr><w:tcW w:w="{cell}" w:type="dxa"/>{gap}</w:tcPr>{content}</w:tc>'
     return said + "</w:tr></w:tbl>" + _paragraph("Normal", "", _AFTER_TABLE)
 
@@ -612,9 +660,11 @@ def _contents(body: _Body, width: int) -> str:
     champs ``PAGEREF`` vers le signet de chaque titre : seul le traitement de texte connaît
     les pages, et LibreOffice les écrit à « Mettre à jour l'index »."""
     style = body.style
-    body.used.update((look.TOC_HEADING, *look.TOC_LEVELS[: style.toc_levels]))
-    pages = style.toc_pages
-    switches = f' TOC \\o "1-{style.toc_levels}" \\h \\z \\u' + ("" if pages else " \\n")
+    toc = style.look("toc")
+    levels = toc.levels or 2
+    body.used.update((look.TOC_HEADING, *look.TOC_LEVELS[:levels]))
+    pages = toc.page_numbers is not False
+    switches = f' TOC \\o "1-{levels}" \\h \\z \\u' + ("" if pages else " \\n")
     begin = (
         '<w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r>'
         f'<w:r><w:instrText xml:space="preserve">{switches} </w:instrText></w:r>'
@@ -624,7 +674,7 @@ def _contents(body: _Body, width: int) -> str:
     tabs = (
         f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{width}"/></w:tabs>' if pages else ""
     )
-    said = _paragraph(look.TOC_HEADING, _run("Sommaire"))
+    said = _paragraph(look.TOC_HEADING, _run(style.labels.contents))
     if not body.toc:
         return said + _paragraph(look.TOC_LEVELS[0], begin + end)
     for index, (level, label, mark) in enumerate(body.toc):
@@ -651,30 +701,32 @@ def _toc_entries(body: _Body, blocks: Sequence[BlockOut]) -> None:
     if not any(isinstance(block, ContentsOut) for block in blocks):
         return
     style = body.style
+    levels = style.look("toc").levels or 2
     counters = [0, 0, 0]
     for block in blocks:
         if not isinstance(block, HeadingOut):
             continue
         text = plain(block.runs)
-        hidden = block.level == 1 and style.section(text).title == "masque"
-        numbered = style.numbering != "aucune" and not hidden
+        hidden = block.level == 1 and style.section(text).title == "hidden"
+        numbered = style.numbering != "none" and not hidden
         if numbered:
             counters[block.level - 1] += 1
             counters[block.level :] = [0] * (3 - block.level)
-        if block.level > style.toc_levels or hidden:
+        if block.level > levels or hidden:
             continue
         label = text
         if numbered:
-            label = f"{_heading_number(style.numbering, counters[: block.level])} {text}"
+            number = _heading_number(style.numbering, counters[: block.level], style.labels.article)
+            label = f"{number} {text}"
         name = f"_Toc_loom_{len(body.toc) + 1}"
         body.marks[id(block)] = (len(body.toc) + 1, name)
         body.toc.append((block.level, label, name))
 
 
-def _heading_number(numbering: str, counters: Sequence[int]) -> str:
+def _heading_number(numbering: str, counters: Sequence[int], article: str) -> str:
     """Le numéro d'un titre, comme la numérotation de ``word/style.py`` l'écrit."""
     if len(counters) == 1:
-        return f"Article {counters[0]} \u2013" if numbering == "article" else f"{counters[0]}."
+        return f"{article} {counters[0]} \u2013" if numbering == "article" else f"{counters[0]}."
     return ".".join(str(number) for number in counters)
 
 
@@ -682,7 +734,7 @@ def _heading_style(body: _Body, level: int, section: SectionLook) -> str:
     """Le style d'un titre : celui de son niveau, sauf le titre d'une section masqué ou discret."""
     if level != 1 or section.title == "visible":
         return f"Heading{level}"
-    chosen = look.HIDDEN if section.title == "masque" else look.QUIET
+    chosen = look.HIDDEN if section.title == "hidden" else look.QUIET
     body.used.add(chosen)
     return chosen
 
@@ -774,7 +826,7 @@ def _alone(body: _Body, group: _Group, landscape: bool) -> _Unit:
     space = COVER_SPACE if section.cover and not section.space_before else section.space_before
     said = _spacer(space) if space else ""
     if section.cover:
-        section = dataclasses.replace(section, align=section.align or "centre")
+        section = dataclasses.replace(section, align=section.align or "center")
     if section.box:
         content = _blocks(body, group.blocks, _room(width, True, False), section)
         said += _layout(body, [content], [width], boxed=(0,))
@@ -911,7 +963,7 @@ def _document(prepared: Prepared, body: _Body) -> tuple[str, _Bands]:
     units = _units(body, _groups(prepared.blocks, style))
     sections = _sections(units, style)
     bands = _Bands(
-        header=style.header is not None or style.watermark is not None,
+        header=style.header is not None or look.watermark(style) is not None,
         title_page=_blank_first_page(style, sections),
     )
     said = ""
@@ -967,7 +1019,7 @@ def _band_parts(
                     title=body.title,
                     width=width,
                     logo=drawn,
-                    watermark=style.watermark,
+                    watermark=look.watermark(style),
                 ),
             )
         )
@@ -996,26 +1048,36 @@ def _band_parts(
     return parts, listed
 
 
-def render(prepared: Prepared, style: Style = HOUSE) -> bytes:
-    """Le fichier .docx, le même octet pour octet pour un même document et un même style."""
+def render(prepared: Prepared, style: Style | None = None) -> bytes:
+    """Le fichier .docx, le même octet pour octet pour un même document et un même style
+    (le style maison, sans style)."""
+    style = style or house()
     body = _Body(style, plain(_title_runs(prepared)))
     _toc_entries(body, prepared.blocks)
     document, bands = _document(prepared, body)
     body_media = len(body.media)
     band_parts, listed = _band_parts(body, bands)
     types, relations = _parts_listed(len(body.charts), body.media, body_media, listed)
+    language = look.LANGUAGES[style.language]
+    font = style.look("text").font or ""
     parts: tuple[tuple[str, str | bytes], ...] = (
         ("[Content_Types].xml", types),
         ("_rels/.rels", PACKAGE_RELS),
-        ("docProps/core.xml", _core(prepared.title, prepared.template)),
+        ("docProps/core.xml", _core(prepared.title, prepared.template, language)),
         ("docProps/app.xml", APP),
         ("word/document.xml", document),
         ("word/_rels/document.xml.rels", relations),
         ("word/styles.xml", look.styles_xml(style, body.used)),
-        ("word/numbering.xml", look.numbering_xml(body.lists, style.numbering)),
+        (
+            "word/numbering.xml",
+            look.numbering_xml(body.lists, style.numbering, style.labels.article),
+        ),
         ("word/settings.xml", SETTINGS),
         *band_parts,
-        *((f"word/charts/chart{n}.xml", chart.part(c)) for n, c in enumerate(body.charts, start=1)),
+        *(
+            (f"word/charts/chart{n}.xml", chart.part(c, style.chart, font, language))
+            for n, c in enumerate(body.charts, start=1)
+        ),
         *(
             (f"word/media/image{n}.{p.extension}", p.data)
             for n, p in enumerate(body.media, start=1)

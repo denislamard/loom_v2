@@ -1293,12 +1293,13 @@ Sans `templates`, rien ne change : ni action ni champ `template`, ni ligne dans 
 
 #### Des styles de document
 
-Depuis loom-ia 2.0.20, pour `loom.word`. Sans style, l'outil écrit tous ses documents dans son style maison : Calibri, titres bleu nuit, tableaux à grille. Une facture d'artisan demande autre chose : son logo, ses couleurs, l'émetteur et le client côte à côte, des titres de section qu'on ne voit pas, un récapitulatif étroit à droite, les mentions légales en pied de page. **Le style se décrit dans des fichiers de l'agent**, en YAML, et l'outil n'en fixe rien : il pose les mêmes blocs, à la manière que le style décrit.
+Depuis loom-ia 2.0.20, pour `loom.word` ; un format plus simple depuis 2.1.0. Sans charte, l'outil écrit tous ses documents dans le style maison : Calibri 11, titres bleu nuit, tableaux à grille. Une facture d'artisan demande autre chose : son logo, ses couleurs, l'émetteur et le client côte à côte, un récapitulatif étroit à droite, les mentions légales en pied de page. **Le style se décrit dans des fichiers YAML de l'agent**, et l'outil n'en fixe rien : il pose les mêmes blocs, à la manière que le style décrit.
 
-Deux fichiers, relatifs à `resources_dir` et lus au chargement comme un modèle :
+**Un fichier de style est une liste de styles nommés** (`text`, `document_title`, `heading1`…), chacun avec ses propriétés, plus quelques réglages (`colors`, `page`, `language`…). Trois fichiers, du plus général au plus précis :
 
-- **la charte**, sur l'outil (`style:`) : elle vaut pour tous ses documents ;
-- **la disposition** d'un modèle de document (`templates.<nom>.style`) : elle complète la charte, clé par clé, pour les documents qui suivent ce modèle, et dispose ses sections.
+1. **`default.yaml`**, livré avec loom (`loom_ia/tools_builtin/styles/default.yaml`) : le style maison, au même format que les deux autres ;
+2. **la charte**, sur l'outil (`style:`) : elle vaut pour tous ses documents ;
+3. **le style d'un modèle de document** (`templates.<nom>.style`) : pour les documents qui suivent ce modèle.
 
 ```yaml
   - python: loom.word
@@ -1306,85 +1307,133 @@ Deux fichiers, relatifs à `resources_dir` et lus au chargement comme un modèle
     templates:
       facture:
         file: templates/modele-facture.md
-        style: styles/facture.yaml           # la disposition du modèle (facultatif)
+        style: styles/facture.yaml           # le style du modèle (facultatif)
       courrier: templates/modele-courrier.md # la charte seule
     folders: …
 ```
 
-**Le modèle de langage n'en voit rien** : ni le schéma ni la description ne changent, et `action: template` ne rend que le modèle. Il écrit les mêmes blocs et les mêmes titres de section qu'avant ; le style ne coûte aucun token. Un document qui suit un modèle prend la charte complétée de sa disposition ; un document libre (`none`), ou un outil sans modèles, la charte ; un outil sans `style`, le style maison, le même fichier qu'avant, octet pour octet.
+`style` prend un fichier, relatif à `resources_dir` et lu au chargement, ou le style écrit dans la config : `style: { heading1: { color: 0B5D3B } }`.
 
-**La charte.** Les clés sont en anglais, comme la config ; les valeurs d'une liste fermée, en français. Toutes sont facultatives : une clé absente garde la valeur du style maison.
+**Le modèle de langage n'en voit rien** : ni le schéma ni la description ne changent, et le style ne coûte aucun token. Un document qui suit un modèle prend `default.yaml`, la charte, puis le style du modèle ; un document libre (`none`), ou un outil sans modèles, s'arrête à la charte ; un outil sans `style` écrit dans `default.yaml` seul, le même fichier qu'avant, octet pour octet.
 
-| Clé | Ce qu'elle règle | Valeurs |
-| --- | --- | --- |
-| `page` | Format, orientation, marges | `size` : `A4`, `A5`, `Letter` ; `orientation` : `portrait`, `paysage` ; `margins` : `top`, `bottom`, `left`, `right`, en cm (0,5 à 5) |
-| `fonts` | Polices du corps et des titres | `body: {name, size}` (7 à 16 pt) ; `headings: {name}` |
-| `colors` | Couleurs nommées, reprises ailleurs par leur nom | `text`, `primary` (titres), `accent` (titre 3, encadré, titre discret), `muted` (légendes, en-tête, pied), `rule` (filets fins) ; six chiffres hexadécimaux |
-| `paragraphs` | Le corps du texte | `line` (interligne, 1 à 3), `after` (espace après, en pt), `justify` |
-| `title` | Le titre du document | `size`, `color`, `align` (`gauche`, `centre`, `droite`), `uppercase`, `underline` (le texte souligné, de sa longueur), `rule` (filet dessous, de toute la largeur) |
-| `headings` | Titres de niveaux 1 à 3 | par niveau (`1:`, `2:`, `3:`) : `size`, `color`, `uppercase`, `underline` (un titre `discret` suit le niveau 1) ; `numbering` : `aucune`, `decimale` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
-| `tables` | Les tableaux | `borders` : `grille`, `filets`, `horizontales`, `aucune` ; `header: {fill, color}` ; `bands` (fond d'une ligne sur deux) ; `size` (pt) ; `width` : `pleine`, `contenu` ; `align` |
-| `note` | L'encadré | `fill`, `border` |
-| `captions` | Les légendes | `numbered` : « Tableau 1 — », « Figure 1 — » (images et graphiques) |
-| `images` | Les images | `grid` : deux images `half` qui se suivent se posent côte à côte, chacune avec sa légende |
-| `toc` | Le bloc `toc` (`blocks: [toc]`) | `levels` : les niveaux de titre repris (1 à 3, 2 par défaut) ; `pages` : `false` pour des liens sans numéros de page |
-| `header`, `footer` | En-tête, pied de page | `left`, `center`, `right` : un texte, avec `{page}`, `{pages}`, `{titre}` ; `lines` : des lignes centrées (4 au plus : des mentions légales) ; `logo: {file, width, position}` (PNG ou JPEG, largeur en cm) ; `first_page` : `false` pour une première page sans |
-| `watermark` | Filigrane | un texte (« BROUILLON ») ; `""` dans une disposition retire celui de la charte |
-
-Une couleur se donne en hexadécimal ou par son nom dans la charte (`color: accent`). `width: contenu` : un tableau étroit — la moitié de la page au plus, un récapitulatif — prend sa largeur, aligné selon `align` ; un plus large garde toute la largeur. Un pied de page déclaré remplace celui de la maison : pour garder les numéros, les écrire (`right: "Page {page} / {pages}"`). Aucune date n'est permise dans un en-tête ou un pied de page : deux documents identiques donneraient deux fichiers, et la date d'un document est son contenu.
+**Les fichiers d'abord, l'héritage ensuite.** Chaque style complète le même style des fichiers précédents, propriété par propriété : une charte qui écrit `heading1: { color: brand }` garde la taille, le gras et les espacements de `default.yaml`. Puis chaque style prend les propriétés de sa base (`text`, sauf `quote_source`, qui part de `quote`, et `table_header` et `table_total`, qui partent de `table`), déjà complétée par les fichiers, puis les siennes : la police de `text` vaut pour les titres sans être répétée.
 
 ```yaml
 # prompts/styles/charte.yaml
-fonts: { body: { name: Arial, size: 10 } }
-colors: { primary: 0B5D3B, accent: C0392B }
-title: { size: 22, align: droite, uppercase: true, rule: false }
-headings:
-  1: { size: 13, uppercase: true }
-tables: { borders: filets, header: { fill: E8F1EC } }
-header:
-  logo: { file: images/logo.png, width: 3.5 }
-  right: "{titre}"
-footer:
+colors:
+  brand: 0B5D3B
+  alert: C0392B
+text: { font: Arial, size: 10 }
+document_title: { size: 22, color: brand, align: right, uppercase: true, border_bottom: none }
+heading1: { size: 13, color: brand, uppercase: true }
+heading2: { color: brand }
+heading3: { color: alert }
+table: { borders: horizontal, border_top: 1pt brand, border_bottom: 1pt brand }
+table_header: { fill: E8F1EC }
+header: { logo: images/logo.png, logo_width: 3.5, right: "{title}" }
+footer:                    # « Page n / N » vient de default.yaml
   lines:
   - "Dupont Plomberie SARL au capital de 8 000 € · 12 rue des Lilas, 69003 Lyon · SIRET 812 345 678 00021"
   - "TVA FR41 812345678 · Assurance décennale MAAF Pro, contrat 123456, France métropolitaine"
-  right: "Page {page} / {pages}"
 ```
 
-**La disposition.** Les mêmes clés, qui complètent la charte, plus `sections` : la mise en page de chaque section du modèle, par son titre (comparé comme le plan : sans numérotation, casse ni accents), et `beside` : des sections posées côte à côte.
+**Les styles prévus.**
+
+| Nom | Ce qu'il met en forme |
+| --- | --- |
+| `text` | Le corps du texte ; la base de tous les autres |
+| `document_title` | Le titre du document (`title`) |
+| `heading1`, `heading2`, `heading3` | Les titres de niveaux 1 à 3 |
+| `paragraph`, `list`, `note`, `caption` | Les blocs du même nom ; `caption` est la légende d'un tableau, d'une image, d'un graphique |
+| `quote`, `quote_source` | Une citation et sa source |
+| `table`, `table_header`, `table_total` | Le tableau, sa ligne d'en-tête, sa ligne de total |
+| `box` | Le cadre d'une section encadrée |
+| `toc` | Le titre du sommaire (il part de `heading1`), ses niveaux, ses numéros de page |
+| `signature`, `signature_mention` | Le libellé d'un signataire, la mention (« Bon pour accord ») |
+| `header`, `footer` | Le haut et le bas de page |
+| `watermark` | Le filigrane : un texte en travers de chaque page (`watermark: BROUILLON` suffit) |
+
+**Les propriétés**, communes à tous les styles et toutes facultatives :
+
+| Propriété | Valeur |
+| --- | --- |
+| `font` | Un nom de police |
+| `size` | En points (6 à 72) |
+| `color`, `fill` | Une couleur : la couleur du texte, le fond ; `fill: none` retire un fond |
+| `bold`, `italic`, `underline`, `uppercase` | `true` ou `false` |
+| `align` | `left`, `center`, `right`, `justify` |
+| `space_before`, `space_after` | En points |
+| `line_spacing` | L'interligne, de 1 à 3 |
+| `indent` | Le retrait à gauche et à droite, en cm |
+| `border_top`, `border_bottom`, `border_left`, `border` | Un filet, « épaisseur couleur » (`1pt 2F5496`, `3pt brand`), ou `none` pour retirer celui de `default.yaml` |
+| `base` | Le style dont celui-ci part |
+
+**Propres à certains styles** (et aux styles qui en partent) :
+
+| Style | Propriétés en plus |
+| --- | --- |
+| `table` | `borders` : `grid`, `horizontal`, `none` ; `line` : le trait des filets (« épaisseur couleur ») ; `bands` : le fond d'une ligne sur deux ; `width` : `full`, `content` ; `position` : `left`, `center`, `right` |
+| `header`, `footer` | `left`, `center`, `right` : un texte, avec `{page}`, `{pages}`, `{title}` ; `lines` : des lignes centrées (4 au plus : des mentions légales) ; `logo` (PNG ou JPEG, relatif à `resources_dir`), `logo_width` (en cm), `logo_position` ; `first_page` : `false` pour une première page sans |
+| `caption` | `numbered` : « Tableau 1 — », « Figure 1 — » |
+| `toc` | `levels` : les niveaux de titre repris (1 à 3) ; `page_numbers` : `false` pour des liens sans numéros de page |
+| `watermark` | `text` |
+
+**Les réglages** ne sont pas des styles :
+
+| Clé | Ce qu'elle règle |
+| --- | --- |
+| `colors` | Tes couleurs nommées (`brand: 0B5D3B`), reprises partout par leur nom ; l'outil ne leur donne aucun rôle |
+| `page` | `size` : `A4`, `A5`, `Letter` ; `orientation` : `portrait`, `landscape` ; `margins`, ou `margin_top`, `margin_bottom`, `margin_left`, `margin_right`, en cm (0,5 à 5) |
+| `numbering` | La numérotation des titres : `none`, `decimal` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
+| `language` | `fr` ou `en` : la langue déclarée du document (correcteur, césure), l'écriture des nombres et des dates (« 1 250,50 € », « 10/11/2026 » ; « €1,250.50 », « 11/10/2026 »), les libellés |
+| `labels` | Les libellés que l'outil écrit, un par un : `table` (Tableau), `figure` (Figure), `contents` (Sommaire), `date` (Date :), `signature` (Signature :), `article` (Article), `total` (Total) |
+| `image` | `grid` : deux images `half` qui se suivent se posent côte à côte, chacune avec sa légende |
+| `chart` | `colors` : la couleur de chaque série, dans l'ordre (12 au plus) ; `text`, `grid`, `title` : le texte, la grille, le titre |
+
+Une couleur s'écrit en six chiffres hexadécimaux, sans `#` (un `#` ouvre un commentaire YAML), ou par un nom de `colors`. Les tailles et les espacements sont en points ; les marges, les retraits et les largeurs en centimètres. `width: content` : un tableau étroit — la moitié de la page au plus, un récapitulatif — prend sa largeur, posé selon `position` ; un plus large garde toute la largeur. Pour retirer les numéros de page du pied de page : `footer: { center: "" }`. Aucune date n'est permise dans un en-tête ou un pied de page : deux documents identiques donneraient deux fichiers, et la date d'un document est son contenu.
+
+Dans un texte écrit sans guillemets, deux caractères posent problème en YAML : une espace suivie de « : » est une erreur (« Qui joindre : le standard »), une espace suivie de « # » coupe le texte sans prévenir. Un texte qui en contient s'écrit entre guillemets.
+
+**Un style à toi** porte un nom de ton choix et dit de quel style il part : `message_title: { base: heading1, size: 14, uppercase: true }`. Il prend tout ce que les trois fichiers donnent à sa base, et il est vérifié au chargement ; un modèle de document pourra le choisir pour une section (à venir).
+
+**La disposition des sections.** Le style d'un modèle porte aussi, pour l'instant, la mise en page de ses sections : `sections`, par le titre de la section (comparé comme le plan : sans numérotation, casse ni accents), et `beside` : des sections posées côte à côte. La charte n'en a pas.
 
 | Clé d'une section | Effet |
 | --- | --- |
-| `title` | `visible` (par défaut) ; `masque` : relu, jamais imprimé ; `discret` : petit, couleur d'accent |
-| `align` | `gauche`, `centre`, `droite`, `justifie` : les paragraphes et listes de la section |
-| `size` | `petit` : le texte de la section deux points plus petit (conditions, mentions) |
-| `box` | La section dans un cadre |
+| `title` | `visible` (par défaut) ; `hidden` : relu, jamais imprimé ; `quiet` : à la taille du texte, dans la couleur de `heading3` |
+| `align` | `left`, `center`, `right`, `justify` : les paragraphes et listes de la section |
+| `size` | `small` : le texte de la section deux points plus petit (conditions, mentions) |
+| `box` | La section dans un cadre (le style `box`) |
 | `columns` | Le texte sur 2 ou 3 colonnes, équilibrées |
 | `page_break` | La section commence une page |
 | `landscape` | La section sur des pages en paysage |
 | `cover` | Page de garde : la première section du modèle, avec le titre du document, centrée, sans en-tête ni pied de page, suivie d'une nouvelle page |
 | `space_before` | Un espace avant la section, en cm (l'adresse d'un courrier dans la fenêtre de l'enveloppe) |
-| `tables` | Les tableaux de la section : les clés de `tables` de la charte |
+| `table` | Les tableaux de la section : les propriétés de `table` (`size`, `borders`, `line`, `bands`, `width`, `position`, `border_top`, `border_bottom`) |
 
 ```yaml
 # prompts/styles/facture.yaml
+box: { border: 0.75pt brand }
 beside:
 - { sections: [Émetteur, Client], widths: [55, 45] }   # en %, 100 en tout
 sections:
-  Émetteur: { title: masque }
-  Client: { title: masque, box: true }
-  Description: { title: masque, tables: { width: contenu, align: droite } }
-  Informations de paiement: { title: discret }
-  Conditions et termes: { title: discret, size: petit, align: justifie }
+  Émetteur: { title: hidden }
+  Client: { title: hidden, box: true }
+  Description: { title: hidden, table: { width: content, position: right } }
+  Informations de paiement: { title: quiet }
+  Conditions et termes: { title: quiet, size: small, align: justify }
 ```
 
 La facture garde son plan : le modèle de langage écrit `# Émetteur`, `# Client`… comme avant, l'outil vérifie le plan, et le style pose l'émetteur et le client côte à côte, sans leurs titres, le client encadré, les prestations en pleine largeur et le récapitulatif à droite. Les sections de `beside` doivent se suivre dans le plan ; une section facultative absente laisse l'autre seule, en pleine largeur. Une section côte à côte n'a ni `columns`, ni `landscape`, ni `cover`, et `page_break` et `space_before` vont à la première de la ligne. Une page de garde n'a ni `landscape`, ni `columns`, ni `box`.
 
 **La relecture** rend les blocs, jamais la mise en page, que le style repose à la réécriture : les titres masqués reviennent en titres, les sections côte à côte ou encadrées en blocs dans l'ordre, les images d'une grille en blocs `image`, une légende numérotée sans son numéro (« Avant », non « Figure 1 — Avant »), un titre numéroté sans le sien. Le plan d'un document relu est celui de son modèle.
 
-Une faute de style arrête le chargement, et `loom validate` la dit, avec le style de chaque outil :
+Une faute de style arrête le chargement, et `loom validate` la dit, avec le style de chaque outil. Un fichier au format de la 2.0 est refusé avec ce qui remplace ses clés :
 
 ```text
+tools[loom.word].style : style au format de la 2.0 : title → document_title ; headings → heading1, heading2, heading3 (et numbering : decimal, article). Un fichier de style est depuis 2.1.0 une liste de styles nommés (text, document_title, heading1…)
+tools[loom.word].style : heading_1 : ni un style prévu, ni un réglage ; un style à toi dit de quel style il part (base: note) — vouliez-vous dire heading1 ?
+tools[loom.word].templates[facture].style : heading2.color : couleur « red » inconnue (colors : brand)
 tools[loom.word].templates[facture].style : section(s) hors du modèle facture : « Annexes » (plan : Émetteur · Client · Description · Informations de paiement · Conditions et termes)
 tools[loom.word].style.header.logo — logo introuvable : …/prompts/images/logo.png
 ```
@@ -1392,7 +1441,7 @@ tools[loom.word].style.header.logo — logo introuvable : …/prompts/images/log
 ```text
   ├ word         sortie → ./sortie
   │              read, write
-  │              fuseau : Europe/Paris · … · style : charte ; disposition : facture
+  │              fuseau : Europe/Paris · … · style : charte ; style de modèle : facture
 ```
 
 Une police hors des polices de tous les postes (Arial, Calibri, Cambria, Georgia, Times New Roman, Verdana, Tahoma, Trebuchet MS, Garamond, Courier New) s'affiche dans une police de remplacement chez qui ne l'a pas : Word ne l'embarque pas. `loom validate` le signale (`polices : Inter : hors des polices de tous les postes, remplacée(s) chez qui ne les a pas`).
@@ -1416,8 +1465,8 @@ Depuis loom-ia 2.0.20, pour `loom.word`, avec `signature`, `toc` et `checkboxes`
  "items": ["[x] Coupure d'eau faite", {"text": "[x] Fuite localisée", "items": ["[ ] Canalisation"]}]}
 ```
 
-- **`signature`** : une colonne par signataire (4 au plus, 80 caractères chacun), sans cadre : le libellé en gras, la mention en italique (200 caractères au plus), « Date : », « Signature : » et 2 cm pour signer.
-- **`toc`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si la charte numérote les titres ; un titre de section masqué n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». La charte règle le sommaire : `toc: {levels: 2, pages: true}` (les niveaux de titre repris, 1 à 3 ; `pages: false` pour des liens sans numéros de page).
+- **`signature`** : une colonne par signataire (4 au plus, 80 caractères chacun), sans cadre : le libellé en gras, la mention en italique (200 caractères au plus ; les styles `signature` et `signature_mention`), « Date : », « Signature : » (`labels`) et 2 cm pour signer.
+- **`toc`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si le style numérote les titres ; un titre de section masqué n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». Le style `toc` règle le sommaire : `toc: {levels: 2, page_numbers: true}` (les niveaux de titre repris, 1 à 3 ; `page_numbers: false` pour des liens sans numéros de page).
 - **Liste à cocher** : `checkboxes: true` sur une `list`, et chaque élément, sous-éléments compris, commence par `[x]` (coché) ou `[ ]` (vide), la convention markdown. Une case ☒ ou ☐ se pose devant. Une liste à cocher n'est pas numérotée.
 
 ```text

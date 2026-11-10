@@ -7,27 +7,27 @@ du lecteur. Ses données sont écrites dans le cache de la partie (``numCache``,
 ``strCache``), sans classeur embarqué : Word et LibreOffice l'affichent tel quel,
 mais « Modifier les données » ne trouve pas de classeur.
 
-Le style est figé, comme celui du document (``_chart_style``) : la palette de la maison, des
+Les couleurs viennent du style (réglage ``chart`` : les séries, le texte, la grille, le
+titre), la police de ``text`` ; le reste est la règle commune (``_chart_style``) : des
 étiquettes de valeur quand il y a peu de barres, la légende seulement quand il y
 a plusieurs séries (ou des secteurs). L'ordre des éléments suit le schéma
 DrawingML, que Word applique strictement.
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Final
 from xml.sax.saxutils import escape, quoteattr
 
 from loom_ia.tools_builtin._chart_style import (
     AXIS_FORMATS,
-    GRID,
     LABEL_FORMATS,
     LABEL_ROOM,
     LABELLED_BARS,
-    PALETTE,
-    TEXT,
     axis_end,
 )
 from loom_ia.tools_builtin._document.content import ChartOut
+from loom_ia.tools_builtin._style_params import ChartLook
 
 _C: Final = "http://schemas.openxmlformats.org/drawingml/2006/chart"
 _A: Final = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -35,7 +35,8 @@ _R: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationships
 _WP: Final = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 _HEAD: Final = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 
-FONT: Final = "Calibri"
+# Le blanc du papier : le trait entre deux secteurs.
+PAPER: Final = "FFFFFF"
 # Mesures en EMU : 360 000 par centimètre.
 CM: Final = 360_000
 WIDTH: Final = 17 * CM
@@ -81,12 +82,26 @@ def anchor(
     )
 
 
-def _text_props(size: int, *, bold: bool = False) -> str:
+@dataclass(frozen=True, slots=True)
+class Paint:
+    """Ce que le style donne au graphique : ses couleurs, la police du texte, la langue."""
+
+    look: ChartLook
+    font: str
+    language: str
+
+    def series(self, index: int) -> str:
+        colors = self.look.colors
+        return colors[index % len(colors)]
+
+
+def _text_props(paint: Paint, size: int, *, bold: bool = False) -> str:
     return (
         "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>"
-        f'<a:defRPr sz="{size}" b="{int(bold)}"><a:solidFill><a:srgbClr val="{TEXT}"/>'
-        f'</a:solidFill><a:latin typeface="{FONT}"/></a:defRPr></a:pPr>'
-        '<a:endParaRPr lang="fr-FR"/></a:p></c:txPr>'
+        f'<a:defRPr sz="{size}" b="{int(bold)}"><a:solidFill>'
+        f'<a:srgbClr val="{paint.look.text}"/></a:solidFill>'
+        f'<a:latin typeface="{paint.font}"/></a:defRPr></a:pPr>'
+        f'<a:endParaRPr lang="{paint.language}"/></a:p></c:txPr>'
     )
 
 
@@ -138,13 +153,13 @@ def _name(index: int, name: str) -> str:
     )
 
 
-def _labels(code: str, *, percent: bool = False, position: str | None = None) -> str:
+def _labels(paint: Paint, code: str, *, percent: bool = False, position: str | None = None) -> str:
     """Étiquettes de valeur (ou de pourcentage, pour des secteurs)."""
     place = f'<c:dLblPos val="{position}"/>' if position else ""
     return (
         f'<c:dLbls><c:numFmt formatCode={quoteattr(code)} sourceLinked="0"/>'
         "<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>"
-        f"{_text_props(800)}{place}"
+        f"{_text_props(paint, 800)}{place}"
         '<c:showLegendKey val="0"/>'
         f'<c:showVal val="{int(not percent)}"/><c:showCatName val="0"/>'
         f'<c:showSerName val="0"/><c:showPercent val="{int(percent)}"/>'
@@ -173,16 +188,16 @@ def _scale(chart: ChartOut) -> str:
     return f'<c:max val="{round(end, 10):.10g}"/><c:min val="0"/>'
 
 
-def _axes(chart: ChartOut) -> str:
+def _axes(chart: ChartOut, paint: Paint) -> str:
     horizontal = chart.kind == "horizontal_bar"
     code = AXIS_FORMATS[chart.value_type]
     grid = (
-        f'<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="{GRID}"/>'
-        "</a:solidFill></a:ln></c:spPr></c:majorGridlines>"
+        '<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill>'
+        f'<a:srgbClr val="{paint.look.grid}"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>'
     )
     no_line = "<c:spPr><a:ln><a:noFill/></a:ln></c:spPr>"
     axis_line = (
-        f'<c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="{GRID}"/></a:solidFill>'
+        f'<c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="{paint.look.grid}"/></a:solidFill>'
         "</a:ln></c:spPr>"
     )
     # Barres horizontales : la première catégorie en haut, l'axe des valeurs en bas.
@@ -192,7 +207,7 @@ def _axes(chart: ChartOut) -> str:
         f'<c:delete val="0"/><c:axPos val="{"l" if horizontal else "b"}"/>'
         '<c:numFmt formatCode="General" sourceLinked="0"/>'
         '<c:majorTickMark val="none"/><c:minorTickMark val="none"/>'
-        f'<c:tickLblPos val="nextTo"/>{axis_line}{_text_props(900)}'
+        f'<c:tickLblPos val="nextTo"/>{axis_line}{_text_props(paint, 900)}'
         '<c:crossAx val="1002"/><c:crosses val="autoZero"/><c:auto val="1"/>'
         '<c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>'
         '<c:valAx><c:axId val="1002"/><c:scaling><c:orientation val="minMax"/>'
@@ -200,27 +215,27 @@ def _axes(chart: ChartOut) -> str:
         f'<c:delete val="0"/><c:axPos val="{"b" if horizontal else "l"}"/>{grid}'
         f'<c:numFmt formatCode={quoteattr(code)} sourceLinked="0"/>'
         '<c:majorTickMark val="none"/><c:minorTickMark val="none"/>'
-        f'<c:tickLblPos val="nextTo"/>{no_line}{_text_props(900)}'
+        f'<c:tickLblPos val="nextTo"/>{no_line}{_text_props(paint, 900)}'
         f'<c:crossAx val="1001"/><c:crosses val="{"max" if horizontal else "autoZero"}"/>'
         '<c:crossBetween val="between"/></c:valAx>'
     )
 
 
-def _plot(chart: ChartOut) -> str:
+def _plot(chart: ChartOut, paint: Paint) -> str:
     label = LABEL_FORMATS[chart.value_type]
     match chart.kind:
         case "pie":
             name, values = chart.series[0]
             slices = "".join(
                 f'<c:dPt><c:idx val="{i}"/><c:bubble3D val="0"/>'
-                f'<c:spPr><a:solidFill><a:srgbClr val="{PALETTE[i % len(PALETTE)]}"/>'
-                '</a:solidFill><a:ln w="12700"><a:solidFill><a:srgbClr val="FFFFFF"/>'
+                f'<c:spPr><a:solidFill><a:srgbClr val="{paint.series(i)}"/>'
+                f'</a:solidFill><a:ln w="12700"><a:solidFill><a:srgbClr val="{PAPER}"/>'
                 "</a:solidFill></a:ln></c:spPr></c:dPt>"
                 for i in range(len(chart.categories))
             )
             series = (
                 f'<c:ser><c:idx val="0"/><c:order val="0"/>{_name(0, name)}{slices}'
-                f"{_labels('0%', percent=True, position='outEnd')}"
+                f"{_labels(paint, '0%', percent=True, position='outEnd')}"
                 f"{_categories(chart.categories)}{_values(0, values, label)}</c:ser>"
             )
             return (
@@ -230,9 +245,9 @@ def _plot(chart: ChartOut) -> str:
         case "line":
             series = "".join(
                 f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/>{_name(i, name)}'
-                f"{_line(PALETTE[i % len(PALETTE)])}"
+                f"{_line(paint.series(i))}"
                 '<c:marker><c:symbol val="circle"/><c:size val="5"/>'
-                f"{_fill(PALETTE[i % len(PALETTE)])}</c:marker>"
+                f"{_fill(paint.series(i))}</c:marker>"
                 f"{_categories(chart.categories)}{_values(i, values, label)}"
                 '<c:smooth val="0"/></c:ser>'
                 for i, (name, values) in enumerate(chart.series)
@@ -240,14 +255,14 @@ def _plot(chart: ChartOut) -> str:
             return (
                 f'<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>{series}'
                 '<c:marker val="1"/><c:axId val="1001"/><c:axId val="1002"/></c:lineChart>'
-                + _axes(chart)
+                + _axes(chart, paint)
             )
         case "bar" | "horizontal_bar":
             labelled = _labelled(chart)
             series = "".join(
                 f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/>{_name(i, name)}'
-                f'{_fill(PALETTE[i % len(PALETTE)])}<c:invertIfNegative val="0"/>'
-                f"{_labels(label, position='outEnd') if labelled else ''}"
+                f'{_fill(paint.series(i))}<c:invertIfNegative val="0"/>'
+                f"{_labels(paint, label, position='outEnd') if labelled else ''}"
                 f"{_categories(chart.categories)}{_values(i, values, label)}</c:ser>"
                 for i, (name, values) in enumerate(chart.series)
             )
@@ -255,17 +270,19 @@ def _plot(chart: ChartOut) -> str:
             return (
                 f'<c:barChart><c:barDir val="{direction}"/><c:grouping val="clustered"/>'
                 f'<c:varyColors val="0"/>{series}<c:gapWidth val="60"/>'
-                '<c:axId val="1001"/><c:axId val="1002"/></c:barChart>' + _axes(chart)
+                '<c:axId val="1001"/><c:axId val="1002"/></c:barChart>' + _axes(chart, paint)
             )
 
 
-def part(chart: ChartOut) -> str:
-    """La partie ``chartN.xml`` du graphique."""
+def part(chart: ChartOut, look: ChartLook, font: str, language: str = "fr-FR") -> str:
+    """La partie ``chartN.xml`` du graphique, aux couleurs et dans la police du style."""
+    paint = Paint(look, font, language)
     title = (
         "<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr>"
-        f'<a:defRPr sz="1100" b="1"><a:solidFill><a:srgbClr val="1F3864"/></a:solidFill>'
-        f'<a:latin typeface="{FONT}"/></a:defRPr></a:pPr><a:r><a:rPr lang="fr-FR" sz="1100" '
-        f'b="1"><a:solidFill><a:srgbClr val="1F3864"/></a:solidFill><a:latin typeface="{FONT}"/>'
+        f'<a:defRPr sz="1100" b="1"><a:solidFill><a:srgbClr val="{look.title}"/></a:solidFill>'
+        f'<a:latin typeface="{font}"/></a:defRPr></a:pPr><a:r><a:rPr lang="{language}" '
+        f'sz="1100" b="1"><a:solidFill><a:srgbClr val="{look.title}"/></a:solidFill>'
+        f'<a:latin typeface="{font}"/>'
         f"</a:rPr><a:t>{escape(chart.title)}</a:t></a:r></a:p></c:rich></c:tx>"
         '<c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>'
         if chart.title
@@ -274,15 +291,15 @@ def part(chart: ChartOut) -> str:
     legend = (
         '<c:legend><c:legendPos val="'
         + ("r" if chart.kind == "pie" else "b")
-        + f'"/><c:overlay val="0"/>{_text_props(900)}</c:legend>'
+        + f'"/><c:overlay val="0"/>{_text_props(paint, 900)}</c:legend>'
         if chart.kind == "pie" or len(chart.series) > 1
         else ""
     )
     return (
         _HEAD + f'<c:chartSpace xmlns:c="{_C}" xmlns:a="{_A}" xmlns:r="{_R}">'
-        '<c:date1904 val="0"/><c:lang val="fr-FR"/><c:roundedCorners val="0"/>'
-        f"<c:chart>{title}<c:plotArea><c:layout/>{_plot(chart)}</c:plotArea>{legend}"
+        f'<c:date1904 val="0"/><c:lang val="{language}"/><c:roundedCorners val="0"/>'
+        f"<c:chart>{title}<c:plotArea><c:layout/>{_plot(chart, paint)}</c:plotArea>{legend}"
         '<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart>'
         "<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>"
-        f"{_text_props(900)}</c:chartSpace>"
+        f"{_text_props(paint, 900)}</c:chartSpace>"
     )

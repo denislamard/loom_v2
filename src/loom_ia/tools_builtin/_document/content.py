@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Le document validé, prêt à rendre : texte découpé en segments, cellules mises en forme.
 
-Ce que décide le style maison sans dépendre du format : les valeurs d'une
-colonne typée écrites à la française (``1 250,50 €``, ``02/10/2026``,
-``15,0 %``), leur alignement, la ligne de total calculée par l'outil (un
+Ce qui ne dépend pas du format : les valeurs d'une colonne typée écrites dans la
+langue du style (``1 250,50 €``, ``02/10/2026``, ``15,0 %`` en français ;
+``€1,250.50``, ``10/02/2026``, ``15.0%`` en anglais), leur alignement, la ligne
+de total (« Total », ``labels.total``) calculée par l'outil (un
 document n'a pas de formules), la largeur relative des colonnes. Chaque format
 (``word``, ``pdf``) ne fait plus que poser ces éléments sur la page. La taille
 d'une image dans la page aussi (``placed``) ; ses octets sont lus avant, par
@@ -49,6 +50,7 @@ from loom_ia.tools_builtin._document.arguments import (
     WriteArguments,
 )
 from loom_ia.tools_builtin._document.picture import Picture
+from loom_ia.tools_builtin._style_params import FRENCH, Labels, Language
 from loom_ia.tools_builtin._templates import Template, plan_faults
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Stored, convert
 
@@ -234,11 +236,13 @@ def prepare(
     zone: ZoneInfo,
     pictures: Pictures = NO_PICTURES,
     template: Template | None = None,
+    labels: Labels = FRENCH,
 ) -> Prepared:
     """Valide le document entier ; ``ToolError`` qui liste toutes les fautes trouvées.
 
     Sans disque : les images sont lues avant, par l'outil (``pictures``). ``template`` :
     le modèle que le document dit suivre ; ses titres de niveau 1 doivent suivre son plan.
+    ``labels`` : la langue du style, et le libellé de la ligne de total.
     """
     problems = Problems()
     blocks: list[BlockOut] = []
@@ -269,11 +273,11 @@ def prepare(
             case ListBlock():
                 blocks.append(_list(block, where, problems))
             case Table():
-                table, stored = _table(block, where, problems, zone)
+                table, stored = _table(block, where, problems, zone, labels)
                 blocks.append(table)
                 last_table = (block, stored)
             case Chart():
-                blocks.append(_chart(block, last_table, where, problems, zone))
+                blocks.append(_chart(block, last_table, where, problems, zone, labels.language))
             case Note():
                 text = _text(block.text, where, problems, required=True)
                 note_title = _text(block.title, f"{where}, title", problems) or None
@@ -414,7 +418,7 @@ def _signature(block: Signature, where: str, problems: Problems) -> SignatureOut
 
 
 def _table(
-    block: Table, where: str, problems: Problems, zone: ZoneInfo
+    block: Table, where: str, problems: Problems, zone: ZoneInfo, labels: Labels
 ) -> tuple[TableOut, list[list[Stored]]]:
     columns = block.columns
     headers = [lines(column.header).strip() for column in columns]
@@ -448,12 +452,15 @@ def _table(
                 _clean(value, at, problems)
             cells.append(convert(value, column.type, at, problems, zone))
         stored.append(cells)
-    total = _totals(block, stored, where, problems)
+    total = _totals(block, stored, where, problems, labels)
     if block.totals and not block.rows:
         problems.warn(f"{where} : aucune ligne, la ligne de total n'est pas écrite")
         total = None
     shown = tuple(
-        tuple(display(value, column.type) for value, column in zip(cells, columns, strict=True))
+        tuple(
+            display(value, column.type, labels.language)
+            for value, column in zip(cells, columns, strict=True)
+        )
         for cells in stored
     )
     widths, natural = _widths(headers, [*shown, *([total] if total else [])])
@@ -481,11 +488,12 @@ def _chart(
     where: str,
     problems: Problems,
     zone: ZoneInfo,
+    language: Language = "fr",
 ) -> ChartOut:
     """Le graphique validé, ses données en ligne ou tirées du tableau qui le précède."""
     found = True
     if block.from_table is not None:
-        taken = _from_table(block, last_table, where, problems)
+        taken = _from_table(block, last_table, where, problems, language)
         # Sans tableau ou sans ses colonnes, rien à vérifier de plus : la faute est dite.
         found = taken is not None
         categories, series, kind = taken or ([], [], "decimal")
@@ -524,6 +532,7 @@ def _from_table(
     last_table: tuple[Table, list[list[Stored]]] | None,
     where: str,
     problems: Problems,
+    language: Language,
 ) -> tuple[list[str], list[tuple[str, tuple[float | None, ...]]], ColumnType] | None:
     """Libellés, séries et type tirés du tableau ; ``None`` si on ne peut pas les tirer."""
     source = block.from_table
@@ -543,7 +552,7 @@ def _from_table(
         return None
     label_at = headers.index(source.categories.strip())
     label_kind = table.columns[label_at].type
-    categories = [display(row[label_at], label_kind) for row in stored]
+    categories = [display(row[label_at], label_kind, language) for row in stored]
     kinds: set[ColumnType] = {
         table.columns[headers.index(name.strip())].type for name in source.values
     }
@@ -683,7 +692,7 @@ def _check_images(arguments: WriteArguments, pictures: Pictures, problems: Probl
 
 
 def _totals(
-    block: Table, stored: list[list[Stored]], where: str, problems: Problems
+    block: Table, stored: list[list[Stored]], where: str, problems: Problems, labels: Labels
 ) -> tuple[str, ...] | None:
     totals = block.totals or {}
     if not totals:
@@ -706,9 +715,9 @@ def _totals(
         aggregate = totals.get(column.header)
         values = [row[index] for row in stored if row[index] is not None]
         if aggregate is not None:
-            cells.append(_aggregate(aggregate, values, column.type))
+            cells.append(_aggregate(aggregate, values, column.type, labels.language))
         else:
-            cells.append("Total" if index == labelled else "")
+            cells.append(labels.total if index == labelled else "")
     return tuple(cells)
 
 
@@ -722,23 +731,25 @@ def _total_label(block: Table) -> int | None:
     return free[0][0] if free else None
 
 
-def _aggregate(aggregate: Aggregate, values: Sequence[Stored], kind: ColumnType) -> str:
+def _aggregate(
+    aggregate: Aggregate, values: Sequence[Stored], kind: ColumnType, language: Language
+) -> str:
     if aggregate == "count":
-        return display(len(values), "integer")
+        return display(len(values), "integer", language)
     if not values:
         return ""
     try:
         match aggregate:
             case "sum":
-                return display(sum(_numbers(values)), kind)
+                return display(sum(_numbers(values)), kind, language)
             case "average":
                 numbers = _numbers(values)
                 mean = sum(numbers) / len(numbers)
-                return display(mean, "decimal" if kind == "integer" else kind)
+                return display(mean, "decimal" if kind == "integer" else kind, language)
             case "min":
-                return display(min(values, key=_order), kind)
+                return display(min(values, key=_order), kind, language)
             case "max":
-                return display(max(values, key=_order), kind)
+                return display(max(values, key=_order), kind, language)
     except TypeError:
         # Types mêlés : la faute est déjà dite par la validation des totaux.
         return ""
@@ -805,19 +816,23 @@ def _widths(
     return tuple(share / PAGE_CHARS for share in shares), natural
 
 
-def display(value: Stored, kind: ColumnType) -> str:
-    """La valeur telle qu'un document l'écrit, à la française."""
+def display(value: Stored, kind: ColumnType, language: Language = "fr") -> str:
+    """La valeur telle qu'un document l'écrit, dans sa langue (à la française par défaut)."""
+    english = language == "en"
     match value:
         case None:
             return ""
         case dt.datetime():
-            return value.strftime("%d/%m/%Y %H:%M")
+            return value.strftime("%m/%d/%Y %H:%M" if english else "%d/%m/%Y %H:%M")
         case dt.date():
-            return value.strftime("%d/%m/%Y")
+            return value.strftime("%m/%d/%Y" if english else "%d/%m/%Y")
         case bool():
-            return "Oui" if value else "Non"
+            return ("Yes" if value else "No") if english else ("Oui" if value else "Non")
         case int() | float() if kind in NUMERIC:
-            return _number(value, kind)
+            return _english(value, kind) if english else _number(value, kind)
+        case str() if kind == "boolean" and english:
+            # Une colonne boolean garde « Oui » et « Non » (``_values``, comme excel).
+            return {"Oui": "Yes", "Non": "No"}.get(value, value)
         case _:
             return str(value)
 
@@ -834,6 +849,22 @@ def _number(value: float, kind: ColumnType) -> str:
             return _french(f"{value * 100:,.1f}") + f"{NBSP}%"
         case _:
             return _french(f"{value:,.2f}")
+
+
+def _english(value: float, kind: ColumnType) -> str:
+    """« €1,250.50 », « 15.0% » ; le signe moins devant le symbole (« -€12.00 »)."""
+    sign = "-" if value < 0 else ""
+    match kind:
+        case "integer":
+            return f"{round(value):,}"
+        case "amount_eur":
+            return f"{sign}€{abs(value):,.2f}"
+        case "amount_keur":
+            return f"{sign}€{abs(value):,.0f}k"
+        case "percent":
+            return f"{value * 100:,.1f}%"
+        case _:
+            return f"{value:,.2f}"
 
 
 def _french(said: str) -> str:

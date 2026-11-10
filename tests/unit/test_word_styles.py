@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Styles de document de ``loom.word`` : la charte de l'outil, la disposition d'un modèle.
+"""Styles de document de ``loom.word`` : la charte de l'outil, le style d'un modèle.
 
-Les fichiers de style sont lus au chargement de la config (``load_config``), ou donnés
-en Python (``spec``). Les documents écrits sont relus dans leur XML, et par l'outil
-(``action: read``) : ce que le style pose ne revient pas, le plan du modèle oui.
-LibreOffice, s'il est là, vérifie le rendu.
+Un fichier de style est une liste de styles nommés (``text``, ``heading1``…) et quelques
+réglages ; ``default.yaml`` en est le point de départ, que la charte puis le style du
+modèle complètent, propriété par propriété. Les fichiers sont lus au chargement de la
+config (``load_config``), ou donnés en Python (``spec``). Les documents écrits sont
+relus dans leur XML, et par l'outil (``action: read``) : ce que le style pose ne revient
+pas, le plan du modèle oui. LibreOffice, s'il est là, vérifie le rendu.
 """
 
 import hashlib
@@ -28,11 +30,14 @@ from loom_ia.config import ConfigError, load_config
 from loom_ia.core.model import DEFAULT_TENANT, RunId, SessionId
 from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.tools_builtin import BuiltinContext
+from loom_ia.tools_builtin import word as word_package
 from loom_ia.tools_builtin._style_params import (
-    HOUSE,
-    StyleSpec,
+    DEFAULT_FILE,
+    SAFE_FONTS,
+    StyleFile,
     check_charte,
-    merged,
+    house,
+    load_style,
     resolve,
 )
 from loom_ia.tools_builtin._templates import parse as parse_template
@@ -65,24 +70,29 @@ description: Facture d'un artisan.
 # Conditions et termes
 """
 CHARTE: Final[dict[str, Any]] = {
-    "fonts": {"body": {"name": "Arial", "size": 10}},
-    "colors": {"primary": "0B5D3B", "accent": "c0392b"},
-    "title": {"size": 22, "align": "droite", "uppercase": True, "rule": False},
-    "headings": {1: {"size": 13, "uppercase": True}},
-    "tables": {"borders": "filets", "header": {"fill": "E8F1EC"}},
-    "header": {"logo": {"data": LOGO, "width": 3.5}, "right": "{titre}"},
+    "colors": {"brand": "0B5D3B", "alert": "c0392b"},
+    "text": {"font": "Arial", "size": 10},
+    "document_title": {
+        "size": 22, "color": "brand", "align": "right", "uppercase": True, "border_bottom": "none"
+    },
+    "heading1": {"size": 13, "uppercase": True, "color": "brand"},
+    "heading2": {"color": "brand"},
+    "heading3": {"color": "alert"},
+    "table": {"borders": "horizontal", "border_top": "1pt brand", "border_bottom": "1pt brand"},
+    "table_header": {"fill": "E8F1EC"},
+    "header": {"logo": LOGO, "logo_width": 3.5, "right": "{title}"},
     "footer": {"lines": ["Dupont Plomberie SARL · SIRET 812 345 678 00021"],
-               "right": "Page {page} / {pages}"},
+               "center": "", "right": "Page {page} / {pages}"},
     "watermark": "BROUILLON",
 }  # fmt: skip
 FACTURE_STYLE: Final[dict[str, Any]] = {
     "beside": [{"sections": ["Émetteur", "Client"], "widths": [55, 45]}],
     "sections": {
-        "Émetteur": {"title": "masque"},
-        "Client": {"title": "masque", "box": True},
-        "Description": {"title": "masque", "tables": {"width": "contenu", "align": "droite"}},
-        "informations de paiement": {"title": "discret"},
-        "Conditions et termes": {"title": "discret", "size": "petit", "align": "justifie"},
+        "Émetteur": {"title": "hidden"},
+        "Client": {"title": "hidden", "box": True},
+        "Description": {"title": "hidden", "table": {"width": "content", "position": "right"}},
+        "informations de paiement": {"title": "quiet"},
+        "Conditions et termes": {"title": "quiet", "size": "small", "align": "justify"},
     },
 }
 FACTURE: Final[list[dict[str, Any]]] = [
@@ -116,13 +126,13 @@ FACTURE: Final[list[dict[str, Any]]] = [
 ]
 RAPPORT_MD: Final = "# Page de garde\n# Contexte\n# Mesures (facultatif)\n# Conditions générales\n"
 RAPPORT_STYLE: Final[dict[str, Any]] = {
-    "headings": {"numbering": "decimale"},
-    "captions": {"numbered": True},
-    "images": {"grid": True},
+    "numbering": "decimal",
+    "caption": {"numbered": True},
+    "image": {"grid": True},
     "sections": {
-        "Page de garde": {"title": "masque", "cover": True},
+        "Page de garde": {"title": "hidden", "cover": True},
         "Mesures": {"landscape": True},
-        "Conditions générales": {"columns": 2, "size": "petit"},
+        "Conditions générales": {"columns": 2, "size": "small"},
     },
 }
 RAPPORT: Final[list[dict[str, Any]]] = [
@@ -189,6 +199,17 @@ def names(path: Path) -> list[str]:
         return archive.namelist()
 
 
+def word_style(styles: str, style_id: str) -> str:
+    """Un style de ``styles.xml``, par son identifiant."""
+    found = re.search(rf'<w:style w:type="\w+" w:styleId="{style_id}">.*?</w:style>', styles)
+    assert found is not None, style_id
+    return found.group()
+
+
+def style_of(given: dict[str, Any]) -> StyleFile:
+    return StyleFile.model_validate(given)
+
+
 # L'ordre des enfants que le schéma WordprocessingML impose, pour ce qu'écrit l'outil :
 # Word refuse un document qui ne le suit pas, LibreOffice non.
 ORDER: Final = {
@@ -197,7 +218,10 @@ ORDER: Final = {
             "jc", "outlineLvl", "sectPr"),
     "tblPr": ("tblStyle", "tblW", "jc", "tblBorders", "tblLayout", "tblCellMar", "tblLook"),
     "tcPr": ("tcW", "tcBorders", "shd", "tcMar", "vAlign"),
-    "rPr": ("rFonts", "b", "bCs", "i", "iCs", "caps", "vanish", "color", "sz", "szCs", "lang"),
+    "rPr": ("rFonts", "b", "bCs", "i", "iCs", "caps", "vanish", "color", "sz", "szCs", "u",
+            "lang"),
+    "pBdr": ("top", "left", "bottom", "right"),
+    "tblBorders": ("top", "left", "bottom", "right", "insideH", "insideV"),
     "numbering": ("abstractNum", "num"),
 }  # fmt: skip
 
@@ -216,12 +240,15 @@ def check_order(xml: str) -> None:
         assert positions == sorted(positions), f"{local} : {children}"
 
 
-# --- Sans style, rien ne change ---------------------------------------------------------
+# --- Sans charte, rien ne change ---------------------------------------------------------
 
 # L'empreinte du devis de ``test_word`` écrit sans style : celle de la 2.0.21 pour le même
 # contenu écrit dans le vocabulaire français (le devis n'a plus de saut de page, sorti du
-# vocabulaire en 2.1.0). Avant le saut de page retiré, celle du commit 9ae0492 (avant les styles).
+# vocabulaire en 2.1.0). Avant le saut de page retiré, celle du commit 9ae0492 (avant les
+# styles). Le style maison vient de ``default.yaml`` depuis 2.1.0 : la même empreinte.
 DEVIS_SHA256: Final = "149987cb614b5a4aded8996c5524116ba1a35a14863c513bb81cb04521f4f455"
+# Le ``styles.xml`` du style maison, tel que l'écrivait le code avant ``default.yaml``.
+HOUSE_STYLES_SHA256: Final = "5c73cfc147910a496ae3c47c1127f0c630bda99d5c19382a7f873c5269edc758"
 
 
 async def test_without_a_style_nothing_changes(tmp_path: Path) -> None:
@@ -229,15 +256,49 @@ async def test_without_a_style_nothing_changes(tmp_path: Path) -> None:
 
     plain = make(tmp_path)
     assert (await call(plain, path="sortie/a.docx", **DEVIS))["sha256"] == DEVIS_SHA256
-    # Un style vide : le style maison, le même fichier.
+    # Un style vide : default.yaml seul, le même fichier.
     empty = make(tmp_path, style={"spec": {}})
     assert (await call(empty, path="sortie/b.docx", **DEVIS))["sha256"] == DEVIS_SHA256
-    assert resolve(StyleSpec()) == HOUSE
-    assert styles_xml(HOUSE) == STYLES
+    assert resolve(StyleFile()) == house()
+    assert styles_xml(house()) == STYLES
+    assert hashlib.sha256(STYLES.encode()).hexdigest() == HOUSE_STYLES_SHA256
     # Ni le schéma ni la description ne disent rien des styles : le modèle n'en voit rien.
     assert empty.spec == plain.spec
     assert ("style", "charte") in empty.settings().options
     assert not any(label == "style" for label, _ in plain.settings().options)
+
+
+def test_no_visual_value_in_the_code() -> None:
+    """Ni couleur ni police dans l'écriture Word : elles viennent de ``default.yaml``.
+
+    Deux mécaniques restent : le blanc du papier (le trait entre deux secteurs d'un
+    graphique) et la police de symboles de la case à cocher (un glyphe, comme une puce).
+    """
+    folder = Path(word_package.__file__).parent
+    fonts = re.compile("|".join(sorted({*SAFE_FONTS, "helvetica", "times"})), re.IGNORECASE)
+    for source in sorted(folder.glob("*.py")):
+        code = source.read_text(encoding="utf-8")
+        colors = set(re.findall(r"\b[0-9A-F]{6}\b", code)) - {"FFFFFF"}
+        assert not colors, f"{source.name} : {sorted(colors)}"
+        assert not fonts.search(code), f"{source.name} : {fonts.search(code)}"
+
+
+def test_default_yaml_is_a_style_file_like_any_other() -> None:
+    """``default.yaml`` se lit comme une charte ; ses couleurs de graphique sont celles
+    d'``excel`` et de ``pdf``."""
+    from loom_ia.tools_builtin._chart_style import GRID, PALETTE, TEXT
+
+    house_file = load_style(DEFAULT_FILE.read_text(encoding="utf-8"))
+    assert house_file.chart is not None and tuple(house_file.chart.colors or ()) == PALETTE
+    assert (house_file.chart.grid, house_file.chart.text) == (GRID, TEXT)
+    assert PALETTE[:3] == ("1F3864", "C55A11", "8EA9DB") and len(PALETTE) == 12
+    style = house()
+    assert style.look("heading1").font == "Calibri"  # hérité de text
+    assert style.look("quote_source").italic is False  # sa base, quote, est en italique
+    assert style.look("table_header").size == 10  # hérité de table
+    assert style.footer is not None and style.footer.center == "Page {page} / {pages}"
+    assert style.header is None and style.watermark is None
+    assert style.labels.contents == "Sommaire" and style.margins == (1134, 1134, 1134, 1134)
 
 
 # --- La charte ----------------------------------------------------------------------------
@@ -248,18 +309,18 @@ async def test_the_charte_sets_fonts_colors_and_headings(tmp_path: Path) -> None
     path = await write(tool, "libre", FACTURE, title="Facture", template="none")
     styles = part(path, "word/styles.xml")
     assert 'w:ascii="Arial"' in styles and '<w:sz w:val="20"/>' in styles
-    title = re.search(r'<w:style w:type="paragraph" w:styleId="Title">.*?</w:style>', styles)
-    assert title is not None
-    assert '<w:jc w:val="right"/>' in title.group() and "<w:caps/>" in title.group()
-    assert "pBdr" not in title.group() and 'w:val="0B5D3B"' in title.group()
-    heading = re.search(r'w:styleId="Heading1">.*?</w:style>', styles)
-    assert heading is not None and "<w:caps/>" in heading.group()
-    assert '<w:sz w:val="26"/>' in heading.group()
-    # Une couleur nommée (accent) prend la valeur de la charte, en majuscules.
-    assert 'w:styleId="Heading3"' in styles and 'w:color w:val="C0392B"' in styles
-    # Filets : haut et bas forts, lignes intérieures fines, pas de verticales.
+    title = word_style(styles, "Title")
+    assert '<w:jc w:val="right"/>' in title and "<w:caps/>" in title
+    # border_bottom: none retire le filet de default.yaml.
+    assert "pBdr" not in title and 'w:val="0B5D3B"' in title
+    heading = word_style(styles, "Heading1")
+    assert "<w:caps/>" in heading and '<w:sz w:val="26"/>' in heading
+    # Une couleur nommée prend sa valeur, en majuscules.
+    assert 'w:color w:val="C0392B"' in word_style(styles, "Heading3")
+    # Horizontales, et les filets haut et bas de la charte ; pas de verticales.
     document = part(path, "word/document.xml")
     assert '<w:top w:val="single" w:sz="8" w:space="0" w:color="0B5D3B"/>' in document
+    assert '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="A6A6A6"/>' in document
     assert "insideV" not in document
     assert 'w:fill="E8F1EC"' in document
     for name in ("word/document.xml", "word/styles.xml", "word/header1.xml"):
@@ -268,21 +329,21 @@ async def test_the_charte_sets_fonts_colors_and_headings(tmp_path: Path) -> None
 
 async def test_an_underlined_title(tmp_path: Path) -> None:
     """Le texte du titre souligné, de sa longueur ; sans filet de toute la largeur."""
-    charte = {"title": {"underline": True, "rule": False}}
+    charte = {"document_title": {"underline": True, "border_bottom": "none"}}
     tool = styled(tmp_path, charte=charte)
     path = await write(tool, "libre", FACTURE, title="Facture", template="none")
     styles = part(path, "word/styles.xml")
-    title = re.search(r'<w:style w:type="paragraph" w:styleId="Title">.*?</w:style>', styles)
-    assert title is not None
-    assert '<w:u w:val="single"/>' in title.group() and "pBdr" not in title.group()
+    title = word_style(styles, "Title")
+    assert '<w:u w:val="single"/>' in title and "pBdr" not in title
     check_order(styles)
-    # Sans la clé, rien de souligné.
-    assert "<w:u " not in styles_xml(resolve(StyleSpec.model_validate({"title": {"rule": False}})))
+    # Sans la propriété, rien de souligné.
+    plain = resolve(style_of({"document_title": {"border_bottom": "none"}}))
+    assert "<w:u " not in styles_xml(plain)
 
 
 async def test_underlined_headings(tmp_path: Path) -> None:
     """Un niveau souligné, les autres non ; un titre discret hérite du niveau 1."""
-    charte = {"headings": {1: {"underline": True}}}
+    charte = {"heading1": {"underline": True}}
     tool = make(
         tmp_path,
         style={"spec": charte},
@@ -292,20 +353,20 @@ async def test_underlined_headings(tmp_path: Path) -> None:
     styles = part(path, "word/styles.xml")
     check_order(styles)
     for level, underlined in ((1, True), (2, False), (3, False)):
-        heading = re.search(rf'w:styleId="Heading{level}">.*?</w:style>', styles)
-        assert heading is not None
-        assert ('<w:u w:val="single"/>' in heading.group()) is underlined
-    quiet = re.search(r'w:styleId="HeadingQuiet">.*?</w:style>', styles)
-    assert quiet is not None and '<w:basedOn w:val="Heading1"/>' in quiet.group()
-    assert "<w:u " not in quiet.group()  # hérité, pas annulé
+        heading = word_style(styles, f"Heading{level}")
+        assert ('<w:u w:val="single"/>' in heading) is underlined
+    quiet = word_style(styles, "HeadingQuiet")
+    assert '<w:basedOn w:val="Heading1"/>' in quiet
+    assert "<w:u " not in quiet  # hérité, pas annulé
 
 
 async def test_header_footer_logo_and_watermark(tmp_path: Path) -> None:
     tool = styled(tmp_path)
     path = await write(tool, "libre", FACTURE, title="Facture F-12", template="none")
     header = part(path, "word/header1.xml")
-    assert "Facture F-12" in header  # {titre}
+    assert "Facture F-12" in header  # {title}
     assert 'string="BROUILLON"' in header and "PowerPlusWaterMarkObject" in header
+    assert 'fillcolor="#D9D9D9"' in header and "&quot;Arial&quot;" in header
     assert 'r:embed="rIdImage1"' in header
     assert "media/image1.png" in part(path, "word/_rels/header1.xml.rels")
     # Le logo est une partie de l'archive, mais pas une relation du corps.
@@ -314,16 +375,25 @@ async def test_header_footer_logo_and_watermark(tmp_path: Path) -> None:
     assert 'Target="header1.xml"' in part(path, "word/_rels/document.xml.rels")
     assert "/word/header1.xml" in part(path, "[Content_Types].xml")
     footer = part(path, "word/footer1.xml")
-    # Les mentions, puis la ligne des zones (le numéro de page à droite).
+    # Les mentions, puis la ligne des zones (le numéro de page à droite, center vidé).
     assert footer.index("SIRET") < footer.index(" PAGE ") < footer.index(" NUMPAGES ")
+    assert footer.count(" PAGE ") == 1
     assert '<w:tab w:val="right" w:pos="9638"/>' in footer
     document = part(path, "word/document.xml")
     assert '<w:headerReference w:type="default" r:id="rIdHeader1"/>' in document
     assert "titlePg" not in document
 
 
+async def test_a_footer_keeps_the_page_numbers_of_the_house(tmp_path: Path) -> None:
+    """Des mentions ajoutées au pied de page gardent « Page n / N » de default.yaml."""
+    tool = make(tmp_path, style={"spec": {"footer": {"lines": ["SIRET 812 345 678 00021"]}}})
+    path = await write(tool, "d", FACTURE)
+    footer = part(path, "word/footer1.xml")
+    assert footer.index("SIRET") < footer.index(" PAGE ") < footer.index(" NUMPAGES ")
+
+
 async def test_a_first_page_without_header(tmp_path: Path) -> None:
-    charte = {**CHARTE, "header": {"right": "{titre}", "first_page": False}, "watermark": None}
+    charte = {**CHARTE, "header": {"right": "{title}", "first_page": False}, "watermark": ""}
     tool = styled(tmp_path, charte)
     path = await write(tool, "libre", FACTURE, title="Facture", template="none")
     document = part(path, "word/document.xml")
@@ -344,8 +414,7 @@ async def test_numbered_headings_and_captions(tmp_path: Path) -> None:
     assert '<w:num w:numId="900"><w:abstractNumId w:val="2"/></w:num>' in numbering
     styles = part(path, "word/styles.xml")
     # Le titre masqué ne prend pas de numéro.
-    hidden = re.search(r'w:styleId="HeadingHidden">.*?</w:style>', styles)
-    assert hidden is not None and '<w:numId w:val="0"/>' in hidden.group()
+    assert '<w:numId w:val="0"/>' in word_style(styles, "HeadingHidden")
     document = part(path, "word/document.xml")
     assert re.search(
         r'Figure </w:t></w:r><w:fldSimple w:instr=" SEQ Figure \\\* ARABIC ">', document
@@ -376,12 +445,48 @@ async def test_an_underlined_section_title_keeps_its_layout(tmp_path: Path) -> N
 
 
 async def test_article_numbering(tmp_path: Path) -> None:
-    tool = make(tmp_path, style={"spec": {"headings": {"numbering": "article"}}})
+    tool = make(tmp_path, style={"spec": {"numbering": "article"}})
     path = await write(tool, "contrat", [{"type": "heading", "text": "Objet"}], title="Contrat")
     assert '<w:lvlText w:val="Article %1 \u2013"/>' in part(path, "word/numbering.xml")
 
 
-# --- La disposition ------------------------------------------------------------------------
+async def test_a_document_in_english(tmp_path: Path) -> None:
+    """``language: en`` : la langue déclarée, les nombres, les dates, les libellés."""
+    tool = make(
+        tmp_path,
+        blocks=("image", "toc", "signature"),
+        style={"spec": {"language": "en", "numbering": "article", "caption": {"numbered": True},
+                        "labels": {"total": "Grand total"}}},
+    )  # fmt: skip
+    table = {
+        "type": "table",
+        "columns": [{"header": "Item"}, {"header": "Amount", "type": "amount_eur"},
+                    {"header": "Date", "type": "date"}, {"header": "Paid", "type": "boolean"},
+                    {"header": "Rate", "type": "percent"}],
+        "rows": [["Pipe", 1250.5, "2026-11-10", True, 0.2],
+                 ["Refund", -12, "2026-11-11", False, 0.1]],
+        "totals": {"Amount": "sum"},
+        "caption": "Costs",
+    }  # fmt: skip
+    blocks = [
+        {"type": "toc"},
+        {"type": "heading", "text": "Work"},
+        table,
+        {"type": "signature", "signers": ["Customer"]},
+    ]
+    path = await write(tool, "en", blocks, title="Quote")
+    styles = part(path, "word/styles.xml")
+    assert '<w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/>' in styles
+    assert "<dc:language>en-US</dc:language>" in part(path, "docProps/core.xml")
+    document = part(path, "word/document.xml")
+    said = ("€1,250.50", "-€12.00", "€1,238.50", "11/10/2026", "Yes", "No", "20.0%",
+            "Grand total", "Contents", "Date:", "Signature:", "Table ", "SEQ Table ")  # fmt: skip
+    for text in said:
+        assert text in document, text
+    assert '<w:lvlText w:val="Article %1 \u2013"/>' in part(path, "word/numbering.xml")
+
+
+# --- La disposition (le style d'un modèle, jusqu'au lot 3) ---------------------------------
 
 
 async def test_a_facture_laid_out(tmp_path: Path) -> None:
@@ -391,9 +496,9 @@ async def test_a_facture_laid_out(tmp_path: Path) -> None:
     check_order(document)
     styles = part(path, "word/styles.xml")
     assert '<w:name w:val="loom layout"/>' in styles
-    hidden = re.search(r'w:styleId="HeadingHidden">.*?</w:style>', styles)
-    assert hidden is not None and "<w:vanish/>" in hidden.group()
-    assert "numId" not in hidden.group()  # pas de numérotation à annuler
+    hidden = word_style(styles, "HeadingHidden")
+    assert "<w:vanish/>" in hidden
+    assert "numId" not in hidden  # pas de numérotation à annuler
     assert document.count('<w:pStyle w:val="HeadingHidden"/>') == 3
     assert document.count('<w:pStyle w:val="HeadingQuiet"/>') == 2
     # Émetteur et client côte à côte, 55/45, le client encadré.
@@ -401,6 +506,7 @@ async def test_a_facture_laid_out(tmp_path: Path) -> None:
     assert layout is not None
     assert '<w:gridCol w:w="5301"/><w:gridCol w:w="4337"/>' in layout.group()
     assert layout.group().count("<w:tcBorders>") == 1
+    assert '<w:top w:val="single" w:sz="6" w:space="0" w:color="1F3864"/>' in layout.group()
     assert layout.group().index("Émetteur") < layout.group().index("Client")
     # Les prestations en pleine largeur ; le récapitulatif, étroit, à droite.
     assert document.count('<w:tblW w:w="5000" w:type="pct"/>') == 1
@@ -462,13 +568,20 @@ async def test_columns_then_landscape_are_balanced(tmp_path: Path) -> None:
 
 
 async def test_a_boxed_section_and_a_page_break(tmp_path: Path) -> None:
-    layout = {"sections": {"B": {"box": True, "page_break": True, "space_before": 1}}}
+    layout = {
+        "box": {"border": "1pt 7F7F7F", "fill": "F7F7F7"},
+        "sections": {"B": {"box": True, "page_break": True, "space_before": 1}},
+    }
     tool = make(tmp_path, templates={"t": {"text": "# A\n# B\n", "style": {"spec": layout}}})
     blocks = [{"type": "heading", "text": "A"}, {"type": "heading", "text": "B"}]
     path = await write(tool, "d", blocks, template="t")
     document = part(path, "word/document.xml")
+    check_order(document)
     assert document.index('<w:br w:type="page"/>') < document.index('w:line="567"')
     assert document.index('w:line="567"') < document.index("<w:tcBorders>")
+    # Le cadre au style box du modèle : son filet, son fond.
+    assert '<w:left w:val="single" w:sz="8" w:space="0" w:color="7F7F7F"/>' in document
+    assert '<w:shd w:val="clear" w:color="auto" w:fill="F7F7F7"/>' in document
     read = await call(tool, action="read", path="sortie/d.docx")
     assert [b["text"] for b in read["blocks"]] == ["A", "B"]
 
@@ -489,40 +602,92 @@ async def test_a_styled_document_is_reproducible(tmp_path: Path) -> None:
     assert first["sha256"] == second["sha256"]
 
 
-# --- Fusion et contrôles ---------------------------------------------------------------------
+# --- Cascade, héritage, contrôles ----------------------------------------------------------
 
 
-def test_the_layout_completes_the_charte_key_by_key() -> None:
-    charte = StyleSpec.model_validate(CHARTE)
-    layout = StyleSpec.model_validate(
-        {"tables": {"borders": "grille"}, "footer": {"lines": []}, "watermark": ""}
+def test_the_files_first_then_the_bases() -> None:
+    """Chaque style complète le même style des fichiers d'avant ; puis il prend sa base."""
+    charte = style_of(CHARTE)
+    modele = style_of(
+        {
+            "table": {"borders": "grid"},
+            "footer": {"lines": []},
+            "watermark": "",
+            "heading1": {"size": 11, "underline": True},
+            "message_title": {"base": "heading1", "size": 14, "underline": False},
+        }
     )
-    style = resolve(merged(charte, layout))
-    assert style.tables.borders == "grille"
-    assert style.tables.header_fill == "E8F1EC"  # gardé de la charte
-    assert style.font == "Arial"
+    style = resolve(charte, modele)
+    assert style.look("table").borders == "grid"
+    assert style.look("table_header").fill == "E8F1EC"  # gardé de la charte
+    assert style.look("text").font == "Arial"
     assert style.footer is not None and style.footer.lines == ()
     assert style.footer.right == "Page {page} / {pages}"
     assert style.watermark is None
-    assert style.levels[0].uppercase and style.levels[0].size == 13
-    assert style.levels[2].color == "C0392B"
+    heading = style.look("heading1")
+    assert heading.uppercase and heading.size == 11 and heading.color == "0B5D3B"
+    assert style.look("heading3").color == "C0392B"
+    # message_title part de heading1 tel que les trois fichiers l'ont fait : la couleur de la
+    # charte, les majuscules de la charte, la taille et le soulignement à lui.
+    message = style.look("message_title")
+    assert (message.color, message.uppercase, message.size, message.underline) == (
+        "0B5D3B", True, 14, False
+    )  # fmt: skip
+    assert message.font == "Arial" and message.space_before == 18
+    # Un style Word n'écrit que ce qui diffère de sa base.
+    assert style.between("message_title", "heading1") == {
+        "base": "heading1", "size": 14, "underline": False
+    }  # fmt: skip
 
 
-def test_a_style_file_is_checked() -> None:
-    cases: tuple[tuple[dict[str, Any], str], ...] = (
-        ({"colors": {"primary": "bleu"}}, "six chiffres hexadécimaux"),
+@pytest.mark.parametrize(
+    ("given", "said"),
+    [
+        ({"colors": {"brand": "bleu"}}, "six chiffres hexadécimaux"),
+        ({"colors": {"accede": "000000"}}, "pas six chiffres hexadécimaux"),
         ({"footer": {"center": "{date}"}}, r"champ inconnu \{date\}"),
-        ({"fonts": {"body": {"name": "Arial<"}}}, "un nom de police"),
+        ({"header": {"right": "{titre}"}}, r"\{titre\} s'écrit \{title\} depuis 2\.1\.0"),
+        ({"text": {"font": "Arial<"}}, "un nom de police"),
         ({"beside": [{"sections": ["A", "B"], "widths": [60, 30]}]}, "font 100 en tout"),
-        ({"tables": {"borders": "pointillés"}}, "grille"),
-        ({"page": {"margins": {"top": 9}}}, "less than or equal to 5"),
-        ({"en_tete": {}}, "Extra inputs"),
-    )
-    for given, said in cases:
-        with pytest.raises(ValidationError, match=said):
-            StyleSpec.model_validate(given)
+        ({"table": {"borders": "pointillés"}}, "'grid', 'horizontal' or 'none'"),
+        ({"page": {"margins": 9}}, "less than or equal to 5"),
+        ({"heading1": {"colour": "1F3864"}}, "Extra inputs"),
+        ({"heading1": {"border_bottom": "2pt"}}, "« épaisseur couleur », ex. 1pt 2F5496"),
+        ({"heading1": {"border_bottom": "9pt 1F3864"}}, "une épaisseur de 0,25 à 6 pt"),
+        ({"heading_1": {"size": 12}}, "vouliez-vous dire heading1"),
+        ({"important": {"fill": "FDECEA"}}, r"un style à toi dit de quel style il part \(base"),
+        ({"title": {"size": 20}, "headings": {}}, "format de la 2.0 : title → document_title"),
+        ({"header": {"logo": {"file": "logo.png"}}}, "logo : le fichier seul depuis 2.1.0"),
+        ({"sections": {"A": {"tables": {}}}}, "tables s'écrit table depuis 2.1.0"),
+        ({"sections": {"A": {"title": "masque"}}}, "'visible', 'hidden' or 'quiet'"),
+    ],
+)  # fmt: skip
+def test_a_style_file_is_checked(given: dict[str, Any], said: str) -> None:
+    with pytest.raises(ValidationError, match=said):
+        StyleFile.model_validate(given)
+
+
+@pytest.mark.parametrize(
+    ("given", "said"),
+    [
+        ({"heading1": {"color": "brand"}}, r"heading1\.color : couleur « brand » inconnue"),
+        ({"x": {"base": "y"}}, "style x : base inconnue « y »"),
+        ({"a": {"base": "b"}, "b": {"base": "a"}}, r"base en boucle \(a → b → a\)"),
+        ({"note": {"borders": "grid"}}, r"style note\.borders : propre à table"),
+        ({"chart": {"colors": ["brand"]}}, r"chart\.color : couleur « brand » inconnue"),
+    ],
+)  # fmt: skip
+def test_the_cascade_is_checked(given: dict[str, Any], said: str) -> None:
+    with pytest.raises(ValueError, match=said):
+        resolve(style_of(given))
+
+
+def test_a_charte_has_no_layout() -> None:
     with pytest.raises(ValueError, match="pas dans la charte"):
-        check_charte(StyleSpec.model_validate({"sections": {"A": {}}}), "loom.word.style")
+        check_charte(style_of({"sections": {"A": {}}}), "loom.word.style")
+    # Une propriété propre va aussi aux styles qui partent de son style.
+    style = resolve(style_of({"brand_table": {"base": "table", "borders": "none"}}))
+    assert style.look("brand_table").borders == "none" and style.look("brand_table").size == 10
 
 
 PAIR: Final[dict[str, Any]] = {"beside": [{"sections": ["Émetteur", "Client"]}]}
@@ -545,15 +710,17 @@ def test_a_layout_follows_its_template(tmp_path: Path, layout: dict[str, Any], s
 
 
 def test_a_logo_must_be_an_image(tmp_path: Path) -> None:
-    charte = {"header": {"logo": {"data": b"GIF89a....", "width": 3}}}
+    charte = {"header": {"logo": b"GIF89a....", "logo_width": 3}}
     with pytest.raises(ValueError, match="logo de header : image GIF"):
         make(tmp_path, style={"spec": charte})
+    with pytest.raises(ValueError, match=r"logo de header \(logo\.png\) non lu"):
+        make(tmp_path, style={"spec": {"header": {"logo": "logo.png"}}})
     with pytest.raises(ValueError, match=r"non lu — les styles se lisent au chargement"):
         make(tmp_path, style="charte.yaml")
 
 
 def test_an_uncommon_font_is_said(tmp_path: Path) -> None:
-    tool = make(tmp_path, style={"spec": {"fonts": {"body": {"name": "Inter"}}}})
+    tool = make(tmp_path, style={"spec": {"text": {"font": "Inter"}}})
     options = dict(tool.settings().options)
     assert options["polices"].startswith("Inter : hors des polices de tous les postes")
 
@@ -592,12 +759,13 @@ def test_styles_are_read_when_the_config_loads(
         load_config(path)
     (prompts / "styles").mkdir()
     (prompts / "styles" / "charte.yaml").write_text(
-        "fonts: {body: {name: Arial}}\ncolors: {primary: 0B5D3B}\n"
-        "header:\n  logo: {file: logo.png, width: 3}\n  right: '{titre}'\n",
+        "colors: {brand: 0B5D3B}\ntext: {font: Arial}\nheading1: {color: brand}\n"
+        "header:\n  logo: logo.png\n  logo_width: 3\n  right: '{title}'\n",
         encoding="utf-8",
     )
     (prompts / "styles" / "facture.yaml").write_text(
-        "beside:\n- sections: [Émetteur, Client]\nsections:\n  Émetteur: {title: masque}\n",
+        "heading2: {color: brand}\nbeside:\n- sections: [Émetteur, Client]\n"
+        "sections:\n  Émetteur: {title: hidden}\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match=r"style\.header\.logo — logo introuvable"):
@@ -606,14 +774,24 @@ def test_styles_are_read_when_the_config_loads(
     config = load_config(path)
     assert config is not None
     assert main(["--config", str(path), "validate"]) == 0
-    assert "style : charte ; disposition : facture" in capsys.readouterr().out
+    assert "style : charte ; style de modèle : facture" in capsys.readouterr().out
     for written, said in (
         (
             "sections:\n  Annexes: {}\n",
             r"templates\[facture\]\.style : section\(s\) hors du modèle",
         ),
-        ("tables: {borders: pointillés}\n", r"templates\[facture\]\.style\.tables\.borders"),
-        ("tables: {}\ntables: {}\n", "YAML invalide"),
+        ("table: {borders: pointillés}\n", r"templates\[facture\]\.style\.table\.borders"),
+        ("table: {}\ntable: {}\n", "YAML invalide"),
+        (
+            "footer:\n  center: Qui joindre : le standard\n",
+            "un texte qui contient « : » ou « # » s'écrit entre guillemets",
+        ),
+        ("title: {size: 20}\n", r"facture\]\.style : style au format de la 2\.0"),
+        (
+            "heading2: {color: red}\n",
+            r"templates\[facture\]\.style : heading2\.color : couleur « red » inconnue "
+            r"\(colors : brand\)",
+        ),
     ):
         (prompts / "styles" / "facture.yaml").write_text(written, encoding="utf-8")
         with pytest.raises(ConfigError, match=said):
@@ -622,6 +800,19 @@ def test_styles_are_read_when_the_config_loads(
     (prompts / "styles" / "charte.yaml").write_text("sections: {A: {}}\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="pas dans la charte"):
         load_config(path)
+
+
+def test_a_style_written_in_the_config(demo: ConfigFactory, tmp_path: Path) -> None:
+    """``style`` : un chemin, ou le style écrit en ligne dans la config."""
+    (tmp_path / "sortie").mkdir()
+    folders = [{"name": "sortie", "path": "sortie", "rights": ["read", "write"]}]
+    inline = {"colors": {"brand": "0B5D3B"}, "heading1": {"color": "brand"}}
+    config = load_config(demo(agents=[word_agent(folders=folders, style=inline)], storage=JSONL))
+    declared = config.agents[0].tools[0]
+    assert isinstance(declared, PythonTool)
+    params = WordParams.model_validate(builtin_settings(declared, WordParams))
+    assert params.style is not None and params.style.spec is not None
+    assert resolve(params.style.spec).look("heading1").color == "0B5D3B"
 
 
 async def test_a_style_written_in_yaml_writes_the_facture(
@@ -633,7 +824,7 @@ async def test_a_style_written_in_yaml_writes_the_facture(
     prompts.mkdir(parents=True, exist_ok=True)
     (prompts / "facture.md").write_text(FACTURE_MD, encoding="utf-8")
     (prompts / "facture.yaml").write_text(
-        "headings: {1: {size: 12}}\nbeside:\n- {sections: [Émetteur, Client], widths: [50, 50]}\n",
+        "heading1: {size: 12}\nbeside:\n- {sections: [Émetteur, Client], widths: [50, 50]}\n",
         encoding="utf-8",
     )
     folders = [FOLDER]
@@ -869,11 +1060,11 @@ async def test_what_the_extra_blocks_refuse(tmp_path: Path) -> None:
 
 
 async def test_the_contents_lists_the_headings(tmp_path: Path) -> None:
-    layout = {"sections": {"Page de garde": {"title": "masque", "cover": True}}}
+    layout = {"sections": {"Page de garde": {"title": "hidden", "cover": True}}}
     md = "# Page de garde\n# Contexte\n# Mesures\n# Conditions générales\n"
     tool = extra(
         tmp_path,
-        style={"spec": {"headings": {"numbering": "decimale"}}},
+        style={"spec": {"numbering": "decimal"}},
         templates={"rapport": {"text": md, "style": {"spec": layout}}},
     )
     path = await write(tool, "rapport", SOMMAIRE, title="Rapport", template="rapport")
@@ -901,7 +1092,7 @@ async def test_the_contents_lists_the_headings(tmp_path: Path) -> None:
 
 
 async def test_the_charte_sets_the_contents(tmp_path: Path) -> None:
-    tool = extra(tmp_path, style={"spec": {"toc": {"levels": 1, "pages": False}}})
+    tool = extra(tmp_path, style={"spec": {"toc": {"levels": 1, "page_numbers": False}}})
     path = await write(tool, "d", SOMMAIRE)
     document = part(path, "word/document.xml")
     assert ' TOC \\o "1-1" \\h \\z \\u \\n </w:instrText>' in document
@@ -935,7 +1126,7 @@ def test_pdf_has_no_signature_toc_or_checkboxes_yet() -> None:
 
 async def test_libreoffice_prints_the_extra_blocks(tmp_path: Path, soffice: str) -> None:
     pypdf = pytest.importorskip("pypdf")
-    tool = extra(tmp_path, style={"spec": {"headings": {"numbering": "decimale"}}})
+    tool = extra(tmp_path, style={"spec": {"numbering": "decimal"}})
     path = await write(tool, "d", [*SOMMAIRE[1:], *LIVRAISON], title="Rapport")
     text = "".join(
         page.extract_text()

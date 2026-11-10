@@ -48,6 +48,7 @@ from loom_ia.tools_builtin._document.picture import Picture, PictureError
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin._folders import Folders, Located, write_bytes
 from loom_ia.tools_builtin._office_params import OPTIONAL_BLOCKS
+from loom_ia.tools_builtin._style_params import FRENCH, Labels
 from loom_ia.tools_builtin._templates import NONE as NO_TEMPLATE
 from loom_ia.tools_builtin._templates import Template
 from loom_ia.tools_builtin.local_files_params import Right
@@ -259,7 +260,9 @@ class DocumentTool(ABC):
             if request.template is not None and request.template != NO_TEMPLATE
             else None
         )
-        prepared = prepare(request, self._zone, self._pictures(request), followed)
+        prepared = prepare(
+            request, self._zone, self._pictures(request), followed, self._labels(request.template)
+        )
         data, facts, warnings = self._render(prepared)
         if len(data) > MAX_OUTPUT_BYTES:
             raise ToolError(f"Fichier de {len(data)} octets, au-delà de {MAX_OUTPUT_BYTES}.")
@@ -333,6 +336,12 @@ class DocumentTool(ABC):
         return data
 
     # --- Ce que chaque format fournit -----------------------------------------------------
+
+    def _labels(self, template: str | None) -> Labels:
+        """La langue et les libellés d'un document (celui de son modèle) : ceux du style ;
+        le français, sans style."""
+        del template
+        return FRENCH
 
     @abstractmethod
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
