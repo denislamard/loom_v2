@@ -244,6 +244,20 @@ async def test_what_it_writes_reads_back(tool: PdfTool) -> None:
     assert "notes" not in found
 
 
+async def test_underline_is_drawn_not_written(tool: PdfTool) -> None:
+    from loom_ia.tools_builtin._document.content import inline
+    from loom_ia.tools_builtin.pdf.writer import _markup  # pyright: ignore[reportPrivateUsage]
+
+    assert _markup(inline("un <u>mot</u> et **<u>deux</u>**")) == (
+        "un <u>mot</u> et <b><u>deux</u></b>"
+    )
+    blocks = [{"type": "paragraphe", "text": "Le dépôt sera fermé le <u>vendredi 13</u>."}]
+    await call(tool, path="sortie/u.pdf", title="Note", blocks=blocks)
+    found = await call(tool, action="read", path="sortie/u.pdf")
+    text = found["pages"][0]["text"]
+    assert "vendredi 13" in text and "<u>" not in text
+
+
 @pytest.mark.parametrize(
     ("pages", "numbers"),
     [("2", [2]), ("2-3", [2, 3]), ("3-", [3, 4]), (" 1 - 2 ", [1, 2]), ("4-9", [4])],

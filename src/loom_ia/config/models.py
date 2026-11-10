@@ -1007,7 +1007,7 @@ class LoomConfig(DomainModel):
     # Modules chargés au démarrage, qui enregistrent leurs outils (#50).
     imports: tuple[str, ...] = ()
     agents_dir: Path = Path("agents")
-    prompts_dir: Path = Path("prompts")
+    resources_dir: Path = Path("prompts")
     models: tuple[ModelSpec, ...] = ()
     # Serveurs MCP, référencés par les agents (#19).
     mcp_servers: tuple[McpServerSpec, ...] = ()

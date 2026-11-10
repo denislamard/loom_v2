@@ -145,6 +145,24 @@ def test_emphasis_and_line_breaks() -> None:
     assert inline("ligne 1\nligne 2") == (Run("ligne 1\nligne 2"),)
 
 
+def test_underline_marks() -> None:
+    assert inline("un <u>mot</u> souligné") == (
+        Run("un "),
+        Run("mot", underline=True),
+        Run(" souligné"),
+    )
+    # Avec le gras et l'italique, dans n'importe quel ordre ; au milieu d'un mot aussi.
+    both = (Run("gras souligné", bold=True, underline=True),)
+    assert inline("**<u>gras souligné</u>**") == both
+    assert inline("<u>**gras souligné**</u>") == both
+    assert inline("*<u>it</u>*") == (Run("it", italic=True, underline=True),)
+    assert inline("mi<u>lieu</u>du") == (Run("mi"), Run("lieu", underline=True), Run("du"))
+    # Une balise seule, non refermée, en majuscules ou imbriquée reste du texte.
+    for said in ("a <u> b", "fin </u> seule", "<u>ouvert", "<U>maj</U>"):
+        assert inline(said) == (Run(said),), said
+    assert inline("<u><u>x</u></u>") == (Run("<u>x", underline=True), Run("</u>"))
+
+
 def test_values_are_written_the_french_way() -> None:
     assert display(1250.5, "montant_eur") == f"1{NBSP}250,50{NBSP}€"
     assert display(-3, "montant_eur") == f"-3,00{NBSP}€"
@@ -711,6 +729,8 @@ def test_templates_refused(name: str, text: str, said: str) -> None:
         ("a) Rôles", "roles"),
         ("IV. Intégrations", "integrations"),
         ("**Constat** :", "constat"),
+        ("<u>Client</u>", "client"),
+        ("2. **<u>Détail</u>** du devis", "detail du devis"),
         ("Mix : produits", "mix : produits"),
     ],
 )

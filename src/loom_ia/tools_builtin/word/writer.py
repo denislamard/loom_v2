@@ -218,6 +218,7 @@ def _runs(runs: Inline, *, bold: bool = False, size: int | None = None) -> str:
             ("<w:b/><w:bCs/>" if run.bold or bold else "")
             + ("<w:i/><w:iCs/>" if run.italic else "")
             + _size(size)
+            + ('<w:u w:val="single"/>' if run.underline else "")
         )
         said += _run(run.text, f"<w:rPr>{props}</w:rPr>" if props else "")
     return said

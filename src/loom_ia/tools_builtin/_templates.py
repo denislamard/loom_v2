@@ -67,8 +67,9 @@ class Template:
 
 
 def key(title: str) -> str:
-    """Un titre comparable : sans numérotation, casse, accents ni espaces superflus."""
-    said = unicodedata.normalize("NFKD", title)
+    """Un titre comparable : sans numérotation, emphase, casse, accents ni espaces superflus."""
+    said = re.sub(r"</?u>", "", title, flags=re.IGNORECASE)
+    said = unicodedata.normalize("NFKD", said)
     said = "".join(c for c in said if not unicodedata.combining(c)).casefold()
     said = _NUMBERING.sub("", said, count=1)
     said = re.sub(r"[*_`]", "", said)

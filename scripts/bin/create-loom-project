@@ -61,7 +61,7 @@ if [[ $fournisseur == anthropic ]]; then
 version: 1
 
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: HAIKU
@@ -96,7 +96,7 @@ else
 version: 1
 
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE

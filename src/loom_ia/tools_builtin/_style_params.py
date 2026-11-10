@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Le style d'un document ``word`` : la charte de l'outil, la disposition d'un modèle.
 
-Deux fichiers YAML, relatifs à ``prompts_dir`` et lus au chargement de la config :
+Deux fichiers YAML, relatifs à ``resources_dir`` et lus au chargement de la config :
 
 - **la charte**, sur l'outil (``style:``) : page, polices, couleurs, titres,
   tableaux, encadré, légendes, en-tête et pied de page, filigrane ;
@@ -180,6 +180,8 @@ class TitleSpec(_Spec):
     color: Color | None = None
     align: Position | None = None
     uppercase: bool | None = None
+    # Le texte souligné, de sa longueur ; ``rule`` est un filet de toute la largeur.
+    underline: bool | None = None
     rule: bool | None = None
 
 
@@ -244,7 +246,7 @@ class TocSpec(_Spec):
 
 
 class LogoSpec(_Spec):
-    """Un logo : son fichier (relatif à ``prompts_dir``), puis ses octets, lus au chargement."""
+    """Un logo : son fichier (relatif à ``resources_dir``), puis ses octets, lus au chargement."""
 
     file: Path | None = None
     data: bytes | None = None
@@ -324,7 +326,7 @@ class StyleSpec(_Spec):
 
 
 class StyleRef(BaseModel):
-    """Un fichier de style (relatif à ``prompts_dir``), puis son contenu lu.
+    """Un fichier de style (relatif à ``resources_dir``), puis son contenu lu.
 
     Le chargeur de config lit le fichier (et ses logos) et range le style dans
     ``spec`` ; ``file`` n'est alors plus gardé. En config, la forme courte est le
@@ -499,6 +501,7 @@ class TitleLook:
     color: str
     align: Position = "gauche"
     uppercase: bool = False
+    underline: bool = False
     rule: bool = True
 
 
@@ -692,6 +695,7 @@ def resolve(spec: StyleSpec) -> Style:
             color=color(title.color, "primary"),
             align=title.align or "gauche",
             uppercase=bool(title.uppercase),
+            underline=bool(title.underline),
             rule=title.rule if title.rule is not None else True,
         ),
         levels=cast(tuple[Level, Level, Level], levels),

@@ -14,7 +14,7 @@ version: 1
 
 imports: [outils]                 # module voisin de ce fichier
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   # Orchestrateur simulé : la réponse est choisie sur la demande.

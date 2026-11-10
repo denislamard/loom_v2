@@ -158,6 +158,8 @@ def test_the_spec_names_the_folders_and_the_vocabulary(tool: WordTool) -> None:
         "titre (text, level 1 à 3)",
         "montant_eur",
         "**gras**",
+        "<u>souligné</u>",
+        "ni autre balise",
         "next_start",
     ):
         assert said in spec.description, said
@@ -979,6 +981,45 @@ def test_assess_counts_the_reads_of_images(imaged: WordTool) -> None:
     assert refused_call.side_effects == "none"
 
 
+UNDERLINED: Final = [
+    {"type": "titre", "level": 1, "text": "Points <u>importants</u>"},
+    {
+        "type": "paragraphe",
+        "text": "Fermé le <u>vendredi</u>, **<u>toute la journée</u>**, pour l'*<u>stock</u>*.",
+    },
+    {"type": "liste", "ordered": False, "items": ["Clés à rendre <u>avant 17 h</u>"]},
+]
+
+
+async def test_underline_is_written_read_back_and_rewritten(tool: WordTool, disk: Path) -> None:
+    written = await call(tool, path="sortie/u.docx", title="Note", blocks=UNDERLINED)
+    with zipfile.ZipFile(disk / "sortie" / "u.docx") as archive:
+        document = archive.read("word/document.xml").decode()
+    assert document.count('<w:u w:val="single"/>') == 5
+    found = await call(tool, action="read", path="sortie/u.docx")
+    blocks = [b for b in found["blocks"] if b.get("level") != 0]
+    assert blocks == UNDERLINED
+    again = await call(tool, path="sortie/u2.docx", title="Note", blocks=blocks)
+    assert again["sha256"] == written["sha256"]
+
+
+async def test_any_underline_of_a_document_from_elsewhere_reads_back(
+    tool: WordTool, disk: Path
+) -> None:
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">Voir </w:t></w:r>'
+        '<w:r><w:rPr><w:u w:val="double"/></w:rPr><w:t>double</w:t></w:r>'
+        '<w:r><w:rPr><w:u w:val="none"/></w:rPr><w:t xml:space="preserve"> et non</w:t></w:r>'
+        '<w:r><w:rPr><w:b/><w:u w:val="dotted"/></w:rPr><w:t xml:space="preserve"> ici</w:t></w:r>'
+        "</w:p>"
+    )
+    (disk / "modeles" / "souligne.docx").write_bytes(docx(body))
+    found = await call(tool, action="read", path="modeles/souligne.docx")
+    assert {"type": "paragraphe", "text": "Voir <u>double</u> et non **<u>ici</u>**"} in found[
+        "blocks"
+    ]
+
+
 async def test_images_read_back_and_rewrite_the_same_file(imaged: WordTool) -> None:
     written = await call(imaged, path="sortie/cdc.docx", **CDC)
     found = await call(imaged, action="read", path="sortie/cdc.docx")
@@ -1202,8 +1243,8 @@ def test_templates_are_read_when_the_config_loads(
         "images : non · modèles : rapport · lecture des documents : oui" in capsys.readouterr().out
     )
     for given, said in (
-        ("../secret.md", "le fichier doit être dans le dossier des prompts"),
-        ("prompts/rapport.md", "le chemin est relatif à prompts_dir : écrire rapport.md"),
+        ("../secret.md", "le fichier doit être dans le dossier des ressources"),
+        ("prompts/rapport.md", "le chemin est relatif à resources_dir : écrire rapport.md"),
     ):
         path = demo(
             agents=[word_agent(folders=folders, templates={"rapport": given})], storage=JSONL

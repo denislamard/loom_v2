@@ -15,7 +15,7 @@ classeur (``excel/reader``) :
 Ce qui revient au modèle reprend le vocabulaire de l'écriture : ``titre``
 (``level`` 1 à 3 et plus, 0 pour le titre du document), ``paragraphe``,
 ``liste`` (``items`` : textes, ou ``{text, items}``), ``tableau`` (``rows``).
-L'emphase revient en ``**gras**`` et ``*italique*`` : ce qui est lu peut être
+L'emphase revient en ``**gras**``, ``*italique*`` et ``<u>souligné</u>`` : ce qui est lu peut être
 réécrit tel quel. Ce qu'un style de document a posé ne revient pas, puisque le style
 le repose à la réécriture : un tableau de disposition (style « loom layout » : des
 sections côte à côte, un encadré, une grille d'images) rend les blocs de ses
@@ -561,7 +561,7 @@ def _signature(package: _Package, table: Element) -> dict[str, JsonValue]:
         properties = _child(paragraph, "pPr")
         style = _child(properties, "pStyle") if properties is not None else None
         name = _style_name(package.styles, _attribute(style, "val") if style is not None else None)
-        text = "".join(piece for piece, _, _ in _segments(paragraph)).strip()
+        text = "".join(piece for piece, *_ in _segments(paragraph)).strip()
         if name == SIGNER_STYLE and text:
             signers.append(text)
         elif name == MENTION_STYLE and text and mention is None:
@@ -913,11 +913,11 @@ def _style_meaning(
     return title, outline, listed
 
 
-def _segments(element: Element) -> list[tuple[str, bool, bool]]:
-    """Le texte d'un paragraphe, en segments (texte, gras, italique), dans l'ordre."""
-    found: list[tuple[str, bool, bool]] = []
+def _segments(element: Element) -> list[tuple[str, bool, bool, bool]]:
+    """Le texte d'un paragraphe, en segments (texte, gras, italique, souligné), dans l'ordre."""
+    found: list[tuple[str, bool, bool, bool]] = []
 
-    def walk(node: Element, bold: bool, italic: bool) -> None:
+    def walk(node: Element, bold: bool, italic: bool, underline: bool) -> None:
         name = _local(node.tag)
         if name in _SKIPPED:
             return
@@ -926,47 +926,55 @@ def _segments(element: Element) -> list[tuple[str, bool, bool]]:
             if properties is not None:
                 bold = _on(_child(properties, "b"))
                 italic = _on(_child(properties, "i"))
+                underline = _underlined(_child(properties, "u"))
         elif name == "t":
-            found.append((node.text or "", bold, italic))
+            found.append((node.text or "", bold, italic, underline))
             return
         elif name == "tab":
-            found.append(("\t", bold, italic))
+            found.append(("\t", bold, italic, underline))
             return
         elif name in {"br", "cr"}:
             if _attribute(node, "type") != "page":
-                found.append(("\n", bold, italic))
+                found.append(("\n", bold, italic, underline))
             return
         elif name == "noBreakHyphen":
-            found.append(("-", bold, italic))
+            found.append(("-", bold, italic, underline))
             return
         elif name is None and node.tag.endswith("}AlternateContent"):
             # Le choix d'un logiciel récent (zone de texte, forme) : rien de lisible ici.
             return
         for child in node:
-            walk(child, bold, italic)
+            walk(child, bold, italic, underline)
 
     for child in element:
-        walk(child, False, False)
+        walk(child, False, False, False)
     return found
 
 
-def _markdown(segments: list[tuple[str, bool, bool]]) -> str:
-    """Les segments joints, l'emphase en ``**`` et ``*`` comme à l'écriture."""
-    merged: list[tuple[str, bool, bool]] = []
-    for text, bold, italic in segments:
-        if merged and merged[-1][1:] == (bold, italic):
-            merged[-1] = (merged[-1][0] + text, bold, italic)
+def _underlined(element: Element | None) -> bool:
+    """``<w:u w:val="single"/>`` (ou double, pointillé…) : souligné ; ``none`` : non."""
+    return element is not None and _attribute(element, "val") not in (None, "none")
+
+
+def _markdown(segments: list[tuple[str, bool, bool, bool]]) -> str:
+    """Les segments joints, l'emphase en ``**``, ``*`` et ``<u>`` comme à l'écriture."""
+    merged: list[tuple[str, bool, bool, bool]] = []
+    for text, bold, italic, underline in segments:
+        if merged and merged[-1][1:] == (bold, italic, underline):
+            merged[-1] = (merged[-1][0] + text, bold, italic, underline)
         else:
-            merged.append((text, bold, italic))
+            merged.append((text, bold, italic, underline))
     said: list[str] = []
-    for text, bold, italic in merged:
+    for text, bold, italic, underline in merged:
         core = text.strip()
-        if not core or not (bold or italic):
+        if not core or not (bold or italic or underline):
             said.append(text)
             continue
         mark = ("**" if bold else "") + ("*" if italic else "")
         lead = text[: len(text) - len(text.lstrip())]
         tail = text[len(text.rstrip()) :]
+        if underline:
+            core = f"<u>{core}</u>"
         said.append(f"{lead}{mark}{core}{mark[::-1]}{tail}")
     return "".join(said).strip()
 
@@ -1004,7 +1012,7 @@ def _cell_text(cell: Element) -> str:
     lines: list[str] = []
     for paragraph in cell.iter():
         if _local(paragraph.tag) == "p":
-            said = "".join(text for text, _, _ in _segments(paragraph)).strip()
+            said = "".join(text for text, *_ in _segments(paragraph)).strip()
             if said:
                 lines.append(said)
     return "\n".join(lines)

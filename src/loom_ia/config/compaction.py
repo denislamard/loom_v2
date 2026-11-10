@@ -53,7 +53,7 @@ class CompactionConfig(DomainModel):
     # au lieu d'une tâche de fond après le run. Rien ne reste alors en cours
     # quand un process de courte vie (CLI) se ferme.
     blocking: bool = False
-    # Prompt interne surchargé, relatif au dossier des prompts.
+    # Prompt interne surchargé, relatif au dossier des ressources.
     system_file: Path | None = None
 
     @model_validator(mode="after")

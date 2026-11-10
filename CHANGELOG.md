@@ -4,6 +4,22 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.21 - non publiée
 
+### Config : `prompts_dir` devient `resources_dir`
+- ⚠ **La clé `prompts_dir` de `loom.yaml` s'appelle `resources_dir`.** Le dossier ne contient plus seulement les prompts : les `system_file`, les `skill_file`, les modèles de document, les chartes et dispositions de `loom.word` et leurs logos s'y rapportent, et il reste fermé à tous les outils fournis. Rien d'autre ne change : même défaut (`prompts`), mêmes règles (chemin relatif à ce dossier, refusé s'il en sort une fois résolu). Une config qui écrit encore `prompts_dir` est refusée au chargement (`prompts_dir — Extra inputs are not permitted`), jamais lue avec le dossier par défaut : remplacer la clé suffit. En Python, `LoomConfig.resources_dir` remplace `LoomConfig.prompts_dir`.
+- Les messages disent « le dossier des ressources » : « le fichier doit être dans le dossier des ressources (…) », « dossier 'w' : … est le dossier des ressources » (un dossier ouvert à un outil), « le chemin est relatif à resources_dir : écrire … ».
+- Le reste suit : `scripts/bin/create-loom-project`, les configs de la CI et de la publication, les exemples, la documentation (la référence de la formation disait à tort qu'un agent écrit dans `loom.yaml` ne rapportait pas son `system_file` à ce dossier).
+- Essais : `tests/unit/test_config.py` (l'ancienne clé refusée) ; les essais de `test_tool_skill.py` qui la nommaient sont renommés.
+
+### Documents `loom.word` et `loom.pdf` : le souligné dans le texte
+- **`<u>souligné</u>`** dans le texte d'un bloc, à côté de `**gras**` et `*italique*`, et combiné avec eux (`**<u>mot</u>**`) : titres, paragraphes, éléments de liste (cases à cocher comprises), notes, citations, légendes ; pas les cellules de tableau, qui n'ont pas non plus de gras. `<u>` ouvre s'il est refermé plus loin, `</u>` ferme ce qui est ouvert, sans imbrication ; une balise seule, en majuscules ou non refermée reste du texte. Word : `<w:u w:val="single"/>` ; PDF : le souligné de reportlab.
+- **La relecture** d'un `.docx` rend `<u>…</u>` pour tout segment souligné (simple, double, pointillé… ; pas `none`), posé sur le segment comme le gras : un document écrit par l'outil se relit et se réécrit à l'identique. Avant, le souligné d'un document d'ailleurs était perdu sans le dire ; un double soulignement devient simple à la réécriture.
+- ⚠ **La description de `loom.word` et `loom.pdf`** dit « **gras**, *italique*, <u>souligné</u> … ; pas d'autre balisage (ni #, ni -, ni |, ni autre balise) » : 34 caractères de plus, quelques tokens par appel d'un agent qui a l'un de ces outils, et ses runs d'avant ne se rejouent plus à l'identique (« ce qui diffère : les outils proposés »). Un texte qui contenait déjà `<u>…</u>` est désormais souligné. Les balises sont ignorées pour reconnaître une section de modèle (« <u>Client</u> » est la section Client), comme l'emphase. Sans `<u>`, un document est le même fichier qu'avant.
+- Essais : `tests/unit/test_document.py` (`test_underline_marks`), `test_word.py` (écriture, relecture et réécriture à l'identique ; double, pointillé et `none` d'un document d'ailleurs ; description), `test_pdf.py`. Analyse : `docs/outil-word-souligne-analyse.md`.
+
+### Documents `loom.word` : le titre souligné
+- **`title.underline`** dans la charte ou la disposition : le texte du titre du document souligné, de sa seule longueur (`<w:u w:val="single"/>`, couleur du titre). `rule` reste le filet de toute la largeur, sous le paragraphe ; les deux se combinent. Sans la clé, rien ne change, au fichier près.
+- Essais : `tests/unit/test_word_styles.py` (`test_an_underlined_title`).
+
 ## 2.0.20 - publiée
 
 ### Moteur : un outil qui dépasse son délai (B-2, B-3, B-4)

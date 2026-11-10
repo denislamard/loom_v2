@@ -136,7 +136,7 @@ Reste la configuration racine, `loom.yaml`. Le modèle `SIMULE` y joue un script
 version: 1
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE

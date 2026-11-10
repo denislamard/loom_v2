@@ -151,7 +151,8 @@ def styles_xml(style: Style, used: Iterable[str] = ()) -> str:
             + (f'<w:jc w:val="{jc(title.align)}"/>' if title.align != "gauche" else ""),
             run=f"{_fonts(style.heading_font)}<w:b/><w:bCs/>"
             + ("<w:caps/>" if title.uppercase else "")
-            + f'<w:color w:val="{title.color}"/>{_size(title.size)}',
+            + f'<w:color w:val="{title.color}"/>{_size(title.size)}'
+            + ('<w:u w:val="single"/>' if title.underline else ""),
         )
         + _heading(style, 1, style.levels[0], 360, 120)
         + _heading(style, 2, style.levels[1], 240, 80)

@@ -628,7 +628,7 @@ def test_mounted_from_the_config(demo: ConfigFactory, tmp_path: Path) -> None:
     [
         (".", "est le dossier de la config"),
         ("agents", "est le dossier des agents"),
-        ("prompts", "est le dossier des prompts"),
+        ("prompts", "est le dossier des ressources"),
         ("journal", "est le journal"),
         ("journal/sous", "est dans le journal"),
         ("outils_acces.py", "n'existe pas ou n'est pas un dossier"),

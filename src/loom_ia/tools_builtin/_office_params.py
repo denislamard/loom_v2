@@ -98,7 +98,7 @@ def check_timezone(name: str) -> None:
 
 
 class TemplateRef(BaseModel):
-    """Un modèle de document : son fichier (relatif à ``prompts_dir``), puis son texte.
+    """Un modèle de document : son fichier (relatif à ``resources_dir``), puis son texte.
 
     Le chargeur de config lit le fichier et range son texte dans ``text``, comme un
     ``skill_file`` dans ``skill`` ; ``file`` n'est alors plus gardé. En config, la forme

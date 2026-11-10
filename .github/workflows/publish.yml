@@ -76,7 +76,7 @@ jobs:
           cat > "$smoke/cfg/loom.yaml" <<'YAML'
           version: 1
           agents_dir: agents/
-          prompts_dir: prompts/
+          resources_dir: prompts/
           models:
             - id: FAKE
               sdk: fake

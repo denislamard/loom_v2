@@ -9,8 +9,8 @@ document n'a pas de formules), la largeur relative des colonnes. Chaque format
 d'une image dans la page aussi (``placed``) ; ses octets sont lus avant, par
 l'outil, et ``prepare`` ne touche jamais au disque.
 
-Dans un texte, ``**gras**`` et ``*italique*`` marquent l'emphase ; un saut de
-ligne reste un saut de ligne dans le même paragraphe.
+Dans un texte, ``**gras**``, ``*italique*`` et ``<u>souligné</u>`` marquent l'emphase ;
+un saut de ligne reste un saut de ligne dans le même paragraphe.
 """
 
 import datetime as dt
@@ -91,6 +91,7 @@ class Run:
     text: str
     bold: bool = False
     italic: bool = False
+    underline: bool = False
 
 
 type Inline = tuple[Run, ...]
@@ -853,28 +854,36 @@ def _french(said: str) -> str:
 
 # --- Emphase ---------------------------------------------------------------------------
 
-_MARK: Final = re.compile(r"\*\*|\*")
+_MARK: Final = re.compile(r"\*\*|\*|<u>|</u>")
 
 
 def inline(text: str) -> Inline:
-    """Les segments d'un texte : ``**gras**`` et ``*italique*``, le reste tel quel.
+    """Les segments d'un texte : ``**gras**``, ``*italique*``, ``<u>souligné</u>``, le reste
+    tel quel.
 
     Un marqueur ouvre seulement s'il est suivi d'un caractère visible et refermé
     plus loin ; il ferme seulement s'il suit un caractère visible. Sinon il
-    reste du texte : « 2 * 3 » ne met rien en italique.
+    reste du texte : « 2 * 3 » ne met rien en italique. ``<u>`` ouvre s'il est refermé
+    plus loin et ``</u>`` ferme ce qui est ouvert, sans imbrication ; sinon, la balise
+    reste du texte.
     """
     runs: list[Run] = []
-    bold = italic = False
+    bold = italic = underline = False
     buffer: list[str] = []
     position = 0
 
     def flush() -> None:
         if buffer:
             said = "".join(buffer)
-            if runs and (runs[-1].bold, runs[-1].italic) == (bold, italic):
-                runs[-1] = Run(runs[-1].text + said, bold, italic)
+            last = runs[-1] if runs else None
+            if last is not None and (last.bold, last.italic, last.underline) == (
+                bold,
+                italic,
+                underline,
+            ):
+                runs[-1] = Run(last.text + said, bold, italic, underline)
             else:
-                runs.append(Run(said, bold, italic))
+                runs.append(Run(said, bold, italic, underline))
             buffer.clear()
 
     for found in _MARK.finditer(text):
@@ -882,6 +891,16 @@ def inline(text: str) -> Inline:
         mark = found.group()
         buffer.append(text[position:start])
         position = end
+        if mark in ("<u>", "</u>"):
+            # Une balise : <u> ouvre s'il est refermé plus loin, </u> ferme ce qui est ouvert.
+            if (mark == "<u>" and not underline and "</u>" in text[end:]) or (
+                mark == "</u>" and underline
+            ):
+                flush()
+                underline = not underline
+            else:
+                buffer.append(mark)
+            continue
         before = text[start - 1] if start else " "
         after = text[end] if end < len(text) else " "
         is_open = bold if mark == "**" else italic

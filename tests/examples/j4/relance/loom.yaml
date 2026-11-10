@@ -15,7 +15,7 @@ version: 1
 
 imports: [outils, politiques]     # modules voisins de ce fichier
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   # Orchestrateur simulé. Deux demandes, deux runs de la même session :

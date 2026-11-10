@@ -87,7 +87,7 @@ Tant que la 2.0.7 n'est pas publiée, installez-la depuis votre clone du dépôt
 version: 1
 
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   # L'orchestrateur simulé : il lit la page, puis répond.
@@ -957,7 +957,7 @@ La description de `excel` dit son vocabulaire ; elle ne dit pas quand s'en servi
 
 ```yaml
 - python: loom.excel
-  skill_file: excel.md            # relatif à prompts_dir, et dans ce dossier
+  skill_file: excel.md            # relatif à resources_dir, et dans ce dossier
   folders:
   - name: workspace
     path: workspace
@@ -1003,7 +1003,7 @@ tools:
     images: true                     # le bloc image ; false par défaut
     extra_blocks: true               # signature, sommaire, liste à cocher ; false par défaut
     style: styles/charte.yaml        # la charte des documents (facultatif)
-    templates:                       # modèles de document, relatifs à prompts_dir
+    templates:                       # modèles de document, relatifs à resources_dir
       devis: devis.md
     folders:
     - name: maquettes                # les images à mettre dans les documents
@@ -1073,7 +1073,7 @@ Un appel décrit le document entier. Celui-ci, tiré d'un run réel (modèle sim
 
 - **Blocs** : `titre` (`level` 1 à 3), `paragraphe`, `liste` (à puces, ou numérotée avec `ordered` ; un élément `{text, items}` porte une sous-liste), `tableau`, `note` (un encadré, avec un `title` facultatif), `citation` (avec sa `source`), `saut_de_page`. `title`, à côté des blocs, est le titre du document : en tête, et dans ses propriétés.
 - **Tableaux** : les types de colonne de `loom.excel` (`texte`, `entier`, `decimal`, `montant_eur`, `montant_keur`, `pourcentage`, `date`, `date_heure`, `annee`, `booleen`), avec la même conversion tolérante (`1 250,50`, `02/10/2026`, `15%`, `oui`). Une ligne plus courte que les colonnes est complétée de cellules vides. `totals` ajoute une ligne de total **calculée par l'outil** — un document n'a pas de formules — : `somme`, `moyenne`, `nombre`, `min` ou `max`. `caption` est la légende, sous le tableau. 8 colonnes et 500 lignes au plus : au-delà, un classeur (`excel`) se lit mieux.
-- **Texte** : `**gras**`, `*italique*`, et `\n` pour aller à la ligne dans le même paragraphe. Rien d'autre : un `#` ou un `-` en tête reste du texte, et `2 * 3 * 4` aussi.
+- **Texte** : `**gras**`, `*italique*`, `<u>souligné</u>`, et `\n` pour aller à la ligne dans le même paragraphe ; ils se combinent (`**<u>mot</u>**`). Rien d'autre : un `#` ou un `-` en tête reste du texte, `2 * 3 * 4` aussi, comme une balise seule ou non refermée, et toute autre balise (`<b>`, `<br>`). Les cellules de tableau sont du texte simple.
 
 Le document produit : A4 portrait, marges de 2 cm, titre bleu nuit souligné d'un filet, titres de section bleu nuit, tableaux à en-tête bleu pâle répété d'une page à l'autre, ligne de total en gras sous un filet, nombres alignés à droite et dates centrées, notes en encadré gris à filet bleu, citations en retrait, « Page n / N » en pied. Le `.docx` est en Calibri 11 et déclaré en français (correcteur, césure). Le PDF reprend la même page en Helvetica, une police standard du PDF, non embarquée : le fichier reste léger.
 
@@ -1179,7 +1179,7 @@ L'image est un fichier PNG ou JPEG d'un dossier qui a le droit `read` ; l'outil 
 
 - **`path`** : « `<dossier>/<chemin>` », avec les règles de tous les chemins de l'outil (dossier déclaré, pas de `..`, ni fichier caché, ni lien qui sort du dossier). Le dossier doit avoir le droit `read`.
 - **`width`** : `pleine_largeur` (17 cm, la largeur du texte ; par défaut), `moitie` (8,5 cm) ou `petite` (4 cm, un logo). La hauteur suit les proportions de l'image ; une image plus haute que 21 cm (une capture de téléphone) y est ramenée, sa largeur suit.
-- **`caption`** : la légende, sous l'image, dans le style des légendes de tableau, sur la même page qu'elle ; `**gras**` et `*italique*` permis.
+- **`caption`** : la légende, sous l'image, dans le style des légendes de tableau, sur la même page qu'elle ; `**gras**`, `*italique*` et `<u>souligné</u>` permis.
 - **`alt`** : le texte alternatif, ce que montre l'image pour qui ne la voit pas (lecteur d'écran) ; sans lui, la légende en tient lieu.
 
 L'image est centrée, dans le flux du texte : ni position flottante, ni habillage. Le format se lit dans le fichier, jamais dans son nom. Dans le `.docx`, une image est rangée telle quelle, une seule fois même si elle sert deux fois ; le fichier reste le même, octet pour octet, pour un même appel. Dans le PDF, elle est posée à la même taille ; reportlab la lit avec Pillow, qui vient avec l'extra `pdf`. Un PDF n'a pas de texte alternatif.
@@ -1209,11 +1209,11 @@ Sont aussi refusés : un GIF, un WebP ou un SVG (« la convertir en PNG ») ; un
 
 #### Des modèles de document
 
-Avec `templates`, l'outil connaît les modèles des documents que l'agent écrit : un devis, un rapport d'intervention, un cahier des charges. Chaque modèle est un fichier markdown du dossier des prompts (`prompts_dir`), lu au chargement comme un `skill_file`. Le modèle de langage n'en voit que le nom et une ligne de description, et lit le texte quand il en a besoin. À l'écriture, **l'outil vérifie que le document suit le plan du modèle**, et refuse un document qui s'en écarte. Un skill est une consigne que le modèle de langage peut oublier ; un modèle, l'outil le fait respecter.
+Avec `templates`, l'outil connaît les modèles des documents que l'agent écrit : un devis, un rapport d'intervention, un cahier des charges. Chaque modèle est un fichier markdown du dossier des ressources (`resources_dir`), lu au chargement comme un `skill_file`. Le modèle de langage n'en voit que le nom et une ligne de description, et lit le texte quand il en a besoin. À l'écriture, **l'outil vérifie que le document suit le plan du modèle**, et refuse un document qui s'en écarte. Un skill est une consigne que le modèle de langage peut oublier ; un modèle, l'outil le fait respecter.
 
 ```yaml
   - python: loom.word
-    templates:                       # relatifs à prompts_dir
+    templates:                       # relatifs à resources_dir
       devis: devis.md
       rapport-intervention: rapport-intervention.md
     folders: …
@@ -1284,10 +1284,10 @@ Une section en trop (« section hors du modèle « Annexe » »), donnée deux f
 
 Le `.docx` garde le modèle suivi dans sa **catégorie** (Fichier > Informations > Propriétés dans Word), que LibreOffice garde aussi ; la relecture le rend (voir « Lire un document Word »). Un document libre, `aucun`, est le même fichier qu'un document écrit par un outil sans modèles. `pdf` vérifie le plan de la même façon, mais un PDF ne garde pas son modèle.
 
-Un fichier de modèle introuvable, hors du dossier des prompts, ou mal formé arrête le chargement, et `loom validate` le dit :
+Un fichier de modèle introuvable, hors du dossier des ressources, ou mal formé arrête le chargement, et `loom validate` le dit :
 
 ```text
-tools[loom.word].templates[devis] — modèle introuvable : …/prompts/prompts/devis.md — le chemin est relatif à prompts_dir : écrire devis.md
+tools[loom.word].templates[devis] — modèle introuvable : …/prompts/prompts/devis.md — le chemin est relatif à resources_dir : écrire devis.md
 tools[loom.word].templates[devis] — modèle devis : section donnée deux fois : 4. Remarques : …/prompts/devis.md
 ```
 
@@ -1297,7 +1297,7 @@ Sans `templates`, rien ne change : ni action ni champ `template`, ni ligne dans 
 
 Depuis loom-ia 2.0.20, pour `loom.word`. Sans style, l'outil écrit tous ses documents dans son style maison : Calibri, titres bleu nuit, tableaux à grille. Une facture d'artisan demande autre chose : son logo, ses couleurs, l'émetteur et le client côte à côte, des titres de section qu'on ne voit pas, un récapitulatif étroit à droite, les mentions légales en pied de page. **Le style se décrit dans des fichiers de l'agent**, en YAML, et l'outil n'en fixe rien : il pose les mêmes blocs, à la manière que le style décrit.
 
-Deux fichiers, relatifs à `prompts_dir` et lus au chargement comme un modèle :
+Deux fichiers, relatifs à `resources_dir` et lus au chargement comme un modèle :
 
 - **la charte**, sur l'outil (`style:`) : elle vaut pour tous ses documents ;
 - **la disposition** d'un modèle de document (`templates.<nom>.style`) : elle complète la charte, clé par clé, pour les documents qui suivent ce modèle, et dispose ses sections.
@@ -1323,7 +1323,7 @@ Deux fichiers, relatifs à `prompts_dir` et lus au chargement comme un modèle :
 | `fonts` | Polices du corps et des titres | `body: {name, size}` (7 à 16 pt) ; `headings: {name}` |
 | `colors` | Couleurs nommées, reprises ailleurs par leur nom | `text`, `primary` (titres), `accent` (titre 3, encadré, titre discret), `muted` (légendes, en-tête, pied), `rule` (filets fins) ; six chiffres hexadécimaux |
 | `paragraphs` | Le corps du texte | `line` (interligne, 1 à 3), `after` (espace après, en pt), `justify` |
-| `title` | Le titre du document | `size`, `color`, `align` (`gauche`, `centre`, `droite`), `uppercase`, `rule` (filet dessous) |
+| `title` | Le titre du document | `size`, `color`, `align` (`gauche`, `centre`, `droite`), `uppercase`, `underline` (le texte souligné, de sa longueur), `rule` (filet dessous, de toute la largeur) |
 | `headings` | Titres de niveaux 1 à 3 | par niveau (`1:`, `2:`, `3:`) : `size`, `color`, `uppercase` ; `numbering` : `aucune`, `decimale` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
 | `tables` | Les tableaux | `borders` : `grille`, `filets`, `horizontales`, `aucune` ; `header: {fill, color}` ; `bands` (fond d'une ligne sur deux) ; `size` (pt) ; `width` : `pleine`, `contenu` ; `align` |
 | `note` | L'encadré | `fill`, `border` |

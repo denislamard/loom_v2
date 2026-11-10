@@ -179,7 +179,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: PRINCIPAL
@@ -1002,7 +1002,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: PRINCIPAL
@@ -1555,7 +1555,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: PRINCIPAL
@@ -1800,7 +1800,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: PRINCIPAL
@@ -4775,7 +4775,7 @@ Une requête présente la clé dans `Authorization: Bearer lk_…` ou dans `X-AP
 
 **Objectif.** Déclarer trois clients (Dupont, Martin, et le cabinet comptable de Dupont, limité à la lecture de devis), les faire tourner, et constater l'isolation.
 
-**Mise en place.** Un dossier d'agents `agents_clients/` et un dossier de prompts `prompts_clients/`.
+**Mise en place.** Un dossier d'agents `agents_clients/` et un dossier de ressources `prompts_clients/`.
 
 ```bash
 mkdir agents_clients prompts_clients
@@ -4829,7 +4829,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents_clients/
-prompts_dir: prompts_clients/
+resources_dir: prompts_clients/
 
 models:
   - id: PRINCIPAL

@@ -133,7 +133,7 @@ def test_folders_outside_the_config_are_watched_too(demo: ConfigFactory, tmp_pat
     shared = tmp_path.parent / f"{tmp_path.name}-partage"
     (shared / "prompts").mkdir(parents=True)
     (shared / "prompts" / "demo.md").write_text("Tu calcules.", encoding="utf-8")
-    config = load_config(demo(prompts_dir=str(shared / "prompts")))
+    config = load_config(demo(resources_dir=str(shared / "prompts")))
     spec = watched(config)
     assert spec.roots == (tmp_path, shared / "prompts")
     assert spec.counts(shared / "prompts" / "demo.md")
@@ -308,7 +308,7 @@ def test_the_state_covers_the_folders_of_the_config_that_serves(
 
     def moved() -> None:
         root = path.read_text(encoding="utf-8")
-        path.write_text(f"prompts_dir: {shared}\n{root}", encoding="utf-8")
+        path.write_text(f"resources_dir: {shared}\n{root}", encoding="utf-8")
 
     reading = _Reading({1: moved}, after=True)
     monkeypatch.setattr(http_serve, "load_config", reading)
@@ -330,7 +330,7 @@ def test_the_config_is_read_three_times_at_most(
         (folder / "demo.md").write_text("Tu calcules.", encoding="utf-8")
 
     def move(i: int) -> Callable[[], object]:
-        return lambda: path.write_text(f"prompts_dir: {elsewhere[i]}\n{root}", encoding="utf-8")
+        return lambda: path.write_text(f"resources_dir: {elsewhere[i]}\n{root}", encoding="utf-8")
 
     reading = _Reading({i + 1: move(i) for i in range(4)}, after=True)
     monkeypatch.setattr(http_serve, "load_config", reading)

@@ -124,7 +124,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE_RELANCE
@@ -690,7 +690,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE_RELANCE
@@ -1112,7 +1112,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE_RELANCE
@@ -1350,7 +1350,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE_RELANCE
@@ -2317,7 +2317,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE_RELANCE
@@ -2893,7 +2893,7 @@ mkdir -p memoire/agents memoire/prompts memoire/donnees
 version: 1
 
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE_MEMOIRE
@@ -3540,7 +3540,7 @@ models:
                   - {name: ton, score: 0.9, reason: Le ton est cordial.}
 
 agents_dir: agents
-prompts_dir: prompts
+resources_dir: prompts
 
 budgets:
   run: {max_cost: 0.10}

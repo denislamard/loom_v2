@@ -1217,7 +1217,7 @@ user= ─────┘    effectifs, via)    └─ approve / reject ───
 ### 17.1 Principes
 
 - Un seul format : **YAML** (#35), lu avec `safe_load` puis validé strictement par les modèles Pydantic.
-- Prompts dans des fichiers à part (`system_file`), relatifs à `prompts_dir`.
+- Prompts dans des fichiers à part (`system_file`), relatifs à `resources_dir`.
 - Un fichier racine (`loom.yaml`) et un dossier d'agents (`agents_dir` → `agents/*.yaml`).
 - Secrets : uniquement des noms de variables.
 - `loom.schema.json` est généré depuis Pydantic et sert à l'éditeur (complétion, erreurs, via `yaml-language-server: $schema=...`) ; loom-ia ne le lit pas.
@@ -1239,7 +1239,7 @@ version: 1
 profile: dev                          # dev | prod
 imports: [myapp.tools, myapp.policies]
 agents_dir: agents/
-prompts_dir: prompts/                 # base des *_file
+resources_dir: prompts/                 # base des *_file
 
 models: [...]                         # ModelSpec
 mcp_servers: [...]                    # McpServerSpec

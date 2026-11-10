@@ -71,7 +71,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -219,7 +219,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -541,7 +541,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -591,7 +591,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -668,7 +668,7 @@ profile: dev                  # profil par défaut de ce fichier
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -797,7 +797,7 @@ profile: dev                  # profil par défaut de ce fichier
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -945,7 +945,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -1536,7 +1536,7 @@ version: 1
 
 imports: [outils, politiques]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -1760,7 +1760,7 @@ version: 1
 
 imports: [outils, politiques, garde_fous]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -2022,7 +2022,7 @@ Fichier `ch11/loom.yaml`. Trois cas, choisis par un mot-clé dans la demande : *
 version: 1
 
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -2381,7 +2381,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: ORCHESTRATEUR
@@ -2609,7 +2609,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: ORCHESTRATEUR
@@ -2804,7 +2804,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: ORCHESTRATEUR
@@ -3314,7 +3314,7 @@ Fichier `ch13/loom.yaml`. `command: python` est le Python de l'environnement `uv
 version: 1
 
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -3780,7 +3780,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: ORCHESTRATEUR

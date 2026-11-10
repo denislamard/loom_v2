@@ -2,7 +2,7 @@
 """Lecture de ``loom.yaml`` et des agents (M1, #35).
 
 ``safe_load`` (sans clé en double, ``yaml_source``) puis validation stricte
-par les modèles Pydantic. Les chemins (``agents_dir``, ``prompts_dir``,
+par les modèles Pydantic. Les chemins (``agents_dir``, ``resources_dir``,
 journal, artefacts, ``cwd`` des serveurs MCP, ``schema_file`` des contrats de
 sortie) sont relatifs au fichier de config et deviennent absolus au
 chargement ; un schéma de sortie donné par fichier (JSON ou YAML) est lu et
@@ -10,7 +10,7 @@ vérifié à ce moment-là.
 Un serveur MCP stdio sans ``cwd`` se lance depuis le dossier de la config. Un
 ``system_file`` manquant, un modèle inconnu ou un agent en double arrêtent
 le démarrage. Un ``system_file`` ou un ``skill_file`` doit rester dans
-``prompts_dir`` : ailleurs, un dossier ouvert à un outil laisserait l'agent
+``resources_dir`` : ailleurs, un dossier ouvert à un outil laisserait l'agent
 réécrire son propre prompt.
 """
 
@@ -74,10 +74,10 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     data = _merged(data, active, source=root)
     draft = _validate(LoomConfig, {**data, "agents": data.get("agents", [])}, source=root)
 
-    prompts_dir = base_dir / draft.prompts_dir
-    loaded = _load_agents(base_dir / draft.agents_dir, prompts_dir, base_dir)
+    resources_dir = base_dir / draft.resources_dir
+    loaded = _load_agents(base_dir / draft.agents_dir, resources_dir, base_dir)
     # Les agents écrits dans loom.yaml suivent les mêmes règles que ceux d'agents_dir.
-    inline = [_prepared(spec, prompts_dir, base_dir, source=root) for spec in draft.agents]
+    inline = [_prepared(spec, resources_dir, base_dir, source=root) for spec in draft.agents]
     agents = [*inline, *(spec for spec, _ in loaded)]
     try:
         config = LoomConfig.model_validate({**data, "agents": agents})
@@ -92,7 +92,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
             update={
                 "tools": _with_skills(
                     _with_schemas(server.tools, base_dir, source=root),
-                    prompts_dir,
+                    resources_dir,
                     f"mcp_servers[{server.name}]",
                     source=root,
                 )
@@ -105,7 +105,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
             update={
                 "tools": _with_skills(
                     _with_schemas(declared.tools, base_dir, source=root),
-                    prompts_dir,
+                    resources_dir,
                     f"tool_sources[{declared.name}]",
                     source=root,
                 )
@@ -121,9 +121,9 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
             "base_dir": base_dir,
             "env_file": None if config.env_file is None else (base_dir / config.env_file).resolve(),
             "agents_dir": base_dir / config.agents_dir,
-            "prompts_dir": base_dir / config.prompts_dir,
+            "resources_dir": base_dir / config.resources_dir,
             "storage": _absolute_storage(config.storage, base_dir),
-            "sessions": _absolute_sessions(config, base_dir / config.prompts_dir, source=root),
+            "sessions": _absolute_sessions(config, base_dir / config.resources_dir, source=root),
             "server": _absolute_server(config, base_dir),
             "security": _absolute_security(config, base_dir),
             "mcp_servers": tuple(_launched_from(server, base_dir) for server in servers),
@@ -224,7 +224,7 @@ def _launched_from(server: McpServerSpec, base_dir: Path) -> McpServerSpec:
 
 
 def _load_agents(
-    agents_dir: Path, prompts_dir: Path, base_dir: Path
+    agents_dir: Path, resources_dir: Path, base_dir: Path
 ) -> list[tuple[AgentSpec, Path]]:
     """Les agents du dossier, chacun avec le fichier d'où il vient."""
     if not agents_dir.is_dir():
@@ -232,14 +232,14 @@ def _load_agents(
     agents: list[tuple[AgentSpec, Path]] = []
     for file in sorted(f for f in agents_dir.iterdir() if f.suffix in AGENT_SUFFIXES):
         spec = _validate(AgentSpec, _read_yaml(file), source=file)
-        agents.append((_prepared(spec, prompts_dir, base_dir, source=file), file))
+        agents.append((_prepared(spec, resources_dir, base_dir, source=file), file))
     return agents
 
 
-def _prepared(spec: AgentSpec, prompts_dir: Path, base_dir: Path, *, source: Path) -> AgentSpec:
+def _prepared(spec: AgentSpec, resources_dir: Path, base_dir: Path, *, source: Path) -> AgentSpec:
     """Prompts, skills et schémas de sortie d'un agent, lus et vérifiés."""
-    spec = _with_prompts(spec, prompts_dir, source=source)
-    spec = _with_tool_skills(spec, prompts_dir, source=source)
+    spec = _with_prompts(spec, resources_dir, source=source)
+    spec = _with_tool_skills(spec, resources_dir, source=source)
     return _with_contracts(spec, base_dir, source=source)
 
 
@@ -309,47 +309,52 @@ def _schema(
         raise from_validation(exc, source=path, data=fields) from exc
 
 
-def _with_prompts(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> AgentSpec:
+def _with_prompts(spec: AgentSpec, resources_dir: Path, *, source: Path) -> AgentSpec:
     """Rend absolus les chemins des prompts (``main`` et rôles), et vérifie qu'ils sont lisibles."""
-    main = _with_prompt(spec.main, prompts_dir, "main", source=source)
+    main = _with_prompt(spec.main, resources_dir, "main", source=source)
     roles = tuple(
-        _with_prompt(role, prompts_dir, f"roles[{role.name}]", source=source) for role in spec.roles
+        _with_prompt(role, resources_dir, f"roles[{role.name}]", source=source)
+        for role in spec.roles
     )
     return spec.model_copy(update={"main": main, "roles": roles})
 
 
-def _within_prompts(prompts_dir: Path, written: Path, label: str, *, source: Path) -> Path:
-    """Le fichier d'un prompt ou d'un skill, qui doit rester dans ``prompts_dir``.
+def _within_resources(resources_dir: Path, written: Path, label: str, *, source: Path) -> Path:
+    """Un fichier lu par la config (prompt, skill, modèle de document, style, logo), qui
+    doit rester dans ``resources_dir``.
 
     Le chemin est comparé une fois résolu (``..``, chemin absolu, lien
-    symbolique) : ``prompts_dir`` est protégé de tout outil fourni
+    symbolique) : ``resources_dir`` est protégé de tout outil fourni
     (``_protected_paths``), un dossier ouvert à ``loom.local_files`` ne l'est pas.
     """
-    path = prompts_dir / written
-    if not path.resolve().is_relative_to(prompts_dir.resolve()):
+    path = resources_dir / written
+    if not path.resolve().is_relative_to(resources_dir.resolve()):
         raise ConfigError(
-            f"{label} — le fichier doit être dans le dossier des prompts ({prompts_dir}) : {path}",
+            f"{label} — le fichier doit être dans le dossier des ressources "
+            f"({resources_dir}) : {path}",
             source=source,
         )
     return path
 
 
-def _hint(prompts_dir: Path, written: Path) -> str:
-    """Un chemin qui recommence par le dossier des prompts : il est déjà relatif à lui."""
+def _hint(resources_dir: Path, written: Path) -> str:
+    """Un chemin qui recommence par le dossier des ressources : il est déjà relatif à lui."""
     parts = written.parts
-    if parts and parts[0] == prompts_dir.name:
-        return f" — le chemin est relatif à prompts_dir : écrire {Path(*parts[1:])}"
+    if parts and parts[0] == resources_dir.name:
+        return f" — le chemin est relatif à resources_dir : écrire {Path(*parts[1:])}"
     return ""
 
 
-def _with_prompt[R: BaseRole](role: R, prompts_dir: Path, label: str, *, source: Path) -> R:
+def _with_prompt[R: BaseRole](role: R, resources_dir: Path, label: str, *, source: Path) -> R:
     if role.system_file is None:
         return role
-    prompt = _within_prompts(prompts_dir, role.system_file, f"{label}.system_file", source=source)
+    prompt = _within_resources(
+        resources_dir, role.system_file, f"{label}.system_file", source=source
+    )
     if not prompt.is_file():
         raise ConfigError(
             f"{label}.system_file — prompt introuvable : {prompt}"
-            f"{_hint(prompts_dir, role.system_file)}",
+            f"{_hint(resources_dir, role.system_file)}",
             source=source,
         )
     try:
@@ -359,21 +364,23 @@ def _with_prompt[R: BaseRole](role: R, prompts_dir: Path, label: str, *, source:
     return role.model_copy(update={"system_file": prompt})
 
 
-def _with_tool_skills(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> AgentSpec:
+def _with_tool_skills(spec: AgentSpec, resources_dir: Path, *, source: Path) -> AgentSpec:
     """Skills d'outils donnés par fichier, lus : outils Python, références MCP et de paquet."""
     tools = tuple(
         tool.model_copy(
-            update={"tools": _with_skills(tool.tools, prompts_dir, _ref_label(tool), source=source)}
+            update={
+                "tools": _with_skills(tool.tools, resources_dir, _ref_label(tool), source=source)
+            }
         )
         if isinstance(tool, McpTools | SourceTools)
         else _styles_read(
             _templates_read(
-                _skill_read(tool, prompts_dir, f"tools[{tool.python}]", source=source),
-                prompts_dir,
+                _skill_read(tool, resources_dir, f"tools[{tool.python}]", source=source),
+                resources_dir,
                 f"tools[{tool.python}]",
                 source=source,
             ),
-            prompts_dir,
+            resources_dir,
             f"tools[{tool.python}]",
             source=source,
         )
@@ -383,11 +390,11 @@ def _with_tool_skills(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> Ag
 
 
 def _templates_read(
-    declared: PythonTool, prompts_dir: Path, label: str, *, source: Path
+    declared: PythonTool, resources_dir: Path, label: str, *, source: Path
 ) -> PythonTool:
     """Les modèles de document d'un outil fourni (``loom.word``, ``loom.pdf``), lus.
 
-    Comme un ``skill_file`` : chaque fichier, relatif à ``prompts_dir`` et contenu dans
+    Comme un ``skill_file`` : chaque fichier, relatif à ``resources_dir`` et contenu dans
     ce dossier, est lu une fois au chargement, et son texte rangé à la place du chemin.
     Son plan est vérifié ici (``templates.parse``) : une faute se voit dès ``loom validate``.
     """
@@ -400,10 +407,10 @@ def _templates_read(
             read[name] = ref
             continue
         where = f"{label}.templates[{name}]"
-        path = _within_prompts(prompts_dir, ref.file, where, source=source)
+        path = _within_resources(resources_dir, ref.file, where, source=source)
         if not path.is_file():
             raise ConfigError(
-                f"{where} — modèle introuvable : {path}{_hint(prompts_dir, ref.file)}",
+                f"{where} — modèle introuvable : {path}{_hint(resources_dir, ref.file)}",
                 source=source,
             )
         try:
@@ -418,11 +425,11 @@ def _templates_read(
 
 
 def _styles_read(
-    declared: PythonTool, prompts_dir: Path, label: str, *, source: Path
+    declared: PythonTool, resources_dir: Path, label: str, *, source: Path
 ) -> PythonTool:
     """Les styles d'un outil ``loom.word``, lus : sa charte et la disposition de ses modèles.
 
-    Chaque fichier YAML, relatif à ``prompts_dir`` et contenu dans ce dossier, est lu
+    Chaque fichier YAML, relatif à ``resources_dir`` et contenu dans ce dossier, est lu
     une fois au chargement avec ses logos, et validé ici : une faute (clé inconnue,
     section hors du plan du modèle, logo absent) se voit dès ``loom validate``. Les
     modèles sont déjà lus (``_templates_read``) : la disposition se compare à leur plan.
@@ -432,7 +439,7 @@ def _styles_read(
     update: dict[str, object] = {}
     if isinstance(charte, StyleRef):
         where = f"{label}.style"
-        spec = _style_read(charte, prompts_dir, where, source=source)
+        spec = _style_read(charte, resources_dir, where, source=source)
         try:
             check_charte(spec, where)
         except ValueError as exc:
@@ -445,7 +452,7 @@ def _styles_read(
                 read[name] = ref
                 continue
             where = f"{label}.templates[{name}].style"
-            spec = _style_read(ref.style, prompts_dir, where, source=source)
+            spec = _style_read(ref.style, resources_dir, where, source=source)
             try:
                 check_layout(spec, parse_template(name, ref.text or ""), where)
             except ValueError as exc:
@@ -455,15 +462,15 @@ def _styles_read(
     return declared.model_copy(update=update) if update else declared
 
 
-def _style_read(ref: StyleRef, prompts_dir: Path, where: str, *, source: Path) -> StyleSpec:
+def _style_read(ref: StyleRef, resources_dir: Path, where: str, *, source: Path) -> StyleSpec:
     """Un fichier de style lu et validé, ses logos lus ; ou le style donné en Python."""
     if ref.spec is not None:
-        return _logos_read(ref.spec, prompts_dir, where, source=source)
+        return _logos_read(ref.spec, resources_dir, where, source=source)
     file = cast(Path, ref.file)
-    path = _within_prompts(prompts_dir, file, where, source=source)
+    path = _within_resources(resources_dir, file, where, source=source)
     if not path.is_file():
         raise ConfigError(
-            f"{where} — style introuvable : {path}{_hint(prompts_dir, file)}", source=source
+            f"{where} — style introuvable : {path}{_hint(resources_dir, file)}", source=source
         )
     try:
         text = path.read_text(encoding="utf-8")
@@ -484,10 +491,10 @@ def _style_read(ref: StyleRef, prompts_dir: Path, where: str, *, source: Path) -
         error = from_validation(exc, root=None, data=data)
         lines = "\n".join(f"{where}.{line}" for line in error.reason.splitlines())
         raise ConfigError(f"{lines}\n({path})", source=source) from exc
-    return _logos_read(spec, prompts_dir, where, source=source)
+    return _logos_read(spec, resources_dir, where, source=source)
 
 
-def _logos_read(spec: StyleSpec, prompts_dir: Path, where: str, *, source: Path) -> StyleSpec:
+def _logos_read(spec: StyleSpec, resources_dir: Path, where: str, *, source: Path) -> StyleSpec:
     """Les logos d'un style, lus : leurs octets à la place de leur fichier."""
     bands: dict[str, object] = {}
     for band in ("header", "footer"):
@@ -495,10 +502,10 @@ def _logos_read(spec: StyleSpec, prompts_dir: Path, where: str, *, source: Path)
         if given is None or given.logo is None or given.logo.file is None:
             continue
         label = f"{where}.{band}.logo"
-        path = _within_prompts(prompts_dir, given.logo.file, label, source=source)
+        path = _within_resources(resources_dir, given.logo.file, label, source=source)
         if not path.is_file():
             raise ConfigError(
-                f"{label} — logo introuvable : {path}{_hint(prompts_dir, given.logo.file)}",
+                f"{label} — logo introuvable : {path}{_hint(resources_dir, given.logo.file)}",
                 source=source,
             )
         try:
@@ -521,16 +528,16 @@ def _ref_label(ref: McpTools | SourceTools) -> str:
 
 
 def _with_skills(
-    overrides: dict[str, ToolOverrides], prompts_dir: Path, label: str, *, source: Path
+    overrides: dict[str, ToolOverrides], resources_dir: Path, label: str, *, source: Path
 ) -> dict[str, ToolOverrides]:
     return {
-        name: _skill_read(override, prompts_dir, f"{label}.tools[{name}]", source=source)
+        name: _skill_read(override, resources_dir, f"{label}.tools[{name}]", source=source)
         for name, override in overrides.items()
     }
 
 
 def _skill_read[T: (PythonTool, ToolOverrides)](
-    declared: T, prompts_dir: Path, label: str, *, source: Path
+    declared: T, resources_dir: Path, label: str, *, source: Path
 ) -> T:
     """Le skill lu depuis son fichier et rangé dans ``skill`` ; ``skill_file`` n'est plus gardé.
 
@@ -541,10 +548,10 @@ def _skill_read[T: (PythonTool, ToolOverrides)](
     if declared.skill_file is None:
         return declared
     where = f"{label}.skill_file"
-    path = _within_prompts(prompts_dir, declared.skill_file, where, source=source)
+    path = _within_resources(resources_dir, declared.skill_file, where, source=source)
     if not path.is_file():
         raise ConfigError(
-            f"{where} — skill introuvable : {path}{_hint(prompts_dir, declared.skill_file)}",
+            f"{where} — skill introuvable : {path}{_hint(resources_dir, declared.skill_file)}",
             source=source,
         )
     try:
@@ -556,14 +563,14 @@ def _skill_read[T: (PythonTool, ToolOverrides)](
     return declared.model_copy(update={"skill": text, "skill_file": None})
 
 
-def _absolute_sessions(config: LoomConfig, prompts_dir: Path, *, source: Path) -> object:
-    """Prompt surchargé de la compaction, rapporté au dossier des prompts."""
+def _absolute_sessions(config: LoomConfig, resources_dir: Path, *, source: Path) -> object:
+    """Prompt surchargé de la compaction, rapporté au dossier des ressources."""
     sessions = config.sessions
     compaction = sessions.compaction
     if compaction is None or compaction.system_file is None:
         return sessions
     label = "sessions.compaction.system_file"
-    prompt = _within_prompts(prompts_dir, compaction.system_file, label, source=source)
+    prompt = _within_resources(resources_dir, compaction.system_file, label, source=source)
     if not prompt.is_file():
         raise ConfigError(f"{label} — prompt introuvable : {prompt}", source=source)
     return sessions.model_copy(

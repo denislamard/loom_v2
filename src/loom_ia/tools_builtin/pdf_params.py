@@ -62,7 +62,7 @@ class PdfParams(BaseModel):
     charts: bool = False
     # Le bloc image : environ 230 tokens de plus par appel au modèle, d'où false.
     images: bool = False
-    # Les modèles de document, par nom : fichiers relatifs à prompts_dir, lus au chargement.
+    # Les modèles de document, par nom : fichiers relatifs à resources_dir, lus au chargement.
     templates: Templates = {}
 
     @model_validator(mode="before")

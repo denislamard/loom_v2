@@ -16,8 +16,8 @@ l'importe pour valider la référence au chargement, sans importer l'outil.
       charts: true                     # le bloc graphique ; false par défaut
       images: true                     # le bloc image ; false par défaut
       extra_blocks: true               # signature, sommaire, liste à cocher ; false par défaut
-      style: styles/charte.yaml        # la charte (facultatif), relative à prompts_dir
-      templates:                       # modèles de document, relatifs à prompts_dir
+      style: styles/charte.yaml        # la charte (facultatif), relative à resources_dir
+      templates:                       # modèles de document, relatifs à resources_dir
         cahier-des-charges: modele-cdc.md
         facture:                       # un modèle et sa disposition (facultatif)
           file: modele-facture.md
@@ -65,9 +65,9 @@ class WordParams(BaseModel):
     # Les blocs signature et sommaire, et la liste à cocher : environ 220 tokens de plus
     # par appel au modèle, d'où false.
     extra_blocks: bool = False
-    # Les modèles de document, par nom : fichiers relatifs à prompts_dir, lus au chargement.
+    # Les modèles de document, par nom : fichiers relatifs à resources_dir, lus au chargement.
     templates: Templates = {}
-    # La charte : un fichier de style relatif à prompts_dir, lu au chargement ; la
+    # La charte : un fichier de style relatif à resources_dir, lu au chargement ; la
     # disposition d'un modèle se déclare sur le modèle (templates.<nom>.style).
     style: StyleField = None
 

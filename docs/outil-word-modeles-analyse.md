@@ -10,7 +10,7 @@
 
 Le besoin vient des essais du POC shaper.ia (journaux `test-01` à `test-100`, 8 novembre). Un agent écrit plusieurs types de documents : un cahier des charges, une fiche de maquettes, plus tard un devis ou un rapport. Chaque type a sa structure. Aujourd'hui, cette structure ne peut être décrite que dans le prompt de l'agent ou dans le `skill_file` de `loom.word`. Or un outil n'a qu'un seul `skill_file`, et la config refuse de monter deux fois `loom.word` dans un agent. Tous les modèles partent alors à chaque appel de modèle, et rien ne vérifie qu'un document suit le sien.
 
-**Verdict : rien ne bloque.** Les modèles se déclarent dans la config de l'outil (`templates: {nom: fichier.md}`), comme un `skill_file` : des fichiers markdown relatifs à `prompts_dir`, lus et vérifiés au chargement. Le modèle de langage n'en voit que les noms et une ligne de description. Il lit un modèle à la demande (`action: template`). À l'écriture, il nomme le modèle suivi, ou `aucun`, et **l'outil vérifie le plan du document** : les titres de niveau 1, comparés aux titres `#` du modèle. Un écart est refusé avec le plan attendu, ce qui permet au modèle de langage de se corriger dans le même tour, même s'il n'a pas lu le modèle. Sans `templates`, rien ne change pour le modèle, à l'octet près.
+**Verdict : rien ne bloque.** Les modèles se déclarent dans la config de l'outil (`templates: {nom: fichier.md}`), comme un `skill_file` : des fichiers markdown relatifs à `resources_dir`, lus et vérifiés au chargement. Le modèle de langage n'en voit que les noms et une ligne de description. Il lit un modèle à la demande (`action: template`). À l'écriture, il nomme le modèle suivi, ou `aucun`, et **l'outil vérifie le plan du document** : les titres de niveau 1, comparés aux titres `#` du modèle. Un écart est refusé avec le plan attendu, ce qui permet au modèle de langage de se corriger dans le même tour, même s'il n'a pas lu le modèle. Sans `templates`, rien ne change pour le modèle, à l'octet près.
 
 - **Tests :** 4 205 verts avec tous les extras, soit 4 178 plus 27 nouveaux. En noyau seul, 3 198 verts (+26) : les modèles de `word` marchent sans extra.
 - **Qualité :** pyright strict à 0, ruff propre (`check` et `format --check`), les 6 contrats d'import tenus.
@@ -18,7 +18,7 @@ Le besoin vient des essais du POC shaper.ia (journaux `test-01` à `test-100`, 8
 
 | Point | Constat | Preuve |
 | --- | --- | --- |
-| Lus au chargement | Fichiers relatifs à `prompts_dir`, contenus dans ce dossier ; plan vérifié dès `loom validate` | Démontré (fichier absent, hors du dossier, chemin qui répète `prompts/`, en-tête mal fermé, section en double) |
+| Lus au chargement | Fichiers relatifs à `resources_dir`, contenus dans ce dossier ; plan vérifié dès `loom validate` | Démontré (fichier absent, hors du dossier, chemin qui répète `prompts/`, en-tête mal fermé, section en double) |
 | Le modèle de langage choisit | `template` obligatoire à l'écriture : un nom déclaré, ou `aucun` | Démontré (« write attend 'template' ») |
 | Plan vérifié | Section absente, en trop, en double, dans le désordre : refusé, avec le plan attendu | Démontré (dans `word` et dans `pdf`) |
 | Comparaison souple | Numérotation, casse, accents, espaces et emphase ignorés | Démontré (« 1. Contexte et Objectifs », « 4) DONNÉES ») |
@@ -44,7 +44,7 @@ Les essais réels se sont faits sur tes deux skills de shaper (`prompts/modele-c
 ```yaml
 - python: loom.word
   images: true
-  templates:                                   # facultatif ; relatifs à prompts_dir
+  templates:                                   # facultatif ; relatifs à resources_dir
     cahier-des-charges: cahier-des-charges.md
     fiche-maquettes: fiche-maquettes.md
   folders:
@@ -54,7 +54,7 @@ Les essais réels se sont faits sur tes deux skills de shaper (`prompts/modele-c
 ```
 
 - **La même clé sur `loom.word` et `loom.pdf`.** Les deux outils partagent `_document` et leur vocabulaire, et la vérification du plan est commune.
-- **Les fichiers sont lus au chargement**, comme un `skill_file`, avec les mêmes règles : relatifs à `prompts_dir`, contenus dans ce dossier (ni `..`, ni lien qui en sort), `loom validate` dit la faute. Le dossier des prompts reste fermé aux outils : c'est le chargeur qui lit, pas l'outil.
+- **Les fichiers sont lus au chargement**, comme un `skill_file`, avec les mêmes règles : relatifs à `resources_dir`, contenus dans ce dossier (ni `..`, ni lien qui en sort), `loom validate` dit la faute. Le dossier des ressources reste fermé aux outils : c'est le chargeur qui lit, pas l'outil.
 - **Les noms** : minuscules, chiffres et tirets, 40 caractères au plus, et pas `aucun`. Au plus 20 modèles par outil, 20 000 caractères par modèle.
 - **Un modèle exige un dossier `write`** : sur un outil qui ne fait que lire, des modèles sont refusés au montage.
 
@@ -62,8 +62,8 @@ Les erreurs de config, telles que les dit le prototype :
 
 ```text
 tools[loom.word].templates[fiche-maquettes] — modèle introuvable : …/prompts/absent.md
-tools[loom.word].templates[fiche-maquettes] — le fichier doit être dans le dossier des prompts (…/prompts) : …/prompts/../secret.md
-tools[loom.word].templates[fiche-maquettes] — modèle introuvable : …/prompts/prompts/fiche-maquettes.md — le chemin est relatif à prompts_dir : écrire fiche-maquettes.md
+tools[loom.word].templates[fiche-maquettes] — le fichier doit être dans le dossier des ressources (…/prompts) : …/prompts/../secret.md
+tools[loom.word].templates[fiche-maquettes] — modèle introuvable : …/prompts/prompts/fiche-maquettes.md — le chemin est relatif à resources_dir : écrire fiche-maquettes.md
 tools[loom.word].templates[fiche-maquettes] — modèle fiche-maquettes : en-tête ouvert par --- et jamais fermé : …/prompts/casse.md
 agents[redacteur].tools.0.loom.word.templates — nom de modèle 'aucun' : minuscules, chiffres et tirets (40 caractères au plus), et pas « aucun », qui choisit un document libre
 ```
@@ -184,7 +184,7 @@ Le passage des skills aux modèles se fait dans shaper (`agents/*.yaml`, `prompt
 | `_document/content.py` | +32 / −3 : `prepare(…, template)` vérifie le plan (`_check_plan`) ; `Prepared.template` |
 | `_document/tool.py` | +62 / −4 : les modèles au montage, leurs lignes dans la description, l'action `template`, le modèle passé à `prepare`, `template` dans le résultat, `modèles : …` pour `loom validate` |
 | `_office_params.py` | +72 / −2 : `TemplateRef` (`file` ou `text`, forme courte `nom: fichier.md`), le type `Templates`, `read_templates` (la faute d'une référence non chargée) |
-| `config/loader.py` | +43 / −1 : `_templates_read`, à côté de `_skill_read` : chaque fichier lu dans `prompts_dir`, analysé, rangé en `text` |
+| `config/loader.py` | +43 / −1 : `_templates_read`, à côté de `_skill_read` : chaque fichier lu dans `resources_dir`, analysé, rangé en `text` |
 | `word/writer.py` | +6 / −2 : la catégorie, seulement pour un document qui suit un modèle |
 | `word/reader.py` | +36 / −8 : titre et catégorie lus ensemble ; `template` et la note, seulement avec des modèles |
 | `word/tool.py`, `pdf/tool.py` | +18 / −4, +9 / −2 : les modèles passés par `build` |
@@ -195,7 +195,7 @@ Le moteur, le catalogue, `agents/spec.py` et `pyproject.toml` ne changent pas.
 
 ### Choix techniques et leurs raisons
 
-**Lire au chargement, comme `skill_file`, plutôt qu'au montage (D-5).** Le chargeur a déjà `prompts_dir` et le contrôle « reste dans le dossier » (`_within_prompts`), et une faute de modèle se voit dès `loom validate`. Lire au montage demanderait de passer `prompts_dir` aux outils fournis (`BuiltinContext`) et de refaire ce contrôle. L'outil reçoit des textes, pas des chemins. Seul prix : le chargeur reconnaît un outil à modèles par son attribut `templates`, plutôt que par une déclaration du catalogue.
+**Lire au chargement, comme `skill_file`, plutôt qu'au montage (D-5).** Le chargeur a déjà `resources_dir` et le contrôle « reste dans le dossier » (`_within_resources`), et une faute de modèle se voit dès `loom validate`. Lire au montage demanderait de passer `resources_dir` aux outils fournis (`BuiltinContext`) et de refaire ce contrôle. L'outil reçoit des textes, pas des chemins. Seul prix : le chargeur reconnaît un outil à modèles par son attribut `templates`, plutôt que par une déclaration du catalogue.
 
 **`template` obligatoire à l'écriture, avec `aucun`.** C'est l'option « exiger » sans en avoir l'inconvénient. Le modèle de langage fait un choix explicite à chaque document : suivre un modèle déclaré ou écrire librement. Un document libre reste possible. Le champ ne peut pas être `required` dans le schéma, puisqu'il ne sert pas à `read`. La règle est donc dans le validateur, avec un message qui dit quoi faire.
 
@@ -266,7 +266,7 @@ Classées par importance.
 | D-2 | Une section que le modèle ne déclare pas | (a) refusée (prototype) ; (b) permise | **Décidé (09/11) : (a), refuser.** Une section libre se déclare (`# Annexes (facultatif)`) |
 | D-3 | Le format d'un modèle | (a) markdown, titres `#` = sections, « (facultatif) », `description` en tête (prototype) ; (b) un fichier structuré (YAML : sections, consignes) | **Décidé (09/11) : (a)**, le markdown, titres `#` = sections |
 | D-4 | Ce qui se répète dans un document (les écrans d'une fiche de maquettes) | (a) du contenu d'une section fixe, sous des titres de niveau 2 ; (b) une syntaxe « section répétée » | **Décidé (09/11) : (a).** Ne pas confondre le modèle d'un document avec ses maquettes : la fiche a les sections « Présentation » et « Écrans », et chaque écran est un titre de niveau 2 dans « Écrans ». Rien à ajouter au format |
-| D-5 | Où lire les fichiers | (a) le chargeur de config, comme `skill_file` (prototype) ; (b) la fabrique de l'outil, avec `prompts_dir` dans `BuiltinContext` | **Décidé (09/11) : (a)**, le chargeur de config |
+| D-5 | Où lire les fichiers | (a) le chargeur de config, comme `skill_file` (prototype) ; (b) la fabrique de l'outil, avec `resources_dir` dans `BuiltinContext` | **Décidé (09/11) : (a)**, le chargeur de config |
 | D-6 | Où le `.docx` garde son modèle | (a) la catégorie (`cp:category`, prototype) ; (b) une propriété personnalisée ; (c) nulle part | **Décidé (09/11) : (a)**, la catégorie |
 | D-7 | La relecture d'un document au modèle inconnu | (a) `template` et une note, seulement pour un outil à modèles (prototype) ; (b) rien | **Décidé (09/11) : (a)** |
 | D-8 | Le PDF | (a) même vérification, sans garder le modèle (prototype) ; (b) le modèle dans les métadonnées du PDF (`/Subject`) | **Décidé (09/11) : (a)** |
@@ -280,7 +280,7 @@ Classées par importance.
 
 ## Mise en œuvre
 
-Faite le 9 novembre 2026, en un seul lot, à partir du prototype, sur ton commit `9303664`. S'y ajoutent la documentation (guide : « Des modèles de document » ; `configuration.md` : `prompts_dir` ; `fonctions.md` ; `CHANGELOG` 2.0.20) et un message plus net pour une section donnée deux fois dans un modèle (le titre tel qu'écrit, plus sa forme comparée). Résultat : 4 205 tests verts avec tous les extras (4 178 + 27), 3 198 en noyau seul (3 172 + 26), pyright strict à 0, ruff propre, 6 contrats d'import tenus. shaper n'est pas touché (étape 5 ci-dessous, à ta demande).
+Faite le 9 novembre 2026, en un seul lot, à partir du prototype, sur ton commit `9303664`. S'y ajoutent la documentation (guide : « Des modèles de document » ; `configuration.md` : `resources_dir` ; `fonctions.md` ; `CHANGELOG` 2.0.20) et un message plus net pour une section donnée deux fois dans un modèle (le titre tel qu'écrit, plus sa forme comparée). Résultat : 4 205 tests verts avec tous les extras (4 178 + 27), 3 198 en noyau seul (3 172 + 26), pyright strict à 0, ruff propre, 6 contrats d'import tenus. shaper n'est pas touché (étape 5 ci-dessous, à ta demande).
 
 Le plan d'origine :
 
@@ -288,7 +288,7 @@ Le plan d'origine :
 1. **Le socle** : `_templates.py`, la variante, `prepare`, le montage dans `DocumentTool`, les paramètres, et leurs tests.
 2. **La config** : `_templates_read` dans le chargeur, et ses tests.
 3. **Word** : la catégorie, la relecture, et leurs tests ; **PDF** : la vérification, et son test.
-4. **Documentation** : dans `docs/howto/06-outils-fournis.md`, une sous-section « Des modèles de document » (déclaration, format, vérification, relecture), la clé `templates` dans l'exemple de config, la ligne de `loom validate`, « Coût ». Dans `docs/configuration.md`, une ligne pour les fichiers lus dans `prompts_dir`. Puis `docs/fonctions.md` et le `CHANGELOG`.
+4. **Documentation** : dans `docs/howto/06-outils-fournis.md`, une sous-section « Des modèles de document » (déclaration, format, vérification, relecture), la clé `templates` dans l'exemple de config, la ligne de `loom validate`, « Coût ». Dans `docs/configuration.md`, une ligne pour les fichiers lus dans `resources_dir`. Puis `docs/fonctions.md` et le `CHANGELOG`.
 5. **shaper** : les deux modèles convertis dans `prompts/` (la fiche avec ses sections « Présentation » et « Écrans », D-4), `templates:` dans `agents/shaper.yaml` et `agents/maquettes-test.yaml` à la place des `skill_file`, et le prompt de shaper allégé de sa section « Le cahier des charges ».
 6. **Essai réel** : un cahier des charges et une fiche de maquettes, avec HAIKU, en relisant les journaux pour compter les refus de plan et les corrections.
 

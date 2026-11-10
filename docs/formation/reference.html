@@ -274,7 +274,7 @@ loom reject  RUN_ID [--call CALL_ID] [--by NOM] [--reason MOTIF] [--session SESS
 <p>Règles générales, valables pour tous les fichiers de configuration :</p>
 <ul>
 <li>une clé inconnue est refusée au chargement, avec son chemin (code 2) ; une clé écrite deux fois aussi, avec ses deux lignes ;</li>
-<li>les chemins sont relatifs au dossier de <code>loom.yaml</code> ; un <code>system_file</code> est relatif à <code>prompts_dir</code> ;</li>
+<li>les chemins sont relatifs au dossier de <code>loom.yaml</code> ; un <code>system_file</code>, un <code>skill_file</code>, un modèle ou un style est relatif à <code>resources_dir</code> ;</li>
 <li>la configuration ne contient jamais un secret : les clés en <code>_env</code> donnent le <em>nom</em> de la variable d'environnement qui le porte ;</li>
 <li>dans la colonne « Défaut », <strong>obligatoire</strong> veut dire que la clé doit être écrite, et <code>null</code> que la fonction reste inactive tant que la clé n'est pas donnée.</li>
 </ul>
@@ -289,8 +289,8 @@ loom reject  RUN_ID [--call CALL_ID] [--by NOM] [--reason MOTIF] [--session SESS
 <tr><td><code>env_file</code></td><td>Fichier de variables lu par la commande <code>loom</code> avant la config. Absent : erreur. <a href="module-03.html#ex-3-7">Module 3</a>.</td><td>chemin</td><td><code>null</code> : le <code>.env</code> voisin, s'il existe</td></tr>
 <tr><td><code>imports</code></td><td>Modules Python importés au démarrage, qui enregistrent outils et politiques. <a href="module-02.html#ex-2-1">Module 2</a>.</td><td>liste de noms de modules</td><td><code>[]</code></td></tr>
 <tr><td><code>agents_dir</code></td><td>Dossier dont chaque <code>*.yaml</code> est un agent. Absent : erreur.</td><td>chemin</td><td><code>agents</code></td></tr>
-<tr><td><code>prompts_dir</code></td><td>Dossier des <code>system_file</code>.</td><td>chemin</td><td><code>prompts</code></td></tr>
-<tr><td><code>agents</code></td><td>Agents écrits directement dans <code>loom.yaml</code>, même schéma qu'un fichier d'agent ; leur <code>system_file</code> n'est pas rapporté à <code>prompts_dir</code>, préférer <code>system</code>.</td><td>liste d'agents</td><td><code>[]</code></td></tr>
+<tr><td><code>resources_dir</code></td><td>Dossier des ressources lues au chargement : <code>system_file</code>, <code>skill_file</code>, modèles de document, styles et logos ; fermé aux outils fournis.</td><td>chemin</td><td><code>prompts</code></td></tr>
+<tr><td><code>agents</code></td><td>Agents écrits directement dans <code>loom.yaml</code>, même schéma qu'un fichier d'agent ; leur <code>system_file</code> est relatif à <code>resources_dir</code>, comme pour un agent d'<code>agents_dir</code>.</td><td>liste d'agents</td><td><code>[]</code></td></tr>
 <tr><td><code>models</code>, <code>mcp_servers</code>, <code>tool_sources</code>, <code>storage</code>, <code>sessions</code>, <code>execution</code>, <code>budgets</code>, <code>telemetry</code>, <code>tenants</code>, <code>security</code>, <code>server</code>, <code>triggers</code></td><td colspan="3">Détaillées dans les sections suivantes.</td></tr>
 </tbody>
 </table></div>
@@ -519,7 +519,7 @@ loom reject  RUN_ID [--call CALL_ID] [--by NOM] [--reason MOTIF] [--session SESS
 <tbody>
 <tr><td><code>model</code></td><td>Modèle de l'orchestrateur. <a href="module-01.html#fichiers">Module 1</a>.</td><td>id de modèle</td><td><strong>obligatoire</strong></td></tr>
 <tr><td><code>system</code></td><td>Prompt système en ligne ; exclusif de <code>system_file</code>.</td><td>texte</td><td><code>""</code></td></tr>
-<tr><td><code>system_file</code></td><td>Prompt système dans un fichier de <code>prompts_dir</code>. <a href="module-01.html#ex-1-5">Module 1</a>.</td><td>chemin</td><td><code>null</code></td></tr>
+<tr><td><code>system_file</code></td><td>Prompt système dans un fichier de <code>resources_dir</code>. <a href="module-01.html#ex-1-5">Module 1</a>.</td><td>chemin</td><td><code>null</code></td></tr>
 <tr><td><code>fallbacks</code></td><td>Modèles de secours, dans l'ordre. <a href="module-09.html#ex-9-2">Module 9</a>.</td><td>liste d'ids</td><td><code>[]</code></td></tr>
 <tr><td><code>llm</code></td><td>Réglages d'appel : voir <a href="#bloc-llm">réglages <code>llm</code></a>.</td><td>objet</td><td><code>{}</code></td></tr>
 <tr><td><code>context</code></td><td>Ajoute le state de session, entier ou certaines clés, en fin de requête. <a href="module-04.html#ex-4-8">Module 4</a>.</td><td><code>[session_state]</code> ou <code>[{session_state: [clés]}]</code></td><td><code>[]</code></td></tr>

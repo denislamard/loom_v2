@@ -76,7 +76,7 @@ Le contenu reste au modèle de langage, l'apparence au style. Un artisan change 
     rights: [ read, write ]
 ```
 
-- **Les fichiers sont lus au chargement**, comme les modèles : relatifs à `prompts_dir`, contenus dans ce dossier, avec les fautes signalées dès `loom validate`. Le logo aussi, et son format (PNG ou JPEG) est vérifié au montage de l'outil.
+- **Les fichiers sont lus au chargement**, comme les modèles : relatifs à `resources_dir`, contenus dans ce dossier, avec les fautes signalées dès `loom validate`. Le logo aussi, et son format (PNG ou JPEG) est vérifié au montage de l'outil.
 - **Quatre cas :**
   - document qui suit un modèle avec disposition : la charte, complétée par la disposition ;
   - document qui suit un modèle sans disposition : la charte ;

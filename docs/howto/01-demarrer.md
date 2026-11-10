@@ -150,7 +150,7 @@ dependencies = [
 ]
 ```
 
-Un projet Loom-IA tient en un fichier de configuration racine, un dossier d'agents et un dossier de prompts. Créez les deux dossiers :
+Un projet Loom-IA tient en un fichier de configuration racine, un dossier d'agents et un dossier de ressources (les prompts, puis les modèles et les styles des documents). Créez les deux dossiers :
 
 ```bash
 mkdir agents prompts
@@ -164,7 +164,7 @@ Puis les trois fichiers.
 version: 1
 
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE
@@ -186,7 +186,7 @@ main:
   system_file: devis.md
 ```
 
-`prompts/devis.md` (le prompt système, cherché dans `prompts_dir`) :
+`prompts/devis.md` (le prompt système, cherché dans `resources_dir`) :
 
 ```markdown
 Tu es l'assistant d'un artisan. Tu réponds en français, en une ou deux phrases.
@@ -284,7 +284,7 @@ data/default:
 
 #### À retenir
 
-- **Un projet = un `loom.yaml`, un dossier d'agents, un dossier de prompts.** Les chemins `agents_dir` et `prompts_dir` sont relatifs au fichier `loom.yaml`.
+- **Un projet = un `loom.yaml`, un dossier d'agents, un dossier de ressources.** Les chemins `agents_dir` et `resources_dir` sont relatifs au fichier `loom.yaml`.
 - **`loom validate` avant tout.** Il monte les agents sans appeler de modèle : c'est la vérification la moins chère.
 - **Le journal est créé au premier run.** Sans identifiant de session, la session prend l'identifiant du run : un fichier `.jsonl` par run. Dossier `default` = le client par défaut (voir le niveau 3).
 - **Les lignes `INFO` viennent de l'absence de bloc `telemetry`.** Sans lui, la commande `loom` affiche une ligne de log par appel de modèle et par transition. Le chapitre 2 les fait taire.
@@ -393,7 +393,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   - id: SIMULE

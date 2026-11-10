@@ -11,7 +11,7 @@
 version: 1
 
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
 # Orchestrateur simulé : fait décrire la photo jointe s'il y en a une, lit

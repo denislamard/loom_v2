@@ -291,7 +291,7 @@ def test_a_folder_that_starts_being_watched_is_watched(
     shared = tmp_path.parent / f"{tmp_path.name}-prompts"
     shared.mkdir()
     (shared / "demo.md").write_text("Tu calcules, ailleurs.", encoding="utf-8")
-    rewrite(config, lambda data: data.update(prompts_dir=str(shared)))
+    rewrite(config, lambda data: data.update(resources_dir=str(shared)))
     server.until(lambda: f"surveille {tmp_path}, {shared}" in server.said, "pas suivi")
     done = server.said.count("Rechargé")
     (shared / "demo.md").write_text("Tu calcules, ailleurs, autrement.", encoding="utf-8")

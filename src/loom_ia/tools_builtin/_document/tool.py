@@ -59,8 +59,8 @@ WRITING_HELP: Final = (
     f"de valeurs par ligne, totals, caption ; {MAX_TABLE_COLUMNS} colonnes et "
     f"{MAX_TABLE_ROWS} lignes au plus), note (text, title : un encadré), citation (text, "
     "source), saut_de_page. 'title' : le titre du document, en tête. Dans un texte : "
-    "**gras**, *italique*, et \\n pour aller à la ligne dans le même paragraphe ; pas "
-    "d'autre balisage (ni #, ni -, ni |).",
+    "**gras**, *italique*, <u>souligné</u>, et \\n pour aller à la ligne dans le même "
+    "paragraphe ; pas d'autre balisage (ni #, ni -, ni |, ni autre balise).",
     "Types de colonne : texte, entier, decimal, montant_eur, montant_keur (valeur déjà en "
     "k€), pourcentage (fraction : 0.15 pour 15 %), date (AAAA-MM-JJ), date_heure (ISO "
     "8601), annee, booleen. L'outil écrit les valeurs à la française (1 250,50 €) : donner "

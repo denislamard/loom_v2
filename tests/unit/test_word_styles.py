@@ -264,6 +264,20 @@ async def test_the_charte_sets_fonts_colors_and_headings(tmp_path: Path) -> None
         check_order(part(path, name))
 
 
+async def test_an_underlined_title(tmp_path: Path) -> None:
+    """Le texte du titre souligné, de sa longueur ; sans filet de toute la largeur."""
+    charte = {"title": {"underline": True, "rule": False}}
+    tool = styled(tmp_path, charte=charte)
+    path = await write(tool, "libre", FACTURE, title="Facture", template="aucun")
+    styles = part(path, "word/styles.xml")
+    title = re.search(r'<w:style w:type="paragraph" w:styleId="Title">.*?</w:style>', styles)
+    assert title is not None
+    assert '<w:u w:val="single"/>' in title.group() and "pBdr" not in title.group()
+    check_order(styles)
+    # Sans la clé, rien de souligné.
+    assert "<w:u " not in styles_xml(resolve(StyleSpec.model_validate({"title": {"rule": False}})))
+
+
 async def test_header_footer_logo_and_watermark(tmp_path: Path) -> None:
     tool = styled(tmp_path)
     path = await write(tool, "libre", FACTURE, title="Facture F-12", template="aucun")
@@ -325,6 +339,18 @@ async def test_numbered_headings_and_captions(tmp_path: Path) -> None:
     assert {"type": "paragraphe", "text": "Pression mesurée"} in blocks
     # Le titre masqué revient en titre, pas en liste (B-4).
     assert {"type": "titre", "level": 1, "text": "Page de garde"} in blocks
+
+
+async def test_an_underlined_section_title_keeps_its_layout(tmp_path: Path) -> None:
+    """« <u>Client</u> » est la section Client : le plan l'accepte, la disposition la pose."""
+    blocks = [
+        dict(block, text=f"<u>{block['text']}</u>") if block["type"] == "titre" else block
+        for block in FACTURE
+    ]
+    path = await write(styled(tmp_path), "facture", blocks, title="Facture", template="facture")
+    document = part(path, "word/document.xml")
+    assert document.count('<w:pStyle w:val="HeadingHidden"/>') == 3
+    assert '<w:tblStyle w:val="LoomLayout"/>' in document
 
 
 async def test_article_numbering(tmp_path: Path) -> None:

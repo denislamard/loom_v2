@@ -17,7 +17,7 @@
     rights: [ read, write ]
 ```
 
-**La proposition.** Une clé commune à **tous** les outils, pas propre à `loom.excel` : `guide` (texte en ligne) ou `guide_file` (fichier du dossier des prompts), noms provisoires (D-1). Le texte est lu au chargement et **ajouté à la description** de l'outil, que le modèle voit à chaque appel. Elle vaut pour les outils Python et fournis (`- python:`), et pour les outils MCP et de paquet (bloc de surcharges `tools:`).
+**La proposition.** Une clé commune à **tous** les outils, pas propre à `loom.excel` : `guide` (texte en ligne) ou `guide_file` (fichier du dossier des ressources), noms provisoires (D-1). Le texte est lu au chargement et **ajouté à la description** de l'outil, que le modèle voit à chaque appel. Elle vaut pour les outils Python et fournis (`- python:`), et pour les outils MCP et de paquet (bloc de surcharges `tools:`).
 
 **Verdict : faisable, petit, sans risque pour le moteur — à cinq conditions.**
 
@@ -27,7 +27,7 @@
 
 **Les cinq conditions**, toutes nées du prototype (§ Effets de bord) :
 
-1. **Le guide doit rester dans le dossier des prompts.** Sinon, un guide placé dans un dossier ouvert à `loom.local_files` peut être réécrit par l'agent lui-même, et relu au chargement suivant : une injection de prompt persistante. Démontré, puis corrigé dans le prototype. `system_file` a **déjà** ce défaut aujourd'hui (démontré) : à corriger en même temps.
+1. **Le guide doit rester dans le dossier des ressources.** Sinon, un guide placé dans un dossier ouvert à `loom.local_files` peut être réécrit par l'agent lui-même, et relu au chargement suivant : une injection de prompt persistante. Démontré, puis corrigé dans le prototype. `system_file` a **déjà** ce défaut aujourd'hui (démontré) : à corriger en même temps.
 2. **`ToolSpec.overridden()` recopie aveuglément** chaque champ de `ToolOverrides` : un nouveau champ qui n'existe pas sur `ToolSpec` y est posé sans erreur, et **perdu** sans rien dire (démontré). Le prototype l'exclut et refuse un fichier non lu.
 3. **Le guide coûte des tokens à chaque appel de modèle**, que l'outil serve ou non. Le cache de prompt (`cache: { tools: true }`) le rend bon marché après le premier appel, mais tout changement de guide **invalide le cache entier** de l'agent : outils, prompt système et conversation.
 4. **Un run fait avant un changement de guide ne se rejoue plus à l'identique.** C'est voulu (la requête a changé) et bien diagnostiqué, mais à documenter.
@@ -104,7 +104,7 @@ Trois choses rendent l'ajout naturel :
 # agents/agent.yaml
 tools:
 - python: loom.excel
-  guide_file: excel.md                # relatif à prompts_dir, comme system_file
+  guide_file: excel.md                # relatif à resources_dir, comme system_file
   folders:
   - name: workspace
     path: workspace
@@ -128,12 +128,12 @@ mcp_servers:
 ```
 
 - **`guide` et `guide_file` s'excluent**, comme `system` et `system_file`.
-- **Le chemin est relatif au dossier des prompts** (`prompts_dir`), comme `system_file`. Écrire `guide_file: prompts/excel.md`, comme dans la demande de départ, chercherait `prompts/prompts/excel.md` : le message d'erreur donne le chemin complet.
+- **Le chemin est relatif au dossier des ressources** (`resources_dir`), comme `system_file`. Écrire `guide_file: prompts/excel.md`, comme dans la demande de départ, chercherait `prompts/prompts/excel.md` : le message d'erreur donne le chemin complet.
 - **Contrôles au chargement**, donc dès `loom validate` :
   - `… .guide_file — guide introuvable : /…/prompts/autre.md` ;
   - `… .guide_file — guide illisible : …` (droits, encodage) ;
   - `… .guide_file — guide vide : …` ;
-  - `… .guide_file — le guide doit être dans le dossier des prompts (…) : …` (§ Effets de bord, point 1).
+  - `… .guide_file — le guide doit être dans le dossier des ressources (…) : …` (§ Effets de bord, point 1).
 - **Une surcharge d'agent l'emporte** sur celle du serveur ou de la source, comme pour les autres clés du bloc (`docs/configuration.md`). Le prototype **remplace** le guide du serveur par celui de l'agent ; les concaténer est l'autre choix (D-6).
 
 ### Ce que voit le modèle
@@ -165,7 +165,7 @@ Mesuré sur le prototype : avec un guide de 95 caractères (fichier, espaces ret
 | --- | --- | --- |
 | `core/model/tooling.py` | +33 / −3 | `ToolOverrides.guide`, `guide_file`, validateur d'exclusion ; `ToolSpec.guide` ; `overridden()` exclut `guide_file` et refuse un fichier non lu ; `definition()` compose |
 | `agents/spec.py` | +13 | `PythonTool.guide`, `guide_file`, validateur d'exclusion |
-| `config/loader.py` | +77 / −3 | `_with_guides`, `_guided`, `_guide_read` : lecture, contrôles, chemin borné au dossier des prompts ; appliqué aux agents des fichiers, à `mcp_servers[].tools` et à `tool_sources[].tools` |
+| `config/loader.py` | +77 / −3 | `_with_guides`, `_guided`, `_guide_read` : lecture, contrôles, chemin borné au dossier des ressources ; appliqué aux agents des fichiers, à `mcp_servers[].tools` et à `tool_sources[].tools` |
 | `runtime/wiring.py` | +7 | `_tool` passe `guide` à `configure()`, et refuse un `guide_file` non lu |
 | `tools/configured.py` | +2 | `configure(guide=…)` |
 | `tests/unit/test_tool_guide.py` | +206 (nouveau) | 13 tests |
@@ -174,7 +174,7 @@ Ne changent pas : le moteur (`engine/`), le journal et ses événements, les ada
 
 ### Le chemin d'un guide
 
-1. **Chargement** (`config/loader.py`). `_load_agents` lit chaque fichier d'agent, puis `_with_prompts` et, nouveau, `_with_guides`. `_guide_read` résout le chemin dans `prompts_dir`, vérifie qu'il y reste, lit le fichier, retire les espaces de tête et de fin, range le texte dans `guide` et efface `guide_file`. Même traitement pour les surcharges de `mcp_servers[]` et `tool_sources[]` de `loom.yaml`. C'est le schéma de `schema_file` des contrats de sortie, lu puis rangé dans `schema`.
+1. **Chargement** (`config/loader.py`). `_load_agents` lit chaque fichier d'agent, puis `_with_prompts` et, nouveau, `_with_guides`. `_guide_read` résout le chemin dans `resources_dir`, vérifie qu'il y reste, lit le fichier, retire les espaces de tête et de fin, range le texte dans `guide` et efface `guide_file`. Même traitement pour les surcharges de `mcp_servers[]` et `tool_sources[]` de `loom.yaml`. C'est le schéma de `schema_file` des contrats de sortie, lu puis rangé dans `schema`.
 2. **Montage** (`runtime/wiring.py`, `_tool`). Le guide passe à `configure()`, qui enveloppe l'outil dans un `ConfiguredTool` dont la `spec` porte `guide`. Pour MCP et les paquets, `ToolSpec.overridden()` le pose à l'ouverture de la source (`adapters/mcp/source.py`, l. 180 ; `runtime/sources.py`, l. 180).
 3. **Requête** (`engine/executor.py`, `definitions`). `tool.spec.definition()` compose la description ; les adaptateurs l'envoient telle quelle (`anthropic.py`, l. 412 ; `openai_chat.py`, l. 312 ; `openai_responses.py`, l. 249).
 
@@ -185,7 +185,7 @@ Ne changent pas : le moteur (`engine/`), le journal et ses événements, les ada
 | Clé sur `PythonTool` et sur `ToolOverrides`, pas sur `loom.excel` | Tout outil en profite (Python, fourni, MCP, paquet, `forge`), avec un seul mécanisme. Un paramètre propre à un outil fourni ne servirait qu'à lui |
 | `ToolSpec.guide` séparé de `description` | `description` reste celle de l'outil ; la surcharge `description:` et le guide se combinent sans se marcher dessus ; `TERMINAL_HINT` reste en dernier |
 | Lu au chargement, pas à chaque montage | Erreur dès `loom validate` ; même schéma que `schema_file`. `system_file`, lui, est lu au chargement pour contrôle (`_with_prompt`, `_check_variables`), puis relu au montage (`system_text`) ; comme un agent n'est monté qu'une fois par instance et par client (`access/api.py`, `runtime/wiring.py`, l. 1545), la différence ne se voit qu'avec `serve --reload`, qui recharge la config de toute façon |
-| Relatif à `prompts_dir`, et borné à lui | Un guide est un prompt ; le dossier des prompts est déjà protégé de tout outil fourni (`_protected_paths`, l. 1938) |
+| Relatif à `resources_dir`, et borné à lui | Un guide est un prompt ; le dossier des ressources est déjà protégé de tout outil fourni (`_protected_paths`, l. 1938) |
 | Espaces de tête et de fin retirés d'un `guide_file` | La description composée ne finit pas par des lignes vides ; l'empreinte de la requête ne dépend pas d'un saut de ligne final. **Le prototype ne nettoie pas un `guide:` en ligne**, qui accepte même un texte fait d'espaces (`min_length=1`) : à aligner avant fusion |
 | Pas de rendu des variables `{{ }}` dans le prototype | Décision à prendre (D-5) ; le prototype n'en fait pas, pour ne pas préjuger |
 
@@ -198,7 +198,7 @@ Chacun est classé : **démontré** (sur le prototype ou la référence), **lu**
 Sans borne, `guide_file: ../workspace/guide.md` est accepté. Or `workspace` peut être ouvert à `loom.local_files` en écriture : l'agent réécrit alors son propre guide, et le chargement suivant (`serve --reload`, redémarrage) le lui sert comme une consigne de la config. C'est une injection de prompt **persistante**, qui survit à la session.
 
 - **Démontré :** dossier d'essai `e2e_escape` (annexe), `loom validate` monte l'agent sans erreur avec ce guide.
-- **Corrigé dans le prototype :** le chemin résolu doit rester dans `prompts_dir`, que `_protected_paths` interdit déjà à tous les outils fournis. Test `test_a_guide_outside_the_prompts_dir_is_refused`.
+- **Corrigé dans le prototype :** le chemin résolu doit rester dans `resources_dir`, que `_protected_paths` interdit déjà à tous les outils fournis. Test `test_a_guide_outside_the_resources_dir_is_refused`.
 - **Constat hors périmètre, même défaut :** `system_file: ../workspace/sys.md` est accepté **aujourd'hui** (démontré sur la référence, même dossier d'essai). Le prompt système d'un agent peut donc vivre dans un dossier qu'il peut réécrire. La même borne s'applique à `_with_prompt` et `_absolute_sessions` (D-7).
 
 ### 2. `ToolSpec.overridden()` perd sans rien dire un champ inconnu — démontré
@@ -333,9 +333,9 @@ Au lieu d'envoyer le guide entier, la description ne porte qu'une phrase (« Lis
 | Test | Ce qu'il vérifie |
 | --- | --- |
 | `test_guide_and_guide_file_exclude_each_other` | exclusion, sur `PythonTool` et `ToolOverrides` |
-| `test_the_file_is_read_at_load_relative_to_prompts_dir` | lecture, chemin, espaces retirés, `guide_file` effacé |
+| `test_the_file_is_read_at_load_relative_to_resources_dir` | lecture, chemin, espaces retirés, `guide_file` effacé |
 | `test_a_missing_or_empty_guide_stops_the_load` (×2) | `introuvable`, `vide` |
-| `test_a_guide_outside_the_prompts_dir_is_refused` | effet de bord 1 |
+| `test_a_guide_outside_the_resources_dir_is_refused` | effet de bord 1 |
 | `test_an_unread_guide_file_on_a_python_tool_stops_the_mount` | effet de bord 2, `PythonTool` |
 | `test_the_guide_follows_the_description_and_precedes_the_terminal_hint` | ordre de composition ; `description` intacte |
 | `test_configure_with_a_guide_only_wraps_the_tool` | enveloppe, `fixed` vide ; sans réglage, pas d'enveloppe |
@@ -348,7 +348,7 @@ Au lieu d'envoyer le guide entier, la description ne porte qu'une phrase (« Lis
 **À ajouter avant fusion :**
 - une source de paquet (`tool_sources[].tools`) avec guide, comme le test MCP ;
 - `loom validate` : la ligne du guide (D-8) ;
-- la borne `prompts_dir` sur `system_file` et la compaction, si D-7 est retenue ;
+- la borne `resources_dir` sur `system_file` et la compaction, si D-7 est retenue ;
 - un agent en ligne dans `loom.yaml`, si D-7 est retenue ;
 - un `guide_file` non lu sur une référence MCP ou de paquet, refusé au montage (effet de bord 9) ;
 - un `guide:` en ligne nettoyé, et refusé s'il n'a que des espaces ;
@@ -373,11 +373,11 @@ Les tests existants n'ont demandé **aucune modification** : les nouvelles clés
 | --- | --- | --- |
 | D-1 | **Nom de la clé.** `skill`, `guide`/`guide_file`, `instructions`/`instructions_file`, autre | Éviter `skill`, qui fait attendre un Agent Skill (chargement progressif, scripts). Le couple `x`/`x_file` suit `system`/`system_file` |
 | D-2 | Ajouté à la description (choix 1), ou à la demande (choix 2) | Choix 1 ; le choix 2 plus tard, en option |
-| D-3 | Dossier de base du fichier : `prompts_dir` ou dossier de `loom.yaml` (comme `schema_file`) | `prompts_dir`, borné (effet de bord 1) |
+| D-3 | Dossier de base du fichier : `resources_dir` ou dossier de `loom.yaml` (comme `schema_file`) | `resources_dir`, borné (effet de bord 1) |
 | D-4 | Texte en ligne permis en plus du fichier | Oui, comme `system` |
 | D-5 | Variables `{{ }}` des clients rendues dans le guide | Oui si un cas réel le demande ; sinon refuser `{{` au chargement, pour qu'un guide ne parte jamais avec une variable brute |
 | D-6 | Serveur MCP et agent ont chacun un guide : remplacer ou concaténer | Remplacer, comme les autres clés du bloc |
-| D-7 | Corriger en même temps les défauts existants : `system_file` hors de `prompts_dir`, agents en ligne de `loom.yaml` sans prompts ni contrats lus | Oui pour la borne (sécurité) ; les agents en ligne, dans le même lot ou juste après |
+| D-7 | Corriger en même temps les défauts existants : `system_file` hors de `resources_dir`, agents en ligne de `loom.yaml` sans prompts ni contrats lus | Oui pour la borne (sécurité) ; les agents en ligne, dans le même lot ou juste après |
 | D-8 | `loom validate` affiche le guide de chaque outil (fichier, taille en caractères et en tokens estimés) | Oui |
 | D-9 | Avertir au-delà d'une taille (par exemple 8 000 caractères), ou refuser | Avertir ; refuser seulement si un fournisseur l'impose (§ À vérifier) |
 | D-10 | Ajouter aussi `description:` à `PythonTool`, pour la parité avec `ToolOverrides` | Oui, même lot : quelques lignes, même chemin |
@@ -388,11 +388,11 @@ Les tests existants n'ont demandé **aucune modification** : les nouvelles clés
 | --- | --- |
 | D-1 | **`skill` / `skill_file`**, choisi par Denis (la recommandation déconseillait `skill`) |
 | D-2 | Ajouté à la description (choix 1) ; le chargement à la demande pourra venir en option |
-| D-3 | Fichier relatif à `prompts_dir`, et borné à ce dossier une fois résolu (`..`, chemin absolu, lien symbolique) |
+| D-3 | Fichier relatif à `resources_dir`, et borné à ce dossier une fois résolu (`..`, chemin absolu, lien symbolique) |
 | D-4 | Texte en ligne permis (`skill`), exclusif de `skill_file` |
 | D-5 | Pas de rendu des variables : un `{{` est refusé, en ligne comme en fichier |
 | D-6 | Le skill de l'agent remplace celui du serveur ou de la source |
-| D-7 | Borne `prompts_dir` aussi pour `system_file` (`main`, rôles, compaction) ; agents de `loom.yaml` lus comme ceux d'`agents_dir` (prompts, contrats, skills) ; tout `skill_file` non lu arrête le montage, références MCP et de paquet comprises |
+| D-7 | Borne `resources_dir` aussi pour `system_file` (`main`, rôles, compaction) ; agents de `loom.yaml` lus comme ceux d'`agents_dir` (prompts, contrats, skills) ; tout `skill_file` non lu arrête le montage, références MCP et de paquet comprises |
 | D-8 | `loom validate` montre chaque skill et sa taille, outils MCP et de paquet déclarés compris |
 | D-9 | Avertissement au-delà de 8 000 caractères, jamais un refus, même en profil `prod` |
 | D-10 | `description` ajoutée à l'outil Python ; refusée sur `local_files`, `excel` et `sql`, dont la description est tirée des paramètres (relecture du code) |
@@ -429,7 +429,7 @@ assess write: CallAssessment(side_effects='reversible', approval='never', idempo
 
 **Rejeu** : `loom run agent "Salut" --run-id RUN-1`, puis `loom replay RUN-1` avant et après une ligne ajoutée au guide (§ Effets de bord, point 6).
 
-**Guide et prompt hors du dossier des prompts** (`e2e_escape`, `loom.local_files` avec `rights: [ read, write, overwrite ]` sur `workspace`) : avant la borne, `guide_file: ../workspace/guide.md` et `system_file: ../workspace/sys.md` sont acceptés (`1 agent(s) monté(s) sans erreur.`).
+**Guide et prompt hors du dossier des ressources** (`e2e_escape`, `loom.local_files` avec `rights: [ read, write, overwrite ]` sur `workspace`) : avant la borne, `guide_file: ../workspace/guide.md` et `system_file: ../workspace/sys.md` sont acceptés (`1 agent(s) monté(s) sans erreur.`).
 
 **Perte silencieuse d'un champ** :
 
@@ -457,7 +457,7 @@ Sur le clone, à partir du prototype ; reporté dans `/home/denis/dev/loom_v2` s
 | `core/model/__init__.py` | +10 | exports |
 | `agents/spec.py` | +20 | `PythonTool.description`, `skill`, `skill_file` ; `description` refusée sur un outil fourni qui tire la sienne de ses paramètres |
 | `tools_builtin/__init__.py` | +7 | `Builtin.own_description`, vrai pour `local_files`, `excel` et `sql` |
-| `config/loader.py` | +124 / −14 | `_prepared` (prompts, skills, contrats d'un agent, de fichier ou de `loom.yaml`) ; `_within_prompts` (borne, pour `system_file`, compaction et `skill_file`) ; `_hint` (chemin qui recommence par le dossier des prompts) ; `_with_tool_skills`, `_with_skills`, `_skill_read` ; skills de `mcp_servers[]` et `tool_sources[]` |
+| `config/loader.py` | +124 / −14 | `_prepared` (prompts, skills, contrats d'un agent, de fichier ou de `loom.yaml`) ; `_within_resources` (borne, pour `system_file`, compaction et `skill_file`) ; `_hint` (chemin qui recommence par le dossier des ressources) ; `_with_tool_skills`, `_with_skills`, `_skill_read` ; skills de `mcp_servers[]` et `tool_sources[]` |
 | `runtime/wiring.py` | +89 / −5 | `_tool` passe `description` et `skill`, refuse un `skill_file` non lu ; `_source_refs`, `declared_skills` (un skill par outil exposé : priorité de l'agent, `include`/`exclude`), `_check_skills_read`, `skill_warnings` ; `innermost()` dans `_builtin_closables` et `_returns_data` |
 | `runtime/__init__.py`, `tools/__init__.py`, `tools/configured.py` | +28 / −2 | `declared_skills`, `skill_warnings` ; `configure(description=…, skill=…)`, qui revérifie le skill ; `innermost()` |
 | `access/cli/main.py` | +15 / −3 | `loom validate` : une ligne par skill, avec sa taille, sous le nom que voit le modèle ; `innermost()` |
@@ -469,11 +469,11 @@ Sur le clone, à partir du prototype ; reporté dans `/home/denis/dev/loom_v2` s
 - **`loom validate` et l'avertissement de taille ignoraient la priorité et `include`/`exclude`**, et doublaient une ligne pour un serveur référencé deux fois. Ils suivent maintenant la même lecture que `_sources_asking_approval`.
 - **Un skill posé par `model_copy` ou `configure()` échappait au contrôle** : il est revérifié là où il sert.
 - **Le même outil portait deux noms**, selon l'avertissement ou `validate`. Il en a un seul.
-- **Un chemin `prompts/x.md` reçoit une indication** : « le chemin est relatif à prompts_dir : écrire x.md ».
+- **Un chemin `prompts/x.md` reçoit une indication** : « le chemin est relatif à resources_dir : écrire x.md ».
 - Docs complétées (`compaction.system_file`, ligne des chemins de `configuration.md`).
 - Tests ajoutés : chemin absolu, lien symbolique, rôle, compaction, serveur MCP hors des prompts, agent de `loom.yaml` refusé, fichier illisible, priorité et sélection des skills MCP.
 
-Documentation : `configuration.md` (`description`, `skill`, `skill_file`, `prompts_dir`, `system_file`, agents de `loom.yaml`, bloc surcharges), guide chapitre 32 (« Un skill pour bien s'en servir », dans `loom.excel`) et chapitre 13, `fonctions.md` (D14), `CHANGELOG.md`.
+Documentation : `configuration.md` (`description`, `skill`, `skill_file`, `resources_dir`, `system_file`, agents de `loom.yaml`, bloc surcharges), guide chapitre 32 (« Un skill pour bien s'en servir », dans `loom.excel`) et chapitre 13, `fonctions.md` (D14), `CHANGELOG.md`.
 
 Essai réel par la CLI, sur un agent comme celui de `temp/agent` (`loom.excel` avec le skill du guide, `loom.current_datetime` avec `description`) : `loom validate` affiche `outil excel : skill, 298 caractères (environ 74 tokens)` ; `loom run`, puis `loom replay` : « Identique ».
 

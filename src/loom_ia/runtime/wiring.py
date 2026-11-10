@@ -2103,7 +2103,7 @@ def _protected_paths(config: LoomConfig) -> tuple[Protected, ...]:
     if config.env_file is not None:
         found.append(Protected(config.env_file, "le fichier d'environnement"))
     found.append(Protected(config.agents_dir, "le dossier des agents", subtree=True))
-    found.append(Protected(config.prompts_dir, "le dossier des prompts", subtree=True))
+    found.append(Protected(config.resources_dir, "le dossier des ressources", subtree=True))
     storages = [config.storage]
     storages += [spec.storage for spec in config.tenants if spec.storage is not None]
     for storage in storages:

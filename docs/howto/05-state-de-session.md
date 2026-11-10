@@ -83,7 +83,7 @@ version: 1
 
 imports: [outils]
 agents_dir: agents/
-prompts_dir: prompts/
+resources_dir: prompts/
 
 models:
   # L'orchestrateur simulé : il cherche le devis, puis fait rédiger.

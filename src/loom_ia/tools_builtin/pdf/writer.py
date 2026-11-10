@@ -167,6 +167,8 @@ def _markup(runs: Inline, *, bold: bool = False) -> str:
     said = ""
     for run in runs:
         text = escape(run.text).replace("\n", "<br/>").replace("\t", "&nbsp;" * 4)
+        if run.underline:
+            text = f"<u>{text}</u>"
         if run.italic:
             text = f"<i>{text}</i>"
         if run.bold or bold:

@@ -115,7 +115,7 @@ def test_an_inline_skill_is_stripped_and_checked(given: str, message: str) -> No
         spec.overridden(ToolOverrides.model_construct(skill=given))
 
 
-def test_the_file_is_read_at_load_relative_to_prompts_dir(tmp_path: Path) -> None:
+def test_the_file_is_read_at_load_relative_to_resources_dir(tmp_path: Path) -> None:
     config = load_config(write(tmp_path, [{**FILES, "skill_file": "outil.md"}]))
     declared = config.agents[0].python_tools[0]
     assert declared.skill == SKILL
@@ -145,7 +145,7 @@ def test_a_bad_skill_file_stops_the_load(
 
 
 @pytest.mark.parametrize("written", ["../workspace/outil.md", "ABSOLU", "LIEN"])
-def test_a_skill_outside_the_prompts_dir_is_refused(tmp_path: Path, written: str) -> None:
+def test_a_skill_outside_the_resources_dir_is_refused(tmp_path: Path, written: str) -> None:
     """Un dossier ouvert à local_files laisserait l'agent réécrire son propre skill."""
     (tmp_path / "workspace").mkdir()
     outside = tmp_path / "workspace" / "outil.md"
@@ -157,11 +157,11 @@ def test_a_skill_outside_the_prompts_dir_is_refused(tmp_path: Path, written: str
         (tmp_path / "prompts" / "lien.md").symlink_to(outside)
         written = "lien.md"
     path = write(tmp_path, [{**FILES, "skill_file": written}])
-    with pytest.raises(ConfigError, match="doit être dans le dossier des prompts"):
+    with pytest.raises(ConfigError, match="doit être dans le dossier des ressources"):
         load_config(path)
 
 
-def test_a_server_skill_outside_the_prompts_dir_is_refused(tmp_path: Path) -> None:
+def test_a_server_skill_outside_the_resources_dir_is_refused(tmp_path: Path) -> None:
     server = {"name": "time", "transport": "stdio", "command": "x"}
     server["tools"] = {"maintenant": {"skill_file": "../workspace/s.md"}}  # type: ignore[assignment]
     path = write(tmp_path, [{"mcp": "time"}], mcp_servers=[server])
@@ -172,7 +172,7 @@ def test_a_server_skill_outside_the_prompts_dir_is_refused(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("where", ["main", "role", "compaction"])
-def test_a_system_file_outside_the_prompts_dir_is_refused(tmp_path: Path, where: str) -> None:
+def test_a_system_file_outside_the_resources_dir_is_refused(tmp_path: Path, where: str) -> None:
     """Même règle pour le prompt d'un agent, d'un rôle, et pour celui de la compaction."""
     path = write(tmp_path, [FILES])
     (tmp_path / "workspace" / "sys.md").write_text("Tu aides.", encoding="utf-8")
@@ -194,11 +194,11 @@ def test_a_system_file_outside_the_prompts_dir_is_refused(tmp_path: Path, where:
         load_config(path)
 
 
-def test_a_system_file_that_repeats_the_prompts_dir_gets_a_hint(tmp_path: Path) -> None:
+def test_a_system_file_that_repeats_the_resources_dir_gets_a_hint(tmp_path: Path) -> None:
     path = write(tmp_path, [FILES])
     (tmp_path / "prompts" / "sys.md").write_text("Tu aides.", encoding="utf-8")
     rewrite_agent(path, main={"model": "FAKE", "system_file": "prompts/sys.md"})
-    with pytest.raises(ConfigError, match=r"relatif à prompts_dir : écrire sys\.md"):
+    with pytest.raises(ConfigError, match=r"relatif à resources_dir : écrire sys\.md"):
         load_config(path)
 
 
@@ -223,7 +223,7 @@ def test_an_agent_written_in_loom_yaml_follows_the_same_rules(tmp_path: Path) ->
 
     root["agents"][0]["tools"][0]["skill_file"] = "../workspace/outil.md"
     path.write_text(yaml.safe_dump(root), encoding="utf-8")
-    with pytest.raises(ConfigError, match="doit être dans le dossier des prompts"):
+    with pytest.raises(ConfigError, match="doit être dans le dossier des ressources"):
         load_config(path)
 
 

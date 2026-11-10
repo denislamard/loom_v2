@@ -207,7 +207,7 @@ class ToolOverrides(DomainModel):
     # Contrat de sortie propre à cet outil (E5).
     output: OutputContract | None = None
     # Mode d'emploi ajouté à la description : en ligne, ou fichier relatif à
-    # ``prompts_dir``, que le chargement lit et range dans ``skill``.
+    # ``resources_dir``, que le chargement lit et range dans ``skill``.
     skill: SkillText | None = None
     skill_file: Path | None = None
 

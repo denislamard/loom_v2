@@ -23,7 +23,7 @@ Les deux process partagent la socket : une requête qui arrive pendant la
 relève attend dans sa file, elle n'est pas refusée.
 
 Ce qui est surveillé : tout le dossier de la config (et ``agents_dir``,
-``prompts_dir`` s'ils sont ailleurs), **sauf** ce que la config écrit —
+``resources_dir`` s'ils sont ailleurs), **sauf** ce que la config écrit —
 journal, fichiers, bases SQLite, ceux de chaque client — et le bruit d'usage
 (``__pycache__``, ``.git``, ``.venv``, fichiers temporaires d'éditeur). Le
 fichier d'environnement en fait partie : voisin de la config, il est dans son
@@ -266,7 +266,7 @@ def watched(config: LoomConfig, env_file: Path | None = None) -> Watched:
     """
     base = config.base_dir if config.base_dir is not None else Path.cwd()
     roots = [base]
-    for extra in (config.agents_dir, config.prompts_dir):
+    for extra in (config.agents_dir, config.resources_dir):
         if not extra.is_relative_to(base) and extra not in roots:
             roots.append(extra)
     storages = [config.storage, *(t.storage for t in config.tenants if t.storage is not None)]

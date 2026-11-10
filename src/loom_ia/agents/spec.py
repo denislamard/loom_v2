@@ -106,7 +106,7 @@ class BaseRole(DomainModel):
     # Modèles de secours, dans l'ordre (B4, #10) : identifiants déclarés dans ``models``.
     fallbacks: tuple[str, ...] = ()
     system: str = ""
-    # Chemin relatif à ``prompts_dir`` ; lu au chargement.
+    # Chemin relatif à ``resources_dir`` ; lu au chargement.
     system_file: Path | None = None
     llm: LlmSettings = LlmSettings()
 
@@ -551,7 +551,7 @@ class PythonTool(DomainModel):
     # à l'orchestrateur en erreur.
     output: OutputContract | None = None
     # Mode d'emploi ajouté à la description de l'outil : en ligne, ou fichier
-    # relatif à ``prompts_dir``, lu au chargement et rangé dans ``skill``.
+    # relatif à ``resources_dir``, lu au chargement et rangé dans ``skill``.
     skill: SkillText | None = None
     skill_file: Path | None = None
 

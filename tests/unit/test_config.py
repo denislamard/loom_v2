@@ -88,7 +88,7 @@ def test_load_resolves_paths_and_agents(tmp_path: Path) -> None:
         tmp_path,
         root={
             "agents_dir": "agents/",
-            "prompts_dir": "prompts/",
+            "resources_dir": "prompts/",
             "storage": {"events": {"backend": "jsonl", "path": "data/events"}},
             "execution": {"tools": {"timeout": 5}},
             "telemetry": {"logging": {"level": "debug"}},
@@ -203,6 +203,8 @@ def test_config_can_be_written_in_python() -> None:
         ({"telemetry": {"capture": {"raw_max_bytes": 0}}}, None, "greater than 0"),
         ({"telemetry": {"bus": {}}}, None, "le bus se déclare dans 'storage.bus'"),
         ({"inconnu": 1}, None, "Extra inputs are not permitted"),
+        # L'ancien nom de resources_dir est refusé, jamais ignoré au profit du défaut.
+        ({"prompts_dir": "mes_prompts/"}, None, "prompts_dir — Extra inputs are not permitted"),
         (
             {"storage": {"events": {"backend": "firestore"}}},
             None,
