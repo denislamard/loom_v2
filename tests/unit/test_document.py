@@ -30,7 +30,6 @@ from loom_ia.tools_builtin._document.arguments import (
 )
 from loom_ia.tools_builtin._document.content import (
     NBSP,
-    BreakOut,
     ChartOut,
     HeadingOut,
     ImageOut,
@@ -74,7 +73,7 @@ def refused(match: str, *blocks: dict[str, Any], title: str | None = None) -> st
 
 
 def test_write_by_default_read_on_demand() -> None:
-    write = parse(DocumentCall, {"path": "s/a", "blocks": [{"type": "saut_de_page"}]})
+    write = parse(DocumentCall, {"path": "s/a", "blocks": [{"type": "paragraph", "text": "x"}]})
     assert isinstance(write, WriteArguments) and write.overwrite is False
     read = parse(DocumentCall, {"action": "read", "path": "s/a"})
     assert isinstance(read, ReadArguments)
@@ -87,9 +86,9 @@ def test_write_by_default_read_on_demand() -> None:
         ({"action": "read", "path": "s/a", "blocks": []}, "blocks ne sert pas à read"),
         ({"action": "read", "path": "s/a", "title": "T"}, "title ne sert pas à read"),
         ({"path": "s/a", "blocks": [{"type": "inconnu"}]}, "blocks.0"),
-        ({"path": "s/a", "blocks": [{"type": "titre", "text": "x", "level": 4}]}, "level"),
+        ({"path": "s/a", "blocks": [{"type": "heading", "text": "x", "level": 4}]}, "level"),
         (
-            {"path": "s/a", "blocks": [{"type": "paragraphe", "text": "x", "style": "rouge"}]},
+            {"path": "s/a", "blocks": [{"type": "paragraph", "text": "x", "style": "rouge"}]},
             "style",
         ),
     ],
@@ -110,16 +109,15 @@ def test_overwrite_false_on_a_read_is_not_a_fault() -> None:
 
 def test_blocks_are_prepared_in_order() -> None:
     found = prepared(
-        {"type": "titre", "text": "Objet"},
-        {"type": "paragraphe", "text": "Bonjour"},
-        {"type": "liste", "items": ["a", {"text": "b", "items": ["b1"]}], "ordered": True},
+        {"type": "heading", "text": "Objet"},
+        {"type": "paragraph", "text": "Bonjour"},
+        {"type": "list", "items": ["a", {"text": "b", "items": ["b1"]}], "ordered": True},
         {"type": "note", "text": "N", "title": "Attention"},
-        {"type": "citation", "text": "Q", "source": "S"},
-        {"type": "saut_de_page"},
+        {"type": "quote", "text": "Q", "source": "S"},
         title="Devis",
     )
     kinds = [type(block) for block in found.blocks]
-    assert kinds == [TitleOut, HeadingOut, ParagraphOut, ListOut, NoteOut, QuoteOut, BreakOut]
+    assert kinds == [TitleOut, HeadingOut, ParagraphOut, ListOut, NoteOut, QuoteOut]
     listed = found.blocks[3]
     assert isinstance(listed, ListOut) and listed.ordered
     assert [len(entry.children) for entry in listed.entries] == [0, 1]
@@ -164,30 +162,30 @@ def test_underline_marks() -> None:
 
 
 def test_values_are_written_the_french_way() -> None:
-    assert display(1250.5, "montant_eur") == f"1{NBSP}250,50{NBSP}€"
-    assert display(-3, "montant_eur") == f"-3,00{NBSP}€"
-    assert display(12_500, "montant_keur") == f"12{NBSP}500{NBSP}k€"
-    assert display(1234567, "entier") == f"1{NBSP}234{NBSP}567"
-    assert display(0.155, "pourcentage") == f"15,5{NBSP}%"
+    assert display(1250.5, "amount_eur") == f"1{NBSP}250,50{NBSP}€"
+    assert display(-3, "amount_eur") == f"-3,00{NBSP}€"
+    assert display(12_500, "amount_keur") == f"12{NBSP}500{NBSP}k€"
+    assert display(1234567, "integer") == f"1{NBSP}234{NBSP}567"
+    assert display(0.155, "percent") == f"15,5{NBSP}%"
     assert display(2.5, "decimal") == "2,50"
-    assert display(None, "texte") == ""
+    assert display(None, "text") == ""
 
 
 def test_a_table_converts_aligns_and_totals() -> None:
     found = prepared(
         {
-            "type": "tableau",
+            "type": "table",
             "columns": [
                 {"header": "Client"},
                 {"header": "Date", "type": "date"},
-                {"header": "Montant", "type": "montant_eur"},
-                {"header": "Relances", "type": "entier"},
+                {"header": "Montant", "type": "amount_eur"},
+                {"header": "Relances", "type": "integer"},
             ],
             "rows": [
                 ["Dupont", "02/10/2026", "1 250,50", 2],
                 ["Martin", "2026-10-09", 830],
             ],
-            "totals": {"Montant": "somme", "Relances": "moyenne", "Date": "max"},
+            "totals": {"Montant": "sum", "Relances": "average", "Date": "max"},
             "caption": "Suivi au **29/10**",
         }
     )
@@ -205,20 +203,20 @@ def test_a_table_converts_aligns_and_totals() -> None:
 def test_structure_faults_are_listed_together() -> None:
     said = refused(
         "Document refusé",
-        {"type": "titre", "text": "  "},
+        {"type": "heading", "text": "  "},
         {
-            "type": "tableau",
-            "columns": [{"header": "A"}, {"header": "A", "type": "entier"}],
+            "type": "table",
+            "columns": [{"header": "A"}, {"header": "A", "type": "integer"}],
             "rows": [["x", "pas un nombre", "de trop"]],
-            "totals": {"A": "somme", "B": "somme"},
+            "totals": {"A": "sum", "B": "sum"},
         },
-        {"type": "paragraphe", "text": "bip\x07"},
+        {"type": "paragraph", "text": "bip\x07"},
     )
     for part in (
-        "bloc 1 (titre) : texte vide",
+        "bloc 1 (heading) : texte vide",
         "en-tête donné deux fois : A",
         "ligne 1 : 3 valeurs pour 2 colonnes",
-        "'pas un nombre' n'est pas un(e) entier",
+        "'pas un nombre' n'est pas une valeur integer",
         "total sur une colonne inconnue 'B'",
         "caractère de contrôle U+0007 refusé",
     ):
@@ -227,32 +225,32 @@ def test_structure_faults_are_listed_together() -> None:
 
 def test_tables_are_bounded() -> None:
     columns = [{"header": f"C{i}"} for i in range(9)]
-    refused("9 colonnes, au-delà de 8", {"type": "tableau", "columns": columns, "rows": []})
+    refused("9 colonnes, au-delà de 8", {"type": "table", "columns": columns, "rows": []})
     refused(
         "501 lignes, au-delà de 500",
-        {"type": "tableau", "columns": [{"header": "A"}], "rows": [["x"]] * 501},
+        {"type": "table", "columns": [{"header": "A"}], "rows": [["x"]] * 501},
     )
 
 
 def test_an_aggregate_must_fit_its_column() -> None:
     refused(
-        "somme sur « Nom », colonne texte : pas un nombre",
+        "sum sur « Nom », colonne text : pas un nombre",
         {
-            "type": "tableau",
+            "type": "table",
             "columns": [{"header": "Nom"}],
             "rows": [["x"]],
-            "totals": {"Nom": "somme"},
+            "totals": {"Nom": "sum"},
         },
     )
 
 
 def test_warnings_do_not_refuse() -> None:
     found = prepared(
-        {"type": "titre", "text": "A", "level": 1},
-        {"type": "titre", "text": "B", "level": 3},
+        {"type": "heading", "text": "A", "level": 1},
+        {"type": "heading", "text": "B", "level": 3},
         {
-            "type": "tableau",
-            "columns": [{"header": "Taux", "type": "pourcentage"}],
+            "type": "table",
+            "columns": [{"header": "Taux", "type": "percent"}],
             "rows": [[15]],
         },
     )
@@ -261,7 +259,14 @@ def test_warnings_do_not_refuse() -> None:
 
 
 def test_an_empty_document_is_refused() -> None:
-    refused("document vide", {"type": "saut_de_page"})
+    refused("document vide")
+
+
+def test_a_page_break_is_no_longer_a_block() -> None:
+    """Un saut de page est de la mise en page : le style le pose, pas le modèle de langage."""
+    with pytest.raises(ToolError, match="saut_de_page") as caught:
+        parse(DocumentCall, {"path": "s/a", "blocks": [{"type": "saut_de_page"}]})
+    assert "'heading', 'paragraph', 'list', 'table', 'note', 'quote'" in str(caught.value)
 
 
 # --- Paramètres --------------------------------------------------------------------------
@@ -284,15 +289,15 @@ def test_params_refuse_delete_and_unknown_zones(model: type[WordParams], referen
 def test_aggregates_of_every_kind() -> None:
     found = prepared(
         {
-            "type": "tableau",
+            "type": "table",
             "columns": [
                 {"header": "Nom"},
-                {"header": "Quand", "type": "date_heure"},
-                {"header": "Montant", "type": "montant_keur"},
+                {"header": "Quand", "type": "datetime"},
+                {"header": "Montant", "type": "amount_keur"},
                 {"header": "Vide", "type": "decimal"},
             ],
             "rows": [["a", "2026-10-02T09:30:00+00:00", 12], ["b", "02/10/2026 08:00", 3.5]],
-            "totals": {"Nom": "nombre", "Quand": "min", "Montant": "max", "Vide": "somme"},
+            "totals": {"Nom": "count", "Quand": "min", "Montant": "max", "Vide": "sum"},
         }
     )
     [table] = found.blocks
@@ -304,19 +309,19 @@ def test_aggregates_of_every_kind() -> None:
 
 
 def test_long_texts_and_lists_are_bounded() -> None:
-    refused("au-delà de 300", {"type": "paragraphe", "text": "x"}, title="t" * 301)
-    refused("au-delà de 20000", {"type": "paragraphe", "text": "x" * 20_001})
+    refused("au-delà de 300", {"type": "paragraph", "text": "x"}, title="t" * 301)
+    refused("au-delà de 20000", {"type": "paragraph", "text": "x" * 20_001})
     items: list[Any] = [{"text": f"e{i}", "items": ["a", "b"]} for i in range(70)]
-    refused("210 éléments, au-delà de 200", {"type": "liste", "items": items})
+    refused("210 éléments, au-delà de 200", {"type": "list", "items": items})
 
 
 def test_a_total_without_rows_is_not_written() -> None:
     found = prepared(
         {
-            "type": "tableau",
-            "columns": [{"header": "N", "type": "entier"}],
+            "type": "table",
+            "columns": [{"header": "N", "type": "integer"}],
             "rows": [],
-            "totals": {"N": "somme"},
+            "totals": {"N": "sum"},
         }
     )
     [table] = found.blocks
@@ -327,15 +332,15 @@ def test_a_total_without_rows_is_not_written() -> None:
 # --- Graphiques ------------------------------------------------------------------------
 
 SALES: Final[dict[str, Any]] = {
-    "type": "tableau",
+    "type": "table",
     "columns": [
         {"header": "Client"},
-        {"header": "Total HT", "type": "montant_eur"},
-        {"header": "Total TTC", "type": "montant_eur"},
-        {"header": "Factures", "type": "entier"},
+        {"header": "Total HT", "type": "amount_eur"},
+        {"header": "Total TTC", "type": "amount_eur"},
+        {"header": "Factures", "type": "integer"},
     ],
     "rows": [["Barre", 17094, "18 034,17", 2], ["Lemaire", 13539.47, 16247.36, 2]],
-    "totals": {"Total TTC": "somme"},
+    "totals": {"Total TTC": "sum"},
 }
 
 
@@ -343,8 +348,8 @@ def test_a_chart_takes_its_data_from_the_table_before_it() -> None:
     found = prepared(
         SALES,
         {
-            "type": "graphique",
-            "kind": "barres_horizontales",
+            "type": "chart",
+            "kind": "horizontal_bar",
             "title": "TTC par client",
             "from_table": {"categories": "Client", "values": ["Total HT", "Total TTC"]},
         },
@@ -358,8 +363,8 @@ def test_a_chart_takes_its_data_from_the_table_before_it() -> None:
         ("Total TTC", (18034.17, 16247.36)),
     )
     assert (chart.kind, chart.value_type, chart.title) == (
-        "barres_horizontales",
-        "montant_eur",
+        "horizontal_bar",
+        "amount_eur",
         "TTC par client",
     )
 
@@ -367,9 +372,9 @@ def test_a_chart_takes_its_data_from_the_table_before_it() -> None:
 def test_a_chart_with_inline_data() -> None:
     found = prepared(
         {
-            "type": "graphique",
-            "kind": "courbe",
-            "value_type": "pourcentage",
+            "type": "chart",
+            "kind": "line",
+            "value_type": "percent",
             "categories": ["janv.", "févr.", "mars"],
             "series": [{"name": "Marge", "values": [0.2, "25%", None]}],
         }
@@ -383,13 +388,13 @@ def test_a_chart_with_inline_data() -> None:
     ("blocks", "said"),
     [
         (
-            [{"type": "graphique", "from_table": {"categories": "A", "values": ["B"]}}],
+            [{"type": "chart", "from_table": {"categories": "A", "values": ["B"]}}],
             "aucun tableau ne précède le graphique",
         ),
         (
             [
                 SALES,
-                {"type": "graphique", "from_table": {"categories": "Client", "values": ["TVA"]}},
+                {"type": "chart", "from_table": {"categories": "Client", "values": ["TVA"]}},
             ],
             r"colonne\(s\) inconnue\(s\) du tableau précédent : TVA",
         ),
@@ -397,7 +402,7 @@ def test_a_chart_with_inline_data() -> None:
             [
                 SALES,
                 {
-                    "type": "graphique",
+                    "type": "chart",
                     "from_table": {"categories": "Client", "values": ["Total TTC", "Factures"]},
                 },
             ],
@@ -406,7 +411,7 @@ def test_a_chart_with_inline_data() -> None:
         (
             [
                 {
-                    "type": "graphique",
+                    "type": "chart",
                     "categories": ["a", "b"],
                     "series": [{"name": "s", "values": [1]}],
                 }
@@ -416,19 +421,19 @@ def test_a_chart_with_inline_data() -> None:
         (
             [
                 {
-                    "type": "graphique",
-                    "kind": "secteurs",
+                    "type": "chart",
+                    "kind": "pie",
                     "categories": ["a", "b"],
                     "series": [{"name": "s", "values": [1, -1]}, {"name": "t", "values": [1, 1]}],
                 }
             ],
-            "un graphique en secteurs n'a qu'une série",
+            "un graphique pie n'a qu'une série",
         ),
         (
             [
                 {
-                    "type": "graphique",
-                    "kind": "secteurs",
+                    "type": "chart",
+                    "kind": "pie",
                     "categories": [str(i) for i in range(13)],
                     "series": [{"name": "s", "values": [1] * 13}],
                 }
@@ -438,8 +443,8 @@ def test_a_chart_with_inline_data() -> None:
         (
             [
                 {
-                    "type": "graphique",
-                    "value_type": "texte",
+                    "type": "chart",
+                    "value_type": "text",
                     "categories": ["a"],
                     "series": [{"name": "s", "values": [1]}],
                 }
@@ -455,25 +460,25 @@ def test_charts_refused(blocks: list[dict[str, Any]], said: str) -> None:
 @pytest.mark.parametrize(
     "blocks",
     [
-        [{"type": "graphique", "from_table": {"categories": "A", "values": ["B"]}}],
-        [SALES, {"type": "graphique", "from_table": {"categories": "Client", "values": ["TVA"]}}],
+        [{"type": "chart", "from_table": {"categories": "A", "values": ["B"]}}],
+        [SALES, {"type": "chart", "from_table": {"categories": "Client", "values": ["TVA"]}}],
     ],
 )
 def test_a_chart_without_its_table_says_one_fault(blocks: list[dict[str, Any]]) -> None:
     # Ni « aucun libellé » ni « aucune série » en plus : elles découlent de la première.
-    said = refused("graphique", *blocks)
+    said = refused("chart", *blocks)
     assert said.count("\n- ") == 1, said
 
 
 @pytest.mark.parametrize(
     ("chart", "said"),
     [
-        ({"type": "graphique"}, "soit de 'categories' et 'series', soit de 'from_table'"),
-        ({"type": "graphique", "categories": ["a"]}, "'categories' et 'series' vont ensemble"),
+        ({"type": "chart"}, "soit de 'categories' et 'series', soit de 'from_table'"),
+        ({"type": "chart", "categories": ["a"]}, "'categories' et 'series' vont ensemble"),
         (
             {
-                "type": "graphique",
-                "value_type": "entier",
+                "type": "chart",
+                "value_type": "integer",
                 "from_table": {"categories": "a", "values": ["b"]},
             },
             "'value_type' ne sert qu'aux données en ligne",
@@ -487,7 +492,7 @@ def test_chart_arguments_refused(chart: dict[str, Any], said: str) -> None:
 
 # --- Images ------------------------------------------------------------------------------
 
-EVERY: Final = variant(DocumentCall, charts=True, images=True)
+EVERY: Final = variant(DocumentCall, blocks=("chart", "image"))
 
 
 def with_pictures(pictures: dict[str, Picture | str], *blocks: dict[str, Any]) -> Prepared:
@@ -558,8 +563,8 @@ def test_an_image_keeps_its_proportions_within_the_page() -> None:
     found = with_pictures(
         {"m/large.png": wide, "m/haute.png": tall},
         {"type": "image", "path": "m/large.png", "caption": "Écran **1**", "alt": "Accueil"},
-        {"type": "image", "path": "m/large.png", "width": "moitie", "caption": "Bis"},
-        {"type": "image", "path": "m/large.png", "width": "petite", "alt": "Logo"},
+        {"type": "image", "path": "m/large.png", "width": "half", "caption": "Bis"},
+        {"type": "image", "path": "m/large.png", "width": "small", "alt": "Logo"},
         {"type": "image", "path": "m/haute.png", "caption": "Téléphone"},
     )
     images = [b for b in found.blocks if isinstance(b, ImageOut)]
@@ -585,7 +590,7 @@ def test_image_warnings() -> None:
         },
         {"type": "image", "path": "m/logo.png", "caption": "Logo"},
         {"type": "image", "path": "m/photo.jpg", "alt": "Chantier"},
-        {"type": "image", "path": "m/anim.png", "width": "petite"},
+        {"type": "image", "path": "m/anim.png", "width": "small"},
     )
     said = "\n".join(found.warnings)
     assert "bloc 1 (image) : m/logo.png, 120 x 60 pixels sur 17,0 cm (18 pixels par pouce)" in said
@@ -597,13 +602,13 @@ def test_image_warnings() -> None:
 def test_image_faults_join_the_document_faults() -> None:
     said = refused_with(
         {"m/a.png": "Droit read refusé sur m/a.png (dossier m : write)", "m/b.png": "x"},
-        {"type": "titre", "text": ""},
+        {"type": "heading", "text": ""},
         {"type": "image", "path": "m/a.png"},
         {"type": "image", "path": "m/inconnue.png"},
     )
     assert said.splitlines() == [
         "Document refusé :",
-        "- bloc 1 (titre) : texte vide",
+        "- bloc 1 (heading) : texte vide",
         "- bloc 2 (image) : Droit read refusé sur m/a.png (dossier m : write)",
         "- bloc 3 (image) : image non lue",
     ]
@@ -643,23 +648,26 @@ def test_image_arguments_refused(image: dict[str, Any], said: str) -> None:
 
 
 def test_variants_add_only_what_is_asked() -> None:
-    assert variant(DocumentCall, charts=False, images=False) is DocumentCall
-    assert variant(DocumentCall, charts=True, images=False) is WithCharts
-    image: dict[str, Any] = {"type": "image", "path": "m/a.png"}
-    chart: dict[str, Any] = {
-        "type": "graphique",
-        "categories": ["a"],
-        "series": [{"name": "s", "values": [1]}],
+    assert variant(DocumentCall) is DocumentCall
+    assert variant(DocumentCall, blocks=("chart",)) is WithCharts
+    # L'ordre des noms ne fait pas un autre appel.
+    assert variant(DocumentCall, blocks=("image", "chart")) is EVERY
+    examples: dict[str, dict[str, Any]] = {
+        "image": {"type": "image", "path": "m/a.png"},
+        "chart": {"type": "chart", "categories": ["a"], "series": [{"name": "s", "values": [1]}]},
+        "signature": {"type": "signature", "signers": ["Le client"]},
+        "toc": {"type": "toc"},
+        "checkboxes": {"type": "list", "checkboxes": True, "items": ["[x] a"]},
     }
-    for charts, images in ((False, False), (True, False), (False, True), (True, True)):
-        model = variant(DocumentCall, charts=charts, images=images)
-        for block, allowed in ((image, images), (chart, charts)):
+    for chosen in ((), ("chart",), ("image", "toc"), ("signature", "checkboxes"), tuple(examples)):
+        model = variant(DocumentCall, blocks=chosen)
+        for name, block in examples.items():
             try:
                 parse(model, {"path": "s/a", "blocks": [block]})
             except ToolError:
-                assert not allowed
+                assert name not in chosen
             else:
-                assert allowed
+                assert name in chosen
 
 
 # --- Modèles de document ---------------------------------------------------------------
@@ -706,7 +714,7 @@ def test_a_template_is_its_headings() -> None:
     ("name", "text", "said"),
     [
         ("Rapport", "# A", "minuscules, chiffres et tirets"),
-        ("aucun", "# A", "pas « aucun »"),
+        ("none", "# A", "pas « none »"),
         ("r", "", "vide"),
         ("r", "---\ndescription: x\n# A", "jamais fermé"),
         ("r", "---\nauteur: moi\n---\n# A", "seule « description » est lue"),
@@ -758,7 +766,7 @@ def test_the_plan_of_a_document() -> None:
 def test_prepare_checks_the_plan_of_the_template() -> None:
     template = parse_template("rapport", RAPPORT)
     request = parse(
-        DocumentCall, {"path": "s/a", "blocks": [{"type": "titre", "text": "Contexte"}]}
+        DocumentCall, {"path": "s/a", "blocks": [{"type": "heading", "text": "Contexte"}]}
     )
     assert isinstance(request, WriteArguments)
     with pytest.raises(ToolError) as caught:
@@ -771,7 +779,7 @@ def test_prepare_checks_the_plan_of_the_template() -> None:
         "Photos (facultatif) · Travaux réalisés · Suite à donner",
     ]
     whole: list[Any] = [
-        {"type": "titre", "text": t}
+        {"type": "heading", "text": t}
         for t in ("Contexte", "Constat", "Travaux réalisés", "Suite à donner")
     ]
     request = parse(DocumentCall, {"path": "s/a", "blocks": whole})
@@ -781,23 +789,23 @@ def test_prepare_checks_the_plan_of_the_template() -> None:
 
 
 def test_templates_add_an_action_and_a_field() -> None:
-    model = variant(DocumentCall, charts=False, images=False, templates=("rapport", "devis"))
+    model = variant(DocumentCall, templates=("rapport", "devis"))
     schema = input_schema(model)
     properties = cast(dict[str, Any], schema["properties"])
-    assert properties["template"]["anyOf"][0]["enum"] == ["rapport", "devis", "aucun"]
+    assert properties["template"]["anyOf"][0]["enum"] == ["rapport", "devis", "none"]
     assert "required" not in schema
-    blocks: list[Any] = [{"type": "paragraphe", "text": "x"}]
+    blocks: list[Any] = [{"type": "paragraph", "text": "x"}]
     assert parse(model, {"action": "template", "template": "devis"}) == TemplateArguments(
         name="devis"
     )
-    written = parse(model, {"path": "s/a", "blocks": blocks, "template": "aucun"})
-    assert isinstance(written, WriteArguments) and written.template == "aucun"
+    written = parse(model, {"path": "s/a", "blocks": blocks, "template": "none"})
+    assert isinstance(written, WriteArguments) and written.template == "none"
     for arguments, said in (
         ({"path": "s/a", "blocks": blocks}, "write attend 'template'"),
         ({"path": "s/a", "blocks": blocks, "template": "facture"}, "template"),
-        ({"blocks": blocks, "template": "aucun"}, "write attend 'path'"),
+        ({"blocks": blocks, "template": "none"}, "write attend 'path'"),
         ({"action": "template"}, "action template attend 'template'"),
-        ({"action": "template", "template": "aucun"}, "action template attend 'template'"),
+        ({"action": "template", "template": "none"}, "action template attend 'template'"),
         ({"action": "template", "template": "devis", "path": "s/a"}, "path ne sert pas à template"),
         ({"action": "template", "template": "devis", "title": "T"}, "title ne sert pas à template"),
         ({"action": "read", "path": "s/a", "template": "devis"}, "template ne sert pas à read"),
@@ -809,10 +817,10 @@ def test_templates_add_an_action_and_a_field() -> None:
 def test_windows_line_endings_are_line_breaks() -> None:
     """B-3 : ``prepare`` ramène \\r\\n et \\r à \\n, pour ``word`` comme pour ``pdf``."""
     found = prepared(
-        {"type": "paragraphe", "text": "un\r\ndeux\rtrois"},
+        {"type": "paragraph", "text": "un\r\ndeux\rtrois"},
         {"type": "note", "title": "A\r\nB", "text": "c\r\nd"},
         {
-            "type": "graphique",
+            "type": "chart",
             "categories": ["x\r\ny"],
             "series": [{"name": "s\r\nt", "values": [1]}],
         },

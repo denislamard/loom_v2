@@ -13,9 +13,8 @@ l'importe pour valider la référence au chargement, sans importer l'outil.
         path: sortie
         rights: [ write, overwrite ]   # remplacer un fichier : approbation par défaut
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
-      charts: true                     # le bloc graphique ; false par défaut
-      images: true                     # le bloc image ; false par défaut
-      extra_blocks: true               # signature, sommaire, liste à cocher ; false par défaut
+      blocks: [chart, image]           # les blocs facultatifs : chart, image, signature, toc,
+                                       # checkboxes ; aucun par défaut
       style: styles/charte.yaml        # la charte (facultatif), relative à resources_dir
       templates:                       # modèles de document, relatifs à resources_dir
         cahier-des-charges: modele-cdc.md
@@ -33,10 +32,12 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Fie
 
 from loom_ia.tools_builtin._office_params import (
     DEFAULT_TIMEZONE,
+    Blocks,
     Templates,
     check_timezone,
     checked_folders,
     no_delete,
+    no_old_keys,
 )
 from loom_ia.tools_builtin._style_params import StyleField
 from loom_ia.tools_builtin.local_files_params import FolderSpec
@@ -58,18 +59,26 @@ class WordParams(BaseModel):
     # Fuseau IANA où passe une date-heure qui en porte un : le document l'écrit
     # à l'heure de ce fuseau, sans le nommer.
     timezone: str = DEFAULT_TIMEZONE
-    # Le bloc graphique : environ 500 tokens de plus par appel au modèle, d'où false.
-    charts: bool = False
-    # Le bloc image : environ 230 tokens de plus par appel au modèle, d'où false.
-    images: bool = False
-    # Les blocs signature et sommaire, et la liste à cocher : environ 220 tokens de plus
-    # par appel au modèle, d'où false.
-    extra_blocks: bool = False
+    # Les blocs facultatifs, chacun payé en tokens à chaque appel au modèle : chart
+    # (environ 430), image (environ 190), signature, toc et checkboxes (environ 190 à eux
+    # trois). Aucun par défaut.
+    blocks: Blocks = ()
     # Les modèles de document, par nom : fichiers relatifs à resources_dir, lus au chargement.
     templates: Templates = {}
     # La charte : un fichier de style relatif à resources_dir, lu au chargement ; la
     # disposition d'un modèle se déclare sur le modèle (templates.<nom>.style).
     style: StyleField = None
+
+    @classmethod
+    def precheck(cls, value: object) -> object:
+        """Avant toute validation, aussi sur la référence de la config (``agents.spec``) :
+        les clés de la 2.0 refusées avec ce qui les remplace."""
+        return no_old_keys(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _early(cls, value: object) -> object:
+        return cls.precheck(value)
 
     @model_validator(mode="after")
     def _check(self) -> Self:

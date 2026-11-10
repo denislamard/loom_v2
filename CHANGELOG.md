@@ -2,6 +2,17 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.1.0 - non publiée
+
+### Documents : le vocabulaire en anglais, la liste `blocks` (refonte, lot 1)
+- ⚠ **Le vocabulaire de `loom.word`, `loom.pdf` et `loom.excel` passe en anglais.** Blocs : `heading`, `paragraph`, `list`, `table`, `note`, `quote`, `chart`, `image`, `signature`, `toc` (`titre`, `paragraphe`, `liste`, `tableau`, `citation`, `graphique`, `sommaire` avant). Types de colonne : `text`, `integer`, `decimal`, `amount_eur`, `amount_keur`, `percent`, `date`, `datetime`, `year`, `boolean`. Totaux : `sum`, `average`, `count`, `min`, `max`. Graphiques : `bar`, `horizontal_bar`, `line`, `pie`. Largeur d'image : `full`, `half`, `small`. Document libre : `template: none` (`aucun` avant). Rôles de `loom.excel` : `input`, `formula`, `assumption`, `total`, `note`. La relecture d'un `.docx` rend les mêmes noms, et `loom.memory` les lit. Les descriptions et les messages restent en français ; une valeur refusée se dit « 'environ 800' n'est pas une valeur amount_eur ».
+- ⚠ **`saut_de_page` n'est plus un bloc** : c'est de la mise en page, que posera le style (lot 3 de la refonte : `page_break` sur une section du modèle). Un appel qui l'envoie est refusé par le schéma. La description dit « sauts de page et numéros de page sont décidés par le style », et `note` se décrit par son sens (« ce que le lecteur doit retenir, une mise en garde »).
+- ⚠ **`blocks` remplace `charts`, `images` et `extra_blocks`** dans la référence de `loom.word` et `loom.pdf` : une liste des blocs facultatifs, chacun déclaré seul (`chart`, `image`, `signature`, `toc`, `checkboxes`). Un bloc absent n'est ni dans le schéma ni dans la description. Les anciennes clés sont refusées au chargement avec ce qui les remplace : « charts → blocks: [chart] ; images → blocks: [image] : les blocs facultatifs se nomment dans une seule liste, blocks (chart, image, signature, toc, checkboxes) » ; un bloc nommé deux fois aussi. `loom.pdf` refuse `signature`, `toc` et `checkboxes` (« blocks : toc ne sert qu'à loom.word pour l'instant »). `loom.excel` garde `charts: true`.
+- **Le refus d'une clé retirée passe aussi au chargement de la config** : le modèle d'un outil fourni peut déclarer un `precheck`, que la référence de l'agent (`agents/spec.py`) appelle avant toute autre validation. Avant, `style` sur `loom.pdf` n'était expliqué qu'à la validation directe des paramètres ; la config disait « Extra inputs are not permitted ».
+- **Ce qui ne change pas** : les fichiers écrits. Pour un même contenu, les 17 documents d'essai (8 en Word, avec ou sans graphiques, images et modèle déclaré ; 4 qui suivent un modèle ; 4 en PDF ; un avec signature, sommaire et liste à cocher) et un classeur à graphiques, rôles et totaux sont les mêmes, octet pour octet, qu'en 2.0.21 avec le vocabulaire français ; la relecture rend les mêmes blocs. `loom validate` dit `blocs : chart, image` (ou `aucun`) à la place de `graphiques`, `images` et `signature, sommaire, cases à cocher`.
+- ⚠ **Coût** (description et schéma, en caractères) : `word` sans bloc facultatif 5 402 (5 605 avant), avec `chart` +1 700, `image` +770, `signature` +432, `toc` +220, `checkboxes` +97 ; tout déclaré 8 753 (9 114 avant). Le schéma change pour tout agent qui a l'un des trois outils : ses runs d'avant ne se rejouent plus à l'identique (« ce qui diffère : les outils proposés »).
+- Essais : `tests/unit/test_word.py` (anciennes clés refusées au chargement, bloc nommé deux fois ou inconnu), `test_pdf.py` (anciennes clés, `toc` refusé), `test_document.py` (variantes par `blocks`, saut de page refusé), `test_word_styles.py` (blocs déclarés un à un, note de relecture qui nomme les blocs manquants) ; les essais existants passent au nouveau vocabulaire. L'empreinte du devis sans style (`DEVIS_SHA256`) est celle du même devis sans saut de page en 2.0.21. Analyse : `docs/outil-word-pdf-refonte-analyse.md`.
+
 ## 2.0.21 - non publiée
 
 ### Config : `prompts_dir` devient `resources_dir`
@@ -16,9 +27,10 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 - ⚠ **La description de `loom.word` et `loom.pdf`** dit « **gras**, *italique*, <u>souligné</u> … ; pas d'autre balisage (ni #, ni -, ni |, ni autre balise) » : 34 caractères de plus, quelques tokens par appel d'un agent qui a l'un de ces outils, et ses runs d'avant ne se rejouent plus à l'identique (« ce qui diffère : les outils proposés »). Un texte qui contenait déjà `<u>…</u>` est désormais souligné. Les balises sont ignorées pour reconnaître une section de modèle (« <u>Client</u> » est la section Client), comme l'emphase. Sans `<u>`, un document est le même fichier qu'avant.
 - Essais : `tests/unit/test_document.py` (`test_underline_marks`), `test_word.py` (écriture, relecture et réécriture à l'identique ; double, pointillé et `none` d'un document d'ailleurs ; description), `test_pdf.py`. Analyse : `docs/outil-word-souligne-analyse.md`.
 
-### Documents `loom.word` : le titre souligné
+### Documents `loom.word` : le titre et les titres de section soulignés
 - **`title.underline`** dans la charte ou la disposition : le texte du titre du document souligné, de sa seule longueur (`<w:u w:val="single"/>`, couleur du titre). `rule` reste le filet de toute la largeur, sous le paragraphe ; les deux se combinent. Sans la clé, rien ne change, au fichier près.
-- Essais : `tests/unit/test_word_styles.py` (`test_an_underlined_title`).
+- **`headings.<niveau>.underline`** : les titres de ce niveau soulignés, de leur longueur ; un titre de section `discret` (disposition) suit le niveau 1, dont il hérite.
+- Essais : `tests/unit/test_word_styles.py` (`test_an_underlined_title`, `test_underlined_headings`).
 
 ## 2.0.20 - publiée
 

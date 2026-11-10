@@ -41,7 +41,6 @@ from loom_ia.tools_builtin._document.arguments import (
     Item,
     ListBlock,
     Note,
-    PageBreak,
     Paragraph,
     Problems,
     Quote,
@@ -69,12 +68,10 @@ BOLD_WIDTH: Final = 1.15
 # jamais coupée ; une plus longue (un nom, un texte) peut passer à la ligne.
 SHORT_VALUE_CHARS: Final = 14
 NUMERIC: Final[frozenset[ColumnType]] = frozenset(
-    {"entier", "decimal", "montant_eur", "montant_keur", "pourcentage"}
+    {"integer", "decimal", "amount_eur", "amount_keur", "percent"}
 )
-ORDERED_TYPES: Final[frozenset[ColumnType]] = NUMERIC | frozenset[ColumnType](
-    {"date", "date_heure"}
-)
-CENTERED: Final[frozenset[ColumnType]] = frozenset({"date", "date_heure", "annee", "booleen"})
+ORDERED_TYPES: Final[frozenset[ColumnType]] = NUMERIC | frozenset[ColumnType]({"date", "datetime"})
+CENTERED: Final[frozenset[ColumnType]] = frozenset({"date", "datetime", "year", "boolean"})
 # Espace insécable : présente dans toutes les polices, y compris Helvetica (WinAnsi),
 # contrairement à l'espace fine insécable (U+202F) de la typographie française.
 NBSP: Final = "\u00a0"
@@ -126,7 +123,7 @@ class Entry:
 class ListOut:
     ordered: bool
     entries: tuple[Entry, ...]
-    # Une liste à cocher (``extra_blocks``) : une case devant chaque élément.
+    # Une liste à cocher (``blocks: [checkboxes]``) : une case devant chaque élément.
     checkboxes: bool = False
 
 
@@ -170,11 +167,6 @@ class QuoteOut:
 
 
 @dataclass(frozen=True, slots=True)
-class BreakOut:
-    pass
-
-
-@dataclass(frozen=True, slots=True)
 class ChartOut:
     """Un graphique : ses libellés, ses séries de nombres, et le type de ces nombres."""
 
@@ -201,8 +193,8 @@ class ImageOut:
     height: int
     alt: str
     caption: Inline | None
-    # La largeur demandée : une grille d'images (style) pose côte à côte les « moitie ».
-    wanted: ImageWidth = "pleine_largeur"
+    # La largeur demandée : une grille d'images (style) pose côte à côte les « half ».
+    wanted: ImageWidth = "full"
 
 
 type BlockOut = (
@@ -213,7 +205,6 @@ type BlockOut = (
     | TableOut
     | NoteOut
     | QuoteOut
-    | BreakOut
     | ChartOut
     | ImageOut
     | SignatureOut
@@ -254,8 +245,8 @@ def prepare(
     title = lines(arguments.title).strip() if arguments.title else None
     if title is not None:
         if len(title) > MAX_TITLE:
-            problems.error(f"titre : {len(title)} caractères, au-delà de {MAX_TITLE}")
-        _clean(title, "titre", problems)
+            problems.error(f"title : {len(title)} caractères, au-delà de {MAX_TITLE}")
+        _clean(title, "title", problems)
         blocks.append(TitleOut(inline(title)))
     level = 0
     # Le dernier tableau écrit, et ses valeurs : la source d'un graphique ``from_table``.
@@ -291,8 +282,6 @@ def prepare(
                 text = _text(block.text, where, problems, required=True)
                 source = _text(block.source, f"{where}, source", problems) or None
                 blocks.append(QuoteOut(inline(text), source))
-            case PageBreak():
-                blocks.append(BreakOut())
             case Image():
                 found = _image(block, pictures, where, problems)
                 if found is not None:
@@ -310,7 +299,7 @@ def prepare(
         problems.warn("sommaire : le document n'a aucun titre, le sommaire sera vide")
     if template is not None:
         _check_plan(blocks, template, problems)
-    if not any(not isinstance(b, BreakOut) for b in blocks):
+    if not blocks:
         problems.error("document vide : ni titre, ni bloc de contenu")
     problems.raise_if_any()
     return Prepared(
@@ -598,13 +587,13 @@ def _check_chart(
         problems.error(f"{where} : {len(series)} séries, au-delà de {MAX_SERIES}")
     if any(len(label) > MAX_LABEL for label in categories):
         problems.warn(f"{where} : libellé de plus de {MAX_LABEL} caractères, coupé")
-    if kind == "secteurs":
+    if kind == "pie":
         if len(series) > 1:
-            problems.error(f"{where} : un graphique en secteurs n'a qu'une série")
+            problems.error(f"{where} : un graphique pie n'a qu'une série")
         if len(categories) > MAX_SLICES:
             problems.error(
                 f"{where} : {len(categories)} secteurs, au-delà de {MAX_SLICES} — illisible ; "
-                "garder les principaux et regrouper le reste en « Autres », ou des barres"
+                "garder les principaux et regrouper le reste en « Autres », ou bar"
             )
         values = [value for _, values in series[:1] for value in values if value is not None]
         if any(value < 0 for value in values):
@@ -618,9 +607,9 @@ def _check_chart(
 # La largeur d'une image dans la page, en centièmes de millimètre : la largeur utile
 # (17 cm), sa moitié, et celle d'un logo.
 IMAGE_WIDTHS: Final[Mapping[ImageWidth, int]] = {
-    "pleine_largeur": 17_000,
-    "moitie": 8_500,
-    "petite": 4_000,
+    "full": 17_000,
+    "half": 8_500,
+    "small": 4_000,
 }
 # La hauteur au plus : la page utile (25,7 cm), moins la place d'une légende.
 MAX_IMAGE_HEIGHT: Final = 21_000
@@ -705,7 +694,7 @@ def _totals(
             problems.error(f"{where} : total sur une colonne inconnue {header!r}")
             continue
         kind = block.columns[headers.index(header)].type
-        if aggregate in {"somme", "moyenne"} and kind not in NUMERIC:
+        if aggregate in {"sum", "average"} and kind not in NUMERIC:
             problems.error(
                 f"{where} : {aggregate} sur « {header} », colonne {kind} : pas un nombre"
             )
@@ -727,25 +716,25 @@ def _total_label(block: Table) -> int | None:
     """La colonne où écrire « Total » : la première sans agrégat, texte d'abord (comme excel)."""
     totals = block.totals or {}
     free = [(i, c) for i, c in enumerate(block.columns) if c.header not in totals]
-    texts = [i for i, c in free if c.type == "texte"]
+    texts = [i for i, c in free if c.type == "text"]
     if texts:
         return texts[0]
     return free[0][0] if free else None
 
 
 def _aggregate(aggregate: Aggregate, values: Sequence[Stored], kind: ColumnType) -> str:
-    if aggregate == "nombre":
-        return display(len(values), "entier")
+    if aggregate == "count":
+        return display(len(values), "integer")
     if not values:
         return ""
     try:
         match aggregate:
-            case "somme":
+            case "sum":
                 return display(sum(_numbers(values)), kind)
-            case "moyenne":
+            case "average":
                 numbers = _numbers(values)
                 mean = sum(numbers) / len(numbers)
-                return display(mean, "decimal" if kind == "entier" else kind)
+                return display(mean, "decimal" if kind == "integer" else kind)
             case "min":
                 return display(min(values, key=_order), kind)
             case "max":
@@ -835,13 +824,13 @@ def display(value: Stored, kind: ColumnType) -> str:
 
 def _number(value: float, kind: ColumnType) -> str:
     match kind:
-        case "entier":
+        case "integer":
             return _french(f"{round(value):,}")
-        case "montant_eur":
+        case "amount_eur":
             return _french(f"{value:,.2f}") + f"{NBSP}€"
-        case "montant_keur":
+        case "amount_keur":
             return _french(f"{value:,.0f}") + f"{NBSP}k€"
-        case "pourcentage":
+        case "percent":
             return _french(f"{value * 100:,.1f}") + f"{NBSP}%"
         case _:
             return _french(f"{value:,.2f}")

@@ -12,7 +12,7 @@ l'importe pour valider une référence, sans importer aucun des outils.
 
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Annotated, Final, Self, cast
+from typing import Annotated, Final, Literal, Self, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, model_validator
@@ -92,6 +92,54 @@ def check_timezone(name: str) -> None:
         raise ValueError(
             f"fuseau inconnu : {name!r} — un nom IANA, par exemple Europe/Paris"
         ) from None
+
+
+# --- Blocs facultatifs (loom.word, loom.pdf) -----------------------------------------
+
+# Chacun coûte des tokens à chaque appel du modèle : il n'est dans le schéma et la
+# description que si la config de l'outil le nomme dans ``blocks``.
+type OptionalBlock = Literal["chart", "image", "signature", "toc", "checkboxes"]
+OPTIONAL_BLOCKS: Final[tuple[OptionalBlock, ...]] = (
+    "chart",
+    "image",
+    "signature",
+    "toc",
+    "checkboxes",
+)
+# Les clés d'avant ``blocks`` (2.0.x), refusées avec la forme qui les remplace.
+OLD_KEYS: Final[Mapping[str, str]] = {
+    "charts": "blocks: [chart]",
+    "images": "blocks: [image]",
+    "extra_blocks": "blocks: [signature, toc, checkboxes]",
+}
+
+
+def _unique_blocks(blocks: tuple[OptionalBlock, ...]) -> tuple[OptionalBlock, ...]:
+    doubles = sorted({name for name in blocks if blocks.count(name) > 1})
+    if doubles:
+        raise ValueError(f"bloc nommé deux fois : {', '.join(doubles)}")
+    return blocks
+
+
+type Blocks = Annotated[tuple[OptionalBlock, ...], AfterValidator(_unique_blocks)]
+
+
+def _keys(value: object) -> set[object]:
+    """Les clés d'une table YAML ; aucune pour une autre valeur."""
+    return set(cast(Mapping[object, object], value)) if isinstance(value, Mapping) else set()
+
+
+def no_old_keys(value: object) -> object:
+    """Avant la validation : ``charts``, ``images`` et ``extra_blocks`` (2.0.x) refusés,
+    avec la forme qui les remplace, plutôt qu'un champ « extra » sans explication."""
+    keys = _keys(value)
+    found = [f"{key} → {OLD_KEYS[key]}" for key in OLD_KEYS if key in keys]
+    if found:
+        raise ValueError(
+            f"{' ; '.join(found)} : les blocs facultatifs se nomment dans une seule liste, "
+            "blocks (chart, image, signature, toc, checkboxes)"
+        )
+    return value
 
 
 # --- Modèles de document (loom.word, loom.pdf) ---------------------------------------

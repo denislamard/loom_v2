@@ -67,13 +67,13 @@ from loom_ia.tools_builtin.excel.arguments import (
 MAX_POINTS: Final = 1_000
 MAX_CHARTS: Final = 10
 KIND_SAID: Final[dict[str, str]] = {
-    "barres": "des barres",
-    "barres_horizontales": "des barres",
-    "courbe": "une courbe",
-    "secteurs": "des secteurs",
+    "bar": "des barres",
+    "horizontal_bar": "des barres",
+    "line": "une courbe",
+    "pie": "des secteurs",
 }
 # Des libellés que l'axe garde en nombres (et dont il garde le format) ; les autres sont du texte.
-NUMBERED: Final[frozenset[ColumnType]] = NUMERIC | frozenset[ColumnType]({"date", "date_heure"})
+NUMBERED: Final[frozenset[ColumnType]] = NUMERIC | frozenset[ColumnType]({"date", "datetime"})
 # Taille d'un graphique, en centimètres ; une ligne d'Excel fait 0,53 cm (15 points).
 WIDTH: Final = 16
 HEIGHT: Final = 9
@@ -167,7 +167,7 @@ def _check_one(
     if len(values) > MAX_SERIES:
         problems.error(f"{where} : {len(values)} séries, au-delà de {MAX_SERIES}")
     count = len(rows)
-    limit = MAX_POINTS if spec.kind == "courbe" else MAX_CATEGORIES
+    limit = MAX_POINTS if spec.kind == "line" else MAX_CATEGORIES
     if not count:
         problems.error(f"{where} : aucune ligne de données, le graphique serait vide")
     elif count > limit:
@@ -184,13 +184,13 @@ def _check_one(
                 complete = False
             else:
                 known.append(number)
-    if spec.kind == "secteurs":
+    if spec.kind == "pie":
         if len(values) > 1:
-            problems.error(f"{where} : un graphique en secteurs n'a qu'une série")
+            problems.error(f"{where} : un graphique pie n'a qu'une série")
         if count > MAX_SLICES:
             problems.error(
                 f"{where} : {count} secteurs, au-delà de {MAX_SLICES} — illisible ; garder les "
-                "principaux et regrouper le reste en « Autres », ou des barres"
+                "principaux et regrouper le reste en « Autres », ou bar"
             )
         if any(value < 0 for value in known):
             problems.error(f"{where} : une valeur négative n'a pas de secteur")
@@ -234,15 +234,15 @@ def _chart(ws: Worksheet, found: Plotted) -> Drawn:
     labels = Reference(ws, min_col=found.category, min_row=2, max_row=found.last)
     chart: Drawn
     match spec.kind:
-        case "secteurs":
+        case "pie":
             chart = PieChart()
             chart.varyColors = True
-        case "courbe":
+        case "line":
             chart = LineChart()
             chart.grouping = "standard"
-        case "barres" | "barres_horizontales":
+        case "bar" | "horizontal_bar":
             bars = BarChart()
-            bars.type = "bar" if spec.kind == "barres_horizontales" else "col"
+            bars.type = "bar" if spec.kind == "horizontal_bar" else "col"
             bars.grouping = "clustered"
             bars.gapWidth = 60
             chart = bars
@@ -265,8 +265,8 @@ def _chart(ws: Worksheet, found: Plotted) -> Drawn:
         _title_style(chart)
     several = len(found.values) > 1
     chart.legend = (
-        Legend(legendPos="r" if spec.kind == "secteurs" else "b", txPr=_text(900))
-        if spec.kind == "secteurs" or several
+        Legend(legendPos="r" if spec.kind == "pie" else "b", txPr=_text(900))
+        if spec.kind == "pie" or several
         else None
     )
     label = LABEL_FORMATS[found.value_type]
@@ -289,7 +289,7 @@ def _series(chart: Drawn) -> list[Series]:
 
 def _height(spec: ChartSpec, count: int) -> int:
     """Des barres horizontales prennent la place de leurs libellés, comme dans Word."""
-    if spec.kind != "barres_horizontales":
+    if spec.kind != "horizontal_bar":
         return HEIGHT
     return min(20, max(6, round(1.4 + 0.6 * count)))
 
@@ -363,7 +363,7 @@ def _pie(chart: PieChart, count: int) -> None:
 
 
 def _axes(chart: Axed, found: Plotted) -> None:
-    horizontal = found.spec.kind == "barres_horizontales"
+    horizontal = found.spec.kind == "horizontal_bar"
     categories, values = chart.x_axis, chart.y_axis
     # openpyxl 3.1 masque les axes par défaut (``delete``) : les montrer.
     categories.delete = False

@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Ce que voit le modèle : un document décrit par ses blocs, commun à ``word`` et ``pdf``.
 
-Le modèle dit ce que **sont** les blocs — titre, paragraphe, liste, tableau
-aux colonnes typées, note, citation — et jamais leur apparence : police,
-tailles, couleurs, marges, numérotation des pages viennent du style maison
-de chaque format. Clés en anglais, vocabulaire en français, comme ``excel``.
+Le modèle dit ce que **sont** les blocs — heading, paragraph, list, table aux
+colonnes typées, note, quote — et jamais leur apparence : police, tailles,
+couleurs, marges, sauts de page et numérotation des pages viennent du style.
+Clés et vocabulaire en anglais, comme ``excel`` ; descriptions en français.
 
 Pydantic seulement : ni disque, ni bibliothèque de rendu.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import cache
 from typing import Annotated, Any, ClassVar, Final, Literal, Self, cast
@@ -25,6 +25,7 @@ from pydantic import (
 )
 
 from loom_ia.core.ports import ToolError
+from loom_ia.tools_builtin._office_params import OPTIONAL_BLOCKS
 from loom_ia.tools_builtin._templates import NONE as NO_TEMPLATE
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Scalar
 
@@ -60,13 +61,13 @@ class _Model(BaseModel):
 
 
 class Heading(_Model):
-    type: Literal["titre"]
+    type: Literal["heading"]
     text: str
     level: Annotated[int, Field(ge=1, le=3)] = 1
 
 
 class Paragraph(_Model):
-    type: Literal["paragraphe"]
+    type: Literal["paragraph"]
     text: str
 
 
@@ -78,7 +79,7 @@ class Item(_Model):
 
 
 class ListBlock(_Model):
-    type: Literal["liste"]
+    type: Literal["list"]
     items: Annotated[list[str | Item], Field(min_length=1)]
     ordered: bool = False
 
@@ -91,11 +92,11 @@ class CheckList(ListBlock):
 
 class Column(_Model):
     header: Annotated[str, Field(min_length=1)]
-    type: ColumnType = "texte"
+    type: ColumnType = "text"
 
 
 class Table(_Model):
-    type: Literal["tableau"]
+    type: Literal["table"]
     columns: Annotated[list[Column], Field(min_length=1)]
     rows: list[list[Scalar]]
     totals: dict[str, Aggregate] | None = None
@@ -109,16 +110,12 @@ class Note(_Model):
 
 
 class Quote(_Model):
-    type: Literal["citation"]
+    type: Literal["quote"]
     text: str
     source: str | None = None
 
 
-class PageBreak(_Model):
-    type: Literal["saut_de_page"]
-
-
-type ChartKind = Literal["barres", "barres_horizontales", "courbe", "secteurs"]
+type ChartKind = Literal["bar", "horizontal_bar", "line", "pie"]
 
 
 class Series(_Model):
@@ -136,8 +133,8 @@ class FromTable(_Model):
 
 
 class Chart(_Model):
-    type: Literal["graphique"]
-    kind: ChartKind = "barres"
+    type: Literal["chart"]
+    kind: ChartKind = "bar"
     title: str | None = None
     categories: list[str] | None = None
     series: list[Series] | None = None
@@ -163,13 +160,13 @@ class Chart(_Model):
         return self
 
 
-type ImageWidth = Literal["pleine_largeur", "moitie", "petite"]
+type ImageWidth = Literal["full", "half", "small"]
 
 
 class Image(_Model):
     type: Literal["image"]
     path: str
-    width: ImageWidth = "pleine_largeur"
+    width: ImageWidth = "full"
     caption: str | None = None
     alt: str | None = None
 
@@ -184,48 +181,47 @@ class Signature(_Model):
 
 
 class Contents(_Model):
-    type: Literal["sommaire"]
+    type: Literal["toc"]
 
 
-# Les blocs que le modèle voit sans ``charts`` : le bloc ``graphique`` coûte
-# environ 500 tokens par appel au modèle, payés seulement là où il sert. Le nom
-# ``Block`` est celui du schéma : sans ``charts``, il reste celui d'avant les graphiques.
+# Les blocs que le modèle voit sans bloc facultatif.
 type Block = Annotated[
-    Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak,
-    Field(discriminator="type"),
-]
-# Avec ``charts`` : le nom reste celui d'avant les images, qui est dans le schéma.
-type AnyBlock = Annotated[
-    Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak | Chart,
-    Field(discriminator="type"),
-]
-# Avec ``images``, puis avec les deux.
-type ImageBlock = Annotated[
-    Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak | Image,
-    Field(discriminator="type"),
-]
-# Graphiques et images ensemble ; le nom reste celui d'avant les trois blocs de
-# ``extra_blocks``, qui est dans le schéma.
-type EveryBlock = Annotated[
-    Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak | Chart | Image,
+    Heading | Paragraph | ListBlock | Table | Note | Quote,
     Field(discriminator="type"),
 ]
 # Tous les blocs : ce qu'une écriture porte, quel que soit l'outil. Une liste à cocher
 # (``CheckList``) y passe comme liste : elle en est une.
 type WrittenBlock = Annotated[
-    Heading
-    | Paragraph
-    | ListBlock
-    | Table
-    | Note
-    | Quote
-    | PageBreak
-    | Chart
-    | Image
-    | Signature
-    | Contents,
+    Heading | Paragraph | ListBlock | Table | Note | Quote | Chart | Image | Signature | Contents,
     Field(discriminator="type"),
 ]
+
+
+def block_union(blocks: Iterable[str]) -> object:
+    """Les blocs du schéma pour ces blocs facultatifs, dans un ordre fixe."""
+    chosen = set(blocks)
+    kinds: list[type[_Model]] = [
+        Heading,
+        Paragraph,
+        CheckList if "checkboxes" in chosen else ListBlock,
+        Table,
+        Note,
+        Quote,
+    ]
+    kinds += [
+        kind
+        for name, kind in (
+            ("chart", Chart),
+            ("image", Image),
+            ("signature", Signature),
+            ("toc", Contents),
+        )
+        if name in chosen
+    ]
+    union: Any = kinds[0]
+    for kind in kinds[1:]:
+        union = union | kind
+    return Annotated[union, Field(discriminator="type")]
 
 
 # --- Appels --------------------------------------------------------------------------
@@ -238,7 +234,7 @@ class WriteArguments(_Model):
     title: str | None
     blocks: list[WrittenBlock]
     overwrite: bool = False
-    # Le modèle suivi (son nom) ou ``aucun`` ; ``None`` : l'outil n'a pas de modèles.
+    # Le modèle suivi (son nom) ou ``none`` ; ``None`` : l'outil n'a pas de modèles.
     template: str | None = None
 
 
@@ -323,100 +319,51 @@ class DocumentCall(_Model):
         )
 
 
-# Avec ``extra_blocks`` : la liste peut se cocher, signature et sommaire s'ajoutent.
-type ExtraBlock = Annotated[
-    Heading | Paragraph | CheckList | Table | Note | Quote | PageBreak | Signature | Contents,
-    Field(discriminator="type"),
-]
-type ExtraChartBlock = Annotated[
-    Heading
-    | Paragraph
-    | CheckList
-    | Table
-    | Note
-    | Quote
-    | PageBreak
-    | Chart
-    | Signature
-    | Contents,
-    Field(discriminator="type"),
-]
-type ExtraImageBlock = Annotated[
-    Heading
-    | Paragraph
-    | CheckList
-    | Table
-    | Note
-    | Quote
-    | PageBreak
-    | Image
-    | Signature
-    | Contents,
-    Field(discriminator="type"),
-]
-type ExtraEveryBlock = Annotated[
-    Heading
-    | Paragraph
-    | CheckList
-    | Table
-    | Note
-    | Quote
-    | PageBreak
-    | Chart
-    | Image
-    | Signature
-    | Contents,
-    Field(discriminator="type"),
-]
-_EXTRA_BLOCKS: Final[Mapping[tuple[bool, bool], object]] = {
-    (False, False): ExtraBlock,
-    (True, False): ExtraChartBlock,
-    (False, True): ExtraImageBlock,
-    (True, True): ExtraEveryBlock,
-}
-
-# Les blocs du schéma selon les réglages de l'outil (``charts``, ``images``).
-_BLOCKS: Final[Mapping[tuple[bool, bool], object]] = {
-    (True, False): AnyBlock,
-    (False, True): ImageBlock,
-    (True, True): EveryBlock,
-}
-
-
 ACTION_SAID: Final = (
     "write (par défaut) : écrire ; read : lire un fichier (droit read) ; template : lire "
     "un modèle de document."
 )
 TEMPLATE_SAID: Final = (
-    "Pour write : le modèle suivi, ou aucun (document libre) ; pour template : le modèle à lire."
+    "Pour write : le modèle suivi, ou none (document libre) ; pour template : le modèle à lire."
 )
+# Le nom de l'appel selon ses blocs facultatifs : ``WordChartImageCall``…
+_SUFFIXES: Final[Mapping[str, str]] = {
+    "chart": "Chart",
+    "image": "Image",
+    "signature": "Signature",
+    "toc": "Toc",
+    "checkboxes": "Checkboxes",
+}
 
 
-@cache
 def variant(
     base: type[DocumentCall],
     *,
-    charts: bool,
-    images: bool,
+    blocks: tuple[str, ...] = (),
     templates: tuple[str, ...] = (),
-    extra: bool = False,
 ) -> type[DocumentCall]:
     """L'appel d'un format (``WordCall``…), élargi aux réglages de l'outil.
 
-    ``charts``, ``images``, ``extra`` (``extra_blocks``) : ``blocks`` gagne leurs blocs.
-    ``templates`` (les noms des modèles déclarés) : l'action ``template`` et le champ
-    ``template``, obligatoire à l'écriture. Sans réglage, ``base`` lui-même : le schéma
-    reste celui d'avant. Le nom du modèle ne paraît pas dans le schéma allégé
-    (``input_schema``).
+    ``blocks`` (les blocs facultatifs déclarés, dans n'importe quel ordre) : ``blocks`` du
+    schéma gagne les leurs. ``templates`` (les noms des modèles déclarés) : l'action
+    ``template`` et le champ ``template``, obligatoire à l'écriture. Sans réglage, ``base``
+    lui-même. Le nom du modèle ne paraît pas dans le schéma allégé (``input_schema``).
     """
-    if not (charts or images or templates or extra):
+    chosen = tuple(name for name in OPTIONAL_BLOCKS if name in blocks)
+    return _variant(base, chosen, templates)
+
+
+@cache
+def _variant(
+    base: type[DocumentCall], chosen: tuple[str, ...], templates: tuple[str, ...]
+) -> type[DocumentCall]:
+    if not (chosen or templates):
         return base
     fields: dict[str, Any] = {}
-    if charts or images or extra:
-        blocks: Any = (_EXTRA_BLOCKS if extra else _BLOCKS)[charts, images]
+    if chosen:
         fields["blocks"] = (
             Annotated[
-                list[blocks] | None,
+                list[block_union(chosen)] | None,  # type: ignore[valid-type]
                 Field(max_length=MAX_BLOCKS, description=BLOCKS_SAID),
             ],
             None,
@@ -435,12 +382,7 @@ def variant(
             None,
         )
         validators["_template_of_the_action"] = model_validator(mode="after")(_template_rule)
-    suffix = (
-        ("Chart" if charts else "")
-        + ("Image" if images else "")
-        + ("Template" if templates else "")
-        + ("Extra" if extra else "")
-    )
+    suffix = "".join(_SUFFIXES[name] for name in chosen) + ("Template" if templates else "")
     return create_model(
         f"{base.__name__.removesuffix('Call')}{suffix}Call",
         __base__=base,
@@ -451,7 +393,7 @@ def variant(
 
 
 def _template_rule[M: DocumentCall](self: M) -> M:
-    """Avec des modèles : write nomme le sien (ou aucun), template nomme celui à lire."""
+    """Avec des modèles : write nomme le sien (ou none), template nomme celui à lire."""
     action = cast(str, self.action)
     template = cast(str | None, getattr(self, "template", None))
     path = cast(str | None, self.path)
@@ -461,7 +403,7 @@ def _template_rule[M: DocumentCall](self: M) -> M:
         raise ValueError("path ne sert pas à template")
     if action == "write" and template is None:
         raise ValueError(
-            "write attend 'template' : le modèle suivi, ou aucun pour un document libre"
+            "write attend 'template' : le modèle suivi, ou none pour un document libre"
         )
     if action == "read" and template is not None:
         raise ValueError("template ne sert pas à read")
@@ -478,8 +420,8 @@ def _template_rule[M: DocumentCall](self: M) -> M:
     return self
 
 
-# Le même appel, avec le bloc ``graphique`` (tests du vocabulaire commun).
-WithCharts: Final = variant(DocumentCall, charts=True, images=False)
+# Le même appel, avec le bloc ``chart`` (tests du vocabulaire commun).
+WithCharts: Final = variant(DocumentCall, blocks=("chart",))
 
 
 def parse(

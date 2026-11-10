@@ -84,7 +84,7 @@ _CP_CATEGORY: Final = (
 _FALSE: Final = frozenset({"0", "false", "off"})
 # Le nom du style de tableau de disposition qu'écrit l'outil (``word/style.py``).
 LAYOUT_STYLE: Final = "loom layout"
-# Les styles des blocs d'``extra_blocks`` (``word/style.py``), par leur nom.
+# Les styles des blocs signature et toc, et de la liste à cocher (``word/style.py``), par leur nom.
 SIGNATURE_STYLE: Final = "loom signature"
 SIGNER_STYLE: Final = "loom signer"
 MENTION_STYLE: Final = "loom mention"
@@ -468,7 +468,7 @@ def read(
     if templates is not None and package.category not in (None, *templates):
         notes.append(
             f"Le document dit suivre le modèle « {package.category} », que cet outil ne "
-            "déclare pas : pour le réécrire, nommer un modèle déclaré, ou aucun."
+            "déclare pas : pour le réécrire, nommer un modèle déclaré, ou none."
         )
     if notes:
         result["notes"] = notes
@@ -534,7 +534,7 @@ def _block(package: _Package, reading: _Reading, element: Element, depth: int = 
         case "tbl":
             _close_list(reading)
             reading.in_toc = False
-            _emit(reading, {"type": "tableau", "rows": _table(package, reading, element)})
+            _emit(reading, {"type": "table", "rows": _table(package, reading, element)})
         case "sdt":
             content = _child(element, "sdtContent")
             for child in list(content) if content is not None else []:
@@ -597,7 +597,7 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
         # seul bloc ``sommaire`` les remplace.
         if not reading.in_toc:
             _close_list(reading)
-            _emit(reading, {"type": "sommaire"})
+            _emit(reading, {"type": "toc"})
             reading.in_toc = True
         return
     reading.in_toc = False
@@ -633,11 +633,13 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
     level = outline if outline is not None else heading
     if title:
         _close_list(reading)
-        _emit(reading, {"type": "titre", "level": 0, "text": text}, heading=(0, text))
+        _emit(reading, {"type": "heading", "level": 0, "text": text}, heading=(0, text))
     elif level is not None and level < 9:
         _close_list(reading)
         _emit(
-            reading, {"type": "titre", "level": level + 1, "text": text}, heading=(level + 1, text)
+            reading,
+            {"type": "heading", "level": level + 1, "text": text},
+            heading=(level + 1, text),
         )
     elif numbering is not None:
         number_id, ilvl = numbering
@@ -650,7 +652,7 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
         _close_list(reading)
         _emit(
             reading,
-            {"type": _KIND.get(_style_name(package.styles, style_id), "paragraphe"), "text": text},
+            {"type": _KIND.get(_style_name(package.styles, style_id), "paragraph"), "text": text},
         )
 
 
@@ -665,7 +667,7 @@ def _checkbox(reading: _Reading, text: str, level: int) -> None:
     if reading.pending is not None and reading.pending_id != _CHECKLIST:
         _close_list(reading)
     if reading.pending is None:
-        reading.pending = {"type": "liste", "ordered": False, "checkboxes": True, "items": []}
+        reading.pending = {"type": "list", "ordered": False, "checkboxes": True, "items": []}
     reading.pending_id = _CHECKLIST
     _list_item(reading, item, level, False)
 
@@ -676,9 +678,9 @@ _CHECKLIST: Final = "checkboxes"
 # Les styles qui disent un autre bloc que le paragraphe : ceux qu'écrit l'outil, et
 # leurs équivalents intégrés de Word.
 _KIND: Final = {
-    "quote": "citation",
-    "intense quote": "citation",
-    "quote source": "citation",
+    "quote": "quote",
+    "intense quote": "quote",
+    "quote source": "quote",
     "note": "note",
 }
 
@@ -745,20 +747,20 @@ def _chart(package: _Package, relation: str) -> dict[str, JsonValue]:
     Un graphique qu'on ne sait pas lire (partie absente, type inconnu) reste un bloc
     ``graphique`` sans données : sa place dans le document est connue.
     """
-    block: dict[str, JsonValue] = {"type": "graphique"}
+    block: dict[str, JsonValue] = {"type": "chart"}
     name = package.charts.get(relation)
-    root = _whole(package.archive, name, "graphique") if name else None
+    root = _whole(package.archive, name, "chart") if name else None
     if root is None:
         return block
     plot = root.find(f"{_CHART_NS}chart/{_CHART_NS}plotArea")
     kinds = {
-        "barChart": "barres",
-        "bar3DChart": "barres",
-        "lineChart": "courbe",
-        "line3DChart": "courbe",
-        "pieChart": "secteurs",
-        "pie3DChart": "secteurs",
-        "doughnutChart": "secteurs",
+        "barChart": "bar",
+        "bar3DChart": "bar",
+        "lineChart": "line",
+        "line3DChart": "line",
+        "pieChart": "pie",
+        "pie3DChart": "pie",
+        "doughnutChart": "pie",
     }
     children: list[Element] = list(plot) if plot is not None else []
     found = next((child for child in children if child.tag.endswith("Chart")), None)
@@ -767,8 +769,8 @@ def _chart(package: _Package, relation: str) -> dict[str, JsonValue]:
     local = found.tag.rpartition("}")[2]
     kind = kinds.get(local, local)
     direction = found.find(f"{_CHART_NS}barDir")
-    if kind == "barres" and direction is not None and direction.get("val") == "bar":
-        kind = "barres_horizontales"
+    if kind == "bar" and direction is not None and direction.get("val") == "bar":
+        kind = "horizontal_bar"
     block["kind"] = kind
     title = root.find(f"{_CHART_NS}chart/{_CHART_NS}title")
     if title is not None:
@@ -1021,7 +1023,7 @@ def _cell_text(cell: Element) -> str:
 def _list_item(reading: _Reading, text: str, level: int, ordered: bool) -> None:
     pending = reading.pending
     if pending is None:
-        pending = reading.pending = {"type": "liste", "ordered": ordered, "items": []}
+        pending = reading.pending = {"type": "list", "ordered": ordered, "items": []}
     items = cast(list[JsonValue], pending["items"])
     if level == 0 or not items:
         items.append(text)

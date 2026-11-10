@@ -97,7 +97,6 @@ def build(params: BaseModel, context: BuiltinContext) -> PdfTool:
     return PdfTool(
         space,
         ZoneInfo(params.timezone),
-        charts=params.charts,
-        images=params.images,
+        blocks=params.blocks,
         templates=read_templates(params.templates, REFERENCE),
     )

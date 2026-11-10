@@ -13,6 +13,7 @@ l'importe pour valider la référence au chargement, sans importer l'outil ni py
         path: sortie
         rights: [ write, overwrite ]   # remplacer un fichier : approbation par défaut
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
+      blocks: [chart, image]           # les blocs facultatifs ; aucun par défaut
 
 Les dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
 ``rights``, ``approval``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
@@ -25,10 +26,12 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Fie
 
 from loom_ia.tools_builtin._office_params import (
     DEFAULT_TIMEZONE,
+    Blocks,
     Templates,
     check_timezone,
     checked_folders,
     no_delete,
+    no_old_keys,
 )
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 
@@ -37,6 +40,8 @@ REFERENCE: Final = "loom.pdf"
 # PDF forgés (CVE-2026-59935, -59937). Ici, et non dans l'outil, pour que ``loom.memory``
 # le vérifie sans importer reportlab.
 SAFE_PYPDF: Final = (6, 14, 2)
+# Les blocs facultatifs que ``loom.pdf`` n'écrit pas encore.
+WORD_ONLY: Final = ("signature", "toc", "checkboxes")
 
 
 def _mapping(value: object) -> Mapping[object, object]:
@@ -58,18 +63,23 @@ class PdfParams(BaseModel):
     # Fuseau IANA où passe une date-heure qui en porte un : le document l'écrit
     # à l'heure de ce fuseau, sans le nommer.
     timezone: str = DEFAULT_TIMEZONE
-    # Le bloc graphique : environ 500 tokens de plus par appel au modèle, d'où false.
-    charts: bool = False
-    # Le bloc image : environ 230 tokens de plus par appel au modèle, d'où false.
-    images: bool = False
+    # Les blocs facultatifs, chacun payé en tokens à chaque appel au modèle : chart
+    # (environ 430), image (environ 190). Aucun par défaut.
+    blocks: Blocks = ()
     # Les modèles de document, par nom : fichiers relatifs à resources_dir, lus au chargement.
     templates: Templates = {}
 
     @model_validator(mode="before")
     @classmethod
-    def _no_style(cls, value: object) -> object:
-        """Styles et ``extra_blocks`` ne servent qu'à ``loom.word`` pour l'instant : le dire,
-        plutôt qu'un champ « extra » refusé sans explication."""
+    def _early(cls, value: object) -> object:
+        return cls.precheck(value)
+
+    @classmethod
+    def precheck(cls, value: object) -> object:
+        """Avant toute validation, aussi sur la référence de la config (``agents.spec``) : les
+        anciennes clés (``charts``…), les styles, la signature, le sommaire et la liste à
+        cocher, dits tels quels plutôt qu'un champ « extra » refusé sans explication."""
+        no_old_keys(value)
         templates = _mapping(value).get("templates")
         styled = "style" in _mapping(value) or any(
             "style" in _mapping(ref) for ref in _mapping(templates).values()
@@ -79,10 +89,14 @@ class PdfParams(BaseModel):
                 "style : les styles de document ne servent qu'à loom.word pour l'instant "
                 "(loom.pdf écrit dans son style maison) ; retirer style"
             )
-        if "extra_blocks" in _mapping(value):
+        blocks = _mapping(value).get("blocks")
+        listed = cast(list[object], blocks) if isinstance(blocks, list | tuple) else []
+        word_only = [name for name in WORD_ONLY if name in listed]
+        if word_only:
+            verb = "ne sert" if len(word_only) == 1 else "ne servent"
             raise ValueError(
-                "extra_blocks : la signature, le sommaire et la liste à cocher ne servent "
-                "qu'à loom.word pour l'instant ; retirer extra_blocks"
+                f"blocks : {', '.join(word_only)} {verb} qu'à loom.word pour l'instant ; "
+                "loom.pdf écrit chart et image"
             )
         return value
 

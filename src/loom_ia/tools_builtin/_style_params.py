@@ -189,6 +189,7 @@ class LevelSpec(_Spec):
     size: Annotated[float, Field(ge=8, le=32)] | None = None
     color: Color | None = None
     uppercase: bool | None = None
+    underline: bool | None = None
 
 
 def _level_keys(value: object) -> object:
@@ -493,6 +494,7 @@ class Level:
     size: float
     color: str
     uppercase: bool = False
+    underline: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -632,6 +634,7 @@ def resolve(spec: StyleSpec) -> Style:
             size=given.size if given and given.size is not None else size,
             color=color(given.color if given else None, fallback),
             uppercase=bool(given and given.uppercase),
+            underline=bool(given and given.underline),
         )
         for given, (fallback, size) in zip(
             (headings.level1, headings.level2, headings.level3), defaults, strict=True

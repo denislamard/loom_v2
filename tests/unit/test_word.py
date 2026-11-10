@@ -86,24 +86,23 @@ async def refused(tool: WordTool, match: str, **arguments: Any) -> None:
 DEVIS: Final[dict[str, Any]] = {
     "title": "Devis D-2026-042",
     "blocks": [
-        {"type": "paragraphe", "text": "Madame **Dupont**,\nvoici notre *proposition*."},
-        {"type": "titre", "text": "Travaux"},
-        {"type": "liste", "items": ["Dépose", {"text": "Pose", "items": ["receveur", "paroi"]}]},
-        {"type": "liste", "items": ["Signature", "Acompte"], "ordered": True},
+        {"type": "paragraph", "text": "Madame **Dupont**,\nvoici notre *proposition*."},
+        {"type": "heading", "text": "Travaux"},
+        {"type": "list", "items": ["Dépose", {"text": "Pose", "items": ["receveur", "paroi"]}]},
+        {"type": "list", "items": ["Signature", "Acompte"], "ordered": True},
         {
-            "type": "tableau",
+            "type": "table",
             "columns": [
                 {"header": "Désignation"},
-                {"header": "Montant HT", "type": "montant_eur"},
+                {"header": "Montant HT", "type": "amount_eur"},
             ],
             "rows": [["Dépose", 180], ["Pose", 1250.5]],
-            "totals": {"Montant HT": "somme"},
+            "totals": {"Montant HT": "sum"},
             "caption": "Montants hors taxes.",
         },
         {"type": "note", "title": "Validité", "text": "3 mois."},
-        {"type": "citation", "text": "Travail soigné.", "source": "M. Martin"},
-        {"type": "saut_de_page"},
-        {"type": "titre", "text": "Conditions", "level": 2},
+        {"type": "quote", "text": "Travail soigné.", "source": "M. Martin"},
+        {"type": "heading", "text": "Conditions", "level": 2},
     ],
 }
 
@@ -155,8 +154,8 @@ def test_the_spec_names_the_folders_and_the_vocabulary(tool: WordTool) -> None:
     for said in (
         "- sortie : read, write, overwrite (attend une approbation humaine : overwrite)",
         "- valide : write (attend une approbation humaine : write)",
-        "titre (text, level 1 à 3)",
-        "montant_eur",
+        "heading (text, level 1 à 3)",
+        "amount_eur",
         "**gras**",
         "<u>souligné</u>",
         "ni autre balise",
@@ -184,8 +183,7 @@ def test_settings_for_validate(tool: WordTool) -> None:
     assert [place.name for place in settings.places] == ["modeles", "sortie", "valide"]
     assert settings.options == (
         ("fuseau", "Europe/Paris"),
-        ("graphiques", "non"),
-        ("images", "non"),
+        ("blocs", "aucun"),
         ("modèles", "aucun"),
         ("lecture des documents", "oui"),
     )
@@ -205,7 +203,7 @@ async def test_writes_a_document_in_the_house_style(tool: WordTool, disk: Path) 
         "ListParagraph", "ListParagraph", "ListParagraph", "ListParagraph",
         "ListParagraph", "ListParagraph",
         *["TableText"] * 8,
-        "Caption", "Note", "Quote", "QuoteSource", "", "Heading2",
+        "Caption", "Note", "Quote", "QuoteSource", "Heading2",
     ]  # fmt: skip
     texts = "".join(t.text or "" for t in body.iter(f"{W}t"))
     assert "1\u00a0430,50\u00a0€" in texts and "— M. Martin" in texts
@@ -295,23 +293,23 @@ async def test_what_it_writes_reads_back_in_the_same_vocabulary(tool: WordTool) 
     found = await call(tool, action="read", path="sortie/devis.docx")
     assert found["title"] == "Devis D-2026-042" and found["truncated"] is False
     blocks = found["blocks"]
-    assert blocks[0] == {"type": "titre", "level": 0, "text": "Devis D-2026-042"}
+    assert blocks[0] == {"type": "heading", "level": 0, "text": "Devis D-2026-042"}
     assert blocks[1] == {
-        "type": "paragraphe",
+        "type": "paragraph",
         "text": "Madame **Dupont**,\nvoici notre *proposition*.",
     }
-    assert blocks[2] == {"type": "titre", "level": 1, "text": "Travaux"}
+    assert blocks[2] == {"type": "heading", "level": 1, "text": "Travaux"}
     assert blocks[3] == {
-        "type": "liste",
+        "type": "list",
         "ordered": False,
         "items": ["Dépose", {"text": "Pose", "items": ["receveur", "paroi"]}],
     }
-    assert blocks[4] == {"type": "liste", "ordered": True, "items": ["Signature", "Acompte"]}
-    assert blocks[5]["type"] == "tableau"
+    assert blocks[4] == {"type": "list", "ordered": True, "items": ["Signature", "Acompte"]}
+    assert blocks[5]["type"] == "table"
     assert blocks[5]["rows"][-1] == ["Total", "1\u00a0430,50\u00a0€"]
     assert {"type": "note", "text": "**Validité**\n3 mois."} in blocks
-    assert {"type": "citation", "text": "Travail soigné."} in blocks
-    assert blocks[-1] == {"type": "titre", "level": 2, "text": "Conditions"}
+    assert {"type": "quote", "text": "Travail soigné."} in blocks
+    assert blocks[-1] == {"type": "heading", "level": 2, "text": "Conditions"}
 
 
 def docx(
@@ -399,13 +397,13 @@ async def test_reads_what_word_writes_and_this_tool_does_not(tool: WordTool, dis
     )
     found = await call(tool, action="read", path="modeles/fait-main.docx")
     assert found["blocks"] == [
-        {"type": "titre", "level": 1, "text": "Chapitre"},
-        {"type": "titre", "level": 1, "text": "Section héritée"},
-        {"type": "titre", "level": 3, "text": "Niveau direct"},
-        {"type": "liste", "ordered": False, "items": ["Point par style"]},
-        {"type": "paragraphe", "text": "gardé inséré pas gras lien arrivé"},
-        {"type": "paragraphe", "text": "Dans un contrôle"},
-        {"type": "tableau", "rows": [["Fusion", ""], ["a", "b"], ["c", ""]]},
+        {"type": "heading", "level": 1, "text": "Chapitre"},
+        {"type": "heading", "level": 1, "text": "Section héritée"},
+        {"type": "heading", "level": 3, "text": "Niveau direct"},
+        {"type": "list", "ordered": False, "items": ["Point par style"]},
+        {"type": "paragraph", "text": "gardé inséré pas gras lien arrivé"},
+        {"type": "paragraph", "text": "Dans un contrôle"},
+        {"type": "table", "rows": [["Fusion", ""], ["a", "b"], ["c", ""]]},
     ]
     notes = " ".join(found["notes"])
     assert "1 image(s)" in notes and "Modifications suivies" in notes
@@ -425,11 +423,11 @@ async def test_reads_a_document_from_elsewhere(tool: WordTool, disk: Path, soffi
     convert(soffice, html, disk / "modeles", "docx:MS Word 2007 XML")
     found = await call(tool, action="read", path="modeles/ailleurs.docx")
     blocks = found["blocks"]
-    assert {"type": "titre", "level": 1, "text": "Rapport"} in blocks
-    assert {"type": "titre", "level": 2, "text": "Points"} in blocks
-    assert {"type": "paragraphe", "text": "Texte **gras** et *penché*."} in blocks
-    assert {"type": "liste", "ordered": True, "items": ["un", "deux"]} in blocks
-    assert {"type": "tableau", "rows": [["Nom", "Total"], ["A", "3"]]} in blocks
+    assert {"type": "heading", "level": 1, "text": "Rapport"} in blocks
+    assert {"type": "heading", "level": 2, "text": "Points"} in blocks
+    assert {"type": "paragraph", "text": "Texte **gras** et *penché*."} in blocks
+    assert {"type": "list", "ordered": True, "items": ["un", "deux"]} in blocks
+    assert {"type": "table", "rows": [["Nom", "Total"], ["A", "3"]]} in blocks
 
 
 async def test_a_long_document_is_read_in_parts(tool: WordTool, disk: Path) -> None:
@@ -541,6 +539,34 @@ def word_agent(**reference: Any) -> dict[str, Any]:
     return demo_agent(tools=[{"python": "loom.word", **reference}])
 
 
+@pytest.mark.parametrize(
+    ("old", "said"),
+    [
+        ("charts", r"charts → blocks: \[chart\]"),
+        ("images", r"images → blocks: \[image\]"),
+        ("extra_blocks", r"extra_blocks → blocks: \[signature, toc, checkboxes\]"),
+    ],
+)
+def test_the_keys_of_2_0_say_the_new_form(demo: ConfigFactory, old: str, said: str) -> None:
+    """``charts``, ``images`` et ``extra_blocks`` (2.0.x) : refusés avec ce qui les remplace."""
+    folders = [{"name": "s", "path": "/tmp", "rights": ["write"]}]
+    with pytest.raises(ConfigError, match=said):
+        load_config(demo(agents=[word_agent(folders=folders, **{old: True})]))
+
+
+@pytest.mark.parametrize(
+    ("blocks", "said"),
+    [
+        (["chart", "chart"], "bloc nommé deux fois : chart"),
+        (["graphique"], "Input should be 'chart', 'image', 'signature', 'toc' or 'checkboxes'"),
+    ],
+)
+def test_blocks_are_known_and_named_once(demo: ConfigFactory, blocks: list[str], said: str) -> None:
+    folders = [{"name": "s", "path": "/tmp", "rights": ["write"]}]
+    with pytest.raises(ConfigError, match=said):
+        load_config(demo(agents=[word_agent(folders=folders, blocks=blocks)]))
+
+
 def test_delete_is_refused_when_the_config_loads(demo: ConfigFactory) -> None:
     folders = [{"name": "s", "path": "/tmp", "rights": ["write"], "approval": {"delete": "never"}}]
     with pytest.raises(
@@ -590,7 +616,7 @@ def test_validate_shows_the_folders(
     out = capsys.readouterr().out
     assert "loom.word" in out
     assert (
-        "fuseau : Europe/Paris · graphiques : non · images : non · modèles : aucun · "
+        "fuseau : Europe/Paris · blocs : aucun · modèles : aucun · "
         "lecture des documents : oui" in out
     )
 
@@ -607,21 +633,21 @@ RAPPORT: Final[dict[str, Any]] = {
     "title": "Top clients",
     "blocks": [
         {
-            "type": "tableau",
-            "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "montant_eur"}],
+            "type": "table",
+            "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "amount_eur"}],
             "rows": [["Barre", 18034.17], ["Lemaire", 16247.36], ["Guillot", 14709.17]],
         },
         {
-            "type": "graphique",
-            "kind": "barres_horizontales",
+            "type": "chart",
+            "kind": "horizontal_bar",
             "title": "TTC par client",
             "from_table": {"categories": "Client", "values": ["Total TTC"]},
             "caption": "Montants facturés.",
         },
         {
-            "type": "graphique",
-            "kind": "secteurs",
-            "value_type": "pourcentage",
+            "type": "chart",
+            "kind": "pie",
+            "value_type": "percent",
             "categories": ["Plomberie", "Chauffage"],
             "series": [{"name": "Part", "values": [0.6, 0.4]}],
         },
@@ -631,22 +657,22 @@ RAPPORT: Final[dict[str, Any]] = {
 
 @pytest.fixture
 def charted(disk: Path) -> WordTool:
-    """Le même outil, monté avec ``charts: true``."""
+    """Le même outil, monté avec ``blocks: [chart]``."""
     return make(
         disk,
         {"name": "modeles", "path": "modeles", "rights": ["read"]},
         {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
-        charts=True,
+        blocks=["chart"],
     )
 
 
 def test_charts_are_off_unless_asked(tool: WordTool, charted: WordTool) -> None:
-    # Sans charts, ni le bloc ni sa ligne : la taille d'avant les graphiques.
-    assert "graphique" not in json.dumps(tool.spec.input_schema)
+    # Sans chart dans blocks, ni le bloc ni sa ligne.
+    assert "chart" not in json.dumps(tool.spec.input_schema)
     assert "Graphique" not in tool.spec.description
-    assert '"graphique"' in json.dumps(charted.spec.input_schema)
-    assert "Graphique ('type': 'graphique')" in charted.spec.description
-    assert ("graphiques", "oui") in charted.settings().options
+    assert '"chart"' in json.dumps(charted.spec.input_schema)
+    assert "Graphique ('type': 'chart')" in charted.spec.description
+    assert ("blocs", "chart") in charted.settings().options
 
 
 async def test_without_charts_a_chart_is_refused(tool: WordTool, charted: WordTool) -> None:
@@ -662,13 +688,14 @@ async def test_reading_charts_without_charts_says_so(tool: WordTool, charted: Wo
     await call(charted, path="sortie/rapport.docx", **RAPPORT)
     found = await call(tool, action="read", path="sortie/rapport.docx")
     # Lus quand même : lire un graphique ne coûte rien dans le schéma.
-    assert [b["kind"] for b in found["blocks"] if b["type"] == "graphique"] == [
-        "barres_horizontales",
-        "secteurs",
+    assert [b["kind"] for b in found["blocks"] if b["type"] == "chart"] == [
+        "horizontal_bar",
+        "pie",
     ]
-    assert "2 graphique(s) lu(s) : cet outil n'en écrit pas" in " ".join(found["notes"])
+    assert "Lu : chart (2) ; cet outil n'en écrit pas" in " ".join(found["notes"])
+    assert "(ou blocks: [chart] dans la config de l'outil)" in " ".join(found["notes"])
     again = await call(charted, action="read", path="sortie/rapport.docx")
-    assert "graphique" not in " ".join(again.get("notes", []))
+    assert "chart" not in " ".join(again.get("notes", []))
 
 
 def test_validate_shows_charts(
@@ -676,9 +703,9 @@ def test_validate_shows_charts(
 ) -> None:
     (tmp_path / "sortie").mkdir()
     folders = [{"name": "sortie", "path": "sortie", "rights": ["write"]}]
-    path = demo(agents=[word_agent(folders=folders, charts=True)], storage=JSONL)
+    path = demo(agents=[word_agent(folders=folders, blocks=["chart"])], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
-    assert "graphiques : oui" in capsys.readouterr().out
+    assert "blocs : chart ·" in capsys.readouterr().out
 
 
 async def test_a_chart_is_a_native_word_chart(charted: WordTool, disk: Path) -> None:
@@ -721,25 +748,25 @@ _R: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationships
     ("chart", "bounds"),
     [
         # Barres verticales : 0,6 fois 1,1, arrondi à 0,02 près.
-        ({"kind": "barres", "series": [{"name": "Part", "values": [0.6, 0.4]}]}, ["0.66", "0"]),
+        ({"kind": "bar", "series": [{"name": "Part", "values": [0.6, 0.4]}]}, ["0.66", "0"]),
         # Deux séries : pas d'étiquette, l'axe est celui de Word.
         (
             {
-                "kind": "barres",
+                "kind": "bar",
                 "series": [{"name": "A", "values": [1, 2]}, {"name": "B", "values": [3, 4]}],
             },
             [],
         ),
         # Une valeur négative : l'axe est celui de Word.
-        ({"kind": "barres", "series": [{"name": "Écart", "values": [-5, 12]}]}, []),
+        ({"kind": "bar", "series": [{"name": "Écart", "values": [-5, 12]}]}, []),
         # Une courbe n'a pas d'étiquette.
-        ({"kind": "courbe", "series": [{"name": "CA", "values": [10, 20]}]}, []),
+        ({"kind": "line", "series": [{"name": "CA", "values": [10, 20]}]}, []),
     ],
 )
 async def test_the_value_axis_leaves_room_for_the_labels(
     charted: WordTool, disk: Path, chart: dict[str, Any], bounds: list[str]
 ) -> None:
-    block = {"type": "graphique", "categories": ["a", "b"], **chart}
+    block = {"type": "chart", "categories": ["a", "b"], **chart}
     await call(charted, path="sortie/axe.docx", blocks=[block], overwrite=True)
     scaling = part(disk / "sortie" / "axe.docx", "word/charts/chart1.xml").find(
         f".//{C}valAx/{C}scaling"
@@ -763,18 +790,18 @@ async def test_a_chart_reads_back_in_the_same_vocabulary(charted: WordTool) -> N
     tool = charted
     await call(tool, path="sortie/rapport.docx", **RAPPORT)
     found = await call(tool, action="read", path="sortie/rapport.docx")
-    charts = [b for b in found["blocks"] if b["type"] == "graphique"]
+    charts = [b for b in found["blocks"] if b["type"] == "chart"]
     assert charts == [
         {
-            "type": "graphique",
-            "kind": "barres_horizontales",
+            "type": "chart",
+            "kind": "horizontal_bar",
             "title": "TTC par client",
             "categories": ["Barre", "Lemaire", "Guillot"],
             "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}],
         },
         {
-            "type": "graphique",
-            "kind": "secteurs",
+            "type": "chart",
+            "kind": "pie",
             "categories": ["Plomberie", "Chauffage"],
             "series": [{"name": "Part", "values": [0.6, 0.4]}],
         },
@@ -821,29 +848,28 @@ def imaged(disk: Path) -> WordTool:
         {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
         {"name": "valide", "path": "valide", "rights": ["write"]},
         {"name": "secret", "path": "secret", "rights": ["read"], "approval": {"read": "always"}},
-        charts=True,
-        images=True,
+        blocks=["chart", "image"],
     )
 
 
 CDC: Final[dict[str, Any]] = {
     "title": "Cahier des charges",
     "blocks": [
-        {"type": "titre", "text": "Écrans"},
+        {"type": "heading", "text": "Écrans"},
         {
             "type": "image",
             "path": "maquettes/depot.png",
             "caption": "Écran 1 — Dépôt de la demande",
         },
-        {"type": "image", "path": "maquettes/tableau.png", "width": "moitie", "alt": "Tableau"},
+        {"type": "image", "path": "maquettes/tableau.png", "width": "half", "alt": "Tableau"},
         {
-            "type": "graphique",
+            "type": "chart",
             "categories": ["sept.", "oct."],
             "series": [{"name": "Demandes", "values": [12, 18]}],
         },
-        {"type": "image", "path": "maquettes/photo.jpg", "width": "moitie", "caption": "Photo"},
+        {"type": "image", "path": "maquettes/photo.jpg", "width": "half", "caption": "Photo"},
         # La même image, une deuxième fois : stockée une seule fois.
-        {"type": "image", "path": "maquettes/depot.png", "width": "petite", "alt": "Rappel"},
+        {"type": "image", "path": "maquettes/depot.png", "width": "small", "alt": "Rappel"},
     ],
 }
 
@@ -853,7 +879,7 @@ def test_images_are_off_unless_asked(tool: WordTool, imaged: WordTool) -> None:
     assert "Image ('type': 'image')" not in tool.spec.description
     assert '"image"' in json.dumps(imaged.spec.input_schema)
     assert "Image ('type': 'image')" in imaged.spec.description
-    assert ("images", "oui") in imaged.settings().options
+    assert ("blocs", "chart, image") in imaged.settings().options
     # Le chemin garde son suffixe dans le schéma, quels que soient les réglages.
     for mounted in (tool, imaged):
         properties = cast(dict[str, Any], mounted.spec.input_schema["properties"])
@@ -982,12 +1008,12 @@ def test_assess_counts_the_reads_of_images(imaged: WordTool) -> None:
 
 
 UNDERLINED: Final = [
-    {"type": "titre", "level": 1, "text": "Points <u>importants</u>"},
+    {"type": "heading", "level": 1, "text": "Points <u>importants</u>"},
     {
-        "type": "paragraphe",
+        "type": "paragraph",
         "text": "Fermé le <u>vendredi</u>, **<u>toute la journée</u>**, pour l'*<u>stock</u>*.",
     },
-    {"type": "liste", "ordered": False, "items": ["Clés à rendre <u>avant 17 h</u>"]},
+    {"type": "list", "ordered": False, "items": ["Clés à rendre <u>avant 17 h</u>"]},
 ]
 
 
@@ -1015,7 +1041,7 @@ async def test_any_underline_of_a_document_from_elsewhere_reads_back(
     )
     (disk / "modeles" / "souligne.docx").write_bytes(docx(body))
     found = await call(tool, action="read", path="modeles/souligne.docx")
-    assert {"type": "paragraphe", "text": "Voir <u>double</u> et non **<u>ici</u>**"} in found[
+    assert {"type": "paragraph", "text": "Voir <u>double</u> et non **<u>ici</u>**"} in found[
         "blocks"
     ]
 
@@ -1028,12 +1054,12 @@ async def test_images_read_back_and_rewrite_the_same_file(imaged: WordTool) -> N
         {
             "type": "image",
             "path": "maquettes/depot.png",
-            "width": "pleine_largeur",
+            "width": "full",
             "caption": "Écran 1 — Dépôt de la demande",
         },
-        {"type": "image", "path": "maquettes/tableau.png", "width": "moitie", "alt": "Tableau"},
-        {"type": "image", "path": "maquettes/photo.jpg", "width": "moitie", "caption": "Photo"},
-        {"type": "image", "path": "maquettes/depot.png", "width": "petite", "alt": "Rappel"},
+        {"type": "image", "path": "maquettes/tableau.png", "width": "half", "alt": "Tableau"},
+        {"type": "image", "path": "maquettes/photo.jpg", "width": "half", "caption": "Photo"},
+        {"type": "image", "path": "maquettes/depot.png", "width": "small", "alt": "Rappel"},
     ]
     assert "notes" not in found
     # Relu puis réécrit tel quel : le même fichier.
@@ -1062,7 +1088,7 @@ async def test_an_image_from_elsewhere_has_no_path(imaged: WordTool, disk: Path)
     found = await call(imaged, action="read", path="sortie/ailleurs.docx")
     images = [b for b in found["blocks"] if b["type"] == "image"]
     assert [("path" in b, b["width"]) for b in images] == [
-        (False, "pleine_largeur"), (False, "moitie"), (False, "moitie"), (False, "petite"),
+        (False, "full"), (False, "half"), (False, "half"), (False, "small"),
     ]  # fmt: skip
     assert "4 image(s) sans fichier source (pas de path)" in " ".join(found["notes"])
 
@@ -1087,10 +1113,10 @@ def test_validate_shows_images(
 ) -> None:
     (tmp_path / "sortie").mkdir()
     folders = [{"name": "sortie", "path": "sortie", "rights": ["read", "write"]}]
-    path = demo(agents=[word_agent(folders=folders, charts=True, images=True)], storage=JSONL)
+    path = demo(agents=[word_agent(folders=folders, blocks=["image", "chart"])], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     said = capsys.readouterr().out
-    assert "graphiques : oui · images : oui · modèles : aucun · lecture des documents : oui" in said
+    assert "blocs : chart, image · modèles : aucun · lecture des documents : oui" in said
 
 
 # --- Modèles de document -----------------------------------------------------------------
@@ -1112,7 +1138,7 @@ def rapport(*titles: str) -> list[Any]:
     return [
         b
         for t in titles
-        for b in ({"type": "titre", "text": t}, {"type": "paragraphe", "text": "Fait."})
+        for b in ({"type": "heading", "text": t}, {"type": "paragraph", "text": "Fait."})
     ]
 
 
@@ -1184,10 +1210,10 @@ async def test_a_document_follows_its_template(modeled: WordTool, disk: Path) ->
 async def test_a_free_document_has_no_template(
     modeled: WordTool, tool: WordTool, disk: Path
 ) -> None:
-    free = await call(modeled, path="sortie/libre.docx", template="aucun", **DEVIS)
+    free = await call(modeled, path="sortie/libre.docx", template="none", **DEVIS)
     plain = await call(tool, path="sortie/devis.docx", **DEVIS)
     # Un document libre est le même fichier qu'un document écrit sans modèles.
-    assert free["sha256"] == plain["sha256"] and free["template"] == "aucun"
+    assert free["sha256"] == plain["sha256"] and free["template"] == "none"
     assert "template" not in plain
     found = await call(modeled, action="read", path="sortie/libre.docx")
     assert "template" not in found
@@ -1240,7 +1266,7 @@ def test_templates_are_read_when_the_config_loads(
     load_config(path)
     assert main(["--config", str(path), "validate"]) == 0
     assert (
-        "images : non · modèles : rapport · lecture des documents : oui" in capsys.readouterr().out
+        "blocs : aucun · modèles : rapport · lecture des documents : oui" in capsys.readouterr().out
     )
     for given, said in (
         ("../secret.md", "le fichier doit être dans le dossier des ressources"),
@@ -1275,7 +1301,7 @@ def test_a_shape_and_its_fallback_count_once() -> None:
         f"<w:p><w:r><w:drawing/></w:r></w:p><w:p>{shape}</w:p>"
     )
     found = reader_module.read(docx(body), "d.docx", 0)
-    assert found["blocks"] == [{"type": "paragraphe", "text": "Une zone de texte, puis une image."}]
+    assert found["blocks"] == [{"type": "paragraph", "text": "Une zone de texte, puis une image."}]
     assert found["notes"] == ["3 image(s) ou forme(s) non lue(s)."]
 
 
@@ -1286,10 +1312,10 @@ async def test_windows_line_endings_become_line_breaks(tool: WordTool, disk: Pat
         path="sortie/crlf.docx",
         title="Devis\r\nn° 12",
         blocks=[
-            {"type": "paragraphe", "text": "ligne 1\r\nligne 2\rligne 3"},
-            {"type": "liste", "items": ["a\r\nb"]},
+            {"type": "paragraph", "text": "ligne 1\r\nligne 2\rligne 3"},
+            {"type": "list", "items": ["a\r\nb"]},
             {
-                "type": "tableau",
+                "type": "table",
                 "columns": [{"header": "Dési\r\ngnation"}, {"header": "Note"}],
                 "rows": [["Pose\r\nfinition", "ok"]],
             },
@@ -1300,8 +1326,8 @@ async def test_windows_line_endings_become_line_breaks(tool: WordTool, disk: Pat
         assert b"\r" not in archive.read("docProps/core.xml")
     found = await call(tool, action="read", path="sortie/crlf.docx")
     assert found["blocks"][:3] == [
-        {"type": "titre", "level": 0, "text": "Devis\nn° 12"},
-        {"type": "paragraphe", "text": "ligne 1\nligne 2\nligne 3"},
-        {"type": "liste", "ordered": False, "items": ["a\nb"]},
+        {"type": "heading", "level": 0, "text": "Devis\nn° 12"},
+        {"type": "paragraph", "text": "ligne 1\nligne 2\nligne 3"},
+        {"type": "list", "ordered": False, "items": ["a\nb"]},
     ]
     assert found["blocks"][3]["rows"] == [["Dési\ngnation", "Note"], ["Pose\nfinition", "ok"]]

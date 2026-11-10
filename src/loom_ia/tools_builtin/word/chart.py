@@ -44,7 +44,7 @@ HEIGHT: Final = 9 * CM
 
 def height(chart: ChartOut) -> int:
     """La hauteur du graphique : des barres horizontales prennent la place de leurs libellés."""
-    if chart.kind != "barres_horizontales":
+    if chart.kind != "horizontal_bar":
         return HEIGHT
     return min(20 * CM, max(6 * CM, int(1.4 * CM + 0.6 * CM * len(chart.categories))))
 
@@ -174,7 +174,7 @@ def _scale(chart: ChartOut) -> str:
 
 
 def _axes(chart: ChartOut) -> str:
-    horizontal = chart.kind == "barres_horizontales"
+    horizontal = chart.kind == "horizontal_bar"
     code = AXIS_FORMATS[chart.value_type]
     grid = (
         f'<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="{GRID}"/>'
@@ -209,7 +209,7 @@ def _axes(chart: ChartOut) -> str:
 def _plot(chart: ChartOut) -> str:
     label = LABEL_FORMATS[chart.value_type]
     match chart.kind:
-        case "secteurs":
+        case "pie":
             name, values = chart.series[0]
             slices = "".join(
                 f'<c:dPt><c:idx val="{i}"/><c:bubble3D val="0"/>'
@@ -227,7 +227,7 @@ def _plot(chart: ChartOut) -> str:
                 f'<c:pieChart><c:varyColors val="1"/>{series}'
                 '<c:firstSliceAng val="0"/></c:pieChart>'
             )
-        case "courbe":
+        case "line":
             series = "".join(
                 f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/>{_name(i, name)}'
                 f"{_line(PALETTE[i % len(PALETTE)])}"
@@ -242,7 +242,7 @@ def _plot(chart: ChartOut) -> str:
                 '<c:marker val="1"/><c:axId val="1001"/><c:axId val="1002"/></c:lineChart>'
                 + _axes(chart)
             )
-        case "barres" | "barres_horizontales":
+        case "bar" | "horizontal_bar":
             labelled = _labelled(chart)
             series = "".join(
                 f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/>{_name(i, name)}'
@@ -251,7 +251,7 @@ def _plot(chart: ChartOut) -> str:
                 f"{_categories(chart.categories)}{_values(i, values, label)}</c:ser>"
                 for i, (name, values) in enumerate(chart.series)
             )
-            direction = "bar" if chart.kind == "barres_horizontales" else "col"
+            direction = "bar" if chart.kind == "horizontal_bar" else "col"
             return (
                 f'<c:barChart><c:barDir val="{direction}"/><c:grouping val="clustered"/>'
                 f'<c:varyColors val="0"/>{series}<c:gapWidth val="60"/>'
@@ -273,9 +273,9 @@ def part(chart: ChartOut) -> str:
     )
     legend = (
         '<c:legend><c:legendPos val="'
-        + ("r" if chart.kind == "secteurs" else "b")
+        + ("r" if chart.kind == "pie" else "b")
         + f'"/><c:overlay val="0"/>{_text_props(900)}</c:legend>'
-        if chart.kind == "secteurs" or len(chart.series) > 1
+        if chart.kind == "pie" or len(chart.series) > 1
         else ""
     )
     return (

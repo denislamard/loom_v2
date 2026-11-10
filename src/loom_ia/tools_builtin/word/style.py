@@ -33,7 +33,8 @@ HEADER: Final = "Header"
 LAYOUT: Final = "LoomLayout"
 # Le nom du style de tableau de disposition : la relecture le reconnaît.
 LAYOUT_NAME: Final = "loom layout"
-# Les blocs d'``extra_blocks`` : leurs styles, que la relecture reconnaît par leur nom.
+# Les blocs signature et toc, et la liste à cocher : leurs styles, que la relecture
+# reconnaît par leur nom.
 SIGNATURE: Final = "LoomSignature"
 SIGNATURE_NAME: Final = "loom signature"
 SIGNER: Final = "LoomSigner"
@@ -114,7 +115,8 @@ def _heading(style: Style, level: int, look: Level, before: int, after: int) -> 
         f'w:after="{after}"/><w:outlineLvl w:val="{level - 1}"/>',
         run=f"{_fonts(style.heading_font)}<w:b/><w:bCs/>"
         + ("<w:caps/>" if look.uppercase else "")
-        + f'<w:color w:val="{look.color}"/>{_size(look.size)}',
+        + f'<w:color w:val="{look.color}"/>{_size(look.size)}'
+        + ('<w:u w:val="single"/>' if look.underline else ""),
     )
 
 
@@ -241,7 +243,7 @@ def styles_xml(style: Style, used: Iterable[str] = ()) -> str:
 
 
 def _extra_styles(style: Style, wanted: set[str]) -> str:
-    """Les styles des blocs d'``extra_blocks`` que le document emploie."""
+    """Les styles des blocs signature et toc, et de la liste à cocher, que le document emploie."""
     said = ""
     if SIGNATURE in wanted:
         said += (

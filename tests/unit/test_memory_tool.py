@@ -470,18 +470,18 @@ def docx(*body: str) -> bytes:
 def test_word_blocks_become_markdown() -> None:
     title, text = word_markdown(
         [
-            {"type": "titre", "level": 0, "text": "Plaquette commerciale"},
-            {"type": "titre", "level": 1, "text": "**Offre**"},
-            {"type": "paragraphe", "text": "Un **agent** par artisan."},
+            {"type": "heading", "level": 0, "text": "Plaquette commerciale"},
+            {"type": "heading", "level": 1, "text": "**Offre**"},
+            {"type": "paragraph", "text": "Un **agent** par artisan."},
             {
-                "type": "liste",
+                "type": "list",
                 "ordered": True,
                 "items": ["Cadrage", {"text": "Réalisation", "items": ["code", "tests"]}],
             },
-            {"type": "tableau", "rows": [["Poste", "Prix"], ["Audit | conseil", "500\n€"]]},
-            {"type": "citation", "text": "Travail\nsoigné."},
-            {"type": "graphique", "title": "Ventes"},
-            {"type": "titre", "level": 2, "text": "Détail"},
+            {"type": "table", "rows": [["Poste", "Prix"], ["Audit | conseil", "500\n€"]]},
+            {"type": "quote", "text": "Travail\nsoigné."},
+            {"type": "chart", "title": "Ventes"},
+            {"type": "heading", "level": 2, "text": "Détail"},
             {"type": "note", "text": "**Validité**\n3 mois."},
         ]
     )

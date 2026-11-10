@@ -762,28 +762,28 @@ Un appel décrit le classeur entier. Celui-ci, tiré d'un run réel (modèle sim
 {"path": "sortie/relances-octobre.xlsx",
  "sheets": [
   {"name": "Hypothèses",
-   "columns": [{"header": "Paramètre"}, {"header": "Valeur", "type": "pourcentage"}],
+   "columns": [{"header": "Paramètre"}, {"header": "Valeur", "type": "percent"}],
    "rows": [
-     {"cells": ["Taux de conversion visé", 0.15], "role": "hypothese",
+     {"cells": ["Taux de conversion visé", 0.15], "role": "assumption",
       "note": "Source : objectif fixé par l'artisan"},
-     {"cells": ["TVA", 0.2], "role": "hypothese", "note": "Source : taux normal, art. 278 CGI"}]},
+     {"cells": ["TVA", 0.2], "role": "assumption", "note": "Source : taux normal, art. 278 CGI"}]},
   {"name": "Suivi",
    "columns": [{"header": "Client"}, {"header": "Date devis", "type": "date"},
-               {"header": "Montant HT", "type": "montant_eur"},
-               {"header": "Relances", "type": "entier"}, {"header": "Statut"}],
+               {"header": "Montant HT", "type": "amount_eur"},
+               {"header": "Relances", "type": "integer"}, {"header": "Statut"}],
    "data": {"path": "donnees/devis.csv"},
-   "totals": {"Montant HT": "somme", "Relances": "somme"}},
+   "totals": {"Montant HT": "sum", "Relances": "sum"}},
   {"name": "Synthèse",
-   "columns": [{"header": "Indicateur"}, {"header": "Valeur", "type": "montant_eur"}],
+   "columns": [{"header": "Indicateur"}, {"header": "Valeur", "type": "amount_eur"}],
    "rows": [
      {"cells": ["Montant HT en attente", "=SUMIF(Suivi!E2:E5,\"En attente\",Suivi!C2:C5)"]},
      {"cells": ["Montant TTC en attente", "=B2*(1+'Hypothèses'!$B$3)"]},
      {"cells": ["CA HT espéré", "=B2*'Hypothèses'!$B$2"], "role": "total"},
-     {"cells": ["Objectif HT du mois", null], "role": "saisie"}]}]}
+     {"cells": ["Objectif HT du mois", null], "role": "input"}]}]}
 ```
 
-- **Types de colonne** : `texte` (par défaut), `entier`, `decimal`, `montant_eur`, `montant_keur` (valeur déjà en k€), `pourcentage` (une fraction : 0.15 pour 15 %), `date`, `date_heure`, `annee` (stockée en texte, sans séparateur de milliers), `booleen` (« Oui » / « Non »).
-- **Rôles**, sur une ligne (`role`) ou une cellule (`{"value": …, "role": …, "note": …}`) : `saisie` (à remplir par l'utilisateur, bleu sur jaune pâle), `hypothese` (paramètre cité par les formules, bleu sur jaune, avec sa source en `note`, obligatoire), `total` (gras, bordure haute), `note` (italique gris). Dans une ligne `saisie` ou `hypothese`, un texte non vide est un libellé et reste noir.
+- **Types de colonne** : `text` (par défaut), `integer`, `decimal`, `amount_eur`, `amount_keur` (valeur déjà en k€), `percent` (une fraction : 0.15 pour 15 %), `date`, `datetime`, `year` (stockée en texte, sans séparateur de milliers), `boolean` (« Oui » / « Non »).
+- **Rôles**, sur une ligne (`role`) ou une cellule (`{"value": …, "role": …, "note": …}`) : `input` (à remplir par l'utilisateur, bleu sur jaune pâle), `assumption` (paramètre cité par les formules, bleu sur jaune, avec sa source en `note`, obligatoire), `total` (gras, bordure haute), `note` (italique gris). Dans une ligne `input` ou `assumption`, un texte non vide est un libellé et reste noir.
 - **Formules** : une valeur qui commence par `=`. En anglais, arguments séparés par `,` ; une formule qui cite un autre onglet s'affiche en vert.
 - **Données** : `rows` pour un petit tableau (200 lignes au plus), `data` pour un fichier `.csv`, `.json` ou `.xlsx` d'un dossier qui a le droit `read` (`{"path": "donnees/export.xlsx", "sheet": "Devis"}` : l'onglet, le premier par défaut ; ses en-têtes en ligne 1). Le CSV peut venir d'un logiciel français : `;` comme séparateur, `1 250,50`, `02/10/2026`. `totals` ajoute une ligne de total, `=SUM(…)` générée par l'outil.
 
@@ -808,7 +808,7 @@ Deux appels identiques donnent le même fichier, octet pour octet : les dates du
 
 #### Ce que l'outil refuse
 
-Avant d'écrire, l'outil valide toute la description, sans LibreOffice : noms d'onglets (31 caractères, ni `[ ] : * ? / \`, pas de doublon), valeurs (`'demain' n'est pas un(e) date`), hypothèse sans source, et formules. Une formule écrite avec une fonction française, un `;`, un onglet inconnu ou mal quoté (`'Mes Hypothèses'!B2`), une fonction à débordement (`XLOOKUP`, `FILTER`…) ou une fonction hors de la liste permise est refusée, avec le correctif. Les fautes sont dites ensemble, et le modèle corrige en un appel. Dans ce run, le modèle écrit d'abord `=SOMME(B2;B3)` :
+Avant d'écrire, l'outil valide toute la description, sans LibreOffice : noms d'onglets (31 caractères, ni `[ ] : * ? / \`, pas de doublon), valeurs (`'demain' n'est pas une valeur date`), hypothèse sans source, et formules. Une formule écrite avec une fonction française, un `;`, un onglet inconnu ou mal quoté (`'Mes Hypothèses'!B2`), une fonction à débordement (`XLOOKUP`, `FILTER`…) ou une fonction hors de la liste permise est refusée, avec le correctif. Les fautes sont dites ensemble, et le modèle corrige en un appel. Dans ce run, le modèle écrit d'abord `=SOMME(B2;B3)` :
 
 ```text
     outil excel — 4 ms (erreur)
@@ -854,13 +854,13 @@ Le graphique cite les colonnes de son onglet par leur en-tête. Un appel réel d
 {"path": "sortie/top-clients.xlsx",
  "sheets": [
   {"name": "Clients",
-   "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "montant_eur"}],
+   "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "amount_eur"}],
    "rows": [{"cells": ["Julien Barre", 18034.17]}, {"cells": ["Chauffage Lemaire Rénovation", 16247.36]},
             {"cells": ["Guillot SARL", 14709.17]}],
-   "totals": {"Total TTC": "somme"},
+   "totals": {"Total TTC": "sum"},
    "charts": [
-     {"kind": "barres_horizontales", "title": "Total TTC par client", "categories": "Client", "values": ["Total TTC"]},
-     {"kind": "secteurs", "title": "Part de chaque client", "categories": "Client", "values": ["Total TTC"]}]}]}
+     {"kind": "horizontal_bar", "title": "Total TTC par client", "categories": "Client", "values": ["Total TTC"]},
+     {"kind": "pie", "title": "Part de chaque client", "categories": "Client", "values": ["Total TTC"]}]}]}
 ```
 
 Le résumé compte les graphiques de chaque onglet, et seulement là où il y en a :
@@ -871,7 +871,7 @@ Le résumé compte les graphiques de chaque onglet, et seulement là où il y en
  "sheets": [{"name": "Clients", "rows": 3, "formulas": 1, "charts": 2}], "warnings": []}
 ```
 
-- **`kind`** : `barres` (par défaut) pour comparer, `barres_horizontales` pour des libellés longs (des noms de clients), `courbe` pour une évolution, `secteurs` pour les parts d'un tout.
+- **`kind`** : `bar` (par défaut) pour comparer, `horizontal_bar` pour des libellés longs (des noms de clients), `line` pour une évolution, `pie` pour les parts d'un tout.
 - **`categories`** nomme la colonne des libellés, **`values`** les colonnes de nombres, une série chacune (6 au plus), d'un même type numérique. **`title`** s'affiche au-dessus du graphique.
 - **Les lignes tracées** sont celles des données, depuis la ligne 2 : ni la ligne de `totals`, ni les lignes `total` ou `note` de la fin. Les données d'un graphique se suivent : une ligne de données après un total ou une note est refusée.
 - **Pas de données en ligne**, contrairement à `word` et `pdf` : dans un classeur, les nombres vivent dans des cellules. Pour un graphique sur des nombres calculés ailleurs, le modèle les met dans un onglet, et le graphique les cite.
@@ -886,7 +886,7 @@ Les fautes d'un graphique sont dites avec celles du classeur :
 Classeur refusé :
 - Clients, graphique 1 : colonne(s) inconnue(s) : TVA (colonnes : Client, Total TTC)
 - Clients, graphique 2 : une colonne citée deux fois
-- Clients, graphique 3 : les séries viennent de colonnes de nombres d'un même type (ici : texte)
+- Clients, graphique 3 : les séries viennent de colonnes de nombres d'un même type (ici : text)
 ```
 
 Sans `charts`, une liste `charts` est refusée par le moteur avant d'atteindre l'outil, puisque le schéma ne la connaît pas. `loom validate` ajoute `graphiques : oui` ou `graphiques : non` aux réglages de l'outil.
@@ -953,7 +953,7 @@ Avec `"action": "read"`, l'outil lit un `.xlsx` ou un `.xlsm` d'un dossier qui a
 
 #### Un skill pour bien s'en servir
 
-La description de `excel` dit son vocabulaire ; elle ne dit pas quand s'en servir, ni comment choisir entre ses formes. À qui demande un bon d'intervention, un agent Haiku peut rendre un tableau « Champ | Valeur », les dates en texte, les champs à remplir sans le rôle `saisie`. Un **skill** ajoute ce mode d'emploi à la suite de la description de l'outil :
+La description de `excel` dit son vocabulaire ; elle ne dit pas quand s'en servir, ni comment choisir entre ses formes. À qui demande un bon d'intervention, un agent Haiku peut rendre un tableau « Champ | Valeur », les dates en texte, les champs à remplir sans le rôle `input`. Un **skill** ajoute ce mode d'emploi à la suite de la description de l'outil :
 
 ```yaml
 - python: loom.excel
@@ -969,8 +969,8 @@ Et `prompts/excel.md` :
 ```markdown
 - `excel` écrit des tableaux. Une fiche (bon, compte rendu) n'est pas un tableau Champ | Valeur :
   dis-le à la personne au lieu de la forcer.
-- Chaque colonne a son type : `date_heure` pour une date et une heure, `montant_eur` pour un montant.
-- Une cellule à remplir à la main a le rôle `saisie`.
+- Chaque colonne a son type : `datetime` pour une date et une heure, `amount_eur` pour un montant.
+- Une cellule à remplir à la main a le rôle `input`.
 ```
 
 `loom validate` montre, sous la branche `excel` de l'agent, la ligne `skill, 298 caractères (environ 74 tokens)`.
@@ -999,9 +999,7 @@ Configuration : Agent 'assistant', outil 'loom.pdf' : Outil fourni 'loom.pdf' : 
 ```yaml
 tools:
   - python: loom.word
-    charts: true                     # le bloc graphique ; false par défaut
-    images: true                     # le bloc image ; false par défaut
-    extra_blocks: true               # signature, sommaire, liste à cocher ; false par défaut
+    blocks: [chart, image, signature, toc, checkboxes]   # les blocs facultatifs ; aucun par défaut
     style: styles/charte.yaml        # la charte des documents (facultatif)
     templates:                       # modèles de document, relatifs à resources_dir
       devis: devis.md
@@ -1023,9 +1021,9 @@ tools:
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »), `images`, qui lui donne le bloc `image` (voir « Des images »), `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), `style`, la charte des documents de `loom.word` (voir « Des styles de document »), et `extra_blocks`, qui donne à `loom.word` la signature, le sommaire et la liste à cocher (voir « Signature, sommaire, liste à cocher »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `blocks`, la liste des blocs facultatifs que voit le modèle — `chart` (voir « Des graphiques »), `image` (voir « Des images »), et pour `loom.word` seulement `signature`, `toc` et `checkboxes` (voir « Signature, sommaire, liste à cocher ») —, `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents de `loom.word` (voir « Des styles de document »). Depuis loom-ia 2.1.0, `blocks` remplace `charts`, `images` et `extra_blocks`, refusés au chargement avec la forme qui les remplace (`charts → blocks: [chart]`). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
-`loom validate` montre les dossiers, puis le fuseau, les graphiques, les images, les modèles, la lecture et, s'il y en a un, le style :
+`loom validate` montre les dossiers, puis le fuseau, les blocs facultatifs, les modèles, la lecture et, s'il y en a un, le style :
 
 ```text
 …
@@ -1035,12 +1033,12 @@ AGENTS
   │              read
   │              sortie → ./sortie
   │              read, write
-  │              fuseau : Europe/Paris · graphiques : oui · images : oui · modèles : devis · lecture des documents : oui · signature, sommaire, cases à cocher : oui · style : charte
+  │              fuseau : Europe/Paris · blocs : chart, image, signature, toc, checkboxes · modèles : devis · lecture des documents : oui · style : charte
   └ pdf          recus → ./recus
                  read
                  sortie → ./sortie
                  read, write · overwrite*
-                 fuseau : Europe/Paris · graphiques : non · images : non · modèles : aucun · lecture des PDF : oui, process à part (20 s, 1 Gio)
+                 fuseau : Europe/Paris · blocs : aucun · modèles : aucun · lecture des PDF : oui, process à part (20 s, 1 Gio)
 
   * = approbation requise
 …
@@ -1054,25 +1052,25 @@ Un appel décrit le document entier. Celui-ci, tiré d'un run réel (modèle sim
 {"path": "sortie/devis-D-2026-042.docx",
  "title": "Devis n° D-2026-042 — Rénovation salle de bains",
  "blocks": [
-  {"type": "paragraphe", "text": "Madame **Dupont**,\nsuite à notre visite du 2 octobre, voici notre proposition *détaillée*."},
-  {"type": "titre", "text": "Objet des travaux"},
-  {"type": "liste", "items": ["Dépose de la baignoire",
+  {"type": "paragraph", "text": "Madame **Dupont**,\nsuite à notre visite du 2 octobre, voici notre proposition *détaillée*."},
+  {"type": "heading", "text": "Objet des travaux"},
+  {"type": "list", "items": ["Dépose de la baignoire",
                               {"text": "Pose d'une douche à l'italienne", "items": ["receveur extra-plat", "paroi vitrée 120 cm"]}]},
-  {"type": "tableau",
-   "columns": [{"header": "Désignation"}, {"header": "Quantité", "type": "entier"},
-               {"header": "Montant HT", "type": "montant_eur"}, {"header": "TVA", "type": "pourcentage"}],
+  {"type": "table",
+   "columns": [{"header": "Désignation"}, {"header": "Quantité", "type": "integer"},
+               {"header": "Montant HT", "type": "amount_eur"}, {"header": "TVA", "type": "percent"}],
    "rows": [["Dépose baignoire", 1, 180, 0.1],
             ["Receveur extra-plat 120x90", 1, "1 250,50", 0.1],
             ["Main d'œuvre plomberie (heures)", 14, 770, 0.1]],
-   "totals": {"Montant HT": "somme"},
+   "totals": {"Montant HT": "sum"},
    "caption": "Montants hors taxes ; TVA réduite à 10 % (travaux de rénovation)."},
   {"type": "note", "title": "Validité", "text": "Ce devis est valable **3 mois**."},
-  {"type": "titre", "text": "Conditions de paiement", "level": 2},
-  {"type": "liste", "ordered": true, "items": ["Acompte de 30 % à la signature", "Solde à la fin du chantier"]}]}
+  {"type": "heading", "text": "Conditions de paiement", "level": 2},
+  {"type": "list", "ordered": true, "items": ["Acompte de 30 % à la signature", "Solde à la fin du chantier"]}]}
 ```
 
-- **Blocs** : `titre` (`level` 1 à 3), `paragraphe`, `liste` (à puces, ou numérotée avec `ordered` ; un élément `{text, items}` porte une sous-liste), `tableau`, `note` (un encadré, avec un `title` facultatif), `citation` (avec sa `source`), `saut_de_page`. `title`, à côté des blocs, est le titre du document : en tête, et dans ses propriétés.
-- **Tableaux** : les types de colonne de `loom.excel` (`texte`, `entier`, `decimal`, `montant_eur`, `montant_keur`, `pourcentage`, `date`, `date_heure`, `annee`, `booleen`), avec la même conversion tolérante (`1 250,50`, `02/10/2026`, `15%`, `oui`). Une ligne plus courte que les colonnes est complétée de cellules vides. `totals` ajoute une ligne de total **calculée par l'outil** — un document n'a pas de formules — : `somme`, `moyenne`, `nombre`, `min` ou `max`. `caption` est la légende, sous le tableau. 8 colonnes et 500 lignes au plus : au-delà, un classeur (`excel`) se lit mieux.
+- **Blocs** : `heading` (`level` 1 à 3), `paragraph`, `list` (à puces, ou numérotée avec `ordered` ; un élément `{text, items}` porte une sous-liste), `table`, `note` (ce que le lecteur doit retenir, une mise en garde ; un `title` facultatif), `quote` (avec sa `source`). Un saut de page n'est pas un bloc depuis loom-ia 2.1.0 : c'est de la mise en page, que décide le style. `title`, à côté des blocs, est le titre du document : en tête, et dans ses propriétés.
+- **Tableaux** : les types de colonne de `loom.excel` (`text`, `integer`, `decimal`, `amount_eur`, `amount_keur`, `percent`, `date`, `datetime`, `year`, `boolean`), avec la même conversion tolérante (`1 250,50`, `02/10/2026`, `15%`, `oui`). Une ligne plus courte que les colonnes est complétée de cellules vides. `totals` ajoute une ligne de total **calculée par l'outil** — un document n'a pas de formules — : `sum`, `average`, `count`, `min` ou `max`. `caption` est la légende, sous le tableau. 8 colonnes et 500 lignes au plus : au-delà, un classeur (`excel`) se lit mieux.
 - **Texte** : `**gras**`, `*italique*`, `<u>souligné</u>`, et `\n` pour aller à la ligne dans le même paragraphe ; ils se combinent (`**<u>mot</u>**`). Rien d'autre : un `#` ou un `-` en tête reste du texte, `2 * 3 * 4` aussi, comme une balise seule ou non refermée, et toute autre balise (`<b>`, `<br>`). Les cellules de tableau sont du texte simple.
 
 Le document produit : A4 portrait, marges de 2 cm, titre bleu nuit souligné d'un filet, titres de section bleu nuit, tableaux à en-tête bleu pâle répété d'une page à l'autre, ligne de total en gras sous un filet, nombres alignés à droite et dates centrées, notes en encadré gris à filet bleu, citations en retrait, « Page n / N » en pied. Le `.docx` est en Calibri 11 et déclaré en français (correcteur, césure). Le PDF reprend la même page en Helvetica, une police standard du PDF, non embarquée : le fichier reste léger.
@@ -1103,9 +1101,9 @@ Avant d'écrire, l'outil valide tout le document, et dit les fautes ensemble :
 
 ```text
 Document refusé :
-- bloc 1 (titre) : texte vide
-- bloc 2 (tableau), ligne 1, « Montant HT » : 'environ 800' n'est pas un(e) montant eur
-- bloc 2 (tableau) : somme sur « Désignation », colonne texte : pas un nombre
+- bloc 1 (heading) : texte vide
+- bloc 2 (table), ligne 1, « Montant HT » : 'environ 800' n'est pas une valeur amount_eur
+- bloc 2 (table) : sum sur « Désignation », colonne text : pas un nombre
 ```
 
 Sont aussi refusés : un tableau de plus de 8 colonnes ou de 500 lignes, un en-tête en double, un total sur une colonne inconnue, un caractère de contrôle, un document sans contenu. Trois points ne sont qu'avertis, dans `warnings` : un titre qui saute un niveau, un pourcentage plus grand que 1, et, pour un PDF, un caractère que ses polices n'ont pas :
@@ -1118,34 +1116,34 @@ Les polices standard du PDF couvrent le français et l'Europe de l'Ouest, plus l
 
 #### Des graphiques
 
-Avec `charts: true`, l'outil a un bloc de plus : `graphique`. Il n'est pas actif par défaut, parce qu'il coûte : environ 500 tokens par outil et par appel de modèle (sa description et son schéma), payés même par un agent qui n'en fait jamais. Sans `charts`, ce que voit le modèle est exactement ce qu'il voyait avant les graphiques. Le paramètre se règle outil par outil : ci-dessus, `word` dessine des graphiques, `pdf` non.
+Avec `chart` dans `blocks`, l'outil a un bloc de plus : `chart`. Il n'est pas actif par défaut, parce qu'il coûte : environ 430 tokens par outil et par appel de modèle (1 700 caractères de description et de schéma), payés même par un agent qui n'en fait jamais. Sans lui, le modèle ne voit ni le bloc ni sa ligne d'aide. La liste se règle outil par outil : ci-dessus, `word` dessine des graphiques, `pdf` non.
 
 Le plus souvent, les nombres d'un graphique sont déjà dans un tableau du document. `from_table` les y prend : le modèle ne recopie aucun nombre, il ne peut donc ni en déformer ni en inventer. Le run réel de cet exemple (modèle simulé) :
 
 ```json
 {"path": "sortie/top-clients.docx", "title": "Top clients 2026",
  "blocks": [
-  {"type": "tableau",
-   "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "montant_eur"}],
+  {"type": "table",
+   "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "amount_eur"}],
    "rows": [["Julien Barre", 18034.17], ["Chauffage Lemaire Rénovation", 16247.36], ["Guillot SARL", 14709.17]],
-   "totals": {"Total TTC": "somme"}},
-  {"type": "graphique", "kind": "barres_horizontales", "title": "Total TTC par client",
+   "totals": {"Total TTC": "sum"}},
+  {"type": "chart", "kind": "horizontal_bar", "title": "Total TTC par client",
    "from_table": {"categories": "Client", "values": ["Total TTC"]}}]}
 ```
 
 Quand les nombres ne sont dans aucun tableau du document, ils se donnent en ligne :
 
 ```json
-{"type": "graphique", "kind": "courbe", "title": "Chiffre d'affaires mensuel 2026", "value_type": "montant_eur",
+{"type": "chart", "kind": "line", "title": "Chiffre d'affaires mensuel 2026", "value_type": "amount_eur",
  "categories": ["janv.", "févr.", "mars", "avr."],
  "series": [{"name": "Facturé", "values": [18200, 21500, 19800, 25400]},
             {"name": "Encaissé", "values": [15100, 19900, 20500, null]}],
  "caption": "Avril encaissé : pas encore connu."}
 ```
 
-- **`kind`** : `barres` (par défaut) pour comparer, `barres_horizontales` pour des libellés longs (des noms de clients), `courbe` pour une évolution, `secteurs` pour les parts d'un tout.
+- **`kind`** : `bar` (par défaut) pour comparer, `horizontal_bar` pour des libellés longs (des noms de clients), `line` pour une évolution, `pie` pour les parts d'un tout.
 - **`from_table`** : le dernier tableau avant le graphique. `categories` nomme la colonne des libellés, `values` les colonnes de nombres, une série chacune, d'un même type. Les valeurs sont celles du tableau, déjà converties, sans la ligne de total.
-- **En ligne** : `categories`, `series` (`{name, values}`) et `value_type`, un type de colonne numérique (`entier`, `decimal`, `montant_eur`, `montant_keur`, `pourcentage`) qui décide de l'écriture des nombres. La conversion est celle des tableaux (`"25%"` donne 0,25) ; `null` laisse un trou dans la courbe.
+- **En ligne** : `categories`, `series` (`{name, values}`) et `value_type`, un type de colonne numérique (`integer`, `decimal`, `amount_eur`, `amount_keur`, `percent`) qui décide de l'écriture des nombres. La conversion est celle des tableaux (`"25%"` donne 0,25) ; `null` laisse un trou dans la courbe.
 - **`title`** au-dessus du graphique, **`caption`** en légende dessous.
 - **Bornes** : 50 libellés et 6 séries au plus ; un graphique en secteurs a une seule série, 12 parts au plus, et aucune valeur négative.
 
@@ -1155,30 +1153,30 @@ Les fautes d'un graphique sont dites avec celles du document :
 
 ```text
 Document refusé :
-- bloc 2 (graphique) : from_table, colonne(s) inconnue(s) du tableau précédent : TVA (colonnes : Client, Total TTC)
-- bloc 3 (graphique) : un graphique en secteurs n'a qu'une série
+- bloc 2 (chart) : from_table, colonne(s) inconnue(s) du tableau précédent : TVA (colonnes : Client, Total TTC)
+- bloc 3 (chart) : un graphique pie n'a qu'une série
 ```
 
-La description dit aussi au modèle de ne jamais dessiner un graphique en caractères (`█`, `#`). Sans `charts`, un bloc `graphique` est refusé par le moteur avant d'atteindre l'outil, puisque le schéma ne le connaît pas (« ne correspond à aucune des variantes autorisées »).
+La description dit aussi au modèle de ne jamais dessiner un graphique en caractères (`█`, `#`). Sans `chart` dans `blocks`, un bloc `chart` est refusé par le moteur avant d'atteindre l'outil, puisque le schéma ne le connaît pas (« ne correspond à aucune des variantes autorisées »).
 
 #### Des images
 
-Avec `images: true`, l'outil a un bloc de plus : `image`, pour un logo sur un devis, une photo de chantier dans un rapport, une capture d'écran dans une procédure. Comme `charts`, il n'est pas actif par défaut : environ 230 tokens par outil et par appel de modèle (849 caractères de description et de schéma). Sans `images`, ce que voit le modèle est exactement ce qu'il voyait avant.
+Avec `image` dans `blocks`, l'outil a un bloc de plus : `image`, pour un logo sur un devis, une photo de chantier dans un rapport, une capture d'écran dans une procédure. Comme `chart`, il n'est pas actif par défaut : environ 190 tokens par outil et par appel de modèle (770 caractères de description et de schéma). Sans lui, le modèle ne voit ni le bloc ni sa ligne d'aide.
 
 L'image est un fichier PNG ou JPEG d'un dossier qui a le droit `read` ; l'outil la lit lui-même, le modèle n'en envoie jamais le contenu :
 
 ```json
 {"path": "sortie/cahier-des-charges.docx", "title": "Cahier des charges — Demandes de congés",
  "blocks": [
-  {"type": "titre", "text": "Écrans"},
+  {"type": "heading", "text": "Écrans"},
   {"type": "image", "path": "maquettes/depot-demande.png",
    "caption": "Écran 1 — Dépôt de la demande par le manager"},
-  {"type": "image", "path": "maquettes/tableau-de-bord.png", "width": "moitie",
+  {"type": "image", "path": "maquettes/tableau-de-bord.png", "width": "half",
    "alt": "Tableau de bord : les demandes du mois, par équipe"}]}
 ```
 
 - **`path`** : « `<dossier>/<chemin>` », avec les règles de tous les chemins de l'outil (dossier déclaré, pas de `..`, ni fichier caché, ni lien qui sort du dossier). Le dossier doit avoir le droit `read`.
-- **`width`** : `pleine_largeur` (17 cm, la largeur du texte ; par défaut), `moitie` (8,5 cm) ou `petite` (4 cm, un logo). La hauteur suit les proportions de l'image ; une image plus haute que 21 cm (une capture de téléphone) y est ramenée, sa largeur suit.
+- **`width`** : `full` (17 cm, la largeur du texte ; par défaut), `half` (8,5 cm) ou `small` (4 cm, un logo). La hauteur suit les proportions de l'image ; une image plus haute que 21 cm (une capture de téléphone) y est ramenée, sa largeur suit.
 - **`caption`** : la légende, sous l'image, dans le style des légendes de tableau, sur la même page qu'elle ; `**gras**`, `*italique*` et `<u>souligné</u>` permis.
 - **`alt`** : le texte alternatif, ce que montre l'image pour qui ne la voit pas (lecteur d'écran) ; sans lui, la légende en tient lieu.
 
@@ -1231,7 +1229,7 @@ Fichier : sortie/devis-<numéro>.docx ; title : « Devis n° <numéro> — <obje
 Une liste des travaux ; en sous-liste, les fournitures.
 
 # Détail du devis
-Un tableau : Désignation, Quantité (entier), Montant HT (montant_eur), TVA (pourcentage), avec la somme des montants.
+Un tableau : Désignation, Quantité (integer), Montant HT (amount_eur), TVA (percent), avec la somme des montants.
 
 # Conditions de paiement
 Une liste numérotée : l'acompte à la signature, le solde.
@@ -1244,12 +1242,12 @@ Ce qui ne rentre pas ailleurs : accès au chantier, délais.
 - **« (facultatif) »** en fin de titre : la section peut manquer.
 - **Seuls les titres `#` comptent** : un `##` reste de la consigne, et un `#` dans un bloc de code est ignoré. Un modèle sans titre `#` n'a que des consignes, et son plan n'est pas vérifié.
 - **Ce qui se répète** (un écran, une exigence, un lot de travaux) n'est pas une section : c'est du contenu d'une section, sous des titres de niveau 2, que le plan ne vérifie pas.
-- **Noms** : minuscules, chiffres et tirets, 40 caractères au plus, et pas `aucun`. **Bornes** : 20 modèles par outil, 20 000 caractères par modèle.
+- **Noms** : minuscules, chiffres et tirets, 40 caractères au plus, et pas `none`. **Bornes** : 20 modèles par outil, 20 000 caractères par modèle.
 
 La description de l'outil gagne ces lignes, et le schéma l'action `template` et le champ `template` :
 
 ```text
-Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou aucun pour un document libre ; les titres de niveau 1 du document suivent alors le plan du modèle, dans l'ordre. Avant d'écrire, lire le modèle : action=template, template=<nom> (ses consignes et son plan).
+Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou none pour un document libre ; les titres de niveau 1 du document suivent alors le plan du modèle, dans l'ordre. Avant d'écrire, lire le modèle : action=template, template=<nom> (ses consignes et son plan).
 - devis : Devis de travaux pour un particulier.
 ```
 
@@ -1265,11 +1263,11 @@ Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou auc
  "text": "---\ndescription: Devis de travaux pour un particulier.\n---\nFichier : sortie/devis-<numéro>.docx ; …"}
 ```
 
-**Écrire** : `template` est obligatoire, le nom d'un modèle déclaré, ou `aucun` pour un document libre.
+**Écrire** : `template` est obligatoire, le nom d'un modèle déclaré, ou `none` pour un document libre.
 
 ```text
 Arguments invalides :
-- (racine) : Value error, write attend 'template' : le modèle suivi, ou aucun pour un document libre
+- (racine) : Value error, write attend 'template' : le modèle suivi, ou none pour un document libre
 ```
 
 Avec un modèle, les titres de niveau 1 du document doivent être ses sections : toutes celles qui ne sont pas facultatives, aucune autre, pas deux fois, dans l'ordre. La comparaison ignore la numérotation (« 2. », « 2.3 - », « b) », « IV. »), la casse, les accents, les espaces et l'emphase : « 2. Détail du devis » est la section « Détail du devis ». Les titres de niveau 2 et 3 sont libres. Un écart est refusé avec les autres fautes du document, et le plan attendu suit, pour que le modèle de langage se corrige même s'il n'a pas lu le modèle :
@@ -1280,9 +1278,9 @@ Document refusé :
 - modèle devis, plan attendu (titres de niveau 1, dans l'ordre) : Objet des travaux · Détail du devis · Conditions de paiement · Remarques (facultatif)
 ```
 
-Une section en trop (« section hors du modèle « Annexe » »), donnée deux fois, ou à la mauvaise place (« « Conditions de paiement » avant « Détail du devis » : le modèle les met dans l'autre ordre ») est refusée de même. Une section libre se déclare : `# Annexes (facultatif)`. Le résultat d'une écriture gagne `"template": "devis"` (ou `"aucun"`).
+Une section en trop (« section hors du modèle « Annexe » »), donnée deux fois, ou à la mauvaise place (« « Conditions de paiement » avant « Détail du devis » : le modèle les met dans l'autre ordre ») est refusée de même. Une section libre se déclare : `# Annexes (facultatif)`. Le résultat d'une écriture gagne `"template": "devis"` (ou `"none"`).
 
-Le `.docx` garde le modèle suivi dans sa **catégorie** (Fichier > Informations > Propriétés dans Word), que LibreOffice garde aussi ; la relecture le rend (voir « Lire un document Word »). Un document libre, `aucun`, est le même fichier qu'un document écrit par un outil sans modèles. `pdf` vérifie le plan de la même façon, mais un PDF ne garde pas son modèle.
+Le `.docx` garde le modèle suivi dans sa **catégorie** (Fichier > Informations > Propriétés dans Word), que LibreOffice garde aussi ; la relecture le rend (voir « Lire un document Word »). Un document libre, `none`, est le même fichier qu'un document écrit par un outil sans modèles. `pdf` vérifie le plan de la même façon, mais un PDF ne garde pas son modèle.
 
 Un fichier de modèle introuvable, hors du dossier des ressources, ou mal formé arrête le chargement, et `loom validate` le dit :
 
@@ -1313,7 +1311,7 @@ Deux fichiers, relatifs à `resources_dir` et lus au chargement comme un modèle
     folders: …
 ```
 
-**Le modèle de langage n'en voit rien** : ni le schéma ni la description ne changent, et `action: template` ne rend que le modèle. Il écrit les mêmes blocs et les mêmes titres de section qu'avant ; le style ne coûte aucun token. Un document qui suit un modèle prend la charte complétée de sa disposition ; un document libre (`aucun`), ou un outil sans modèles, la charte ; un outil sans `style`, le style maison, le même fichier qu'avant, octet pour octet.
+**Le modèle de langage n'en voit rien** : ni le schéma ni la description ne changent, et `action: template` ne rend que le modèle. Il écrit les mêmes blocs et les mêmes titres de section qu'avant ; le style ne coûte aucun token. Un document qui suit un modèle prend la charte complétée de sa disposition ; un document libre (`none`), ou un outil sans modèles, la charte ; un outil sans `style`, le style maison, le même fichier qu'avant, octet pour octet.
 
 **La charte.** Les clés sont en anglais, comme la config ; les valeurs d'une liste fermée, en français. Toutes sont facultatives : une clé absente garde la valeur du style maison.
 
@@ -1324,12 +1322,12 @@ Deux fichiers, relatifs à `resources_dir` et lus au chargement comme un modèle
 | `colors` | Couleurs nommées, reprises ailleurs par leur nom | `text`, `primary` (titres), `accent` (titre 3, encadré, titre discret), `muted` (légendes, en-tête, pied), `rule` (filets fins) ; six chiffres hexadécimaux |
 | `paragraphs` | Le corps du texte | `line` (interligne, 1 à 3), `after` (espace après, en pt), `justify` |
 | `title` | Le titre du document | `size`, `color`, `align` (`gauche`, `centre`, `droite`), `uppercase`, `underline` (le texte souligné, de sa longueur), `rule` (filet dessous, de toute la largeur) |
-| `headings` | Titres de niveaux 1 à 3 | par niveau (`1:`, `2:`, `3:`) : `size`, `color`, `uppercase` ; `numbering` : `aucune`, `decimale` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
+| `headings` | Titres de niveaux 1 à 3 | par niveau (`1:`, `2:`, `3:`) : `size`, `color`, `uppercase`, `underline` (un titre `discret` suit le niveau 1) ; `numbering` : `aucune`, `decimale` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
 | `tables` | Les tableaux | `borders` : `grille`, `filets`, `horizontales`, `aucune` ; `header: {fill, color}` ; `bands` (fond d'une ligne sur deux) ; `size` (pt) ; `width` : `pleine`, `contenu` ; `align` |
 | `note` | L'encadré | `fill`, `border` |
 | `captions` | Les légendes | `numbered` : « Tableau 1 — », « Figure 1 — » (images et graphiques) |
-| `images` | Les images | `grid` : deux images `moitie` qui se suivent se posent côte à côte, chacune avec sa légende |
-| `toc` | Le bloc `sommaire` (`extra_blocks`) | `levels` : les niveaux de titre repris (1 à 3, 2 par défaut) ; `pages` : `false` pour des liens sans numéros de page |
+| `images` | Les images | `grid` : deux images `half` qui se suivent se posent côte à côte, chacune avec sa légende |
+| `toc` | Le bloc `toc` (`blocks: [toc]`) | `levels` : les niveaux de titre repris (1 à 3, 2 par défaut) ; `pages` : `false` pour des liens sans numéros de page |
 | `header`, `footer` | En-tête, pied de page | `left`, `center`, `right` : un texte, avec `{page}`, `{pages}`, `{titre}` ; `lines` : des lignes centrées (4 au plus : des mentions légales) ; `logo: {file, width, position}` (PNG ou JPEG, largeur en cm) ; `first_page` : `false` pour une première page sans |
 | `watermark` | Filigrane | un texte (« BROUILLON ») ; `""` dans une disposition retire celui de la charte |
 
@@ -1403,31 +1401,31 @@ Les styles ne servent qu'à `loom.word` pour l'instant : `style` est refusé sur
 
 #### Signature, sommaire, liste à cocher
 
-Depuis loom-ia 2.0.20, pour `loom.word`, avec `extra_blocks: true` (`false` par défaut). Trois blocs qu'aucun style ne peut faire exister, parce qu'ils sont du contenu : une zone de signature, un sommaire, une liste à cocher. Ils couvrent les devis à signer, les PV, les contrats, les rapports et les listes de contrôle. Ils coûtent environ 230 tokens par appel de modèle (598 caractères de schéma, 262 de description), d'où leur clé à part.
+Depuis loom-ia 2.0.20, pour `loom.word`, avec `signature`, `toc` et `checkboxes` dans `blocks` (aucun par défaut ; chacun se déclare seul depuis 2.1.0). Trois blocs qu'aucun style ne peut faire exister, parce qu'ils sont du contenu : une zone de signature, un sommaire, une liste à cocher. Ils couvrent les devis à signer, les PV, les contrats, les rapports et les listes de contrôle. Ils coûtent, par appel de modèle : `signature` environ 110 tokens, `toc` environ 55, `checkboxes` environ 25 (432, 220 et 97 caractères de description et de schéma).
 
 ```yaml
   - python: loom.word
-    extra_blocks: true
+    blocks: [signature, toc, checkboxes]
     folders: …
 ```
 
 ```json
 {"type": "signature", "signers": ["Le client", "L'entreprise"], "mention": "Bon pour accord"}
-{"type": "sommaire"}
-{"type": "liste", "checkboxes": true,
+{"type": "toc"}
+{"type": "list", "checkboxes": true,
  "items": ["[x] Coupure d'eau faite", {"text": "[x] Fuite localisée", "items": ["[ ] Canalisation"]}]}
 ```
 
 - **`signature`** : une colonne par signataire (4 au plus, 80 caractères chacun), sans cadre : le libellé en gras, la mention en italique (200 caractères au plus), « Date : », « Signature : » et 2 cm pour signer.
-- **`sommaire`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si la charte numérote les titres ; un titre de section masqué n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». La charte règle le sommaire : `toc: {levels: 2, pages: true}` (les niveaux de titre repris, 1 à 3 ; `pages: false` pour des liens sans numéros de page).
-- **Liste à cocher** : `checkboxes: true` sur une `liste`, et chaque élément, sous-éléments compris, commence par `[x]` (coché) ou `[ ]` (vide), la convention markdown. Une case ☒ ou ☐ se pose devant. Une liste à cocher n'est pas numérotée.
+- **`toc`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si la charte numérote les titres ; un titre de section masqué n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». La charte règle le sommaire : `toc: {levels: 2, pages: true}` (les niveaux de titre repris, 1 à 3 ; `pages: false` pour des liens sans numéros de page).
+- **Liste à cocher** : `checkboxes: true` sur une `list`, et chaque élément, sous-éléments compris, commence par `[x]` (coché) ou `[ ]` (vide), la convention markdown. Une case ☒ ou ☐ se pose devant. Une liste à cocher n'est pas numérotée.
 
 ```text
 Document refusé :
-- bloc 2 (liste), élément 1 : dans une liste à cocher (checkboxes), chaque élément commence par [x] (coché) ou [ ] (vide)
+- bloc 2 (list), élément 1 : dans une liste à cocher (checkboxes), chaque élément commence par [x] (coché) ou [ ] (vide)
 ```
 
-La relecture rend ces blocs tels qu'écrits : `signature` avec ses signataires et sa mention, `sommaire` (ses entrées ne reviennent pas), la liste à cocher avec ses `[x]` et `[ ]`. Un document relu se réécrit tel quel. Un outil sans `extra_blocks` qui lit un tel document le dit dans `notes`, avant une réécriture que le schéma refuserait. `loom validate` ajoute `signature, sommaire, cases à cocher : oui`. `loom.pdf` refuse `extra_blocks` pour l'instant.
+La relecture rend ces blocs tels qu'écrits : `signature` avec ses signataires et sa mention, `toc` (ses entrées ne reviennent pas), la liste à cocher avec ses `[x]` et `[ ]`. Un document relu se réécrit tel quel. Un outil qui ne les déclare pas et lit un tel document le dit dans `notes` (« Lu : signature (1), toc (1) ; cet outil n'en écrit pas : … (ou blocks: [signature, toc] dans la config de l'outil) »), avant une réécriture que le schéma refuserait. `loom validate` les liste dans `blocs`. `loom.pdf` refuse `signature`, `toc` et `checkboxes` pour l'instant.
 
 #### Lire un document Word
 
@@ -1440,25 +1438,25 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 ```json
 {"path": "sortie/devis-D-2026-042.docx", "title": "Devis n° D-2026-042 — Rénovation salle de bains", "start": 0,
  "blocks": [
-  {"type": "titre", "level": 0, "text": "Devis n° D-2026-042 — Rénovation salle de bains"},
-  {"type": "paragraphe", "text": "Madame **Dupont**,\nsuite à notre visite du 2 octobre, voici notre proposition *détaillée*."},
-  {"type": "titre", "level": 1, "text": "Objet des travaux"},
-  {"type": "liste", "ordered": false, "items": ["Dépose de la baignoire", {"text": "Pose d'une douche à l'italienne", "items": ["receveur extra-plat", "paroi vitrée 120 cm"]}]},
-  {"type": "tableau", "rows": [["Désignation", "Quantité", "Montant HT", "TVA"],
+  {"type": "heading", "level": 0, "text": "Devis n° D-2026-042 — Rénovation salle de bains"},
+  {"type": "paragraph", "text": "Madame **Dupont**,\nsuite à notre visite du 2 octobre, voici notre proposition *détaillée*."},
+  {"type": "heading", "level": 1, "text": "Objet des travaux"},
+  {"type": "list", "ordered": false, "items": ["Dépose de la baignoire", {"text": "Pose d'une douche à l'italienne", "items": ["receveur extra-plat", "paroi vitrée 120 cm"]}]},
+  {"type": "table", "rows": [["Désignation", "Quantité", "Montant HT", "TVA"],
                               ["Dépose baignoire", "1", "180,00 €", "10,0 %"], …,
                               ["Total", "", "2 200,50 €", ""]]},
-  {"type": "paragraphe", "text": "Montants hors taxes ; TVA réduite à 10 % (travaux de rénovation)."},
+  {"type": "paragraph", "text": "Montants hors taxes ; TVA réduite à 10 % (travaux de rénovation)."},
   {"type": "note", "text": "**Validité**\nCe devis est valable **3 mois**."},
-  {"type": "titre", "level": 2, "text": "Conditions de paiement"},
-  {"type": "liste", "ordered": true, "items": ["Acompte de 30 % à la signature", "Solde à la fin du chantier"]}],
+  {"type": "heading", "level": 2, "text": "Conditions de paiement"},
+  {"type": "list", "ordered": true, "items": ["Acompte de 30 % à la signature", "Solde à la fin du chantier"]}],
  "block_count": 9, "truncated": false}
 ```
 
 - **Titres** : `level` 0 pour le titre du document (style « Titre »), 1 et plus pour les titres de section. Un document écrit ailleurs est reconnu par ses niveaux de plan ou ses styles de titre, quelle que soit la langue de Word.
 - **Tableaux** : les cellules en texte, telles qu'affichées ; une cellule fusionnée laisse les suivantes vides.
 - **Coupe** : au-delà de 40 000 caractères, `"truncated": true`, `"next_start"` (le bloc où reprendre, avec `start`) et `"outline"`, le plan entier avec l'indice de chaque titre, pour aller droit à une section.
-- **Graphiques** : un graphique du `.docx` revient en bloc `graphique`, à sa place, avec ses libellés et ses séries (ce que Word garde dans le graphique) ; un type que l'outil n'écrit pas (aires, nuage de points…) revient avec son nom technique en `kind`. Le rapport ci-dessus, relu : `{"type": "graphique", "kind": "barres_horizontales", "title": "Total TTC par client", "categories": ["Julien Barre", "Chauffage Lemaire Rénovation", "Guillot SARL"], "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}]}`. La lecture rend les graphiques même sans `charts` ; une note dit alors que l'outil n'en écrit pas, et de les retirer avant de réécrire le document.
-- **Images** : avec `images: true`, une image revient en bloc `image`, à sa place : `{"type": "image", "path": "maquettes/depot-demande.png", "width": "pleine_largeur", "caption": "Écran 1 — Dépôt de la demande par le manager"}`. `path` est le fichier que l'outil a lu en écrivant le document : il le garde dans le nom de l'image (visible dans le volet de sélection de Word). Relu puis réécrit tel quel, le document redonne le même fichier, tant que les images sont là. Une image insérée ailleurs revient sans `path`, avec sa largeur et son texte alternatif, et une note le dit : pour réécrire le document, lui donner un fichier, ou retirer le bloc. La légende qui suit l'image revient en `caption`. Sans `images`, les images sont seulement comptées.
+- **Graphiques** : un graphique du `.docx` revient en bloc `chart`, à sa place, avec ses libellés et ses séries (ce que Word garde dans le graphique) ; un type que l'outil n'écrit pas (aires, nuage de points…) revient avec son nom technique en `kind`. Le rapport ci-dessus, relu : `{"type": "chart", "kind": "horizontal_bar", "title": "Total TTC par client", "categories": ["Julien Barre", "Chauffage Lemaire Rénovation", "Guillot SARL"], "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}]}`. La lecture rend les graphiques même sans `chart` dans `blocks` ; une note dit alors que l'outil n'en écrit pas, et de les retirer avant de réécrire le document.
+- **Images** : avec `image` dans `blocks`, une image revient en bloc `image`, à sa place : `{"type": "image", "path": "maquettes/depot-demande.png", "width": "full", "caption": "Écran 1 — Dépôt de la demande par le manager"}`. `path` est le fichier que l'outil a lu en écrivant le document : il le garde dans le nom de l'image (visible dans le volet de sélection de Word). Relu puis réécrit tel quel, le document redonne le même fichier, tant que les images sont là. Une image insérée ailleurs revient sans `path`, avec sa largeur et son texte alternatif, et une note le dit : pour réécrire le document, lui donner un fichier, ou retirer le bloc. La légende qui suit l'image revient en `caption`. Sans lui, les images sont seulement comptées.
 - **Modèle** : avec `templates`, un document écrit avec un modèle le rend (`"template": "devis"`), pour qu'une réécriture le reprenne. S'il dit suivre un modèle que l'outil ne déclare pas, une note le dit. Sans `templates`, rien n'est rendu.
 - **Notes** : les images non lues (un graphique n'en est pas une), les modifications suivies (le texte inséré est rendu, le texte supprimé ou déplacé omis), les commentaires présents.
 
@@ -1486,15 +1484,15 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 
 #### À savoir
 
-- **Images** (avec `images: true`) : PNG et JPEG, en ligne et centrées, à trois largeurs ; ni habillage, ni rognage, ni rotation, ni image dans un tableau ou une note. L'orientation EXIF d'une photo n'est pas appliquée. `pdf` ne relit pas les images d'un PDF.
+- **Images** (avec `blocks: [image]`) : PNG et JPEG, en ligne et centrées, à trois largeurs ; ni habillage, ni rognage, ni rotation, ni image dans un tableau ou une note. L'orientation EXIF d'une photo n'est pas appliquée. `pdf` ne relit pas les images d'un PDF.
 - Pas d'en-tête de page personnalisé, pas de lien cliquable.
 - **Graphiques** : quatre types, ni aires, ni nuage de points, ni barres empilées, ni deux axes ; `from_table` ne vise que le dernier tableau qui précède ; pas de classeur dans le `.docx`. `pdf` ne relit pas un graphique : un PDF n'en garde que le dessin, dont le texte donne les libellés.
 - **On écrit un document neuf, ou on en lit un** : on ne modifie pas un document existant, et on ne remplit ni un modèle `.dotx` ni un formulaire PDF.
 - **Modèles de document** (avec `templates`) : seuls les titres de niveau 1 sont vérifiés, ni les sous-parties, ni les tableaux attendus, ni les textes fixes. La consigne d'un modèle sur l'apparence (alignement, police) ne peut pas être suivie : le style est celui de l'outil.
-- **La lecture d'un `.docx` ne voit pas** les images sans `images: true` (ni, avec, celles d'un tableau ou d'une zone de texte), les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
+- **La lecture d'un `.docx` ne voit pas** les images sans `image` dans `blocks` (ni, avec, celles d'un tableau ou d'une zone de texte), les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
 - **Le style ne se règle pas**, comme pour `excel`.
 - **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
-- **Coût** : environ 1,6 k tokens par outil et par appel de modèle, description et schéma compris ; environ 500 de plus avec `charts: true`, environ 230 avec `images: true`, environ 130 avec `templates` et 30 de plus par modèle déclaré (son nom et sa description). Le texte d'un modèle ne coûte qu'à sa lecture.
+- **Coût** : environ 1,4 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 130 avec `templates` et 30 de plus par modèle déclaré (son nom et sa description). Le texte d'un modèle ne coûte qu'à sa lecture.
 
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 

@@ -17,18 +17,18 @@ from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 type ColumnType = Literal[
-    "texte",
-    "entier",
+    "text",
+    "integer",
     "decimal",
-    "montant_eur",
-    "montant_keur",
-    "pourcentage",
+    "amount_eur",
+    "amount_keur",
+    "percent",
     "date",
-    "date_heure",
-    "annee",
-    "booleen",
+    "datetime",
+    "year",
+    "boolean",
 ]
-type Aggregate = Literal["somme", "moyenne", "nombre", "min", "max"]
+type Aggregate = Literal["sum", "average", "count", "min", "max"]
 type Scalar = str | int | float | bool | None
 
 # Ce qu'une cellule reçoit : valeur convertie selon son type de colonne.
@@ -55,7 +55,7 @@ def convert(
     try:
         return _convert(value, kind, where, problems, zone)
     except ValueError, OverflowError:
-        problems.error(f"{where} : {value!r} n'est pas un(e) {kind.replace('_', ' ')}")
+        problems.error(f"{where} : {value!r} n'est pas une valeur {kind}")
         return None
 
 
@@ -63,25 +63,25 @@ def _convert(
     value: Scalar, kind: ColumnType, where: str, problems: Reports, zone: ZoneInfo
 ) -> Stored:
     match kind:
-        case "texte":
+        case "text":
             return str(value)
-        case "annee":
+        case "year":
             year = str(value).strip()
             if isinstance(value, float) and value.is_integer():
                 year = str(int(value))
             if not re.fullmatch(r"\d{4}", year):
                 raise ValueError(year)
             return year
-        case "booleen":
+        case "boolean":
             return "Oui" if _boolean(value) else "Non"
-        case "entier":
+        case "integer":
             number = _number(value)
             if not float(number).is_integer():
                 raise ValueError(value)
             return int(number)
-        case "decimal" | "montant_eur" | "montant_keur":
+        case "decimal" | "amount_eur" | "amount_keur":
             return _number(value)
-        case "pourcentage":
+        case "percent":
             number = _number(value, percent=True)
             if abs(number) > 1:
                 problems.warn(
@@ -91,7 +91,7 @@ def _convert(
             return number
         case "date":
             return _date(value)
-        case "date_heure":
+        case "datetime":
             return _datetime(value, zone)
 
 

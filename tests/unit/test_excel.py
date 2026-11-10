@@ -100,24 +100,24 @@ def cell(path: Path, sheet: str, address: str) -> Cell:
 SUIVI: Final[dict[str, Any]] = {
     "name": "Suivi",
     "columns": [
-        {"header": "Client", "type": "texte"},
+        {"header": "Client", "type": "text"},
         {"header": "Date devis", "type": "date"},
-        {"header": "Montant HT", "type": "montant_eur"},
-        {"header": "Relances", "type": "entier"},
+        {"header": "Montant HT", "type": "amount_eur"},
+        {"header": "Relances", "type": "integer"},
     ],
     "rows": [
         {"cells": ["Dupont", "2026-10-02", 1250.5, 2]},
         {"cells": ["Martin", "2026-10-09", 830, 0]},
     ],
-    "totals": {"Montant HT": "somme", "Relances": "somme"},
+    "totals": {"Montant HT": "sum", "Relances": "sum"},
 }
 HYPOTHESES: Final[dict[str, Any]] = {
     "name": "Hypothèses",
-    "columns": [{"header": "Paramètre"}, {"header": "Valeur", "type": "pourcentage"}],
+    "columns": [{"header": "Paramètre"}, {"header": "Valeur", "type": "percent"}],
     "rows": [
         {
             "cells": ["Taux de conversion visé", 0.15],
-            "role": "hypothese",
+            "role": "assumption",
             "note": "Source : objectif fixé par l'utilisateur",
         }
     ],
@@ -132,7 +132,7 @@ def test_the_spec_names_the_folders_and_the_vocabulary(tool: ExcelTool) -> None:
     assert spec.name == "excel"
     assert "- donnees : read\n" in spec.description
     assert "- valide : write (attend une approbation humaine : write)" in spec.description
-    assert "montant_eur" in spec.description and "hypothese" in spec.description
+    assert "amount_eur" in spec.description and "assumption" in spec.description
     assert (spec.approval, spec.side_effects) == ("always", "irreversible")
     assert "sheets" in str(spec.input_schema)
 
@@ -280,7 +280,7 @@ PRELEVEMENTS: Final[dict[str, Any]] = {
     "columns": [
         {"header": "Date", "type": "date"},
         {"header": "Libellé"},
-        {"header": "Montant", "type": "montant_eur"},
+        {"header": "Montant", "type": "amount_eur"},
         {"header": "Doublon signalé"},
     ],
     "rows": [
@@ -301,7 +301,7 @@ PRELEVEMENTS: Final[dict[str, Any]] = {
             ]
         },
     ],
-    "totals": {"Montant": "somme"},
+    "totals": {"Montant": "sum"},
 }
 
 
@@ -312,7 +312,7 @@ async def test_the_total_is_labelled_in_the_first_text_column(tool: ExcelTool, d
     assert cell(target, "Prélèvements", "A4").value is None
     assert cell(target, "Prélèvements", "B4").value == "Total"
     assert cell(target, "Prélèvements", "C4").value == "=SUM(C2:C3)"
-    everything = {**PRELEVEMENTS, "columns": [{"header": "Montant", "type": "montant_eur"}]}
+    everything = {**PRELEVEMENTS, "columns": [{"header": "Montant", "type": "amount_eur"}]}
     everything["rows"] = [{"cells": [10]}, {"cells": [20]}]
     await call(tool, path="sortie/q.xlsx", sheets=[everything])
     # Toutes les colonnes ont leur agrégat : pas de place pour un libellé.
@@ -518,10 +518,10 @@ async def test_values_follow_their_type(tool: ExcelTool, disk: Path) -> None:
         {
             "name": "Types",
             "columns": [
-                {"header": "Année", "type": "annee"},
-                {"header": "Actif", "type": "booleen"},
-                {"header": "Quand", "type": "date_heure"},
-                {"header": "Part", "type": "pourcentage"},
+                {"header": "Année", "type": "year"},
+                {"header": "Actif", "type": "boolean"},
+                {"header": "Quand", "type": "datetime"},
+                {"header": "Part", "type": "percent"},
             ],
             "rows": [{"cells": [2026, True, "2026-10-25T17:50:00+00:00", "15%"]}],
         }
@@ -544,7 +544,7 @@ async def test_the_timezone_is_a_parameter(disk: Path) -> None:
     )
     sheet: dict[str, Any] = {
         "name": "T",
-        "columns": [{"header": "Quand", "type": "date_heure"}],
+        "columns": [{"header": "Quand", "type": "datetime"}],
         "rows": [{"cells": ["2026-10-25T17:50:00+00:00"]}, {"cells": ["2026-10-25 09:00"]}],
     }
     await call(tool, path="sortie/t.xlsx", sheets=[sheet])
@@ -556,7 +556,7 @@ async def test_the_timezone_is_a_parameter(disk: Path) -> None:
 
 
 async def test_a_percent_given_as_a_whole_number_warns(tool: ExcelTool) -> None:
-    done = await call(tool, path="sortie/p.xlsx", sheets=[_one("pourcentage", 15)])
+    done = await call(tool, path="sortie/p.xlsx", sheets=[_one("percent", 15)])
     assert done["warnings"] == [
         "F!A2 : 15 affiché 1500% — un pourcentage se donne en fraction (0.15 pour 15 %)"
     ]
@@ -565,11 +565,11 @@ async def test_a_percent_given_as_a_whole_number_warns(tool: ExcelTool) -> None:
 @pytest.mark.parametrize(
     ("column_type", "value", "said"),
     [
-        ("entier", 1.5, "1.5 n'est pas un\\(e\\) entier"),
-        ("date", "demain", "'demain' n'est pas un\\(e\\) date"),
-        ("montant_eur", "beaucoup", "n'est pas un\\(e\\) montant eur"),
-        ("annee", "26", "n'est pas un\\(e\\) annee"),
-        ("booleen", "peut-être", "n'est pas un\\(e\\) booleen"),
+        ("integer", 1.5, "1.5 n'est pas une valeur integer"),
+        ("date", "demain", "'demain' n'est pas une valeur date"),
+        ("amount_eur", "beaucoup", "n'est pas une valeur amount_eur"),
+        ("year", "26", "n'est pas une valeur year"),
+        ("boolean", "peut-être", "n'est pas une valeur boolean"),
     ],
 )
 async def test_a_value_that_does_not_fit_its_type(
@@ -586,8 +586,8 @@ async def test_structure_faults_are_listed_together(tool: ExcelTool) -> None:
         {
             "name": "H",
             "columns": [{"header": "x"}],
-            "rows": [{"cells": ["a", "b"], "role": "hypothese"}],
-            "totals": {"y": "somme"},
+            "rows": [{"cells": ["a", "b"], "role": "assumption"}],
+            "totals": {"y": "sum"},
         },
     ]
     with pytest.raises(ToolError) as caught:
@@ -598,7 +598,7 @@ async def test_structure_faults_are_listed_together(tool: ExcelTool) -> None:
         "en-tête donné deux fois : x",
         "onglet 'suivi' donné deux fois",
         "H!2 : 2 valeurs pour 1 colonnes",
-        "une hypothèse porte sa source en 'note'",
+        "une ligne assumption porte sa source en 'note'",
         "total sur une colonne inconnue 'y'",
     ):
         assert part in said, part
@@ -670,8 +670,8 @@ async def test_formulas_are_checked_in_the_workbook(tool: ExcelTool, disk: Path)
     sheet = {
         "name": "Calcul",
         "columns": [
-            {"header": "Taux", "type": "pourcentage"},
-            {"header": "CA", "type": "montant_eur"},
+            {"header": "Taux", "type": "percent"},
+            {"header": "CA", "type": "amount_eur"},
         ],
         "rows": [{"cells": [0.1, "=A2*'Suivi'!C2"]}, {"cells": [None, "=SOMME(B2)"]}],
     }
@@ -698,7 +698,7 @@ async def test_recalc_refuses_a_formula_in_error(disk: Path, soffice: str) -> No
     )
     sheet: dict[str, Any] = {
         "name": "R",
-        "columns": [{"header": "A", "type": "entier"}, {"header": "B", "type": "decimal"}],
+        "columns": [{"header": "A", "type": "integer"}, {"header": "B", "type": "decimal"}],
         "rows": [{"cells": [0, "=1/A2"]}, {"cells": [2, "=10/A3"]}],
     }
     await refused(

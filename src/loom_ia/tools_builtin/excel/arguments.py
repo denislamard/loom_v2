@@ -32,7 +32,7 @@ MAX_READ_ROWS: Final = 1_000
 MAX_SHEET_ROWS: Final = 1_048_576
 MAX_SHEET_COLUMNS: Final = 16_384
 
-type Role = Literal["saisie", "formule", "hypothese", "total", "note"]
+type Role = Literal["input", "formula", "assumption", "total", "note"]
 
 # Les descriptions des champs restent courtes : la description de l'outil
 # explique déjà le vocabulaire, et le schéma est envoyé au modèle à chaque appel.
@@ -51,7 +51,7 @@ class ColumnSpec(_Model):
             "mais « Montant HT », pas « Montant HT (€) ».",
         ),
     ]
-    type: ColumnType = "texte"
+    type: ColumnType = "text"
 
 
 class CellSpec(_Model):
@@ -112,7 +112,7 @@ class SheetSpec(_Model):
 class ChartSpec(_Model):
     """Un graphique tiré des colonnes de son onglet : libellés et séries, par en-tête."""
 
-    kind: ChartKind = "barres"
+    kind: ChartKind = "bar"
     title: str | None = None
     categories: Annotated[str, Field(description="En-tête de la colonne des libellés.")]
     values: Annotated[

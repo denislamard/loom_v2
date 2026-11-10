@@ -37,13 +37,13 @@ def _axis(kind: ColumnType) -> Callable[[float], str]:
     """Les graduations : des nombres ronds, sans décimale inutile."""
 
     def said(value: float) -> str:
-        if kind == "pourcentage":
-            return display(value * 100, "entier") + f"{NBSP}%"
-        whole = display(value, "entier")
+        if kind == "percent":
+            return display(value * 100, "integer") + f"{NBSP}%"
+        whole = display(value, "integer")
         match kind:
-            case "montant_eur":
+            case "amount_eur":
                 return f"{whole}{NBSP}€"
-            case "montant_keur":
+            case "amount_keur":
                 return f"{whole}{NBSP}k€"
             case "decimal" if value != int(value):
                 return display(value, "decimal")
@@ -62,7 +62,7 @@ def _short(label: str) -> str:
 
 
 def height(chart: ChartOut) -> float:
-    if chart.kind != "barres_horizontales":
+    if chart.kind != "horizontal_bar":
         return HEIGHT
     return min(20 * cm, max(6 * cm, 1.4 * cm + 0.6 * cm * len(chart.categories)))
 
@@ -72,14 +72,14 @@ def drawing(chart: ChartOut, width: float) -> Drawing:
     tall = height(chart)
     found = Drawing(width, tall)
     multi = len(chart.series) > 1
-    if chart.kind == "secteurs":
+    if chart.kind == "pie":
         _pie(found, chart, width, tall)
         return found
     bottom = 2.0 * cm if multi else 0.9 * cm
-    if chart.kind == "barres_horizontales":
+    if chart.kind == "horizontal_bar":
         plot: Any = HorizontalBarChart()
         left = 4 * cm
-    elif chart.kind == "courbe":
+    elif chart.kind == "line":
         plot = HorizontalLineChart()
         left = 1.8 * cm
     else:
@@ -88,7 +88,7 @@ def drawing(chart: ChartOut, width: float) -> Drawing:
     # Des libellés qui ne tiennent pas côte à côte sous l'axe s'inclinent.
     room = (width - left) / max(len(chart.categories), 1) / (8 * 0.55)
     longest = max((len(_short(label)) for label in chart.categories), default=0)
-    rotated = chart.kind != "barres_horizontales" and longest > room
+    rotated = chart.kind != "horizontal_bar" and longest > room
     if rotated:
         bottom += 1.4 * cm
     plot.x, plot.y = left, bottom
@@ -97,7 +97,7 @@ def drawing(chart: ChartOut, width: float) -> Drawing:
     data = [
         [value if value is not None else None for value in values] for _, values in chart.series
     ]
-    if chart.kind == "barres_horizontales":
+    if chart.kind == "horizontal_bar":
         # reportlab dessine la première catégorie en bas : à l'envers, elle est en haut.
         names = names[::-1]
         data = [row[::-1] for row in data]
@@ -118,7 +118,7 @@ def drawing(chart: ChartOut, width: float) -> Drawing:
     if rotated:
         plot.categoryAxis.labels.angle = 35
         plot.categoryAxis.labels.boxAnchor = "ne"
-    if chart.kind == "courbe":
+    if chart.kind == "line":
         for index in range(len(chart.series)):
             plot.lines[index].strokeColor = PALETTE[index % len(PALETTE)]
             plot.lines[index].strokeWidth = 2
@@ -137,7 +137,7 @@ def drawing(chart: ChartOut, width: float) -> Drawing:
             plot.barLabels.fontSize = 7
             plot.barLabels.fillColor = TEXT
             plot.barLabels.nudge = 3
-            horizontal = chart.kind == "barres_horizontales"
+            horizontal = chart.kind == "horizontal_bar"
             plot.barLabels.boxAnchor = "w" if horizontal else "s"
             if values and min(values) >= 0:
                 # De la place au bout de la plus grande barre, pour son étiquette.
@@ -156,7 +156,7 @@ def _pie(found: Drawing, chart: ChartOut, width: float, tall: float) -> None:
     values = [value or 0.0 for value in chart.series[0][1]]
     total = sum(values) or 1.0
     pie.data = values
-    pie.labels = [display(value / total, "pourcentage") for value in values]
+    pie.labels = [display(value / total, "percent") for value in values]
     pie.simpleLabels = 1
     pie.slices.fontName = FONT
     pie.slices.fontSize = 8

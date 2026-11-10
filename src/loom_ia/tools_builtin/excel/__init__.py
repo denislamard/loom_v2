@@ -2,7 +2,7 @@
 """Outil excel : écrire un classeur .xlsx mis en forme, d'après une description sémantique.
 
 Le modèle dit **ce que sont** les données — onglets, colonnes et leur type,
-rôle des lignes (saisie, hypothèse, total…), formules — et jamais à quoi
+rôle des lignes (input, assumption, total…), formules — et jamais à quoi
 elles ressemblent : police, couleurs, formats de nombre, largeurs, volets
 gelés et filtre viennent du style maison (``workbook``). Deux appels
 identiques donnent deux fichiers identiques, octet pour octet.

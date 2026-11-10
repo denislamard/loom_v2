@@ -639,9 +639,17 @@ def _builtin_reference(reference: str, params: type[BaseModel], entry: Builtin) 
     fields: dict[str, Any] = {
         name: (info.annotation, info) for name, info in params.model_fields.items()
     }
-    validators = cast(
-        dict[str, Callable[..., Any]], {"_builtin_params": model_validator(mode="after")(check)}
-    )
+    validators: dict[str, Any] = {"_builtin_params": model_validator(mode="after")(check)}
+    # Le contrôle que le modèle des paramètres fait avant tout (``precheck``) : une clé
+    # retirée dite avec ce qui la remplace, plutôt qu'en « Extra inputs are not permitted ».
+    precheck = cast(Callable[[object], object] | None, getattr(params, "precheck", None))
+    if precheck is not None:
+        early = precheck
+
+        def first(cls: type[PythonTool], data: object) -> object:
+            return early(data)
+
+        validators["_builtin_precheck"] = model_validator(mode="before")(first)
     built: type[PythonTool] = create_model(
         f"Builtin_{reference.removeprefix(RESERVED_PREFIX)}",
         __base__=PythonTool,

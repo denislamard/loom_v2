@@ -24,23 +24,23 @@ TEXT: Final = "404040"
 # Au-delà, des étiquettes de valeur sur chaque barre se chevauchent.
 LABELLED_BARS: Final = 12
 # La place laissée au bout de la plus grande barre pour son étiquette.
-LABEL_ROOM: Final = {"barres": 1.1, "barres_horizontales": 1.22}
+LABEL_ROOM: Final = {"bar": 1.1, "horizontal_bar": 1.22}
 
 # Formats des nombres de Word et d'Excel, en syntaxe neutre : le logiciel applique
 # les séparateurs de la langue du lecteur.
 LABEL_FORMATS: Final[dict[ColumnType, str]] = {
-    "entier": "#,##0",
+    "integer": "#,##0",
     "decimal": "#,##0.00",
-    "montant_eur": '#,##0.00 "€"',
-    "montant_keur": '#,##0 "k€"',
-    "pourcentage": "0.0%",
+    "amount_eur": '#,##0.00 "€"',
+    "amount_keur": '#,##0 "k€"',
+    "percent": "0.0%",
 }
 AXIS_FORMATS: Final[dict[ColumnType, str]] = {
-    "entier": "#,##0",
+    "integer": "#,##0",
     "decimal": "#,##0.##",
-    "montant_eur": '#,##0 "€"',
-    "montant_keur": '#,##0 "k€"',
-    "pourcentage": "0%",
+    "amount_eur": '#,##0 "€"',
+    "amount_keur": '#,##0 "k€"',
+    "percent": "0%",
 }
 
 

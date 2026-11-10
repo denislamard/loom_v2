@@ -337,17 +337,17 @@ def _description(
             "Onglet : 'name' (31 caractères, sans [ ] : * ? / \\), 'columns' ({header, type}), "
             f"puis 'rows' pour un petit tableau (au plus {MAX_INLINE_ROWS} lignes) ou 'data' "
             "pour un fichier .csv, .json ou .xlsx (droit read ; 'sheet' pour l'onglet d'un "
-            ".xlsx) ; 'totals' ajoute une ligne de total (en-tête → somme, moyenne, nombre, min "
+            ".xlsx) ; 'totals' ajoute une ligne de total (en-tête → sum, average, count, min "
             "ou max). La ligne 1 porte les en-têtes : les données commencent ligne 2.",
-            "Types de colonne : texte, entier, decimal, montant_eur, montant_keur (valeur déjà "
-            "en k€), pourcentage (fraction : 0.15 pour 15 %), date (AAAA-MM-JJ), date_heure "
-            f"(ISO 8601 ; un fuseau donné passe en heure de {zone.key}), annee (« 2026 »), "
-            "booleen. Montants et pourcentages affichent leur unité (€, k€, %) : ne pas la "
+            "Types de colonne : text, integer, decimal, amount_eur, amount_keur (valeur déjà "
+            "en k€), percent (fraction : 0.15 pour 15 %), date (AAAA-MM-JJ), datetime "
+            f"(ISO 8601 ; un fuseau donné passe en heure de {zone.key}), year (« 2026 »), "
+            "boolean. Montants et pourcentages affichent leur unité (€, k€, %) : ne pas la "
             "répéter dans l'en-tête.",
-            "Rôles d'une ligne ('role') ou d'une cellule ({value, role, note}) : saisie (à "
-            "remplir par l'utilisateur), hypothese (paramètre cité par les formules ; 'note' "
+            "Rôles d'une ligne ('role') ou d'une cellule ({value, role, note}) : input (à "
+            "remplir par l'utilisateur), assumption (paramètre cité par les formules ; 'note' "
             "obligatoire, avec sa source), total, note (explication). Une valeur « =… » est une "
-            "formule ; dans une ligne saisie ou hypothese, un texte non vide est un libellé.",
+            "formule ; dans une ligne input ou assumption, un texte non vide est un libellé.",
             "Formules : en anglais (SUM, IF, INDEX, MATCH…), arguments séparés par « , », "
             "onglet cité entre apostrophes s'il a une espace ou un accent ('Mes "
             "Hypothèses'!B2). Mettre chaque hypothèse dans sa cellule et la citer ($B$2), "
@@ -380,12 +380,12 @@ def _description(
 
 
 CHART_HELP: Final = (
-    "Graphiques d'un onglet ('charts', liste) : {kind (barres, barres_horizontales, courbe, "
-    "secteurs), title, categories : en-tête de la colonne des libellés, values : en-têtes des "
+    "Graphiques d'un onglet ('charts', liste) : {kind (bar, horizontal_bar, line, pie), "
+    "title, categories : en-tête de la colonne des libellés, values : en-têtes des "
     "colonnes de nombres, une série chacune}. Le graphique est lié aux cellules de l'onglet "
     "(lignes de données depuis la ligne 2, sans total ni note) et se place à droite des "
-    "données : ne pas recopier les nombres ailleurs. Des barres pour comparer, une courbe "
-    f"pour une évolution ({MAX_POINTS} points au plus), des secteurs pour les parts d'un tout "
+    "données : ne pas recopier les nombres ailleurs. bar pour comparer, line pour une "
+    f"évolution ({MAX_POINTS} points au plus), pie pour les parts d'un tout "
     f"(une série, {MAX_SLICES} parts au plus) ; {MAX_CATEGORIES} libellés au plus sinon. "
     "Pour un graphique sur des données d'un autre onglet, les y mettre.",
 )

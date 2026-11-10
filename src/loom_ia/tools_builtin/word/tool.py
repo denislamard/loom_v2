@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """L'outil ``word`` monté : écrire et lire des .docx ; et sa fabrique."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Annotated, ClassVar, Final
 from zoneinfo import ZoneInfo
@@ -84,18 +84,14 @@ class WordTool(DocumentTool):
         zone: ZoneInfo,
         unsafe: str | None = None,
         *,
-        charts: bool = False,
-        images: bool = False,
+        blocks: Iterable[str] = (),
         templates: Mapping[str, Template] | None = None,
         styles: Styles = NO_STYLES,
-        extra_blocks: bool = False,
     ) -> None:
         # Pourquoi les documents ne se lisent pas ici (version d'expat).
         self._unsafe = unsafe
         self._styles = styles
-        super().__init__(
-            space, zone, charts=charts, images=images, templates=templates, extra=extra_blocks
-        )
+        super().__init__(space, zone, blocks=blocks, templates=templates)
 
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
         return writer.render(prepared, self._styles.of(prepared.template)), {}, []
@@ -109,10 +105,7 @@ class WordTool(DocumentTool):
             images=self._images,
             templates=tuple(self._templates) if self._templates else None,
         )
-        if not self._charts:
-            _warn_charts(found)
-        if not self._extra:
-            _warn_extra(found)
+        _warn_unwritten(found, self._blocks)
         return found
 
     def _check_readable(self, path: str) -> None:
@@ -125,7 +118,7 @@ class WordTool(DocumentTool):
             return f"Lecture (action=read) : indisponible ici ({self._unsafe})."
         return (
             f"Lecture (action=read, dans : {folders}) : un .docx, rendu en blocs du même "
-            "vocabulaire (titre level 0 : titre du document), l'emphase en **…** et *…*. Depuis "
+            "vocabulaire (heading level 0 : titre du document), l'emphase en **…** et *…*. Depuis "
             f"le bloc 'start' (0 par défaut), {READ_CHARS} caractères au plus ; au-delà, "
             "'next_start' et 'outline' (le plan, avec l'indice de chaque titre)."
         )
@@ -135,59 +128,35 @@ class WordTool(DocumentTool):
         reading = (
             f"non ({self._unsafe})" if self._unsafe else "oui" if reads else "aucun dossier read"
         )
-        extra = (("signature, sommaire, cases à cocher", "oui"),) if self._extra else ()
         return (
             *super()._options(),
             ("lecture des documents", reading),
-            *extra,
             *self._styles.said,
         )
 
 
-def _warn_charts(found: dict[str, JsonValue]) -> None:
-    """Des graphiques lus par un outil qui n'en écrit pas : le dire avant une réécriture.
-
-    Sinon, le bloc renvoyé tel quel serait refusé par le schéma, sans dire pourquoi.
-    """
-    blocks = found.get("blocks")
-    if not isinstance(blocks, list):
+def _warn_unwritten(found: dict[str, JsonValue], blocks: tuple[str, ...]) -> None:
+    """Des blocs lus que cet outil n'écrit pas (un graphique, une signature, un sommaire, une
+    liste à cocher) : le dire avant une réécriture, que le schéma refuserait sans dire
+    pourquoi."""
+    read = found.get("blocks")
+    if not isinstance(read, list):
         return
-    count = sum(
-        1 for block in blocks if isinstance(block, dict) and block.get("type") == "graphique"
-    )
-    if not count:
+    missing: dict[str, int] = {}
+    for block in read:
+        if not isinstance(block, dict):
+            continue
+        name = "checkboxes" if block.get("checkboxes") else str(block.get("type"))
+        if name in ("chart", "signature", "toc", "checkboxes") and name not in blocks:
+            missing[name] = missing.get(name, 0) + 1
+    if not missing:
         return
+    said = ", ".join(f"{name} ({count})" for name, count in missing.items())
     notes = found.setdefault("notes", list[JsonValue]())
     if isinstance(notes, list):
         notes.append(
-            f"{count} graphique(s) lu(s) : cet outil n'en écrit pas ; les retirer avant de "
-            "réécrire le document (ou charts: true dans la config de l'outil)."
-        )
-
-
-def _warn_extra(found: dict[str, JsonValue]) -> None:
-    """Une signature, un sommaire ou une liste à cocher lus par un outil qui n'en écrit pas.
-
-    Comme pour les graphiques : le dire avant une réécriture, que le schéma refuserait.
-    """
-    blocks = found.get("blocks")
-    if not isinstance(blocks, list):
-        return
-    kinds = sorted(
-        {
-            "liste à cocher" if block.get("checkboxes") else str(block.get("type"))
-            for block in blocks
-            if isinstance(block, dict)
-            and (block.get("type") in ("signature", "sommaire") or block.get("checkboxes"))
-        }
-    )
-    if not kinds:
-        return
-    notes = found.setdefault("notes", list[JsonValue]())
-    if isinstance(notes, list):
-        notes.append(
-            f"Lu : {', '.join(kinds)} ; cet outil n'en écrit pas : les retirer avant de "
-            "réécrire le document (ou extra_blocks: true dans la config de l'outil)."
+            f"Lu : {said} ; cet outil n'en écrit pas : les retirer avant de réécrire le "
+            f"document (ou blocks: [{', '.join(missing)}] dans la config de l'outil)."
         )
 
 
@@ -202,11 +171,9 @@ def build(params: BaseModel, context: BuiltinContext) -> WordTool:
         space,
         ZoneInfo(params.timezone),
         unsafe,
-        charts=params.charts,
-        images=params.images,
+        blocks=params.blocks,
         templates=templates,
         styles=read_styles(params, templates),
-        extra_blocks=params.extra_blocks,
     )
 
 

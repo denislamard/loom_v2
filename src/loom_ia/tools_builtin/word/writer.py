@@ -33,7 +33,6 @@ from xml.sax.saxutils import escape, quoteattr
 
 from loom_ia.tools_builtin._document.content import (
     BlockOut,
-    BreakOut,
     ChartOut,
     ContentsOut,
     HeadingOut,
@@ -474,10 +473,10 @@ def _blocks(
         if (
             style.images_grid
             and isinstance(block, ImageOut)
-            and block.wanted == "moitie"
+            and block.wanted == "half"
             and index < len(blocks)
             and isinstance(second := blocks[index], ImageOut)
-            and second.wanted == "moitie"
+            and second.wanted == "half"
         ):
             index += 1
             half = width // 2
@@ -536,8 +535,6 @@ def _blocks(
                 if source:
                     sized = f"<w:rPr>{_size(size)}</w:rPr>" if size else ""
                     said += _paragraph("QuoteSource", _run(f"— {source}", sized))
-            case BreakOut():
-                said += '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
             case ChartOut():
                 body.charts.append(block)
                 number = len(body.charts)

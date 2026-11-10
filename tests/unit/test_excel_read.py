@@ -302,9 +302,9 @@ async def test_a_workbook_written_by_excel_reads_back(tool: ExcelTool, disk: Pat
     sheets = [
         {
             "name": "Ventes",
-            "columns": [{"header": "Client"}, {"header": "HT", "type": "montant_eur"}],
+            "columns": [{"header": "Client"}, {"header": "HT", "type": "amount_eur"}],
             "rows": [{"cells": ["C-001", 10]}, {"cells": ["C-002", 20]}],
-            "totals": {"HT": "somme"},
+            "totals": {"HT": "sum"},
         }
     ]
     await call(tool, path="sortie/v.xlsx", sheets=sheets)
@@ -329,7 +329,7 @@ async def test_a_sheet_feeds_a_new_workbook(tool: ExcelTool, disk: Path) -> None
     sheets = [
         {
             "name": "Copie",
-            "columns": [{"header": "Client"}, {"header": "Date", "type": "date_heure"}],
+            "columns": [{"header": "Client"}, {"header": "Date", "type": "datetime"}],
             "data": {"path": "donnees/a.xlsx", "sheet": "Données"},
         }
     ]

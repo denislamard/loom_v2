@@ -47,56 +47,57 @@ from loom_ia.tools_builtin._document.content import Pictures, Prepared, prepare
 from loom_ia.tools_builtin._document.picture import Picture, PictureError
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin._folders import Folders, Located, write_bytes
+from loom_ia.tools_builtin._office_params import OPTIONAL_BLOCKS
 from loom_ia.tools_builtin._templates import NONE as NO_TEMPLATE
 from loom_ia.tools_builtin._templates import Template
 from loom_ia.tools_builtin.local_files_params import Right
 
 # Le mode d'emploi de l'écriture, commun aux formats ; il ne part qu'à qui peut écrire.
 WRITING_HELP: Final = (
-    "Blocs ('blocks', dans l'ordre ; 'type' en tête de chacun) : titre (text, level 1 à 3), "
-    "paragraphe (text), liste (items : textes, ou {text, items} pour une sous-liste ; "
-    "ordered pour une liste numérotée), tableau (columns {header, type}, rows : une liste "
+    "Blocs ('blocks', dans l'ordre ; 'type' en tête de chacun) : heading (text, level 1 à 3), "
+    "paragraph (text), list (items : textes, ou {text, items} pour une sous-liste ; "
+    "ordered pour une liste numérotée), table (columns {header, type}, rows : une liste "
     f"de valeurs par ligne, totals, caption ; {MAX_TABLE_COLUMNS} colonnes et "
-    f"{MAX_TABLE_ROWS} lignes au plus), note (text, title : un encadré), citation (text, "
-    "source), saut_de_page. 'title' : le titre du document, en tête. Dans un texte : "
-    "**gras**, *italique*, <u>souligné</u>, et \\n pour aller à la ligne dans le même "
-    "paragraphe ; pas d'autre balisage (ni #, ni -, ni |, ni autre balise).",
-    "Types de colonne : texte, entier, decimal, montant_eur, montant_keur (valeur déjà en "
-    "k€), pourcentage (fraction : 0.15 pour 15 %), date (AAAA-MM-JJ), date_heure (ISO "
-    "8601), annee, booleen. L'outil écrit les valeurs à la française (1 250,50 €) : donner "
-    "des nombres, sans unité ni dans la valeur ni dans l'en-tête. 'totals' : en-tête → "
-    "somme, moyenne, nombre, min ou max, calculés par l'outil.",
+    f"{MAX_TABLE_ROWS} lignes au plus), note (text, title : ce que le lecteur doit retenir, "
+    "une mise en garde), quote (text, source). 'title' : le titre du document, en tête. "
+    "Dans un texte : **gras**, *italique*, <u>souligné</u>, et \\n pour aller à la ligne "
+    "dans le même paragraphe ; pas d'autre balisage (ni #, ni -, ni |, ni autre balise).",
+    "Types de colonne : text, integer, decimal, amount_eur, amount_keur (valeur déjà en "
+    "k€), percent (fraction : 0.15 pour 15 %), date (AAAA-MM-JJ), datetime (ISO 8601), "
+    "year, boolean. L'outil écrit les valeurs à la française (1 250,50 €) : donner des "
+    "nombres, sans unité ni dans la valeur ni dans l'en-tête. 'totals' : en-tête → sum, "
+    "average, count, min ou max, calculés par l'outil.",
     "Décrire ce que SONT les blocs, jamais leur apparence : police, tailles, couleurs, "
-    "marges et numéros de page sont décidés par l'outil.",
+    "marges, sauts de page et numéros de page sont décidés par le style.",
 )
 
-# Le bloc graphique, seulement pour un outil monté avec ``charts``.
-CHART_HELP: Final = (
-    "Graphique ('type': 'graphique') : kind (barres, barres_horizontales, courbe, "
-    "secteurs), title, caption ; ses données viennent du tableau qui le précède "
-    "(from_table : {categories : en-tête des libellés, values : en-têtes des colonnes de "
-    "nombres}), ce qui évite de recopier les nombres, ou sont données en ligne "
-    "(categories, series [{name, values}], value_type). Des barres pour comparer, une "
-    "courbe pour une évolution, des secteurs pour les parts d'un tout (une série, "
-    f"{MAX_SLICES} parts au plus) ; {MAX_CATEGORIES} libellés au plus. Jamais de "
-    "graphique dessiné en caractères.",
-)
-
-# Signature, sommaire et liste à cocher, seulement pour un outil monté avec ``extra_blocks``.
-EXTRA_HELP: Final = (
-    "Signature ('type': 'signature') : signers (« Le client », « L'entreprise » ; 4 au plus), "
-    "mention (« Bon pour accord »). Sommaire ('type': 'sommaire') : la table des matières, "
-    "tirée des titres. Liste à cocher : checkboxes, chaque élément commence par [x] ou [ ].",
-)
-
-# Le bloc image, seulement pour un outil monté avec ``images``.
-IMAGE_HELP: Final = (
-    "Image ('type': 'image') : path, un fichier PNG ou JPEG d'un dossier qui a le droit "
-    "read ; width : pleine_largeur (par défaut), moitie, ou petite (un logo) ; caption, la "
-    "légende dessous ; alt, ce que montre l'image pour qui ne la voit pas (la légende sinon). "
-    "L'image est centrée, dans ses proportions ; l'outil la lit lui-même, ne jamais en "
-    f"envoyer le contenu. {MAX_IMAGES} images au plus.",
-)
+# Le mode d'emploi de chaque bloc facultatif, seulement s'il est déclaré (``blocks``).
+OPTIONAL_HELP: Final[Mapping[str, str]] = {
+    "chart": (
+        "Graphique ('type': 'chart') : kind (bar, horizontal_bar, line, pie), title, "
+        "caption ; ses données viennent du tableau qui le précède (from_table : {categories : "
+        "en-tête des libellés, values : en-têtes des colonnes de nombres}), ce qui évite de "
+        "recopier les nombres, ou sont données en ligne (categories, series [{name, values}], "
+        "value_type). bar pour comparer, line pour une évolution, pie pour les parts d'un "
+        f"tout (une série, {MAX_SLICES} parts au plus) ; {MAX_CATEGORIES} libellés au plus. "
+        "Jamais de graphique dessiné en caractères."
+    ),
+    "image": (
+        "Image ('type': 'image') : path, un fichier PNG ou JPEG d'un dossier qui a le droit "
+        "read ; width : full (par défaut), half, ou small (un logo) ; caption, la légende "
+        "dessous ; alt, ce que montre l'image pour qui ne la voit pas (la légende sinon). "
+        "L'image est centrée, dans ses proportions ; l'outil la lit lui-même, ne jamais en "
+        f"envoyer le contenu. {MAX_IMAGES} images au plus."
+    ),
+    "signature": (
+        "Signature ('type': 'signature') : signers (« Le client », « L'entreprise » ; 4 au "
+        "plus), mention (« Bon pour accord »)."
+    ),
+    "toc": "Sommaire ('type': 'toc') : la table des matières, tirée des titres.",
+    "checkboxes": (
+        "Liste à cocher : checkboxes sur une list, chaque élément commence par [x] ou [ ]."
+    ),
+}
 
 
 class DocumentTool(ABC):
@@ -115,31 +116,24 @@ class DocumentTool(ABC):
         space: Folders,
         zone: ZoneInfo,
         *,
-        charts: bool = False,
-        images: bool = False,
+        blocks: Iterable[str] = (),
         templates: Mapping[str, Template] | None = None,
-        extra: bool = False,
     ) -> None:
         self._space = space
         self._zone = zone
-        self._charts = charts
-        self._images = images
-        self._extra = extra
+        # Les blocs facultatifs déclarés, dans l'ordre de ``OPTIONAL_BLOCKS``.
+        self._blocks = tuple(name for name in OPTIONAL_BLOCKS if name in set(blocks))
+        self._charts = "chart" in self._blocks
+        self._images = "image" in self._blocks
         self._templates = dict(templates or {})
         folders = space.folders
         if self._templates and not any("write" in f.rights for f in folders):
             raise ValueError(
                 "templates : des modèles de document, mais aucun dossier n'a le droit write"
             )
-        # Le schéma vu par le modèle n'a les blocs graphique et image, et les modèles,
-        # que s'ils servent.
-        self._call = variant(
-            self.CALL,
-            charts=charts,
-            images=images,
-            templates=tuple(self._templates),
-            extra=extra,
-        )
+        # Le schéma vu par le modèle n'a les blocs facultatifs, et les modèles, que s'ils
+        # servent.
+        self._call = variant(self.CALL, blocks=self._blocks, templates=tuple(self._templates))
         # Le pire de ses appels ; un outil qui ne fait que lire n'en a aucun, et se
         # rejoue donc en variante (une lecture sans effet s'y exécute).
         effects: SideEffects = (
@@ -363,8 +357,7 @@ class DocumentTool(ABC):
     def _options(self) -> tuple[tuple[str, str], ...]:
         return (
             ("fuseau", self._zone.key),
-            ("graphiques", "oui" if self._charts else "non"),
-            ("images", "oui" if self._images else "non"),
+            ("blocs", ", ".join(self._blocks) or "aucun"),
             ("modèles", ", ".join(self._templates) or "aucun"),
         )
 
@@ -373,7 +366,7 @@ class DocumentTool(ABC):
         if not self._templates:
             return []
         return [
-            "Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou aucun "
+            "Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou none "
             "pour un document libre ; les titres de niveau 1 du document suivent alors le "
             "plan du modèle, dans l'ordre. Avant d'écrire, lire le modèle : action=template, "
             "template=<nom> (ses consignes et son plan).",
@@ -402,9 +395,7 @@ class DocumentTool(ABC):
                 f"Le fichier s'écrit dans : {', '.join(writes)} ; un fichier existant n'est "
                 "remplacé qu'avec overwrite=true (droit overwrite).",
                 *WRITING_HELP,
-                *(CHART_HELP if self._charts else ()),
-                *(IMAGE_HELP if self._images else ()),
-                *(EXTRA_HELP if self._extra else ()),
+                *(OPTIONAL_HELP[name] for name in self._blocks),
                 *self._templates_help(),
                 *self._writing_notes(),
                 f"Bornes : {MAX_BLOCKS} blocs, {MAX_ITEMS} éléments par liste. Résultat : le "

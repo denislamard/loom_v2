@@ -60,35 +60,35 @@ MAX_WIDTH: Final = 60
 # à peu près ce que tient une page A4 en portrait, marges comprises.
 PORTRAIT_WIDTH: Final = 90
 # Types centrés : une date alignée à droite colle au texte de la colonne suivante.
-CENTERED: Final[frozenset[ColumnType]] = frozenset({"date", "date_heure", "annee", "booleen"})
+CENTERED: Final[frozenset[ColumnType]] = frozenset({"date", "datetime", "year", "boolean"})
 
 # Formats en syntaxe neutre : Excel applique les séparateurs de la locale du
 # lecteur. Dates : formats intégrés n° 14 et 22, qui suivent la locale (D5 :
 # adaptatif) ; négatifs avec le signe moins, zéro affiché 0.
 NUMBER_FORMATS: Final[Mapping[ColumnType, str]] = {
-    "texte": "@",
-    "entier": "#,##0",
+    "text": "@",
+    "integer": "#,##0",
     "decimal": "#,##0.00",
-    "montant_eur": '#,##0.00 "€"',
-    "montant_keur": '#,##0 "k€"',
-    "pourcentage": "0.0%",
+    "amount_eur": '#,##0.00 "€"',
+    "amount_keur": '#,##0 "k€"',
+    "percent": "0.0%",
     "date": "mm-dd-yy",
-    "date_heure": "m/d/yy h:mm",
-    "annee": "@",
-    "booleen": "@",
+    "datetime": "m/d/yy h:mm",
+    "year": "@",
+    "boolean": "@",
 }
 # Largeur d'une colonne de formules, dont la valeur n'est connue qu'au recalcul.
 FORMULA_WIDTH: Final[Mapping[ColumnType, int]] = {
-    "texte": 20,
-    "entier": 10,
+    "text": 20,
+    "integer": 10,
     "decimal": 12,
-    "montant_eur": 14,
-    "montant_keur": 12,
-    "pourcentage": 9,
+    "amount_eur": 14,
+    "amount_keur": 12,
+    "percent": 9,
     "date": 11,
-    "date_heure": 16,
-    "annee": 6,
-    "booleen": 6,
+    "datetime": 16,
+    "year": 6,
+    "boolean": 6,
 }
 
 _THIN: Final = Side(style="thin", color="A6A6A6")
@@ -184,12 +184,13 @@ def _check_sheet(sheet: SheetSpec, rows: list[RowSpec], problems: Problems) -> N
                 f"{sheet.name}!{number} : {len(row.cells)} valeurs pour {len(headers)} colonnes"
             )
         if (
-            row.role == "hypothese"
+            row.role == "assumption"
             and not row.note
             and not any(isinstance(cell, CellSpec) and cell.note for cell in row.cells)
         ):
             problems.error(
-                f"{sheet.name}!{number} : une hypothèse porte sa source en 'note' (« Source : … »)"
+                f"{sheet.name}!{number} : une ligne assumption porte sa source en 'note' "
+                "(« Source : … »)"
             )
     for header in sheet.totals or {}:
         if header not in headers:
@@ -251,18 +252,18 @@ def _write_sheet(
                 cell.value = check_formula(spec.value, where, names, problems)
                 done.formulas.append(where)
                 role = "total" if role == "total" else None
-                _style(cell, role or ("lien" if "!" in spec.value else "formule"), column.type)
+                _style(cell, role or ("link" if "!" in spec.value else "formula"), column.type)
                 widths[index - 1] = max(widths[index - 1], FORMULA_WIDTH[column.type])
             else:
                 cell.value = convert(spec.value, column.type, where, problems, zone)
                 # Un texte non vide d'une ligne à saisir est son libellé, pas une saisie.
-                label = column.type == "texte" and cell.value is not None
-                if role in {"saisie", "hypothese"} and label and spec.role is None:
+                label = column.type == "text" and cell.value is not None
+                if role in {"input", "assumption"} and label and spec.role is None:
                     role = None
                 _style(cell, role, column.type)
                 widths[index - 1] = max(widths[index - 1], len(_shown(cell.value)))
-            has_input |= role == "saisie"
-            has_assumption |= role == "hypothese"
+            has_input |= role == "input"
+            has_assumption |= role == "assumption"
             note = spec.note or (row.note if not noted and role not in {None, "note"} else None)
             if note:
                 cell.comment = Comment(note, "loom-ia", width=300, height=80)
@@ -292,7 +293,7 @@ def _write_totals(ws: Worksheet, sheet: SheetSpec, at: int, done: Written) -> No
             done.formulas.append(f"{sheet.name}!{letter}{at}")
         elif index == label:
             cell.value = "Total"
-            _style(cell, "total", "texte")
+            _style(cell, "total", "text")
             continue
         _style(cell, "total", column.type)
 
@@ -309,7 +310,7 @@ def _total_label(sheet: SheetSpec) -> int | None:
         for index, column in enumerate(sheet.columns, start=1)
         if column.header not in totals
     ]
-    texts = [index for index, column in free if column.type == "texte"]
+    texts = [index for index, column in free if column.type == "text"]
     if texts:
         return texts[0]
     return free[0][0] if free else None
@@ -330,7 +331,7 @@ def _finish(
         ws.auto_filter.ref = f"A1:{end}{rows + 1}"
     for index, (width, column) in enumerate(zip(widths, sheet.columns, strict=True), start=1):
         # Une marge, et le retrait d'un texte (d'un caractère) en plus.
-        margin = 3 if column.type == "texte" else 2
+        margin = 3 if column.type == "text" else 2
         ws.column_dimensions[get_column_letter(index)].width = min(
             MAX_WIDTH, max(MIN_WIDTH, width + margin)
         )
@@ -341,7 +342,7 @@ def _finish(
         legend.append("Bleu sur fond jaune : hypothèse (sa source en commentaire).")
     for offset, line in enumerate(legend):
         cell = _cell(ws, last + 2 + offset, 1, line)
-        _style(cell, "note", "texte")
+        _style(cell, "note", "text")
     _page_setup(ws)
 
 
@@ -370,13 +371,13 @@ def _cell(ws: Worksheet, row: int, column: int, value: Stored = None) -> Cell:
 def _style(cell: Cell, role: str | None, kind: ColumnType) -> None:
     cell.number_format = NUMBER_FORMATS[kind]
     match role:
-        case "saisie":
+        case "input":
             cell.font = Font(name=FONT_NAME, size=FONT_SIZE, color=BLUE)
             cell.fill = PatternFill("solid", fgColor=INPUT_FILL)
-        case "hypothese":
+        case "assumption":
             cell.font = Font(name=FONT_NAME, size=FONT_SIZE, color=BLUE)
             cell.fill = PatternFill("solid", fgColor=ASSUMPTION_FILL)
-        case "lien":
+        case "link":
             cell.font = Font(name=FONT_NAME, size=FONT_SIZE, color=GREEN)
         case "total":
             cell.font = Font(name=FONT_NAME, size=FONT_SIZE, bold=True)
@@ -389,7 +390,7 @@ def _style(cell: Cell, role: str | None, kind: ColumnType) -> None:
         return
     if kind in CENTERED:
         cell.alignment = Alignment(horizontal="center")
-    elif kind == "texte":
+    elif kind == "text":
         # Un retrait : un texte ne colle pas au nombre aligné à droite de la colonne voisine.
         wrap = isinstance(cell.value, str) and len(cell.value) > MAX_WIDTH
         cell.alignment = Alignment(

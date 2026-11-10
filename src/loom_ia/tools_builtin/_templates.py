@@ -30,7 +30,7 @@ MAX_DESCRIPTION: Final = 200
 NAME: Final = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MAX_NAME: Final = 40
 # Le nom qui choisit un document libre, quand l'outil a des modèles.
-NONE: Final = "aucun"
+NONE: Final = "none"
 OPTIONAL: Final = "(facultatif)"
 _HEADING: Final = re.compile(r"^#(?!#)\s*(.*?)\s*#*\s*$")
 _FENCE: Final = re.compile(r"^\s*(```|~~~)")

@@ -86,18 +86,18 @@ FACTURE_STYLE: Final[dict[str, Any]] = {
     },
 }
 FACTURE: Final[list[dict[str, Any]]] = [
-    {"type": "titre", "text": "Émetteur"},
-    {"type": "paragraphe", "text": "**Dupont Plomberie**\n12 rue des Lilas, 69003 Lyon"},
-    {"type": "titre", "text": "Client"},
-    {"type": "paragraphe", "text": "SCI Les Tilleuls\n4 avenue Foch, 69006 Lyon"},
-    {"type": "titre", "text": "Description"},
+    {"type": "heading", "text": "Émetteur"},
+    {"type": "paragraph", "text": "**Dupont Plomberie**\n12 rue des Lilas, 69003 Lyon"},
+    {"type": "heading", "text": "Client"},
+    {"type": "paragraph", "text": "SCI Les Tilleuls\n4 avenue Foch, 69006 Lyon"},
+    {"type": "heading", "text": "Description"},
     {
-        "type": "tableau",
+        "type": "table",
         "columns": [
             {"header": "Désignation"},
-            {"header": "Qté", "type": "entier"},
-            {"header": "PU HT", "type": "montant_eur"},
-            {"header": "Montant HT", "type": "montant_eur"},
+            {"header": "Qté", "type": "integer"},
+            {"header": "PU HT", "type": "amount_eur"},
+            {"header": "Montant HT", "type": "amount_eur"},
         ],
         "rows": [
             ["Remplacement du chauffe-eau électrique de 200 litres, dépose comprise", 1, 890, 890],
@@ -105,14 +105,14 @@ FACTURE: Final[list[dict[str, Any]]] = [
         ],
     },
     {
-        "type": "tableau",
-        "columns": [{"header": "Rubrique"}, {"header": "Montant", "type": "montant_eur"}],
+        "type": "table",
+        "columns": [{"header": "Rubrique"}, {"header": "Montant", "type": "amount_eur"}],
         "rows": [["Sous-total HT", 1110], ["TVA (10 %)", 111], ["Net à payer", 1221]],
     },
-    {"type": "titre", "text": "Informations de paiement"},
-    {"type": "paragraphe", "text": "Virement : IBAN FR76 1234 5678 9012"},
-    {"type": "titre", "text": "Conditions et termes"},
-    {"type": "paragraphe", "text": "Paiement à 30 jours ; indemnité forfaitaire : 40 €."},
+    {"type": "heading", "text": "Informations de paiement"},
+    {"type": "paragraph", "text": "Virement : IBAN FR76 1234 5678 9012"},
+    {"type": "heading", "text": "Conditions et termes"},
+    {"type": "paragraph", "text": "Paiement à 30 jours ; indemnité forfaitaire : 40 €."},
 ]
 RAPPORT_MD: Final = "# Page de garde\n# Contexte\n# Mesures (facultatif)\n# Conditions générales\n"
 RAPPORT_STYLE: Final[dict[str, Any]] = {
@@ -126,21 +126,21 @@ RAPPORT_STYLE: Final[dict[str, Any]] = {
     },
 }
 RAPPORT: Final[list[dict[str, Any]]] = [
-    {"type": "titre", "text": "Page de garde"},
-    {"type": "paragraphe", "text": "Chantier SCI Les Tilleuls"},
-    {"type": "titre", "text": "Contexte"},
-    {"type": "titre", "text": "Photos", "level": 2},
-    {"type": "image", "path": "sortie/a.png", "width": "moitie", "caption": "Avant"},
-    {"type": "image", "path": "sortie/a.png", "width": "moitie", "caption": "Après"},
-    {"type": "titre", "text": "Mesures"},
+    {"type": "heading", "text": "Page de garde"},
+    {"type": "paragraph", "text": "Chantier SCI Les Tilleuls"},
+    {"type": "heading", "text": "Contexte"},
+    {"type": "heading", "text": "Photos", "level": 2},
+    {"type": "image", "path": "sortie/a.png", "width": "half", "caption": "Avant"},
+    {"type": "image", "path": "sortie/a.png", "width": "half", "caption": "Après"},
+    {"type": "heading", "text": "Mesures"},
     {
-        "type": "tableau",
+        "type": "table",
         "columns": [{"header": "Point"}, {"header": "Pression", "type": "decimal"}],
         "rows": [["P1", 3.2], ["P2", 2.1]],
         "caption": "Pression mesurée",
     },
-    {"type": "titre", "text": "Conditions générales"},
-    {"type": "paragraphe", "text": "Article 1. Le rapport décrit l'état constaté."},
+    {"type": "heading", "text": "Conditions générales"},
+    {"type": "paragraph", "text": "Article 1. Le rapport décrit l'état constaté."},
 ]
 
 
@@ -148,10 +148,10 @@ RAPPORT: Final[list[dict[str, Any]]] = [
 OUTPUTS: Final[dict[int, Path]] = {}
 
 
-def make(tmp_path: Path, **params: Any) -> WordTool:
+def make(tmp_path: Path, blocks: tuple[str, ...] = ("image",), **params: Any) -> WordTool:
     (tmp_path / "sortie").mkdir(exist_ok=True)
     (tmp_path / "sortie" / "a.png").write_bytes(png(80, 60))
-    model = WordParams.model_validate({"folders": [FOLDER], "images": True, **params})
+    model = WordParams.model_validate({"folders": [FOLDER], "blocks": list(blocks), **params})
     tool = build(model, BuiltinContext(base_dir=tmp_path))
     OUTPUTS[id(tool)] = tmp_path / "sortie"
     return tool
@@ -218,8 +218,10 @@ def check_order(xml: str) -> None:
 
 # --- Sans style, rien ne change ---------------------------------------------------------
 
-# L'empreinte du devis de ``test_word`` écrit sans style, au commit 9ae0492 (avant les styles).
-DEVIS_SHA256: Final = "e094a8e27393d78ff1857ccaa6f908cb512ea82579f64f131fb7fc4f3438ba6a"
+# L'empreinte du devis de ``test_word`` écrit sans style : celle de la 2.0.21 pour le même
+# contenu écrit dans le vocabulaire français (le devis n'a plus de saut de page, sorti du
+# vocabulaire en 2.1.0). Avant le saut de page retiré, celle du commit 9ae0492 (avant les styles).
+DEVIS_SHA256: Final = "149987cb614b5a4aded8996c5524116ba1a35a14863c513bb81cb04521f4f455"
 
 
 async def test_without_a_style_nothing_changes(tmp_path: Path) -> None:
@@ -243,7 +245,7 @@ async def test_without_a_style_nothing_changes(tmp_path: Path) -> None:
 
 async def test_the_charte_sets_fonts_colors_and_headings(tmp_path: Path) -> None:
     tool = styled(tmp_path)
-    path = await write(tool, "libre", FACTURE, title="Facture", template="aucun")
+    path = await write(tool, "libre", FACTURE, title="Facture", template="none")
     styles = part(path, "word/styles.xml")
     assert 'w:ascii="Arial"' in styles and '<w:sz w:val="20"/>' in styles
     title = re.search(r'<w:style w:type="paragraph" w:styleId="Title">.*?</w:style>', styles)
@@ -268,7 +270,7 @@ async def test_an_underlined_title(tmp_path: Path) -> None:
     """Le texte du titre souligné, de sa longueur ; sans filet de toute la largeur."""
     charte = {"title": {"underline": True, "rule": False}}
     tool = styled(tmp_path, charte=charte)
-    path = await write(tool, "libre", FACTURE, title="Facture", template="aucun")
+    path = await write(tool, "libre", FACTURE, title="Facture", template="none")
     styles = part(path, "word/styles.xml")
     title = re.search(r'<w:style w:type="paragraph" w:styleId="Title">.*?</w:style>', styles)
     assert title is not None
@@ -278,9 +280,29 @@ async def test_an_underlined_title(tmp_path: Path) -> None:
     assert "<w:u " not in styles_xml(resolve(StyleSpec.model_validate({"title": {"rule": False}})))
 
 
+async def test_underlined_headings(tmp_path: Path) -> None:
+    """Un niveau souligné, les autres non ; un titre discret hérite du niveau 1."""
+    charte = {"headings": {1: {"underline": True}}}
+    tool = make(
+        tmp_path,
+        style={"spec": charte},
+        templates={"facture": {"text": FACTURE_MD, "style": {"spec": FACTURE_STYLE}}},
+    )
+    path = await write(tool, "facture", FACTURE, title="Facture", template="facture")
+    styles = part(path, "word/styles.xml")
+    check_order(styles)
+    for level, underlined in ((1, True), (2, False), (3, False)):
+        heading = re.search(rf'w:styleId="Heading{level}">.*?</w:style>', styles)
+        assert heading is not None
+        assert ('<w:u w:val="single"/>' in heading.group()) is underlined
+    quiet = re.search(r'w:styleId="HeadingQuiet">.*?</w:style>', styles)
+    assert quiet is not None and '<w:basedOn w:val="Heading1"/>' in quiet.group()
+    assert "<w:u " not in quiet.group()  # hérité, pas annulé
+
+
 async def test_header_footer_logo_and_watermark(tmp_path: Path) -> None:
     tool = styled(tmp_path)
-    path = await write(tool, "libre", FACTURE, title="Facture F-12", template="aucun")
+    path = await write(tool, "libre", FACTURE, title="Facture F-12", template="none")
     header = part(path, "word/header1.xml")
     assert "Facture F-12" in header  # {titre}
     assert 'string="BROUILLON"' in header and "PowerPlusWaterMarkObject" in header
@@ -303,7 +325,7 @@ async def test_header_footer_logo_and_watermark(tmp_path: Path) -> None:
 async def test_a_first_page_without_header(tmp_path: Path) -> None:
     charte = {**CHARTE, "header": {"right": "{titre}", "first_page": False}, "watermark": None}
     tool = styled(tmp_path, charte)
-    path = await write(tool, "libre", FACTURE, title="Facture", template="aucun")
+    path = await write(tool, "libre", FACTURE, title="Facture", template="none")
     document = part(path, "word/document.xml")
     assert "<w:titlePg/>" in document
     assert '<w:headerReference w:type="first" r:id="rIdHeader2"/>' in document
@@ -333,18 +355,18 @@ async def test_numbered_headings_and_captions(tmp_path: Path) -> None:
     read = await call(styled(tmp_path), action="read", path="sortie/rapport.docx")
     blocks = read["blocks"]
     # Relu sans numéros : ni « 1. » devant les titres, ni « Figure 1 — » dans les légendes.
-    assert {"type": "titre", "level": 1, "text": "Contexte"} in blocks
+    assert {"type": "heading", "level": 1, "text": "Contexte"} in blocks
     captions = [b.get("caption") for b in blocks if b["type"] == "image"]
     assert captions == ["Avant", "Après"]
-    assert {"type": "paragraphe", "text": "Pression mesurée"} in blocks
+    assert {"type": "paragraph", "text": "Pression mesurée"} in blocks
     # Le titre masqué revient en titre, pas en liste (B-4).
-    assert {"type": "titre", "level": 1, "text": "Page de garde"} in blocks
+    assert {"type": "heading", "level": 1, "text": "Page de garde"} in blocks
 
 
 async def test_an_underlined_section_title_keeps_its_layout(tmp_path: Path) -> None:
     """« <u>Client</u> » est la section Client : le plan l'accepte, la disposition la pose."""
     blocks = [
-        dict(block, text=f"<u>{block['text']}</u>") if block["type"] == "titre" else block
+        dict(block, text=f"<u>{block['text']}</u>") if block["type"] == "heading" else block
         for block in FACTURE
     ]
     path = await write(styled(tmp_path), "facture", blocks, title="Facture", template="facture")
@@ -355,7 +377,7 @@ async def test_an_underlined_section_title_keeps_its_layout(tmp_path: Path) -> N
 
 async def test_article_numbering(tmp_path: Path) -> None:
     tool = make(tmp_path, style={"spec": {"headings": {"numbering": "article"}}})
-    path = await write(tool, "contrat", [{"type": "titre", "text": "Objet"}], title="Contrat")
+    path = await write(tool, "contrat", [{"type": "heading", "text": "Objet"}], title="Contrat")
     assert '<w:lvlText w:val="Article %1 \u2013"/>' in part(path, "word/numbering.xml")
 
 
@@ -387,14 +409,14 @@ async def test_a_facture_laid_out(tmp_path: Path) -> None:
     assert '<w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:sz w:val="16"/>' in document
     # Relu : le plan du modèle, dans l'ordre, et le texte des cellules.
     read = await call(tool, action="read", path="sortie/facture.docx")
-    titles = [b["text"] for b in read["blocks"] if b["type"] == "titre"]
+    titles = [b["text"] for b in read["blocks"] if b["type"] == "heading"]
     assert titles == ["Facture", *(s.title for s in parse_template("facture", FACTURE_MD).sections)]
-    assert {"type": "paragraphe", "text": "SCI Les Tilleuls\n4 avenue Foch, 69006 Lyon"} in read[
+    assert {"type": "paragraph", "text": "SCI Les Tilleuls\n4 avenue Foch, 69006 Lyon"} in read[
         "blocks"
     ]
     # Réécrit tel que relu (sans le titre du document) : le plan passe la vérification.
     again = [
-        block if block["type"] != "tableau" else FACTURE[index]
+        block if block["type"] != "table" else FACTURE[index]
         for index, block in enumerate(read["blocks"][1:])
     ]
     assert len(again) == len(FACTURE)
@@ -430,7 +452,7 @@ async def test_a_report_laid_out(tmp_path: Path) -> None:
 async def test_columns_then_landscape_are_balanced(tmp_path: Path) -> None:
     layout = {"sections": {"A": {"columns": 2}, "B": {"landscape": True}}}
     tool = make(tmp_path, templates={"t": {"text": "# A\n# B\n", "style": {"spec": layout}}})
-    blocks = [{"type": "titre", "text": "A"}, {"type": "titre", "text": "B"}]
+    blocks = [{"type": "heading", "text": "A"}, {"type": "heading", "text": "B"}]
     path = await write(tool, "d", blocks, template="t")
     sections = re.findall(r"<w:sectPr>.*?</w:sectPr>", part(path, "word/document.xml"))
     # Colonnes, fermeture continue d'une colonne, paysage sur nouvelle page.
@@ -442,7 +464,7 @@ async def test_columns_then_landscape_are_balanced(tmp_path: Path) -> None:
 async def test_a_boxed_section_and_a_page_break(tmp_path: Path) -> None:
     layout = {"sections": {"B": {"box": True, "page_break": True, "space_before": 1}}}
     tool = make(tmp_path, templates={"t": {"text": "# A\n# B\n", "style": {"spec": layout}}})
-    blocks = [{"type": "titre", "text": "A"}, {"type": "titre", "text": "B"}]
+    blocks = [{"type": "heading", "text": "A"}, {"type": "heading", "text": "B"}]
     path = await write(tool, "d", blocks, template="t")
     document = part(path, "word/document.xml")
     assert document.index('<w:br w:type="page"/>') < document.index('w:line="567"')
@@ -455,7 +477,7 @@ async def test_an_absent_optional_section_leaves_the_other_alone(tmp_path: Path)
     md = "# A\n# B (facultatif)\n# C\n"
     layout = {"beside": [{"sections": ["A", "B"]}]}
     tool = make(tmp_path, templates={"t": {"text": md, "style": {"spec": layout}}})
-    blocks = [{"type": "titre", "text": "A"}, {"type": "titre", "text": "C"}]
+    blocks = [{"type": "heading", "text": "A"}, {"type": "heading", "text": "C"}]
     path = await write(tool, "d", blocks, template="t")
     assert "LoomLayout" not in part(path, "word/document.xml")
 
@@ -646,8 +668,8 @@ def test_a_cancelled_numbering_is_not_a_list() -> None:
     )
     found = reader_module.read(docx(body, styles), "d.docx", 0)
     assert found["blocks"] == [
-        {"type": "liste", "ordered": False, "items": ["Un"]},
-        {"type": "paragraphe", "text": "Deux"},
+        {"type": "list", "ordered": False, "items": ["Un"]},
+        {"type": "paragraph", "text": "Deux"},
     ]
 
 
@@ -661,7 +683,7 @@ def test_a_caption_numbered_by_a_complex_field() -> None:
         'xml:space="preserve"> — Pression</w:t></w:r></w:p>'
     )
     found = reader_module.read(docx(body), "d.docx", 0)
-    assert found["blocks"] == [{"type": "paragraphe", "text": "Pression"}]
+    assert found["blocks"] == [{"type": "paragraph", "text": "Pression"}]
 
 
 def docx(body: str, styles: str | None = None) -> bytes:
@@ -733,12 +755,12 @@ async def test_libreoffice_lays_out_the_report(tmp_path: Path, soffice: str) -> 
     assert "Tableau 1 — Pression mesurée" in pages[2].extract_text()
 
 
-# --- Étape 2 : signature, sommaire, liste à cocher (extra_blocks) ----------------------------
+# --- Étape 2 : signature, sommaire, liste à cocher (blocks) ---------------------------------
 
 LIVRAISON: Final[list[dict[str, Any]]] = [
-    {"type": "titre", "text": "Contrôles"},
+    {"type": "heading", "text": "Contrôles"},
     {
-        "type": "liste",
+        "type": "list",
         "checkboxes": True,
         "items": [
             "[x] Coupure d'eau faite",
@@ -749,35 +771,35 @@ LIVRAISON: Final[list[dict[str, Any]]] = [
     {"type": "signature", "signers": ["Le client", "L'entreprise"], "mention": "Bon pour accord"},
 ]
 SOMMAIRE: Final[list[dict[str, Any]]] = [
-    {"type": "titre", "text": "Page de garde"},
-    {"type": "sommaire"},
-    {"type": "titre", "text": "Contexte"},
-    {"type": "titre", "text": "Photos", "level": 2},
-    {"type": "titre", "text": "Détail", "level": 3},
-    {"type": "titre", "text": "Mesures"},
-    {"type": "titre", "text": "Conditions générales"},
+    {"type": "heading", "text": "Page de garde"},
+    {"type": "toc"},
+    {"type": "heading", "text": "Contexte"},
+    {"type": "heading", "text": "Photos", "level": 2},
+    {"type": "heading", "text": "Détail", "level": 3},
+    {"type": "heading", "text": "Mesures"},
+    {"type": "heading", "text": "Conditions générales"},
 ]
 
 
 def extra(tmp_path: Path, **params: Any) -> WordTool:
-    return make(tmp_path, extra_blocks=True, **params)
+    return make(tmp_path, blocks=("image", "signature", "toc", "checkboxes"), **params)
 
 
-async def test_extra_blocks_are_off_unless_declared(tmp_path: Path) -> None:
+async def test_optional_blocks_are_off_unless_declared(tmp_path: Path) -> None:
     plain = make(tmp_path)
     tool = extra(tmp_path)
     schema = json.dumps(plain.spec.input_schema)
     assert "signature" not in schema and "checkboxes" not in schema
-    assert "Sommaire ('type': 'sommaire')" not in plain.spec.description
-    assert "Sommaire ('type': 'sommaire')" in tool.spec.description
-    assert '"sommaire"' in json.dumps(tool.spec.input_schema)
+    assert "Sommaire ('type': 'toc')" not in plain.spec.description
+    assert "Sommaire ('type': 'toc')" in tool.spec.description
+    assert '"toc"' in json.dumps(tool.spec.input_schema)
     # Le coût : schéma et description, à quelques caractères près de la mesure de l'analyse.
     grown = len(json.dumps(tool.spec.input_schema, ensure_ascii=False, separators=(",", ":")))
     grown += len(tool.spec.description)
     before = len(json.dumps(plain.spec.input_schema, ensure_ascii=False, separators=(",", ":")))
     before += len(plain.spec.description)
     assert 800 < grown - before < 880
-    assert ("signature, sommaire, cases à cocher", "oui") in tool.settings().options
+    assert ("blocs", "image, signature, toc, checkboxes") in tool.settings().options
     with pytest.raises(ToolError, match=r"blocks\.0 : Input tag 'signature'"):
         await call(plain, path="sortie/a.docx", blocks=LIVRAISON[2:])
 
@@ -801,7 +823,7 @@ async def test_a_checklist_and_a_signature(tmp_path: Path) -> None:
     read = await call(tool, action="read", path="sortie/livraison.docx")
     assert read["blocks"][2:] == [
         {
-            "type": "liste",
+            "type": "list",
             "ordered": False,
             "checkboxes": True,
             "items": [
@@ -827,22 +849,22 @@ async def test_what_the_extra_blocks_refuse(tmp_path: Path) -> None:
     tool = extra(tmp_path)
     for blocks, said in (
         (
-            [{"type": "liste", "checkboxes": True, "items": ["Fait"]}],
+            [{"type": "list", "checkboxes": True, "items": ["Fait"]}],
             r"élément 1 : dans une liste à cocher \(checkboxes\), chaque élément commence par",
         ),
         (
-            [{"type": "liste", "checkboxes": True, "ordered": True, "items": ["[x] a"]}],
+            [{"type": "list", "checkboxes": True, "ordered": True, "items": ["[x] a"]}],
             "une liste à cocher n'est pas numérotée",
         ),
         ([{"type": "signature", "signers": [" "]}], "signataire 1 : texte vide"),
         ([{"type": "signature", "signers": ["x" * 81]}], "81 caractères, au-delà de 80"),
-        ([{"type": "sommaire"}, {"type": "sommaire"}], "un seul sommaire par document"),
+        ([{"type": "toc"}, {"type": "toc"}], "un seul sommaire par document"),
     ):
         with pytest.raises(ToolError, match=said):
             await call(tool, path="sortie/a.docx", blocks=blocks)
     with pytest.raises(ToolError, match=r"signers : List should have at most 4 items"):
         await call(tool, path="sortie/a.docx", blocks=[{"type": "signature", "signers": ["a"] * 5}])
-    alone = await call(tool, path="sortie/b.docx", blocks=[{"type": "sommaire"}])
+    alone = await call(tool, path="sortie/b.docx", blocks=[{"type": "toc"}])
     assert alone["warnings"] == ["sommaire : le document n'a aucun titre, le sommaire sera vide"]
 
 
@@ -873,8 +895,8 @@ async def test_the_contents_lists_the_headings(tmp_path: Path) -> None:
         assert f" PAGEREF {mark} \\h " in document
     assert document.count('<w:fldChar w:fldCharType="end"/>') == 5
     read = await call(tool, action="read", path="sortie/rapport.docx")
-    assert {"type": "sommaire"} in read["blocks"]
-    assert [b["type"] for b in read["blocks"]].count("sommaire") == 1
+    assert {"type": "toc"} in read["blocks"]
+    assert [b["type"] for b in read["blocks"]].count("toc") == 1
     assert not any(b.get("text", "").startswith("1. ") for b in read["blocks"])
 
 
@@ -889,19 +911,26 @@ async def test_the_charte_sets_the_contents(tmp_path: Path) -> None:
     assert '<w:t xml:space="preserve">Contexte</w:t></w:r></w:hyperlink>' in document
 
 
-async def test_a_tool_without_extra_blocks_says_so_when_reading(tmp_path: Path) -> None:
+async def test_a_tool_without_the_blocks_says_so_when_reading(tmp_path: Path) -> None:
     await write(extra(tmp_path), "livraison", [*LIVRAISON, *SOMMAIRE[1:3]])
     read = await call(make(tmp_path), action="read", path="sortie/livraison.docx")
     assert read["notes"] == [
-        "Lu : liste à cocher, signature, sommaire ; cet outil n'en écrit pas : les retirer "
-        "avant de réécrire le document (ou extra_blocks: true dans la config de l'outil)."
+        "Lu : checkboxes (1), signature (1), toc (1) ; cet outil n'en écrit pas : les retirer "
+        "avant de réécrire le document (ou blocks: [checkboxes, signature, toc] dans la config "
+        "de l'outil)."
     ]
+    # Un outil qui en écrit une partie ne parle que des autres.
+    partial = make(tmp_path, blocks=("toc",))
+    read = await call(partial, action="read", path="sortie/livraison.docx")
+    assert "(ou blocks: [checkboxes, signature] dans" in read["notes"][0]
 
 
-def test_pdf_has_no_extra_blocks_yet() -> None:
+def test_pdf_has_no_signature_toc_or_checkboxes_yet() -> None:
     folders = [{"name": "s", "path": "s", "rights": ["write"]}]
-    with pytest.raises(ValidationError, match=r"extra_blocks : la signature, le sommaire"):
-        PdfParams.model_validate({"folders": folders, "extra_blocks": True})
+    for name in ("signature", "toc", "checkboxes"):
+        with pytest.raises(ValidationError, match=f"blocks : {name} ne sert qu'à loom.word"):
+            PdfParams.model_validate({"folders": folders, "blocks": ["chart", name]})
+    assert PdfParams.model_validate({"folders": folders, "blocks": ["chart", "image"]}).blocks
 
 
 async def test_libreoffice_prints_the_extra_blocks(tmp_path: Path, soffice: str) -> None:

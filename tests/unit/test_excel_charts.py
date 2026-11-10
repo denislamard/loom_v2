@@ -82,29 +82,29 @@ def part(path: Path, name: str) -> str:
 
 CLIENTS: Final[dict[str, Any]] = {
     "name": "Clients",
-    "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "montant_eur"}],
+    "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "amount_eur"}],
     "rows": [
         {"cells": ["Barre", 18034.17]},
         {"cells": ["Lemaire", 16247.36]},
         {"cells": ["Guillot", 14709.17]},
     ],
-    "totals": {"Total TTC": "somme"},
+    "totals": {"Total TTC": "sum"},
 }
 BARS: Final = {
-    "kind": "barres_horizontales",
+    "kind": "horizontal_bar",
     "title": "TTC par client",
     "categories": "Client",
     "values": ["Total TTC"],
 }
-PIE: Final = {"kind": "secteurs", "categories": "Client", "values": ["Total TTC"]}
+PIE: Final = {"kind": "pie", "categories": "Client", "values": ["Total TTC"]}
 MONTHS: Final[dict[str, Any]] = {
     "name": "CA mensuel",
     "columns": [
         {"header": "Mois"},
-        {"header": "Facturé", "type": "montant_eur"},
-        {"header": "Encaissé", "type": "montant_eur"},
-        {"header": "Écart", "type": "montant_eur"},
-        {"header": "Relances", "type": "entier"},
+        {"header": "Facturé", "type": "amount_eur"},
+        {"header": "Encaissé", "type": "amount_eur"},
+        {"header": "Écart", "type": "amount_eur"},
+        {"header": "Relances", "type": "integer"},
     ],
     "rows": [
         {"cells": ["janv.", 18200, 15100, "=B2-C2", 3]},
@@ -193,8 +193,8 @@ async def test_a_chart_is_linked_to_its_cells(charted: ExcelTool, disk: Path) ->
 async def test_a_chart_on_formulas_lets_excel_choose_its_axis(
     charted: ExcelTool, disk: Path
 ) -> None:
-    line = {"kind": "courbe", "categories": "Mois", "values": ["Facturé", "Encaissé"]}
-    gaps = {"kind": "barres", "categories": "Mois", "values": ["Écart"]}
+    line = {"kind": "line", "categories": "Mois", "values": ["Facturé", "Encaissé"]}
+    gaps = {"kind": "bar", "categories": "Mois", "values": ["Écart"]}
     await call(charted, path="sortie/m.xlsx", sheets=[sheet(MONTHS, line, gaps)])
     path = disk / "sortie" / "m.xlsx"
     curve = part(path, "xl/charts/chart1.xml")
@@ -231,17 +231,17 @@ async def test_bad_columns_are_refused(
 
 
 async def test_series_of_one_type(charted: ExcelTool) -> None:
-    mixed = {"kind": "barres", "categories": "Mois", "values": ["Facturé", "Relances"]}
+    mixed = {"kind": "bar", "categories": "Mois", "values": ["Facturé", "Relances"]}
     await refused(
         charted,
-        r"colonnes de nombres d'un même type \(ici : entier, montant_eur\)",
+        r"colonnes de nombres d'un même type \(ici : amount_eur, integer\)",
         path="sortie/x.xlsx",
         sheets=[sheet(MONTHS, mixed)],
     )
 
 
 async def test_pie_rules(charted: ExcelTool) -> None:
-    pie = {"kind": "secteurs", "categories": "Mois", "values": ["Facturé", "Encaissé"]}
+    pie = {"kind": "pie", "categories": "Mois", "values": ["Facturé", "Encaissé"]}
     await refused(charted, "n'a qu'une série", path="sortie/x.xlsx", sheets=[sheet(MONTHS, pie)])
     negative = {**CLIENTS, "rows": [{"cells": ["Barre", -5]}, {"cells": ["Lemaire", 3]}]}
     await refused(charted, "négative", path="sortie/x.xlsx", sheets=[sheet(negative, PIE)])
@@ -289,13 +289,13 @@ async def test_a_long_line_but_not_long_bars(charted: ExcelTool, disk: Path) -> 
     (disk / "donnees" / "jours.csv").write_text("\n".join(lines), encoding="utf-8")
     days = {
         "name": "Jours",
-        "columns": [{"header": "Jour"}, {"header": "Ventes", "type": "entier"}],
+        "columns": [{"header": "Jour"}, {"header": "Ventes", "type": "integer"}],
         "data": {"path": "donnees/jours.csv"},
     }
-    line = {"kind": "courbe", "categories": "Jour", "values": ["Ventes"]}
+    line = {"kind": "line", "categories": "Jour", "values": ["Ventes"]}
     await call(charted, path="sortie/j.xlsx", sheets=[sheet(days, line)])
     assert "$B$2:$B$366" in part(disk / "sortie" / "j.xlsx", "xl/charts/chart1.xml")
-    bars = {"kind": "barres", "categories": "Jour", "values": ["Ventes"]}
+    bars = {"kind": "bar", "categories": "Jour", "values": ["Ventes"]}
     await refused(
         charted,
         "365 lignes, au-delà de 50 pour des barres",
@@ -337,7 +337,7 @@ def to_ods(soffice: str, source: Path, out: Path) -> None:
 
 
 async def test_libreoffice_reads_the_charts(charted: ExcelTool, disk: Path, soffice: str) -> None:
-    line = {"kind": "courbe", "categories": "Mois", "values": ["Facturé"]}
+    line = {"kind": "line", "categories": "Mois", "values": ["Facturé"]}
     await call(
         charted, path="sortie/c.xlsx", sheets=[sheet(CLIENTS, BARS, PIE), sheet(MONTHS, line)]
     )

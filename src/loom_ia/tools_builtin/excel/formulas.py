@@ -46,9 +46,9 @@ FRENCH_FUNCTIONS: Final[Mapping[str, str]] = {
 }  # fmt: skip
 
 AGGREGATES: Final[Mapping[Aggregate, str]] = {
-    "somme": "SUM",
-    "moyenne": "AVERAGE",
-    "nombre": "COUNT",
+    "sum": "SUM",
+    "average": "AVERAGE",
+    "count": "COUNT",
     "min": "MIN",
     "max": "MAX",
 }

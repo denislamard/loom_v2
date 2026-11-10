@@ -85,21 +85,20 @@ async def refused(tool: PdfTool, match: str, **arguments: Any) -> None:
 DEVIS: Final[dict[str, Any]] = {
     "title": "Devis D-2026-042",
     "blocks": [
-        {"type": "paragraphe", "text": "Madame **Dupont**,\nvoici notre *proposition*."},
-        {"type": "titre", "text": "Travaux"},
-        {"type": "liste", "items": ["Dépose", {"text": "Pose", "items": ["receveur"]}]},
-        {"type": "liste", "items": ["Signature", "Acompte"], "ordered": True},
+        {"type": "paragraph", "text": "Madame **Dupont**,\nvoici notre *proposition*."},
+        {"type": "heading", "text": "Travaux"},
+        {"type": "list", "items": ["Dépose", {"text": "Pose", "items": ["receveur"]}]},
+        {"type": "list", "items": ["Signature", "Acompte"], "ordered": True},
         {
-            "type": "tableau",
-            "columns": [{"header": "Désignation"}, {"header": "Montant HT", "type": "montant_eur"}],
+            "type": "table",
+            "columns": [{"header": "Désignation"}, {"header": "Montant HT", "type": "amount_eur"}],
             "rows": [["Dépose", 180], ["Pose", 1250.5]],
-            "totals": {"Montant HT": "somme"},
+            "totals": {"Montant HT": "sum"},
             "caption": "Montants hors taxes.",
         },
         {"type": "note", "title": "Validité", "text": "3 mois."},
-        {"type": "citation", "text": "Travail soigné.", "source": "M. Martin"},
-        {"type": "saut_de_page"},
-        {"type": "titre", "text": "Conditions", "level": 2},
+        {"type": "quote", "text": "Travail soigné.", "source": "M. Martin"},
+        {"type": "heading", "text": "Conditions", "level": 2},
     ],
 }
 
@@ -134,8 +133,7 @@ def test_the_spec_names_the_folders_and_the_reading(tool: PdfTool) -> None:
     settings = tool.settings()
     assert settings.options == (
         ("fuseau", "Europe/Paris"),
-        ("graphiques", "non"),
-        ("images", "non"),
+        ("blocs", "aucun"),
         ("modèles", "aucun"),
         ("lecture des PDF", "oui, process à part (20 s, 1 Gio)"),
     )
@@ -158,14 +156,13 @@ def test_an_old_pypdf_is_refused_at_mount(disk: Path, monkeypatch: pytest.Monkey
 
 async def test_writes_a_pdf_in_the_house_style(tool: PdfTool, disk: Path) -> None:
     result = await call(tool, path="sortie/devis.pdf", **DEVIS)
-    assert (result["written"], result["pages"], result["warnings"]) == (True, 2, [])
+    assert (result["written"], result["pages"], result["warnings"]) == (True, 1, [])
     found = PdfReader(disk / "sortie" / "devis.pdf")
-    assert len(found.pages) == 2
+    assert len(found.pages) == 1
     assert found.metadata is not None and found.metadata.title == "Devis D-2026-042"
     first = found.pages[0].extract_text()
-    for said in ("Page 1 / 2", "Devis D-2026-042", "Dupont", "1 430,50 €", "Total"):
+    for said in ("Page 1 / 1", "Devis D-2026-042", "Dupont", "1 430,50 €", "Total", "Conditions"):
         assert said in first.replace("\u00a0", " "), said
-    assert "Conditions" in found.pages[1].extract_text()
 
 
 async def test_same_description_same_file(tool: PdfTool) -> None:
@@ -213,7 +210,7 @@ async def test_characters_outside_the_fonts_are_said(tool: PdfTool) -> None:
     result = await call(
         tool,
         path="sortie/a.pdf",
-        blocks=[{"type": "paragraphe", "text": "Merci 🙂 — 中文 ≥ \u03b1 €"}],
+        blocks=[{"type": "paragraph", "text": "Merci 🙂 — 中文 ≥ \u03b1 €"}],
     )
     [warning] = result["warnings"]
     assert warning.startswith("3 caractère(s) absent(s) des polices du PDF")
@@ -237,9 +234,9 @@ async def test_paths_and_rights(tool: PdfTool, disk: Path) -> None:
 async def test_what_it_writes_reads_back(tool: PdfTool) -> None:
     await call(tool, path="sortie/devis.pdf", **DEVIS)
     found = await call(tool, action="read", path="sortie/devis.pdf")
-    assert found["page_count"] == 2 and found["truncated"] is False
+    assert found["page_count"] == 1 and found["truncated"] is False
     assert found["metadata"]["title"] == "Devis D-2026-042"
-    assert [page["number"] for page in found["pages"]] == [1, 2]
+    assert [page["number"] for page in found["pages"]] == [1]
     assert "Madame Dupont" in found["pages"][0]["text"]
     assert "notes" not in found
 
@@ -251,7 +248,7 @@ async def test_underline_is_drawn_not_written(tool: PdfTool) -> None:
     assert _markup(inline("un <u>mot</u> et **<u>deux</u>**")) == (
         "un <u>mot</u> et <b><u>deux</u></b>"
     )
-    blocks = [{"type": "paragraphe", "text": "Le dépôt sera fermé le <u>vendredi 13</u>."}]
+    blocks = [{"type": "paragraph", "text": "Le dépôt sera fermé le <u>vendredi 13</u>."}]
     await call(tool, path="sortie/u.pdf", title="Note", blocks=blocks)
     found = await call(tool, action="read", path="sortie/u.pdf")
     text = found["pages"][0]["text"]
@@ -294,7 +291,7 @@ async def test_a_long_pdf_is_read_in_parts(tool: PdfTool, disk: Path) -> None:
 
 
 async def test_a_page_without_text_is_said(tool: PdfTool, disk: Path) -> None:
-    (disk / "recus" / "scan.pdf").write_bytes(pdf_of("texte", ""))
+    (disk / "recus" / "scan.pdf").write_bytes(pdf_of("text", ""))
     found = await call(tool, action="read", path="recus/scan.pdf")
     assert found["pages"][1] == {"number": 2, "text": ""}
     assert "Page(s) sans texte : 2" in found["notes"][0]
@@ -447,6 +444,22 @@ def pdf_agent(**reference: Any) -> dict[str, Any]:
     return demo_agent(tools=[{"python": "loom.pdf", **reference}])
 
 
+@pytest.mark.parametrize(
+    ("given", "said"),
+    [
+        ({"charts": True}, r"charts → blocks: \[chart\]"),
+        ({"images": True}, r"images → blocks: \[image\]"),
+        ({"blocks": ["toc"]}, "blocks : toc ne sert qu'à loom.word pour l'instant"),
+    ],
+)
+def test_pdf_blocks_when_the_config_loads(
+    demo: ConfigFactory, given: dict[str, Any], said: str
+) -> None:
+    folders = [{"name": "s", "path": "/tmp", "rights": ["write"]}]
+    with pytest.raises(ConfigError, match=said):
+        load_config(demo(agents=[pdf_agent(folders=folders, **given)]))
+
+
 def test_a_missing_extra_is_said_at_mount(
     demo: ConfigFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -538,21 +551,21 @@ def test_the_worker_main_writes_json(
 
 
 TOP10: Final[dict[str, Any]] = {
-    "type": "tableau",
+    "type": "table",
     "columns": [
-        {"header": "Rang", "type": "entier"},
+        {"header": "Rang", "type": "integer"},
         {"header": "Client"},
         {"header": "Code"},
-        {"header": "Factures", "type": "entier"},
-        {"header": "Total HT", "type": "montant_eur"},
-        {"header": "Total TTC", "type": "montant_eur"},
+        {"header": "Factures", "type": "integer"},
+        {"header": "Total HT", "type": "amount_eur"},
+        {"header": "Total TTC", "type": "amount_eur"},
     ],
     "rows": [
         [1, "Julien Barre", "C-429", 2, 17094.0, 18034.17],
         [2, "Chauffage Lemaire Rénovation", "C-851", 2, 13539.47, 16247.36],
         [10, "Maxime Hubert", "C-143", 1, 10095.29, 10650.53],
     ],
-    "totals": {"Factures": "somme", "Total HT": "somme", "Total TTC": "somme"},
+    "totals": {"Factures": "sum", "Total HT": "sum", "Total TTC": "sum"},
 }
 
 
@@ -596,18 +609,18 @@ async def test_header_words_and_short_values_are_never_cut(
 
 @pytest.fixture
 def charted(disk: Path) -> PdfTool:
-    """Le même outil, monté avec ``charts: true``."""
+    """Le même outil, monté avec ``blocks: [chart]``."""
     return make(
-        disk, {"name": "sortie", "path": "sortie", "rights": ["read", "write"]}, charts=True
+        disk, {"name": "sortie", "path": "sortie", "rights": ["read", "write"]}, blocks=["chart"]
     )
 
 
 async def test_charts_are_off_unless_asked(tool: PdfTool, charted: PdfTool) -> None:
-    assert "graphique" not in json.dumps(tool.spec.input_schema)
+    assert "chart" not in json.dumps(tool.spec.input_schema)
     assert "Graphique" not in tool.spec.description
-    assert "Graphique ('type': 'graphique')" in charted.spec.description
-    assert ("graphiques", "oui") in charted.settings().options
-    chart = {"type": "graphique", "categories": ["a"], "series": [{"name": "s", "values": [1]}]}
+    assert "Graphique ('type': 'chart')" in charted.spec.description
+    assert ("blocs", "chart") in charted.settings().options
+    chart = {"type": "chart", "categories": ["a"], "series": [{"name": "s", "values": [1]}]}
     arguments: dict[str, Any] = {"path": "sortie/g.pdf", "blocks": [chart]}
     assert list(bounded_validator(tool.spec.input_schema).iter_errors(arguments))
     assert not list(bounded_validator(charted.spec.input_schema).iter_errors(arguments))
@@ -621,15 +634,15 @@ async def test_a_chart_is_drawn_in_the_pdf(charted: PdfTool, disk: Path) -> None
     blocks: list[dict[str, Any]] = [
         TOP10,
         {
-            "type": "graphique",
-            "kind": "barres_horizontales",
+            "type": "chart",
+            "kind": "horizontal_bar",
             "title": "TTC par client",
             "from_table": {"categories": "Client", "values": ["Total TTC"]},
         },
         {
-            "type": "graphique",
-            "kind": "courbe",
-            "value_type": "montant_eur",
+            "type": "chart",
+            "kind": "line",
+            "value_type": "amount_eur",
             "categories": ["janv.", "févr.", "mars"],
             "series": [
                 {"name": "Facturé", "values": [18200, 21500, 19800]},
@@ -637,9 +650,9 @@ async def test_a_chart_is_drawn_in_the_pdf(charted: PdfTool, disk: Path) -> None
             ],
         },
         {
-            "type": "graphique",
-            "kind": "secteurs",
-            "value_type": "pourcentage",
+            "type": "chart",
+            "kind": "pie",
+            "value_type": "percent",
             "categories": ["Plomberie", "Chauffage 🔥"],
             "series": [{"name": "Part", "values": [0.6, 0.4]}],
         },
@@ -672,13 +685,13 @@ async def test_images_in_a_pdf(disk: Path) -> None:
         disk,
         {"name": "maquettes", "path": "maquettes", "rights": ["read"]},
         {"name": "sortie", "path": "sortie", "rights": ["write"]},
-        images=True,
+        blocks=["image"],
     )
     assert "Image ('type': 'image')" in tool.spec.description
     blocks = [
         {"type": "image", "path": "maquettes/depot.png", "caption": "Écran 1"},
-        {"type": "image", "path": "maquettes/photo.jpg", "width": "moitie", "alt": "Chantier"},
-        {"type": "image", "path": "maquettes/depot.png", "width": "petite", "alt": "Rappel"},
+        {"type": "image", "path": "maquettes/photo.jpg", "width": "half", "alt": "Chantier"},
+        {"type": "image", "path": "maquettes/depot.png", "width": "small", "alt": "Rappel"},
     ]
     result = await call(tool, path="sortie/cdc.pdf", title="Cahier", blocks=blocks)
     assert (result["images"], result["pages"], result["warnings"]) == (3, 2, [])
@@ -700,9 +713,9 @@ async def test_a_pdf_follows_its_template(disk: Path) -> None:
         templates={"rapport": {"text": "# Contexte\n# Travaux réalisés"}},
     )
     assert "- rapport" in tool.spec.description
-    blocks: list[Any] = [{"type": "titre", "text": "Travaux réalisés"}]
+    blocks: list[Any] = [{"type": "heading", "text": "Travaux réalisés"}]
     with pytest.raises(ToolError, match="section\\(s\\) absente\\(s\\) : « Contexte »"):
         await call(tool, path="sortie/r.pdf", template="rapport", blocks=blocks)
-    blocks.insert(0, {"type": "titre", "text": "Contexte"})
+    blocks.insert(0, {"type": "heading", "text": "Contexte"})
     written = await call(tool, path="sortie/r.pdf", template="rapport", blocks=blocks)
     assert (written["template"], written["pages"]) == ("rapport", 1)

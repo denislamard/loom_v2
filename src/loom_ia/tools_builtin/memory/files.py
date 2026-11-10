@@ -141,23 +141,23 @@ def word_markdown(blocks: Sequence[JsonValue]) -> tuple[str | None, str]:
         kind = block.get("type")
         text = str(block.get("text") or "").strip()
         match kind:
-            case "titre":
+            case "heading":
                 heading = _plain(text)
                 level = cast(int, block.get("level", 1))
                 if level == 0:
                     title = title or heading
                 # Le titre du document en « # » ; les niveaux de Word un cran en dessous.
                 parts.append(f"{'#' * min(level + 1, 6)} {heading}")
-            case "liste":
+            case "list":
                 lines = _list_lines(
                     cast(list[JsonValue], block.get("items") or []), bool(block.get("ordered")), 0
                 )
                 parts.append("\n".join(lines))
-            case "tableau":
+            case "table":
                 table = _table(cast(list[JsonValue], block.get("rows") or []))
                 if table:
                     parts.append(table)
-            case "citation":
+            case "quote":
                 parts.append("\n".join(f"> {line}" for line in text.splitlines()))
             case _:
                 # Paragraphe, note, bloc coupé ; un graphique n'a pas de texte.
