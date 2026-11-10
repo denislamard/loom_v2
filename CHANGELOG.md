@@ -2,7 +2,7 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.20 - non publiée
+## 2.0.20 - publiée
 
 ### Moteur : un outil qui dépasse son délai (B-2, B-3, B-4)
 - ⚠ **Un délai dépassé sur un appel à effet est un état inconnu**, pour tous les outils : Python, fournis et MCP. Python n'arrête pas un thread, un outil asynchrone est coupé à son `await` (une maquette sur cinq écrite, au test du `wireframe` du POC), un serveur MCP finit ce qu'il a commencé : l'effet a pu avoir lieu, ou aura lieu. Avant, le modèle lisait « Délai dépassé : pas de réponse », et une relance refaisait l'effet (deux courriels à l'essai). L'outil dit ce qu'il en advient (`on_unknown`), comme à la reprise : ⚠ un outil `on_unknown: pause`, dont `loom.sql` en écriture, met désormais le run en pause à son délai. Trois textes : le travail continue en thread, l'outil a été arrêté en cours de route, ou le serveur MCP a été prévenu. Un appel sans effet garde « Délai dépassé : pas de réponse en N s. ».
