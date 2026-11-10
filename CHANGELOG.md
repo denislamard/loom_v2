@@ -2,6 +2,8 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.21 - non publiée
+
 ## 2.0.20 - publiée
 
 ### Moteur : un outil qui dépasse son délai (B-2, B-3, B-4)

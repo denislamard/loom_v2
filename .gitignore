@@ -238,3 +238,5 @@ examples.OLD/*
 # Verrous de LibreOffice (fichier ouvert) et sorties des sessions Claude
 .~lock.*#
 Claude outputs/
+
+set_version
