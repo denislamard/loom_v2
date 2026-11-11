@@ -177,7 +177,7 @@ async def test_a_chart_is_linked_to_its_cells(charted: ExcelTool, disk: Path) ->
     assert "<f>'Clients'!B1</f>" in bars  # le nom de la série : son en-tête
     assert "18034" not in bars
     assert '<barDir val="bar" />' in bars and '<orientation val="maxMin" />' in bars
-    assert '<a:srgbClr val="1F3864" />' in bars  # la palette de la maison
+    assert '<a:srgbClr val="156082" />' in bars  # la palette de default.yaml
     assert '<showVal val="1" />' in bars and "<legend>" not in bars
     # Valeurs connues : l'axe va jusqu'à un nombre rond qui laisse la place des étiquettes.
     assert '<max val="24000" />' in bars and '<min val="0" />' in bars

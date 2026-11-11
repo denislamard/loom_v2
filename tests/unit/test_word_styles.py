@@ -260,13 +260,12 @@ def check_order(xml: str) -> None:
 
 # --- Sans charte, rien ne change ---------------------------------------------------------
 
-# L'empreinte du devis de ``test_word`` écrit sans style : celle de la 2.0.21 pour le même
-# contenu écrit dans le vocabulaire français (le devis n'a plus de saut de page, sorti du
-# vocabulaire en 2.1.0). Avant le saut de page retiré, celle du commit 9ae0492 (avant les
-# styles). Le style maison vient de ``default.yaml`` depuis 2.1.0 : la même empreinte.
-DEVIS_SHA256: Final = "149987cb614b5a4aded8996c5524116ba1a35a14863c513bb81cb04521f4f455"
-# Le ``styles.xml`` du style maison, tel que l'écrivait le code avant ``default.yaml``.
-HOUSE_STYLES_SHA256: Final = "5c73cfc147910a496ae3c47c1127f0c630bda99d5c19382a7f873c5269edc758"
+# L'empreinte du devis de ``test_word`` écrit sans style, dans le style de base de 2.1.1
+# (les valeurs de Word, Microsoft 365). Jusqu'à 2.1.0, le style maison (Calibri 11, titres
+# bleu nuit) : 149987cb…, celle de la 2.0.21 pour le même contenu.
+DEVIS_SHA256: Final = "f4c674fe7961be06827077728a55a18e63c156dab1240c78e6d53e2cf7ecaa25"
+# Le ``styles.xml`` de ``default.yaml`` seul (5c73cfc1… jusqu'à 2.1.0, le style maison).
+HOUSE_STYLES_SHA256: Final = "da15498badc98a098c1b785ae0d7e5db7dcb4acb7d2bfef108622aa97038ee7d"
 
 
 async def test_without_a_style_nothing_changes(tmp_path: Path) -> None:
@@ -309,9 +308,12 @@ def test_default_yaml_is_a_style_file_like_any_other() -> None:
     house_file = load_style(DEFAULT_FILE.read_text(encoding="utf-8"))
     assert house_file.chart is not None and tuple(house_file.chart.colors or ()) == PALETTE
     assert (house_file.chart.grid, house_file.chart.text) == (GRID, TEXT)
-    assert PALETTE[:3] == ("1F3864", "C55A11", "8EA9DB") and len(PALETTE) == 12
+    # Les six couleurs d'accent du thème Office 2023, puis les mêmes plus sombres.
+    assert PALETTE[:3] == ("156082", "E97132", "196B24") and len(PALETTE) == 12
     style = house()
-    assert style.look("heading1").font == "Calibri"  # hérité de text
+    assert style.look("heading1").font == "Aptos"  # hérité de text
+    assert style.look("document_title").border_bottom is None  # ni filet, ni fond, ni gras
+    assert style.look("table_header").fill is None and style.look("note").fill is None
     assert style.look("quote_source").italic is False  # sa base, quote, est en italique
     assert style.look("table_header").size == 10  # hérité de table
     assert style.footer is not None and style.footer.center == "Page {page} / {pages}"
@@ -338,7 +340,7 @@ async def test_the_charte_sets_fonts_colors_and_headings(tmp_path: Path) -> None
     # Horizontales, et les filets haut et bas de la charte ; pas de verticales.
     document = part(path, "word/document.xml")
     assert '<w:top w:val="single" w:sz="8" w:space="0" w:color="0B5D3B"/>' in document
-    assert '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="A6A6A6"/>' in document
+    assert '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/>' in document
     assert "insideV" not in document
     assert 'w:fill="E8F1EC"' in document
     for name in ("word/document.xml", "word/styles.xml", "word/header1.xml"):
@@ -521,7 +523,7 @@ async def test_a_facture_laid_out(tmp_path: Path) -> None:
     assert layout is not None
     assert '<w:gridCol w:w="5301"/><w:gridCol w:w="4337"/>' in layout.group()
     assert layout.group().count("<w:tcBorders>") == 1
-    assert '<w:top w:val="single" w:sz="6" w:space="0" w:color="1F3864"/>' in layout.group()
+    assert '<w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/>' in layout.group()
     assert layout.group().index("Dupont Plomberie") < layout.group().index("SCI Les Tilleuls")
     # Chaque section entre ses signets, ceux des sections côte à côte dans leur cellule.
     marks = re.findall(r'w:name="(_loom_s\d)"', document)

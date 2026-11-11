@@ -796,12 +796,12 @@ def test_no_visual_value_in_the_pdf_code() -> None:
 
 
 async def test_a_pdf_without_style_is_in_default_yaml(tool: PdfTool, disk: Path) -> None:
-    """Sans style, le style maison de Word : le corps en 11 points (Calibri, rendu en
-    Helvetica), les titres bleu nuit, « Page n / N » en pied."""
+    """Sans style, le style de base de Word : le corps en 12 points (Aptos, rendu en
+    Helvetica), les titres 0F4761, « Page n / N » en pied."""
     await call(tool, path="sortie/devis.pdf", **DEVIS)
     page = PdfReader(disk / "sortie" / "devis.pdf").pages[0]
-    assert b" 11 Tf" in drawn(page)
-    assert b".121569 .219608 .392157 rg" in drawn(page)  # 1F3864, les titres
+    assert b" 12 Tf" in drawn(page)
+    assert b".058824 .278431 .380392 rg" in drawn(page)  # 0F4761, les titres
     assert not any(label in ("style", "polices") for label, _ in tool.settings().options)
 
 
@@ -993,7 +993,7 @@ def test_validate_says_how_the_pdf_writes_the_fonts(disk: Path) -> None:
     tool = make(disk, SORTIE, style={"spec": {"heading1": {"font": "Georgia"}}})
     assert (
         "polices",
-        "Calibri → Helvetica ; Courier New → Courier ; Georgia → Times",
+        "Aptos → Helvetica ; Courier New → Courier ; Georgia → Times",
     ) in tool.settings().options
 
 

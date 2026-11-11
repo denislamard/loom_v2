@@ -58,10 +58,13 @@ MAX_BAND_LINES: Final = 4
 MAX_STYLES: Final = 80
 MAX_LABEL: Final = 40
 # Les polices présentes sur presque tous les postes (Windows, macOS, LibreOffice les
-# remplace par des équivalentes métriques) : une autre s'affiche ailleurs dans une
-# police de remplacement, et ``loom validate`` le signale.
+# remplace par des équivalentes métriques ; Aptos, celle de Word depuis Microsoft 365,
+# s'installe avec Office) : une autre s'affiche ailleurs dans une police de remplacement,
+# et ``loom validate`` le signale.
 SAFE_FONTS: Final = frozenset(
     {
+        "aptos",
+        "aptos display",
         "arial",
         "calibri",
         "cambria",
@@ -78,7 +81,17 @@ SAFE_FONTS: Final = frozenset(
 # dont le style ne donne pas les fichiers (``fonts``), selon sa forme ; Helvetica sinon.
 PDF_FONTS: Final[Mapping[str, str]] = {
     **dict.fromkeys(
-        ("arial", "helvetica", "calibri", "verdana", "tahoma", "trebuchet ms"), "Helvetica"
+        (
+            "aptos",
+            "aptos display",
+            "arial",
+            "helvetica",
+            "calibri",
+            "verdana",
+            "tahoma",
+            "trebuchet ms",
+        ),
+        "Helvetica",
     ),
     **dict.fromkeys(("times new roman", "times", "cambria", "georgia", "garamond"), "Times-Roman"),
     **dict.fromkeys(("courier new", "courier"), "Courier"),

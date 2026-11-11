@@ -6,8 +6,8 @@ formats de nombres, des étiquettes de valeur aux mêmes conditions, le même
 bout d'axe. Chaque format l'applique avec ses moyens — le XML DrawingML de
 Word, ``reportlab.graphics`` dans le PDF, ``openpyxl.chart`` dans un classeur.
 
-Les couleurs sont celles du style maison (``styles/default.yaml``, réglage ``chart``) :
-``word`` prend celles de son style, ``pdf`` et ``excel`` celles de la maison.
+Les couleurs sont celles du style de base (``styles/default.yaml``, réglage ``chart``) :
+``word`` prend celles de son style, ``pdf`` et ``excel`` celles de ``default.yaml``.
 
 Module léger — Pydantic et PyYAML, par ``_style_params`` — : un outil l'importe sans
 tirer les dépendances d'un autre.
@@ -21,7 +21,7 @@ from loom_ia.tools_builtin._style_params import default_style
 from loom_ia.tools_builtin._values import ColumnType
 
 _HOUSE: Final = default_style().chart
-# La palette de la maison : bleu nuit, puis des couleurs qui s'en distinguent bien.
+# La palette de default.yaml : les accents du thème Office 2023, puis les mêmes plus sombres.
 PALETTE: Final = tuple(_HOUSE.colors if _HOUSE is not None and _HOUSE.colors else ())
 GRID: Final = _HOUSE.grid if _HOUSE is not None and _HOUSE.grid else ""
 TEXT: Final = _HOUSE.text if _HOUSE is not None and _HOUSE.text else ""

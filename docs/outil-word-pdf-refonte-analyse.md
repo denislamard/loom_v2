@@ -1330,6 +1330,31 @@ Les documents sans émargement sont identiques, octet pour octet, au lot 6, en W
 - `test_pdf.py` : 56 (1 de plus) : 24 participants sur deux pages, l'en-tête répété.
 - Suite complète : 4 446 réussis, 201 sautés (7 de plus qu'au lot 6). ruff, format, `lint-imports` (6 contrats) et pyright passent sans erreur.
 
+## 25. Ce qui est écrit : le style de base aux valeurs de Word (11 novembre 2026)
+
+Codé sans commit sur `d4fb4df` (le lot 7 et la borne basse de reportlab), après les premiers essais utilisateur de `loom.word` : un document sans charte s'ouvrait dans Word avec un titre souligné d'un filet bleu que personne n'avait demandé, et des styles aux noms de Word mais au dessin de loom. Denis a choisi les valeurs de Word (Microsoft 365), pour Word et pour le PDF, et rien de décoré pour ce que Word n'a pas.
+
+**Ce qui change**
+
+- **`default.yaml`** : `text` en Aptos 12, interligne 1,16, 8 pt après ; `document_title` en 28 pt, 4 pt après, sans gras, couleur ni filet ; `heading1` à `heading3` en 20, 16 et 14 pt, 0F4761, 18 / 8 / 8 pt avant et 4 pt après ; `quote` centrée, italique, 404040, 8 pt avant ; `caption` 9 pt, italique, 0E2841, alignée à gauche ; `link` 467886 ; `footnote` 10 pt ; `header` et `footer` sans réduction ni couleur. Sans fond, filet ni couleur : `table_header`, `table_total`, `table_group`, `table_subtotal`, `note`, `code`. Grille des tableaux et cadre `box` en noir 0,5 pt. La palette des graphiques : les six accents du thème Office 2023, puis les mêmes à 60 % de leur luminosité ; texte et titre des graphiques 595959.
+- **`SAFE_FONTS`** et **`PDF_FONTS`** : Aptos et Aptos Display, sûres, rendues en Helvetica dans le PDF.
+- Aucun code d'écriture ne change : le style était déjà hors du code (lot 2).
+
+**Écarts avec Word, à valider**
+
+1. **Les tableaux restent en 10 pt** (Word : 12, le corps). Les largeurs de colonne de l'outil sont réglées pour 10 pt : en 12, « Rang » et « C-429 » se coupaient, et « 1 789,53 € » du récapitulatif de TVA passait à la ligne (`test_header_words_and_short_values_are_never_cut`, `test_an_invoice_in_a_pdf`).
+2. **Les titres restent en Aptos** (Word : Aptos Display pour le titre, `heading1` et `heading2`). Une police sur les titres dans `default.yaml` empêcherait celle de `text`, dans une charte, de valoir pour les titres (`test_the_files_first_then_the_bases`). Les deux polices sont très proches.
+3. **Les listes gardent 3 pt entre éléments** (Word : aucun, par l'espacement contextuel de « List Paragraph », que loom n'écrit pas ; 8 pt sinon).
+4. **Le cadre `box` reste un filet noir 0,5 pt** : sans filet, une section encadrée (`boxed`) ne l'est plus.
+5. **Le titre du document n'a ni l'espacement serré (-0,5 pt) ni le crénage** de Word : `default.yaml` n'a pas ces propriétés.
+6. **Les en-têtes de tableau sont en gras** ; Word n'en a pas, mais l'en-tête répété d'une page à l'autre doit se distinguer. Leur alignement suit le type de la colonne.
+7. **Aptos n'est pas sur tous les postes** : livrée avec Microsoft 365 ; LibreOffice ou un Word plus ancien la remplace (Calibri, en 2.1.0, avait Carlito, aux mêmes métriques).
+8. **`loom.excel` partage la palette** (`_chart_style.PALETTE`) : ses graphiques changent de couleurs, le reste de son style (le sien, dans le code) ne change pas.
+
+**Non-régression**
+
+Tous les documents changent d'aspect, à dessein : `DEVIS_SHA256` et `HOUSE_STYLES_SHA256` sont nouveaux, les empreintes du script ne valent plus. Un devis à modèle (champs encadrés, tableau calculé, récapitulatif de TVA, signature) passe les schémas XSD de l'ISO/IEC 29500 et se rend dans LibreOffice comme dans le PDF de l'outil.
+
 ## Sources
 
 - `docs/outil-word-styles-analyse.md`, `docs/outil-word-modeles-analyse.md`, `docs/outil-styles-lot2-analyse.md`, `docs/outil-word-souligne-analyse.md` : les lots précédents.
