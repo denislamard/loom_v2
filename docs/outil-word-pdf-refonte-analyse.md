@@ -1355,6 +1355,19 @@ Codé sans commit sur `d4fb4df` (le lot 7 et la borne basse de reportlab), aprè
 
 Tous les documents changent d'aspect, à dessein : `DEVIS_SHA256` et `HOUSE_STYLES_SHA256` sont nouveaux, les empreintes du script ne valent plus. Un devis à modèle (champs encadrés, tableau calculé, récapitulatif de TVA, signature) passe les schémas XSD de l'ISO/IEC 29500 et se rend dans LibreOffice comme dans le PDF de l'outil.
 
+## 26. Ce qui est écrit : l'en-tête et le pied du PDF dans leur style (11 novembre 2026)
+
+Codé sans commit sur `4041e4b` (le style de base). Aux essais de l'agent de Denis, un `border_bottom` sous le logo de l'en-tête paraissait dans le `.docx` et pas dans le PDF : le PDF ne prenait des styles `header` et `footer` que la police, la taille, la couleur et l'interligne.
+
+**Ce qui change** : `_Box`, dans `pdf/writer.py`, pose les lignes d'un en-tête ou d'un pied dans le cadre de leur style, comme Word groupe les paragraphes qui se suivent dans un même style : l'espace avant le premier, les filets et le fond autour du groupe (à `RULE_SPACE` du texte, comme le cadre d'un paragraphe du corps), l'espace entre deux lignes, l'espace après la dernière, le retrait. Les textes prennent les capitales et le soulignement. Les lignes d'un pied et son texte du centre, quand il est seul, suivent son alignement ; celles d'un en-tête restent centrées (Word les centre d'office). `heights` compte le tout : le corps descend d'autant.
+
+**Écarts avec Word, à valider**
+
+1. **Le cadre est à l'intérieur de la largeur du texte** (le texte décalé de 8 pt par un filet de côté ou un fond), comme le cadre d'un paragraphe du corps dans le PDF ; Word pose ces filets dans la marge.
+2. **Le soulignement** est un trait sous chaque texte, à un huitième de la taille sous la ligne de base, épais d'un vingtième, comme celui de `Paragraph` ; le logo n'est pas souligné.
+
+**Non-régression** : les 18 documents du script d'empreintes, PDF compris, sont identiques, octet pour octet, avant et après. Suite complète : 4 447 réussis, 201 sautés.
+
 ## Sources
 
 - `docs/outil-word-styles-analyse.md`, `docs/outil-word-modeles-analyse.md`, `docs/outil-styles-lot2-analyse.md`, `docs/outil-word-souligne-analyse.md` : les lots précédents.

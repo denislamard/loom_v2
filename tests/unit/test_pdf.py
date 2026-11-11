@@ -27,6 +27,7 @@ pytest.importorskip("pypdf", reason="extra 'pdf' absent")
 from conftest import ConfigFactory, demo_agent
 from image_files import png
 from pypdf import PdfReader, PdfWriter
+from reportlab.lib.units import cm
 from reportlab.pdfgen.canvas import Canvas
 from test_word_styles import (
     CHARTE,
@@ -776,6 +777,33 @@ def placed(page: Any) -> list[tuple[float, str]]:
     return found
 
 
+def xs(page: Any) -> list[tuple[float, str]]:
+    """Le texte d'une page, morceau par morceau, avec sa position depuis le bord gauche."""
+    found: list[tuple[float, str]] = []
+
+    def seen(text: str, cm: Any, tm: Any, font: Any, size: Any) -> None:
+        del cm, font, size
+        if text.strip():
+            found.append((round(float(tm[4]), 1), text.strip()))
+
+    page.extract_text(visitor_text=seen)
+    return found
+
+
+def heights(page: Any) -> list[tuple[str, float]]:
+    """Le texte d'une page, morceau par morceau, avec sa hauteur depuis le bas de la page
+    (la matrice du texte dans celle du dessin : un paragraphe se dessine à sa place)."""
+    found: list[tuple[str, float]] = []
+
+    def seen(text: str, cm: Any, tm: Any, font: Any, size: Any) -> None:
+        del font, size
+        if text.strip():
+            found.append((text.strip(), round(float(tm[5]) * float(cm[3]) + float(cm[5]), 1)))
+
+    page.extract_text(visitor_text=seen)
+    return found
+
+
 def drawn(page: Any) -> bytes:
     """Le flux de dessin d'une page : ses couleurs, ses polices, ses filets."""
     return cast(bytes, page.get_contents().get_data())
@@ -832,6 +860,51 @@ async def test_a_facture_in_the_style_of_its_template(disk: Path) -> None:
         tool, path="sortie/g.pdf", template="facture", title="Facture", sections=FACTURE_SECTIONS
     )
     assert again["sha256"] == written["sha256"]
+
+
+async def test_the_header_and_the_footer_in_the_frame_of_their_style(disk: Path) -> None:
+    """L'en-tête et le pied dans le cadre de leur style, comme Word : un filet sous l'en-tête,
+    au-dessus du pied, un fond ; les capitales et le soulignement ; les lignes du pied à
+    gauche quand son style l'est ; le texte du corps descendu d'autant."""
+    plain = make(disk, SORTIE)
+    framed = make(
+        disk,
+        SORTIE,
+        style={
+            "spec": {
+                "header": {
+                    "right": "{title}",
+                    "border_bottom": "1pt 0B5D3B",
+                    "space_after": 6,
+                    "uppercase": True,
+                    "underline": True,
+                },
+                "footer": {
+                    "lines": ["SIRET 812 345 678 00021"],
+                    "border_top": "0.5pt C0392B",
+                    "fill": "F2F2F2",
+                    "align": "left",
+                },
+            }
+        },
+    )
+    note = {"title": "Note", "blocks": [{"type": "paragraph", "text": "Texte."}]}
+    await call(plain, path="sortie/a.pdf", **note)
+    await call(framed, path="sortie/b.pdf", **note)
+    page = PdfReader(disk / "sortie" / "b.pdf").pages[0]
+    said = drawn(page)
+    assert b".043137 .364706 .231373 RG\n1 w" in said  # 0B5D3B, 1 pt : sous l'en-tête
+    assert b".752941 .223529 .168627 RG\n.5 w" in said  # C0392B, 0,5 pt : sur le pied
+    assert b".94902 .94902 .94902 rg" in said  # F2F2F2, le fond du pied
+    assert said.count(b" l S") == 3  # les deux filets, le soulignement du titre
+    text = page.extract_text()
+    assert "NOTE" in text and "SIRET 812 345 678 00021" in text
+    # Le pied à gauche : à la marge, plus l'écart du fond ; sans style, centré.
+    where = {text: x for x, text in xs(page)}
+    assert where["SIRET 812 345 678 00021"] == pytest.approx(2 * cm + 8, abs=0.5)
+    assert where["Page 1 / 1"] == pytest.approx(2 * cm + 8, abs=0.5)
+    first = dict(heights(PdfReader(disk / "sortie" / "a.pdf").pages[0]))
+    assert dict(heights(page))["Texte."] < first["Texte."]  # l'en-tête prend plus de place
 
 
 async def test_a_report_with_its_cover_landscape_and_columns(disk: Path) -> None:

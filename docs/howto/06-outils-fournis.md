@@ -1649,7 +1649,7 @@ tools[loom.pdf].style.fonts.Inter.regular — une police web (WOFF) : le fichier
 
 `loom validate` dit, pour `loom.pdf`, comment s'écrit chaque police du style : `polices : Calibri → Helvetica ; Georgia → Times ; Inter : embarquée`.
 
-**En PDF**, le même style donne la même page : les mêmes styles nommés, la même disposition des sections, l'en-tête et le pied de page (logo, zones, mentions, « Page n / N ») et le filigrane dessinés à chaque page, à 1 cm du bord comme dans Word. Les en-têtes d'une page en paysage suivent le bord de la page couchée, ce que Word ne fait pas. Un PDF ne se relit pas en blocs : sa mise en page n'a pas à revenir.
+**En PDF**, le même style donne la même page : les mêmes styles nommés, la même disposition des sections, l'en-tête et le pied de page (logo, zones, mentions, « Page n / N ») et le filigrane dessinés à chaque page, à 1 cm du bord comme dans Word. Les styles `header` et `footer` y valent tout entiers, comme dans Word : leurs filets (`border_bottom` sous le logo, `border_top` au-dessus des mentions) et leur fond autour de toutes leurs lignes, leurs espacements, leur retrait, les capitales et le soulignement ; les lignes d'un pied et son texte du centre, quand il est seul, suivent son alignement (`align: left`), celles d'un en-tête restent centrées. Un en-tête plus haut que la marge du haut descend le texte, comme dans Word. Les en-têtes d'une page en paysage suivent le bord de la page couchée, ce que Word ne fait pas. Un PDF ne se relit pas en blocs : sa mise en page n'a pas à revenir.
 
 #### Signature, sommaire, liste à cocher
 

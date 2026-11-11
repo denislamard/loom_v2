@@ -38,6 +38,11 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 - Les tableaux restent en 10 pt, et non en 12 comme dans Word : les largeurs de colonne de l'outil sont réglées pour que les mots d'en-tête et les valeurs courtes ne se coupent pas. Les titres restent en Aptos, et non en Aptos Display : la police de `text` vaut pour les titres sans être répétée. Les listes gardent 3 pt entre éléments : Word n'en met aucun (espacement contextuel), que loom n'écrit pas.
 - Essais : `tests/unit/test_word_styles.py` (`DEVIS_SHA256` et `HOUSE_STYLES_SHA256` nouveaux, la palette, ni filet ni fond dans `default.yaml`), `test_pdf.py` (12 pt, 0F4761, Aptos → Helvetica), `test_excel_charts.py` (la palette).
 
+### Documents : l'en-tête et le pied de page du PDF dans leur style
+- **`loom.pdf` dessine les styles `header` et `footer` comme Word** : leurs filets (`border_bottom`, `border_top`, `border_left`, `border`) et leur fond (`fill`) autour de toutes leurs lignes, à 4 pt du texte en haut et en bas, 8 pt sur les côtés ; `space_before` et `space_after` ; `indent` ; `uppercase` et `underline`. Les lignes d'un pied de page, et son texte du centre quand il est seul, suivent son `align` (`left`, `right`) ; celles d'un en-tête restent centrées, comme dans Word. Avant, le PDF n'en prenait que la police, la taille, la couleur et l'interligne : un filet sous le logo, par exemple, n'apparaissait que dans le `.docx`. La place de l'en-tête et du pied compte ces espaces et ces écarts : le texte de la page descend d'autant.
+- Un document dont le style d'en-tête et de pied n'a rien de cela est le même qu'avant, octet pour octet.
+- Essais : `tests/unit/test_pdf.py` (filets, fond, capitales, soulignement, pied à gauche, le texte descendu).
+
 ## 2.1.0 - non publiée
 
 ### Documents : le vocabulaire en anglais, la liste `blocks` (refonte, lot 1)

@@ -106,6 +106,10 @@ LEADING: Final = 1.2
 # page de garde, la place pour signer.
 BAND_DISTANCE: Final = 1 * cm
 BAND_GAP: Final = 6.0
+# Le soulignement d'un texte d'en-tête ou de pied, en fraction de sa taille : comme
+# ``Paragraph`` (sous la ligne de base, d'un vingtième de la taille).
+UNDERLINE_OFFSET: Final = -0.125
+UNDERLINE_WIDTH: Final = 0.05
 COLUMN_GAP: Final = 1 * cm
 CELL_GAP: Final = 284 * TWIP
 BOX_PAD: Final = 170 * TWIP
@@ -1351,6 +1355,75 @@ class _Zone:
     draw: Callable[[Canvas, float, float, float, int, int | None], None]
 
 
+@dataclass(frozen=True, slots=True)
+class _Box:
+    """Les lignes d'un en-tête ou d'un pied dans le cadre de son style, comme Word groupe
+    les paragraphes qui se suivent dans un même style : l'espace avant le premier, puis
+    les filets et le fond autour du groupe (à l'écart du texte de ``RULE_SPACE``), entre
+    deux lignes l'espace après l'une et avant l'autre, l'espace après la dernière ; le
+    retrait à gauche et à droite."""
+
+    zones: list[_Zone]
+    look: Look
+
+    def _pads(self) -> tuple[float, float, float, float]:
+        """L'écart du texte au cadre : en haut, en bas, à gauche, à droite."""
+        look = self.look
+        every = look.border
+        filled = _color(look.fill) is not None
+        vertical, horizontal = RULE_SPACE
+        return (
+            vertical if look.border_top or every or filled else 0.0,
+            vertical if look.border_bottom or every or filled else 0.0,
+            horizontal if look.border_left or every or filled else 0.0,
+            horizontal if every or filled else 0.0,
+        )
+
+    @property
+    def height(self) -> float:
+        if not self.zones:
+            return 0.0
+        look = self.look
+        before, after = look.space_before or 0.0, look.space_after or 0.0
+        top, bottom, _, _ = self._pads()
+        inner = (len(self.zones) - 1) * (before + after)
+        return before + top + sum(z.height for z in self.zones) + inner + bottom + after
+
+    def draw(
+        self, canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None
+    ) -> None:
+        if not self.zones:
+            return
+        look = self.look
+        before, after = look.space_before or 0.0, look.space_after or 0.0
+        indent = (look.indent or 0) * cm
+        left, right = left + indent, right - indent
+        pad_top, _, pad_left, pad_right = self._pads()
+        upper = top - before
+        lower = top - self.height + after
+        filled = _color(look.fill)
+        if filled is not None:
+            canvas.setFillColor(filled)
+            canvas.rect(left, lower, right - left, upper - lower, stroke=0, fill=1)
+        every = _rule(look.border)
+        for rule, line in (
+            (_rule(look.border_top) or every, (left, upper, right, upper)),
+            (_rule(look.border_bottom) or every, (left, lower, right, lower)),
+            (_rule(look.border_left) or every, (left, lower, left, upper)),
+            (every, (right, lower, right, upper)),
+        ):
+            if rule is not None:
+                canvas.setStrokeColor(rule[1])
+                canvas.setLineWidth(rule[0])
+                canvas.line(*line)
+        y = upper - pad_top
+        for index, zone in enumerate(self.zones):
+            if index:
+                y -= after + before
+            zone.draw(canvas, y, left + pad_left, right - pad_right, page, total)
+            y -= zone.height
+
+
 class _Bands:
     """L'en-tête, le pied de page et le filigrane, dessinés à chaque page : à 1 cm du bord,
     comme Word ; trois zones (gauche, centre, droite) et des lignes centrées — sous les
@@ -1366,7 +1439,7 @@ class _Bands:
     def _font(self, look: Look) -> str:
         return self.fonts.name(look.font, bool(look.bold), bool(look.italic))
 
-    def _said(self, text: str, page: int, total: int | None) -> str:
+    def _said(self, text: str, page: int, total: int | None, look: Look) -> str:
         def value(found: re.Match[str]) -> str:
             name = found.group(1)
             if name == "page":
@@ -1375,7 +1448,8 @@ class _Bands:
                 return str(total) if total is not None else "0"
             return self.title
 
-        return _PLACEHOLDER.sub(value, text)
+        said = _PLACEHOLDER.sub(value, text)
+        return said.upper() if look.uppercase else said
 
     def lines(self, band: Band | None, look: Look, *, header: bool) -> list[_Zone]:
         """Les lignes d'un en-tête ou d'un pied, du haut vers le bas."""
@@ -1385,6 +1459,21 @@ class _Bands:
         leading = size * LEADING * (look.line_spacing or 1.0)
         font = self._font(look)
         color = _color(look.color) or colors.black
+        # Comme Word : les lignes d'un en-tête sont centrées ; celles d'un pied, et son
+        # texte du centre quand il est seul, suivent l'alignement de son style.
+        own = "left" if look.align in (None, "justify") else look.align
+        aligned = "center" if header else own
+
+        def write(canvas: Canvas, x: float, baseline: float, text: str) -> None:
+            canvas.setFont(font, size)
+            canvas.setFillColor(color)
+            canvas.drawString(x, baseline, text)
+            if look.underline:
+                below = baseline + size * UNDERLINE_OFFSET
+                canvas.setStrokeColor(color)
+                canvas.setLineWidth(size * UNDERLINE_WIDTH)
+                canvas.line(x, below, x + pdfmetrics.stringWidth(text, font, size), below)
+
         zones: list[_Zone] = []
         logo = band.logo
         picture: Any = None
@@ -1395,6 +1484,9 @@ class _Bands:
             logo_width = logo.width * cm
             logo_height = logo_width * pixels[1] / pixels[0]
         texts = {"left": band.left, "center": band.center, "right": band.right}
+        alone = (
+            not texts["left"] and not texts["right"] and (logo is None or logo.position == "center")
+        )
         if any(texts.values()) or logo is not None:
             height = max(leading, logo_height)
 
@@ -1404,16 +1496,17 @@ class _Bands:
                 bottom = top - height
                 baseline = bottom + size * 0.22
                 for place in ("left", "center", "right"):
-                    text = self._said(texts[place], page, total)
+                    text = self._said(texts[place], page, total, look)
                     has_logo = logo is not None and logo.position == place
                     text_width = pdfmetrics.stringWidth(text, font, size) if text else 0.0
                     gap = 4.0 if has_logo and text else 0.0
                     group = (logo_width if has_logo else 0.0) + gap + text_width
+                    spot = aligned if place == "center" and alone else place
                     x = (
                         left
-                        if place == "left"
+                        if spot == "left"
                         else right - group
-                        if place == "right"
+                        if spot == "right"
                         else (left + right - group) / 2
                     )
                     if has_logo:
@@ -1421,9 +1514,7 @@ class _Bands:
                         drawn.drawImage(picture, x, bottom, logo_width, logo_height, mask="auto")
                         x += logo_width + gap
                     if text:
-                        canvas.setFont(font, size)
-                        canvas.setFillColor(color)
-                        canvas.drawString(x, baseline, text)
+                        write(canvas, x, baseline, text)
 
             zones.append(_Zone(height, zone))
         rows: list[_Zone] = []
@@ -1438,22 +1529,28 @@ class _Bands:
                 total: int | None,
                 line: str = line,
             ) -> None:
-                canvas.setFont(font, size)
-                canvas.setFillColor(color)
-                text = self._said(line, page, total)
-                canvas.drawCentredString((left + right) / 2, top - leading + size * 0.22, text)
+                text = self._said(line, page, total, look)
+                width = pdfmetrics.stringWidth(text, font, size)
+                x = (
+                    left
+                    if aligned == "left"
+                    else right - width
+                    if aligned == "right"
+                    else (left + right - width) / 2
+                )
+                write(canvas, x, top - leading + size * 0.22, text)
 
             rows.append(_Zone(leading, centered))
         return zones + rows if header else rows + zones
 
+    def box(self, band: Band | None, look: Look, *, header: bool) -> _Box:
+        """Les lignes d'un en-tête ou d'un pied dans le cadre de son style."""
+        return _Box(self.lines(band, look, header=header), look)
+
     def heights(self) -> tuple[float, float]:
         """La place que prennent l'en-tête et le pied, depuis le bord de la page."""
-        header = sum(
-            z.height for z in self.lines(self.header, self.style.look("header"), header=True)
-        )
-        footer = sum(
-            z.height for z in self.lines(self.footer, self.style.look("footer"), header=False)
-        )
+        header = self.box(self.header, self.style.look("header"), header=True).height
+        footer = self.box(self.footer, self.style.look("footer"), header=False).height
         return (
             BAND_DISTANCE + header + BAND_GAP if header else 0.0,
             BAND_DISTANCE + footer + BAND_GAP if footer else 0.0,
@@ -1476,16 +1573,11 @@ class _Bands:
         canvas.saveState()
         if header:
             self._watermark(canvas, size)
-            y = height - BAND_DISTANCE
-            for zone in self.lines(self.header, style.look("header"), header=True):
-                zone.draw(canvas, y, left, width - right, page, total)
-                y -= zone.height
+            box = self.box(self.header, style.look("header"), header=True)
+            box.draw(canvas, height - BAND_DISTANCE, left, width - right, page, total)
         if footer:
-            zones = self.lines(self.footer, style.look("footer"), header=False)
-            y = BAND_DISTANCE + sum(zone.height for zone in zones)
-            for zone in zones:
-                zone.draw(canvas, y, left, width - right, page, total)
-                y -= zone.height
+            box = self.box(self.footer, style.look("footer"), header=False)
+            box.draw(canvas, BAND_DISTANCE + box.height, left, width - right, page, total)
         canvas.restoreState()
 
     def _watermark(self, canvas: Canvas, size: tuple[float, float]) -> None:
