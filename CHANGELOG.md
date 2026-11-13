@@ -2,7 +2,7 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.1.1 - non publiée
+## 2.0.21 - non publiée
 
 ### Documents : le texte enrichi (refonte, lot 5)
 - **Liens, notes de bas de page et renvois**, dans `loom.word` et `loom.pdf`. `[texte](https://…)` est un lien (`https`, `http` ou `mailto` ; un autre schéma est refusé, `[voir](page 2)` sans schéma reste du texte). `^[texte]` est une note de bas de page : 500 caractères par note, 100 par document, pas de note dans une note, un `^[` non refermé refusé avec l'endroit. `§[Titre]` renvoie à un titre du document, comparé comme le plan d'un modèle (sans numéro, casse, accents ni emphase) ; un titre inconnu est refusé avec la liste des titres, comme deux titres de même nom ou une section qui n'imprime pas son titre (`show_title: false`). `\^[` et `\§[` s'écrivent tels quels. Ils vont dans un paragraphe, un élément de liste, une note, une citation, une valeur de `fields` et une cellule de texte ; un titre (du document, d'une note), une légende, un en-tête de colonne, un libellé de `fields`, la source d'une citation n'ont que l'emphase (refus : « ni lien, ni note (^[…]), ni renvoi (§[…]) ici ») ; le texte fixe d'un modèle a les liens.
@@ -42,8 +42,6 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 - **`loom.pdf` dessine les styles `header` et `footer` comme Word** : leurs filets (`border_bottom`, `border_top`, `border_left`, `border`) et leur fond (`fill`) autour de toutes leurs lignes, à 4 pt du texte en haut et en bas, 8 pt sur les côtés ; `space_before` et `space_after` ; `indent` ; `uppercase` et `underline`. Les lignes d'un pied de page, et son texte du centre quand il est seul, suivent son `align` (`left`, `right`) ; celles d'un en-tête restent centrées, comme dans Word. Avant, le PDF n'en prenait que la police, la taille, la couleur et l'interligne : un filet sous le logo, par exemple, n'apparaissait que dans le `.docx`. La place de l'en-tête et du pied compte ces espaces et ces écarts : le texte de la page descend d'autant.
 - Un document dont le style d'en-tête et de pied n'a rien de cela est le même qu'avant, octet pour octet.
 - Essais : `tests/unit/test_pdf.py` (filets, fond, capitales, soulignement, pied à gauche, le texte descendu).
-
-## 2.1.0 - non publiée
 
 ### Documents : le vocabulaire en anglais, la liste `blocks` (refonte, lot 1)
 - ⚠ **Le vocabulaire de `loom.word`, `loom.pdf` et `loom.excel` passe en anglais.** Blocs : `heading`, `paragraph`, `list`, `table`, `note`, `quote`, `chart`, `image`, `signature`, `toc` (`titre`, `paragraphe`, `liste`, `tableau`, `citation`, `graphique`, `sommaire` avant). Types de colonne : `text`, `integer`, `decimal`, `amount_eur`, `amount_keur`, `percent`, `date`, `datetime`, `year`, `boolean`. Totaux : `sum`, `average`, `count`, `min`, `max`. Graphiques : `bar`, `horizontal_bar`, `line`, `pie`. Largeur d'image : `full`, `half`, `small`. Document libre : `template: none` (`aucun` avant). Rôles de `loom.excel` : `input`, `formula`, `assumption`, `total`, `note`. La relecture d'un `.docx` rend les mêmes noms, et `loom.memory` les lit. Les descriptions et les messages restent en français ; une valeur refusée se dit « 'environ 800' n'est pas une valeur amount_eur ».
@@ -94,8 +92,6 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 - **Coût** : la description de `loom.pdf` perd 9 caractères (« Polices du PDF »). `signature`, `toc` et `checkboxes` y coûtent ce qu'ils coûtent sur `loom.word` (848 caractères à eux trois).
 - **Pas dans ce lot** : les notes de fin de document (O-6), qui viennent avec les notes de bas de page (lot 5).
 - Essais : `tests/unit/test_pdf.py` (aucune valeur visuelle dans `pdf/`, le PDF sans style dans `default.yaml`, la facture et le rapport des essais de Word en PDF — côte à côte, encadré, récapitulatif à droite, page de garde, paysage, colonnes, sommaire et ses pages, légendes numérotées, filigrane —, signature, sommaire et cases, styles proposés et anglais, une police embarquée, les polices vérifiées au chargement, ce que `loom validate` dit des polices), `test_word_styles.py` (`loom.pdf` prend les styles et les trois blocs).
-
-## 2.0.21 - non publiée
 
 ### Config : `prompts_dir` devient `resources_dir`
 - ⚠ **La clé `prompts_dir` de `loom.yaml` s'appelle `resources_dir`.** Le dossier ne contient plus seulement les prompts : les `system_file`, les `skill_file`, les modèles de document, les chartes et dispositions de `loom.word` et leurs logos s'y rapportent, et il reste fermé à tous les outils fournis. Rien d'autre ne change : même défaut (`prompts`), mêmes règles (chemin relatif à ce dossier, refusé s'il en sort une fois résolu). Une config qui écrit encore `prompts_dir` est refusée au chargement (`prompts_dir — Extra inputs are not permitted`), jamais lue avec le dossier par défaut : remplacer la clé suffit. En Python, `LoomConfig.resources_dir` remplace `LoomConfig.prompts_dir`.
