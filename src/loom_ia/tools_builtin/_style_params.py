@@ -171,9 +171,7 @@ _OWNERS: Final[Mapping[str, frozenset[str]]] = {
     "row_height": frozenset({"attendance"}),
 }
 # Les réglages : des clés du fichier qui ne sont pas des styles.
-SETTINGS: Final = frozenset(
-    {"colors", "page", "numbering", "language", "labels", "image", "chart", "fonts"}
-)
+SETTINGS: Final = frozenset({"colors", "page", "numbering", "language", "labels", "image", "chart", "fonts"})
 # La disposition des sections d'un modèle : dans le modèle de document depuis 2.1.0.
 LAYOUT: Final = frozenset({"sections", "beside"})
 # Les styles de bloc : un style à toi qui en descend peut être proposé au modèle de langage
@@ -272,10 +270,7 @@ def _color(value: str) -> str:
         return value.lstrip("#").upper()
     if _NAME.match(value):
         return value
-    raise ValueError(
-        f"couleur {value!r} : six chiffres hexadécimaux (« 1F3864 »), ou le nom d'une "
-        "couleur définie dans colors"
-    )
+    raise ValueError(f"couleur {value!r} : six chiffres hexadécimaux (« 1F3864 »), ou le nom d'une couleur définie dans colors")
 
 
 def _fill(value: str) -> str:
@@ -303,10 +298,7 @@ def _rule(value: str) -> str:
 
 def _font(value: str) -> str:
     if not _FONT.match(value):
-        raise ValueError(
-            f"police {value!r} : un nom de police (lettres, chiffres, espaces, tirets ; "
-            "60 caractères au plus)"
-        )
+        raise ValueError(f"police {value!r} : un nom de police (lettres, chiffres, espaces, tirets ; 60 caractères au plus)")
     return value
 
 
@@ -325,19 +317,13 @@ def _band_text(value: str) -> str:
 
 def _color_name(value: str) -> str:
     if _HEX.match(value) or not _NAME.match(value):
-        raise ValueError(
-            f"nom de couleur {value!r} : des minuscules, chiffres et _, une lettre d'abord, "
-            "et pas six chiffres hexadécimaux (brand, grey)"
-        )
+        raise ValueError(f"nom de couleur {value!r} : des minuscules, chiffres et _, une lettre d'abord, et pas six chiffres hexadécimaux (brand, grey)")
     return value
 
 
 def _style_name(value: str) -> str:
     if not _NAME.match(value):
-        raise ValueError(
-            f"nom de style {value!r} : des minuscules, chiffres et _, une lettre d'abord "
-            "(40 caractères au plus)"
-        )
+        raise ValueError(f"nom de style {value!r} : des minuscules, chiffres et _, une lettre d'abord (40 caractères au plus)")
     return value
 
 
@@ -424,8 +410,7 @@ def _tax_label(label: str) -> str:
     fields = set(re.findall(r"\{([^{}]*)\}", label))
     if "rate" not in fields or not fields <= TAX_FIELDS:
         raise ValueError(
-            f"labels.tax {label!r} : {{rate}} (le taux), et au besoin {{base}} (le montant HT "
-            "de ce taux), sans autre champ — ex. « TVA {rate} »"
+            f"labels.tax {label!r} : {{rate}} (le taux), et au besoin {{base}} (le montant HT de ce taux), sans autre champ — ex. « TVA {{rate}} »"
         )
     return label
 
@@ -441,9 +426,7 @@ class LabelsSpec(_Spec):
     notes: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     subtotal: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     total_excl_tax: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
-    tax: (
-        Annotated[str, Field(min_length=1, max_length=MAX_LABEL), AfterValidator(_tax_label)] | None
-    ) = None
+    tax: Annotated[str, Field(min_length=1, max_length=MAX_LABEL), AfterValidator(_tax_label)] | None = None
     total_incl_tax: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     paid: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     due: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
@@ -532,22 +515,10 @@ class StyleFile(_Spec):
             if name == "watermark" and isinstance(given, str):
                 given = {"text": given}
             given = {} if given is None else given
-            if (
-                name in ("header", "footer")
-                and isinstance(given, Mapping)
-                and isinstance(cast(Mapping[object, object], given).get("logo"), Mapping)
-            ):
-                raise ValueError(
-                    f"{name}.logo : le fichier seul depuis 2.1.0 (logo: images/logo.png), "
-                    "et logo_width, logo_position à côté"
-                )
-            if name not in BASES and not (
-                isinstance(given, Mapping) and "base" in cast(Mapping[object, object], given)
-            ):
-                raise ValueError(
-                    f"{name} : ni un style prévu, ni un réglage ; un style à toi dit de quel "
-                    f"style il part (base: note){_closest(name)}"
-                )
+            if name in ("header", "footer") and isinstance(given, Mapping) and isinstance(cast(Mapping[object, object], given).get("logo"), Mapping):
+                raise ValueError(f"{name}.logo : le fichier seul depuis 2.1.0 (logo: images/logo.png), et logo_width, logo_position à côté")
+            if name not in BASES and not (isinstance(given, Mapping) and "base" in cast(Mapping[object, object], given)):
+                raise ValueError(f"{name} : ni un style prévu, ni un réglage ; un style à toi dit de quel style il part (base: note){_closest(name)}")
             styles[name] = given
         if len(styles) > MAX_STYLES:
             raise ValueError(f"{len(styles)} styles, au-delà de {MAX_STYLES}")
@@ -562,9 +533,7 @@ def _old_fonts(value: object) -> bool:
     for given in cast(Mapping[object, object], value).values():
         if isinstance(given, str):
             return True
-        if isinstance(given, Mapping) and {"name", "size"} & set(
-            cast(Mapping[object, object], given)
-        ):
+        if isinstance(given, Mapping) and {"name", "size"} & set(cast(Mapping[object, object], given)):
             return True
     return False
 
@@ -689,10 +658,7 @@ def font_fault(data: bytes) -> str | None:
     rights = struct.unpack(">H", data[offset + 8 : offset + 10])[0]
     if not rights & _EDITABLE:
         if rights & _PREVIEW_PRINT:
-            return (
-                "police « aperçu et impression seulement » (fsType 4) : sa licence ne permet "
-                "pas un document modifiable"
-            )
+            return "police « aperçu et impression seulement » (fsType 4) : sa licence ne permet pas un document modifiable"
         if rights & _RESTRICTED:
             return "police à embarquement interdit (fsType 2) : sa licence ne le permet pas"
     if rights & _NO_SUBSETTING:
@@ -899,11 +865,7 @@ class Style:
     def band(self, name: Literal["header", "footer"]) -> Band | None:
         """L'en-tête ou le pied de page ; ``None`` s'il n'écrit rien."""
         look = self.looks[name]
-        logo = (
-            Logo(look.logo, look.logo_width or 3.0, look.logo_position or "left")
-            if look.logo is not None
-            else None
-        )
+        logo = Logo(look.logo, look.logo_width or 3.0, look.logo_position or "left") if look.logo is not None else None
         band = Band(
             left=look.left or "",
             center=look.center or "",
@@ -1001,9 +963,7 @@ _COLORED: Final = frozenset({"color", "fill", "bands"})
 _RULES: Final = frozenset({"border_top", "border_bottom", "border_left", "border", "line"})
 
 
-def _named_colors(
-    name: str, prop: str, value: Any, colors: Mapping[str, str], faults: list[str]
-) -> Any:
+def _named_colors(name: str, prop: str, value: Any, colors: Mapping[str, str], faults: list[str]) -> Any:
     """Une couleur nommée remplacée par sa valeur ; une inconnue, dite."""
 
     def color(said: str) -> str:
@@ -1062,10 +1022,7 @@ def _check_owners(
         for prop in props:
             owners = _OWNERS.get(prop)
             if owners is not None and not owners & chain:
-                faults.append(
-                    f"style {name}.{prop} : propre à {', '.join(sorted(owners))} "
-                    "(et aux styles qui en partent)"
-                )
+                faults.append(f"style {name}.{prop} : propre à {', '.join(sorted(owners))} (et aux styles qui en partent)")
 
 
 def _chain(name: str, bases: Mapping[str, str | None]) -> list[str]:
