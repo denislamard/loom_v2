@@ -2,7 +2,7 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.21 - non publiée
+## 2.0.21 - publiée
 
 ### Documents : le format des styles (`docs/style_format.md`)
 - ⚠ **Un nouveau format pour les fichiers de style**, pour `loom.word` et `loom.pdf` : `default.yaml`, la charte d'un outil, le style d'un modèle de document. Toute charte et tout style de modèle d'avant est à reprendre : chaque ancienne clé est refusée au chargement (`loom validate`) avec sa nouvelle place, toutes celles d'un fichier d'un coup. Ce format remplace, dans cette version, ce que décrivent plus bas « Le style hors du code (refonte, lot 2) », « L'en-tête et le pied de page du PDF dans leur style » et « Les modèles en YAML et les sections (refonte, lot 3) » sur les noms et le contenu de l'en-tête et du pied. Rien ne change pour le modèle de langage : ni la description ni le schéma des outils ne parlent des styles. Le format est décrit dans `docs/style_format.md` et `docs/howto/06-outils-fournis.md`, que vérifie un essai contre le registre des propriétés.
