@@ -43,7 +43,9 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Final, Literal, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, model_validator
+
+from loom_ia.tools_builtin._style_params import in_centimetres, percent
 
 MAX_TEMPLATES: Final = 20
 MAX_TEMPLATE_CHARS: Final = 20_000
@@ -114,13 +116,31 @@ class SectionSpec(_Spec):
     styles: dict[Element, str] = {}
     box: bool = False
     beside: bool = False
-    width: Annotated[int, Field(ge=10, le=90)] | None = None
+    # En pour cent de la largeur du texte : ``55`` ou ``55%``.
+    width: Annotated[int, BeforeValidator(percent), Field(ge=10, le=90)] | None = None
     page_break: bool = False
     columns: Annotated[int, Field(ge=1, le=3)] = 1
     landscape: bool = False
     cover: bool = False
     # En cm : l'adresse d'un courrier dans la fenêtre de l'enveloppe.
-    space_before: Annotated[float, Field(ge=0, le=20)] | None = None
+    # La marge au-dessus de la section, en cm (l'adresse d'un courrier dans la fenêtre d'une
+    # enveloppe) : de la mise en page, pas un style.
+    margin_top: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=20)] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _renamed(cls, value: object) -> object:
+        """``space_before`` d'une section, renommé : le même nom qu'une propriété de style
+        (en points) aurait deux sens."""
+        if not isinstance(value, Mapping):
+            return value
+        entries = cast(Mapping[object, object], value)
+        if "space_before" in entries:
+            raise ValueError(
+                "space_before → margin_top : renommé en 2.0.21 (une marge de la section, en cm ; "
+                "space_before est l'espace d'un style, en points)"
+            )
+        return entries
 
 
 class TemplateSpec(_Spec):
@@ -350,10 +370,10 @@ def _check_layout(where: str, sections: Sequence[Section]) -> None:
                     f"{where} : « {section.name} » est côte à côte (beside) : ni columns, ni "
                     "landscape, ni cover"
                 )
-            if index and (spec.page_break or spec.space_before):
+            if index and (spec.page_break or spec.margin_top):
                 raise ValueError(
                     f"{where} : « {section.name} » suit une autre section sur la même ligne "
-                    "(beside) : page_break et space_before vont à la première"
+                    "(beside) : page_break et margin_top vont à la première"
                 )
         widths = [s.spec.width for s in row]
         if len(row) == 1 and widths[0] is not None:

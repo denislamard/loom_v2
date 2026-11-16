@@ -63,7 +63,7 @@ from loom_ia.tools_builtin._document.content import (
 )
 from loom_ia.tools_builtin._document.picture import Picture
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
-from loom_ia.tools_builtin._style_params import Band, Look, Style, house, parse_rule
+from loom_ia.tools_builtin._style_params import Band, Look, Style, cm_twips, house, parse_rule
 from loom_ia.tools_builtin._templates import SectionSpec, Template
 from loom_ia.tools_builtin.word import chart, image
 from loom_ia.tools_builtin.word import style as look
@@ -78,18 +78,12 @@ _TYPE: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationsh
 _CT: Final = "application/vnd.openxmlformats-officedocument.wordprocessingml"
 _HEAD: Final = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 
-# L'espace laissé pour une signature, sous « Signature : » (2 cm).
-SIGN_SPACE: Final = 1134
-# Un centimètre en vingtièmes de point (twips) ; un twip en EMU ; l'écart entre deux
-# colonnes de texte, entre deux cellules côte à côte, et la marge d'un encadré.
+# Un centimètre en vingtièmes de point (twips) ; un twip en EMU.
 CM: Final = 567
 EMU_PER_TWIP: Final = 635
-COLUMN_GAP: Final = CM
-CELL_GAP: Final = 284
-BOX_PAD: Final = 170
-# L'espace en haut d'une page de garde, sans ``space_before`` : LibreOffice ignore le
-# centrage vertical d'une page (``vAlign``), un espace fixe marche partout.
-COVER_SPACE: Final = 6 * CM
+# L'espace sous « Date : », dans une signature, en twips (3 pt) : resté dans le code (la
+# place pour signer, en dessous, est ``signature.sign_height``).
+_DATE_SPACE: Final = 60
 # Les signets des sections : leurs identifiants commencent ici, loin de ceux du sommaire.
 SECTION_MARKS: Final = 1000
 # Les identifiants des signets des titres que vise un renvoi (``REF_MARK`` et leur rang).
@@ -344,7 +338,23 @@ def _spacer(twips: int) -> str:
     )
 
 
-_AFTER_TABLE: Final = '<w:spacing w:after="120"/>'
+def _after(points: float) -> str:
+    """Le paragraphe vide qui suit un tableau, une image, un graphique, des sections côte à
+    côte (deux tableaux voisins ne fusionnent pas) : une ligne de Normal, et ``points``
+    après elle (le ``space_after`` de leur style, de ``image``, ``chart``, ``page``)."""
+    return _paragraph("Normal", "", f'<w:spacing w:after="{look.twips(points)}"/>')
+
+
+def _list_indent(style: Style) -> tuple[int, int]:
+    """Le retrait de chaque niveau d'une liste et la place de sa puce, en twips (``list``)."""
+    lists = style.look("list")
+    return cm_twips(lists.level_indent or 0), cm_twips(lists.marker_space or 0)
+
+
+def _sides(value: tuple[float, float, float, float] | None) -> tuple[int, int, int, int]:
+    """Un ``padding`` (cm, en haut, à droite, en bas, à gauche), en twips."""
+    top, right, bottom, left = value or (0.0, 0.0, 0.0, 0.0)
+    return cm_twips(top), cm_twips(right), cm_twips(bottom), cm_twips(left)
 _JC: Final = {"left": "left", "center": "center", "right": "right"}
 
 
@@ -431,13 +441,19 @@ def _border(value: str | None) -> str:
     return f'w:val="single" w:sz="{round(width * 8)}" w:space="0" w:color="{color}"'
 
 
+def _valign(look: Look) -> str:
+    """Le texte dans la hauteur d'une cellule de tableau (``valign`` de son style)."""
+    return f'<w:vAlign w:val="{look.valign}"/>' if look.valign else ""
+
+
 def _table_borders(tables: Look) -> list[tuple[str, str]]:
-    """Les filets d'un tableau : ``borders`` (grille, horizontales, aucun) au trait ``line``,
-    puis ``border_top`` et ``border_bottom`` s'ils sont dits."""
+    """Les filets d'un tableau : ``borders`` (grille, horizontales, verticales, aucun) au
+    trait ``line``, puis ``border_top`` et ``border_bottom`` s'ils sont dits."""
     every: tuple[str, ...] = ("top", "left", "bottom", "right", "insideH", "insideV")
     sides: tuple[str, ...] = {
         "grid": every,
         "horizontal": ("top", "bottom", "insideH"),
+        "vertical": ("left", "right", "insideV"),
         "none": every,
     }[tables.borders or "grid"]
     line = 'w:val="nil"' if tables.borders == "none" else _border(tables.line)
@@ -475,8 +491,11 @@ def _table(
     widths[-1] += full - sum(widths)
     size: int | None = None
     position = tables.position or "left"
+    # L'espacement du style du tableau vaut autour de lui ; ses cellules ont son padding.
+    top, right, bottom, left = _sides(tables.padding)
     said = (
-        "<w:tbl><w:tblPr>"
+        (_spacer(look.twips(tables.space_before)) if tables.space_before else "")
+        + "<w:tbl><w:tblPr>"
         + (
             '<w:tblW w:w="5000" w:type="pct"/>'
             if full_width
@@ -486,8 +505,8 @@ def _table(
         + "<w:tblBorders>"
         + "".join(f"<w:{side} {border}/>" for side, border in _table_borders(tables))
         + '</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar>'
-        '<w:top w:w="40" w:type="dxa"/><w:left w:w="85" w:type="dxa"/>'
-        '<w:bottom w:w="40" w:type="dxa"/><w:right w:w="85" w:type="dxa"/>'
+        f'<w:top w:w="{top}" w:type="dxa"/><w:left w:w="{left}" w:type="dxa"/>'
+        f'<w:bottom w:w="{bottom}" w:type="dxa"/><w:right w:w="{right}" w:type="dxa"/>'
         '</w:tblCellMar><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" '
         'w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/>'
         # Ce que la relecture retrouve d'un tableau calculé (le récapitulatif de TVA).
@@ -545,7 +564,7 @@ def _table(
                 content = _runs(body, text, size=size)
             said += (
                 f'<w:tc><w:tcPr><w:tcW w:w="{widths[index]}" w:type="dxa"/>{top}'
-                f'{_cell_fill(filled)}<w:vAlign w:val="center"/></w:tcPr>'
+                f"{_cell_fill(filled)}{_valign(tables)}</w:tcPr>"
                 + _paragraph(paragraph_style, content, f'<w:jc w:val="{_JC[align]}"/>')
                 + "</w:tc>"
             )
@@ -558,7 +577,7 @@ def _table(
         return (
             "<w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc><w:tcPr>"
             f'<w:tcW w:w="{full}" w:type="dxa"/><w:gridSpan w:val="{len(widths)}"/>'
-            f'{_cell_fill(grouped.fill)}<w:vAlign w:val="center"/></w:tcPr>'
+            f"{_cell_fill(grouped.fill)}{_valign(grouped)}</w:tcPr>"
             + _paragraph(look.TABLE_GROUP, _runs(body, label))
             + "</w:tc></w:tr>"
         )
@@ -583,7 +602,7 @@ def _table(
     if table.caption:
         said += _caption(body, style.labels.table, table.caption, caption)
     else:
-        said += _paragraph("Normal", "", _AFTER_TABLE)
+        said += _after(tables.space_after or 0)
     return said
 
 
@@ -599,7 +618,7 @@ def _image(body: _Body, block: ImageOut, width: int, caption: str = "Caption") -
     said = image.inline(relation, body.drawings, block, keep_next=bool(block.caption))
     if block.caption:
         return said + _caption(body, body.style.labels.figure, block.caption, caption)
-    return said + _paragraph("Normal", "", _AFTER_TABLE)
+    return said + _after(body.style.distances.image_space_after)
 
 
 def _layout(
@@ -607,9 +626,11 @@ def _layout(
     cells: Sequence[str],
     widths: Sequence[int],
     *,
+    after: float,
     boxed: Mapping[int, Look] | None = None,
 ) -> str:
-    """Un tableau de disposition : des contenus côte à côte (ou un seul, encadré).
+    """Un tableau de disposition : des contenus côte à côte (ou un seul, encadré), suivi
+    d'un paragraphe vide et de ``after`` points.
 
     Sans bordure, au style « loom layout », que la relecture reconnaît : elle rend les
     blocs de chaque cellule, dans l'ordre, et jamais le tableau. ``boxed`` : les cellules
@@ -617,6 +638,7 @@ def _layout(
     """
     body.used.add(look.LAYOUT)
     framed = dict(boxed or {})
+    gap = body.style.distances.beside_gap
     said = (
         f'<w:tbl><w:tblPr><w:tblStyle w:val="{look.LAYOUT}"/>'
         f'<w:tblW w:w="{sum(widths)}" w:type="dxa"/><w:tblLayout w:type="fixed"/>'
@@ -641,27 +663,34 @@ def _layout(
         )
         said += (
             f'<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/>{frame}'
-            f"{_cell_margins(index in framed, index < len(cells) - 1)}</w:tcPr>"
+            f"{_cell_margins(box, gap if index < len(cells) - 1 else 0)}</w:tcPr>"
             f"{content or '<w:p/>'}</w:tc>"
         )
-    return said + "</w:tr></w:tbl>" + _paragraph("Normal", "", _AFTER_TABLE)
+    return said + "</w:tr></w:tbl>" + _after(after)
 
 
-def _cell_margins(framed: bool, gap: bool) -> str:
-    if framed:
+def _cell_margins(box: Look | None, gap: int) -> str:
+    """Les marges d'une cellule de disposition : celles d'un cadre (le ``padding`` de son
+    style), ou l'écart à la cellule suivante (``gap``, ``page.beside_gap``)."""
+    if box is not None:
+        top, right, bottom, left = _sides(box.padding)
         return (
-            f'<w:tcMar><w:top w:w="{BOX_PAD}" w:type="dxa"/><w:left w:w="{BOX_PAD}" '
-            f'w:type="dxa"/><w:bottom w:w="{BOX_PAD // 2}" w:type="dxa"/>'
-            f'<w:right w:w="{BOX_PAD}" w:type="dxa"/></w:tcMar>'
+            f'<w:tcMar><w:top w:w="{top}" w:type="dxa"/><w:left w:w="{left}" '
+            f'w:type="dxa"/><w:bottom w:w="{bottom}" w:type="dxa"/>'
+            f'<w:right w:w="{right}" w:type="dxa"/></w:tcMar>'
         )
     if gap:
-        return f'<w:tcMar><w:right w:w="{CELL_GAP}" w:type="dxa"/></w:tcMar>'
+        return f'<w:tcMar><w:right w:w="{gap}" w:type="dxa"/></w:tcMar>'
     return ""
 
 
-def _room(width: int, framed: bool, gap: bool) -> int:
-    """La largeur utile d'une cellule de disposition."""
-    return width - (2 * BOX_PAD if framed else CELL_GAP if gap else 0)
+def _room(width: int, box: Look | None, gap: int) -> int:
+    """La largeur utile d'une cellule de disposition : sans le ``padding`` de son cadre, ou
+    sans l'écart à la suivante."""
+    if box is not None:
+        _, right, _, left = _sides(box.padding)
+        return width - left - right
+    return width - gap
 
 
 @dataclass(frozen=True, slots=True)
@@ -678,7 +707,7 @@ class _Layout:
     landscape: bool = False
     cover: bool = False
     # Espace avant la section, en twips.
-    space_before: int = 0
+    margin_top: int = 0
     # Une page de garde : son texte centré.
     align: str | None = None
 
@@ -696,7 +725,7 @@ def _layout_of(spec: SectionSpec) -> _Layout:
         columns=spec.columns,
         landscape=spec.landscape,
         cover=spec.cover,
-        space_before=round((spec.space_before or 0) * CM),
+        margin_top=round((spec.margin_top or 0) * CM),
     )
 
 
@@ -727,9 +756,9 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
             index += 1
             half = width // 2
             # La même place pour les deux : l'écart entre elles est pris sur la première cellule.
-            room = _room(half, False, True)
+            room = _room(half, None, style.distances.beside_gap)
             cells = [_image(body, block, room, caption), _image(body, second, room, caption)]
-            said += _layout(body, cells, [half, width - half])
+            said += _layout(body, cells, [half, width - half], after=style.distances.image_space_after)
             continue
         match block:
             case TitleOut(runs=runs):
@@ -809,7 +838,7 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
                 if block.caption:
                     said += _caption(body, style.labels.figure, block.caption, caption)
                 else:
-                    said += _paragraph("Normal", "", _AFTER_TABLE)
+                    said += _after(style.chart.space_after)
             case ImageOut():
                 said += _image(body, block, width, caption)
             case SignatureOut():
@@ -844,6 +873,8 @@ def _signature(body: _Body, block: SignatureOut, width: int) -> str:
     count = len(block.signers)
     widths = [width // count] * count
     widths[-1] += width - sum(widths)
+    # La place pour signer, sous « Signature : » (``signature.sign_height``).
+    sign = cm_twips(body.style.look("signature").sign_height or 0)
     said = (
         f'<w:tbl><w:tblPr><w:tblStyle w:val="{look.SIGNATURE}"/>'
         f'<w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/>'
@@ -856,7 +887,7 @@ def _signature(body: _Body, block: SignatureOut, width: int) -> str:
     )
     for index, (signer, cell) in enumerate(zip(block.signers, widths, strict=True)):
         gap = (
-            f'<w:tcMar><w:right w:w="{CELL_GAP}" w:type="dxa"/></w:tcMar>'
+            f'<w:tcMar><w:right w:w="{body.style.distances.beside_gap}" w:type="dxa"/></w:tcMar>'
             if index < count - 1
             else ""
         )
@@ -864,12 +895,12 @@ def _signature(body: _Body, block: SignatureOut, width: int) -> str:
         if block.mention:
             content += _paragraph(look.MENTION, _run(block.mention))
         labels = body.style.labels
-        content += _paragraph("Normal", _run(labels.date), '<w:spacing w:after="60"/>')
+        content += _paragraph("Normal", _run(labels.date), f'<w:spacing w:after="{_DATE_SPACE}"/>')
         content += _paragraph(
-            "Normal", _run(labels.signature), f'<w:spacing w:after="{SIGN_SPACE}"/>'
+            "Normal", _run(labels.signature), f'<w:spacing w:after="{sign}"/>'
         )
         said += f'<w:tc><w:tcPr><w:tcW w:w="{cell}" w:type="dxa"/>{gap}</w:tcPr>{content}</w:tc>'
-    return said + "</w:tr></w:tbl>" + _paragraph("Normal", "", _AFTER_TABLE)
+    return said + "</w:tr></w:tbl>" + _after(body.style.look("table").space_after or 0)
 
 
 def _contents(body: _Body, width: int) -> str:
@@ -1023,7 +1054,7 @@ def _fields(body: _Body, block: FieldsOut, width: int) -> str:
         f'<w:tbl><w:tblPr><w:tblStyle w:val="{look.FIELDS}"/>'
         f'<w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/>'
         '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
-        f'<w:bottom w:w="0" w:type="dxa"/><w:right w:w="{CELL_GAP // 2}" w:type="dxa"/>'
+        f'<w:bottom w:w="0" w:type="dxa"/><w:right w:w="{style.distances.beside_gap // 2}" w:type="dxa"/>'
         '</w:tblCellMar><w:tblLook w:val="0000" w:firstRow="0" w:lastRow="0" '
         'w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr><w:tblGrid>'
         + "".join(f'<w:gridCol w:w="{cell}"/>' for cell in widths)
@@ -1040,7 +1071,7 @@ def _fields(body: _Body, block: FieldsOut, width: int) -> str:
             + _paragraph(look.FIELD_VALUE, _runs(body, value))
             + "</w:tc></w:tr>"
         )
-    return said + "</w:tbl>" + _paragraph("Normal", "", _AFTER_TABLE)
+    return said + "</w:tbl>" + _after(style.look("table").space_after or 0)
 
 
 # --- Sections du modèle, sections Word ------------------------------------------------------
@@ -1093,7 +1124,7 @@ def _groups(prepared: Prepared, template: Template | None) -> list[_Group]:
 def _width(style: Style, landscape: bool, columns: int = 1) -> int:
     page_width = style.page[1] if landscape else style.page[0]
     width = page_width - style.margins[2] - style.margins[3]
-    return (width - (columns - 1) * COLUMN_GAP) // columns
+    return (width - (columns - 1) * style.distances.column_gap) // columns
 
 
 def _units(body: _Body, groups: Sequence[_Group]) -> list[_Unit]:
@@ -1148,13 +1179,15 @@ def _alone(body: _Body, group: _Group, landscape: bool) -> _Unit:
     layout = group.layout
     columns = layout.columns
     width = _width(body.style, landscape, columns)
-    space = COVER_SPACE if layout.cover and not layout.space_before else layout.space_before
+    cover = body.style.distances.cover_margin_top
+    space = cover if layout.cover and not layout.margin_top else layout.margin_top
     said = _spacer(space) if space else ""
     if layout.cover:
         layout = dataclasses.replace(layout, align="center")
     if layout.box:
-        content = _marked(group, _blocks(body, group.blocks, _room(width, True, False), layout))
-        said += _layout(body, [content], [width], boxed={0: _box(body, layout)})
+        box = _box(body, layout)
+        content = _marked(group, _blocks(body, group.blocks, _room(width, box, 0), layout))
+        said += _layout(body, [content], [width], after=body.style.distances.beside_space, boxed={0: box})
     else:
         said += _marked(group, _blocks(body, group.blocks, width, layout))
     return _Unit(said, landscape, columns, layout.cover, layout.page_break)
@@ -1174,11 +1207,11 @@ def _beside(body: _Body, together: Sequence[_Group], landscape: bool) -> _Unit:
         last = position == len(together) - 1
         if group.layout.box:
             boxed[position] = _box(body, group.layout)
-        room = _room(cell, group.layout.box, not last)
+        room = _room(cell, boxed.get(position), 0 if last else body.style.distances.beside_gap)
         cells.append(_marked(group, _blocks(body, group.blocks, room, group.layout)))
     first = together[0].layout
-    said = _spacer(first.space_before) if first.space_before else ""
-    said += _layout(body, cells, widths, boxed=boxed)
+    said = _spacer(first.margin_top) if first.margin_top else ""
+    said += _layout(body, cells, widths, after=body.style.distances.beside_space, boxed=boxed)
     return _Unit(said, landscape, 1, page_break=first.page_break)
 
 
@@ -1262,14 +1295,16 @@ def _section_properties(style: Style, section: _Section, bands: _Bands, first: b
         else f'<w:pgSz w:w="{width}" w:h="{height}"/>'
     )
     top, bottom, left, right = style.margins
+    distances = style.distances
     return (
         f"<w:sectPr>{refs}"
         + ('<w:type w:val="continuous"/>' if section.start == "continuous" else "")
         + size
         + f'<w:pgMar w:top="{top}" w:right="{right}" w:bottom="{bottom}" '
-        f'w:left="{left}" w:header="567" w:footer="567" w:gutter="0"/>'
+        f'w:left="{left}" w:header="{distances.header_distance}" '
+        f'w:footer="{distances.footer_distance}" w:gutter="0"/>'
         + (
-            f'<w:cols w:num="{section.columns}" w:space="{COLUMN_GAP}"/>'
+            f'<w:cols w:num="{section.columns}" w:space="{distances.column_gap}"/>'
             if section.columns > 1
             else ""
         )
@@ -1347,6 +1382,8 @@ def _band_parts(
                     width=width,
                     logo=drawn,
                     watermark=look.watermark(style),
+                    style=style,
+                    word=body.word,
                 ),
             )
         )
@@ -1357,7 +1394,15 @@ def _band_parts(
     parts.append(
         (
             "word/footer1.xml",
-            look.band_xml("ftr", style.footer, title=body.title, width=width, logo=drawn),
+            look.band_xml(
+                "ftr",
+                style.footer,
+                title=body.title,
+                width=width,
+                logo=drawn,
+                style=style,
+                word=body.word,
+            ),
         )
     )
     if rels:
@@ -1399,7 +1444,7 @@ def render(
             "</Relationships>", _link_relations(body, "document", bare=True) + "</Relationships>"
         )
     language = look.LANGUAGES[style.language]
-    font = style.look("text").font or ""
+    font = style.look("body").font or ""
     parts: tuple[tuple[str, str | bytes], ...] = (
         ("[Content_Types].xml", types),
         ("_rels/.rels", PACKAGE_RELS),
@@ -1410,7 +1455,7 @@ def render(
         ("word/styles.xml", look.styles_xml(style, body.used, body.custom)),
         (
             "word/numbering.xml",
-            look.numbering_xml(body.lists, style.numbering, style.labels.article),
+            look.numbering_xml(body.lists, _list_indent(style), style.numbering, style.labels.article),
         ),
         ("word/settings.xml", SETTINGS_NOTES if body.footnotes else SETTINGS),
         *notes,

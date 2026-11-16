@@ -21,7 +21,7 @@ s'en sert.
 """
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 from xml.sax.saxutils import escape, quoteattr
@@ -29,9 +29,16 @@ from xml.sax.saxutils import escape, quoteattr
 from loom_ia.tools_builtin._style_params import (
     NONE,
     Band,
+    BandElement,
     Language,
+    Look,
     Numbering,
+    Sides,
     Style,
+    band_columns,
+    band_frame,
+    band_rows,
+    cm_twips,
     parse_rule,
 )
 
@@ -107,15 +114,19 @@ _PPR: Final = (
     "outlineLvl",
 )
 _RPR: Final = ("rFonts", "b", "i", "caps", "vanish", "color", "sz", "u", "lang")
-# L'écart entre un filet et le texte, en points : au-dessus et au-dessous, à gauche.
-_RULE_SPACE: Final = {"top": 4, "bottom": 4, "left": 8, "right": 8}
+# Les côtés d'un filet de paragraphe, et leur place dans ``border_space`` (l'ordre de CSS).
+_SIDE_OF: Final = {"top": 0, "right": 1, "bottom": 2, "left": 3}
+_RULES: Final = ("border_top", "border_bottom", "border_left", "border_right", "border")
+_SPACING: Final = ("space_before", "space_after")
 # Ce que ``text`` met dans les valeurs par défaut du document, plutôt que dans Normal.
 _DEFAULT_RUN: Final = frozenset({"font", "color", "size"})
 _DEFAULT_PARAGRAPH: Final = frozenset({"space_before", "space_after", "line_spacing"})
 
 type Pieces = list[tuple[str, str]]
 # Ce qu'un style de tableau dit du tableau et de ses cellules, et pas de leur texte.
-_CELL_PROPS: Final = frozenset({"border", "border_top", "border_bottom", "border_left", "fill"})
+_CELL_PROPS: Final = frozenset(
+    {"border", "border_top", "border_bottom", "border_left", "border_right", "fill"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,11 +139,13 @@ class Watermark:
 
 
 def watermark(style: Style) -> Watermark | None:
-    """Le filigrane du style ``watermark`` ; ``None`` sans texte."""
-    look = style.look("watermark")
-    if not look.text:
+    """Le filigrane : son texte (``page.watermark``), la police et la couleur du style
+    ``watermark`` ; ``None`` sans texte."""
+    text = style.watermark
+    if not text:
         return None
-    return Watermark(look.text, look.font or "", look.color or "")
+    look = style.look("watermark")
+    return Watermark(text, look.font or "", look.color or "")
 
 
 def jc(align: str) -> str:
@@ -184,31 +197,34 @@ def run_pieces(props: Mapping[str, Any]) -> Pieces:
     return pieces
 
 
-def _side(side: str, value: str) -> str:
+def _side(side: str, value: str, space: Sides | None) -> str:
+    """Un filet de paragraphe ; son écart au texte, ``border_space`` de son côté, en points
+    entiers (Word n'en écrit pas d'autres)."""
     rule = parse_rule(value)
     if rule is None:
         return f'<w:{side} w:val="nil"/>'
     width, color = rule
+    gap = round(space[_SIDE_OF[side]]) if space is not None else 0
     return (
-        f'<w:{side} w:val="single" w:sz="{round(width * 8)}" w:space="{_RULE_SPACE[side]}" '
+        f'<w:{side} w:val="single" w:sz="{round(width * 8)}" w:space="{gap}" '
         f'w:color="{color}"/>'
     )
 
 
-def paragraph_pieces(props: Mapping[str, Any]) -> Pieces:
-    """Les propriétés de paragraphe d'un style : filets, fond, espacements, retrait,
-    alignement."""
+def paragraph_pieces(props: Mapping[str, Any], space: Sides | None = None) -> Pieces:
+    """Les propriétés de paragraphe d'un style : filets (à ``space`` du texte, le
+    ``border_space`` du style résolu), fond, espacements, retrait, alignement."""
     pieces: Pieces = []
     every = props.get("border")
     sides = [
-        _side(side, value)
+        _side(side, value, space)
         for side, prop in (
             ("top", "border_top"),
             ("left", "border_left"),
             ("bottom", "border_bottom"),
-            ("right", None),
+            ("right", "border_right"),
         )
-        if (value := (props.get(prop) if prop else None) or every) is not None
+        if (value := props.get(prop) or every) is not None
     ]
     if sides:
         pieces.append(("pBdr", f"<w:pBdr>{''.join(sides)}</w:pBdr>"))
@@ -274,7 +290,7 @@ def _named(
     loom: str,
     *,
     based: str = "Normal",
-    stop: str = "text",
+    stop: str = "body",
     next_style: str | None = None,
     mechanics: Pieces | None = None,
 ) -> str:
@@ -282,14 +298,25 @@ def _named(
     loom de son style Word de base, et la mécanique (``mechanics``). Les filets et le fond
     d'un tableau sont ceux du tableau et de ses cellules, pas du texte d'une cellule."""
     props = style.between(loom, stop)
+    own = style.look(loom)
     if "table" in style.chain(loom):
         props = {prop: value for prop, value in props.items() if prop not in _CELL_PROPS}
+        if style.table_level(loom):
+            # L'espacement d'un style de tableau vaut autour du tableau : ses cellules n'ont
+            # que celui de leur style de ligne, et rien de celui de Normal.
+            props = {prop: value for prop, value in props.items() if prop not in _SPACING}
+            if loom == "table":
+                body = style.look("body")
+                props.update({prop: 0.0 for prop in _SPACING if getattr(body, prop)})
+    elif "border_space" in props:
+        # Un nouvel écart : les filets du style, réécrits à cet écart.
+        props = {prop: getattr(own, prop) for prop in _RULES if getattr(own, prop) is not None} | props
     return _style(
         style_id,
         word_name,
         based=based,
         next_style=next_style,
-        paragraph=ordered([*(mechanics or []), *paragraph_pieces(props)], _PPR),
+        paragraph=ordered([*(mechanics or []), *paragraph_pieces(props, own.border_space)], _PPR),
         run=run_xml(props),
     )
 
@@ -323,13 +350,13 @@ def _heading(style: Style, level: int) -> str:
 
 def paragraph_style(style: Style) -> str:
     """Le style Word des paragraphes : Normal, ou « Body Text » si ``paragraph`` le règle."""
-    return BODY if style.between("paragraph", "text") else "Normal"
+    return BODY if style.between("paragraph", "body") else "Normal"
 
 
 # Le style Word de chaque style prévu qui en a un (un paragraphe) : la base Word d'un style
 # à toi qui en part.
 WORD_IDS: Final[Mapping[str, str]] = {
-    "text": "Normal",
+    "body": "Normal",
     "document_title": "Title",
     "heading1": "Heading1",
     "heading2": "Heading2",
@@ -374,7 +401,7 @@ def _custom(style: Style, used: Iterable[str]) -> str:
         )
     said = ""
     for name in sorted(wanted):
-        base = style.bases.get(name) or "text"
+        base = style.bases.get(name) or "body"
         said += _named(
             style, name, name, name, based=word_id(style, base), stop=base, next_style=None
         )
@@ -385,7 +412,7 @@ def styles_xml(style: Style, used: Iterable[str] = (), custom: Iterable[str] = (
     """``styles.xml`` : un style Word par style nommé que l'outil emploie, et ceux que le
     corps demande ; ``custom`` : les styles à toi qu'il emploie."""
     wanted = set(used)
-    text = style.between("text", None)
+    text = style.between("body", None)
     language = LANGUAGES[style.language]
     defaults_run = ordered(
         [
@@ -394,8 +421,9 @@ def styles_xml(style: Style, used: Iterable[str] = (), custom: Iterable[str] = (
         ],
         _RPR,
     )
+    space = style.look("body").border_space
     defaults_paragraph = ordered(
-        paragraph_pieces({p: v for p, v in text.items() if p in _DEFAULT_PARAGRAPH}), _PPR
+        paragraph_pieces({p: v for p, v in text.items() if p in _DEFAULT_PARAGRAPH}, space), _PPR
     )
     normal = {p: v for p, v in text.items() if p not in _DEFAULT_RUN | _DEFAULT_PARAGRAPH}
     said = (
@@ -407,7 +435,7 @@ def styles_xml(style: Style, used: Iterable[str] = (), custom: Iterable[str] = (
             "Normal",
             based=None,
             default=True,
-            paragraph=ordered(paragraph_pieces(normal), _PPR),
+            paragraph=ordered(paragraph_pieces(normal, space), _PPR),
             run=run_xml(normal),
         )
         + _named(style, "Title", "Title", "document_title", next_style="Normal")
@@ -506,7 +534,7 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
             style, ATTENDANCE, "loom attendance", "attendance", based="TableText", stop="table"
         )
     if HYPERLINK in wanted:
-        said += _character(HYPERLINK, "Hyperlink", run_xml(style.between("link", "text")))
+        said += _character(HYPERLINK, "Hyperlink", run_xml(style.between("link", "body")))
     if FOOTNOTE_TEXT in wanted:
         said += _named(style, FOOTNOTE_TEXT, "footnote text", "footnote")
         said += _character(
@@ -536,17 +564,32 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
         said += _named(
             style, TOC_HEADING, "TOC Heading", "toc", next_style="Normal", mechanics=keep
         )
+    step = cm_twips(style.look("toc").level_indent or 0)
     for level, toc in enumerate(TOC_LEVELS):
         if toc in wanted:
-            said += _style(
-                toc,
-                f"toc {level + 1}",
-                next_style="Normal",
-                paragraph=f'<w:spacing w:before="{60 if level == 0 else 0}" w:after="40"/>'
-                + (f'<w:ind w:left="{284 * level}"/>' if level else ""),
-                run="<w:b/><w:bCs/>" if level == 0 else "",
-            )
+            said += _toc_entry(style, toc, level, step)
     return said
+
+
+def _toc_entry(style: Style, style_id: str, level: int, step: int) -> str:
+    """Une entrée du sommaire (« toc 1 » à « toc 3 ») : le style ``toc1`` à ``toc3``, à
+    gauche, en retrait de ``toc.level_indent`` par niveau (et de son ``indent``)."""
+    loom = f"toc{level + 1}"
+    props = style.between(loom, "body")
+    indent = props.pop("indent", None)
+    pieces = paragraph_pieces(props, style.look(loom).border_space)
+    margin = cm_twips(indent or 0)
+    left = margin + step * level
+    if left or margin:
+        right = f' w:right="{margin}"' if margin else ""
+        pieces.append(("ind", f'<w:ind w:left="{left}"{right}/>'))
+    return _style(
+        style_id,
+        f"toc {level + 1}",
+        next_style="Normal",
+        paragraph=ordered(pieces, _PPR),
+        run=run_xml(props),
+    )
 
 
 # --- Numérotations -----------------------------------------------------------------
@@ -566,14 +609,17 @@ def _heading_texts(numbering: Numbering, article: str) -> tuple[str, str, str]:
     return (first, "%1.%2", "%1.%2.%3")
 
 
-def _abstract(number: int, ordered: bool, depth: int = 2) -> str:
+def _abstract(number: int, ordered: bool, indent: tuple[int, int], depth: int = 2) -> str:
+    """Une numérotation de liste : chaque niveau en retrait de ``indent[0]`` (twips), la
+    puce ou le numéro ``indent[1]`` avant le texte (``list.level_indent``, ``marker_space``)."""
+    step, marker = indent
     said = f'<w:abstractNum w:abstractNumId="{number}"><w:multiLevelType w:val="hybridMultilevel"/>'
     for level, (kind, text) in enumerate(_LEVELS[ordered][:depth]):
-        left = 720 * (level + 1)
+        left = step * (level + 1)
         said += (
             f'<w:lvl w:ilvl="{level}"><w:start w:val="1"/><w:numFmt w:val="{kind}"/>'
             f'<w:lvlText w:val="{text}"/><w:lvlJc w:val="left"/>'
-            f'<w:pPr><w:ind w:left="{left}" w:hanging="360"/></w:pPr></w:lvl>'
+            f'<w:pPr><w:ind w:left="{left}" w:hanging="{marker}"/></w:pPr></w:lvl>'
         )
     return said + "</w:abstractNum>"
 
@@ -596,18 +642,21 @@ _DEEP: Final = 3
 
 
 def numbering_xml(
-    lists: Iterable[tuple[bool, bool]], headings: Numbering = "none", article: str = "Article"
+    lists: Iterable[tuple[bool, bool]],
+    indent: tuple[int, int],
+    headings: Numbering = "none",
+    article: str = "Article",
 ) -> str:
     """Une numérotation par liste (numérotée ?, à trois niveaux ?) : chaque liste numérotée
     repart de 1. Les définitions (``abstractNum``) précèdent toutes les numérotations
     (``num``) : Word l'exige."""
     lists = list(lists)
-    said = _HEAD + f'<w:numbering xmlns:w="{_W}">' + _abstract(0, False) + _abstract(1, True)
+    said = _HEAD + f'<w:numbering xmlns:w="{_W}">' + _abstract(0, False, indent) + _abstract(1, True, indent)
     if headings != "none":
         said += _heading_abstract(headings, article)
     for ordered in (False, True):
         if (ordered, True) in lists:
-            said += _abstract(_DEEP + int(ordered), ordered, depth=3)
+            said += _abstract(_DEEP + int(ordered), ordered, indent, depth=3)
     for number, (ordered, deep) in enumerate(lists, start=1):
         definition = int(ordered) + (_DEEP if deep else 0)
         said += f'<w:num w:numId="{number}"><w:abstractNumId w:val="{definition}"/>'
@@ -624,26 +673,45 @@ def numbering_xml(
 # --- En-têtes et pieds de page --------------------------------------------------------
 
 
-def _text(text: str, title: str) -> str:
+def _text(text: str, title: str, run: str = "") -> str:
     """Un texte d'en-tête : ``{page}`` et ``{pages}`` en champs, ``{title}`` le titre du
-    document, le reste en segments."""
+    document, le reste en segments ; ``run`` : leurs propriétés de caractère (le style d'une
+    zone)."""
     said = ""
     position = 0
+    props = f"<w:rPr>{run}</w:rPr>" if run else ""
     for found in _PLACEHOLDER.finditer(text):
-        said += _plain(text[position : found.start()])
+        said += _plain(text[position : found.start()], props)
         name = found.group(1)
         if name == "page":
-            said += '<w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple>'
+            said += f'<w:fldSimple w:instr=" PAGE "><w:r>{props}<w:t>1</w:t></w:r></w:fldSimple>'
         elif name == "pages":
-            said += '<w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>1</w:t></w:r></w:fldSimple>'
+            said += f'<w:fldSimple w:instr=" NUMPAGES "><w:r>{props}<w:t>1</w:t></w:r></w:fldSimple>'
         else:
-            said += _plain(title)
+            said += _plain(title, props)
         position = found.end()
-    return said + _plain(text[position:])
+    return said + _plain(text[position:], props)
 
 
-def _plain(text: str) -> str:
-    return f'<w:r><w:t xml:space="preserve">{escape(text)}</w:t></w:r>' if text else ""
+def _logo_gap(band: Band | None) -> str:
+    """L'écart entre le logo et son texte (``logo.gap``) : une espace insécable d'un point,
+    suivie de cet espacement de caractères — ce que Word et LibreOffice font tous deux
+    (LibreOffice ignore l'espacement d'un caractère sans largeur, et ``effectExtent``)."""
+    if band is None or band.logo is None or not band.logo.gap:
+        return ""
+    return (
+        f'<w:r><w:rPr><w:spacing w:val="{twips(band.logo.gap)}"/><w:sz w:val="2"/>'
+        '<w:szCs w:val="2"/></w:rPr><w:t xml:space="preserve">\u00a0</w:t></w:r>'
+    )
+
+
+def _with_logo(logo: str, band: Band | None, text: str) -> str:
+    """Le logo, et son écart s'il est suivi d'un texte."""
+    return logo + (_logo_gap(band) if text else "")
+
+
+def _plain(text: str, props: str = "") -> str:
+    return f'<w:r>{props}<w:t xml:space="preserve">{escape(text)}</w:t></w:r>' if text else ""
 
 
 def band_xml(
@@ -654,53 +722,289 @@ def band_xml(
     width: int,
     logo: str = "",
     watermark: Watermark | None = None,
+    style: Style | None = None,
+    word: Callable[[str], str] | None = None,
 ) -> str:
     """Un en-tête (``hdr``) ou un pied de page (``ftr``).
 
     ``logo`` : le segment qui porte le logo, déjà écrit (sa relation est propre à la
     partie). Trois zones sur une ligne — gauche, centre, droite, par des taquets —, et
     des lignes centrées : sous la ligne des zones dans un en-tête, au-dessus dans un
-    pied de page (les mentions, puis le numéro de page).
+    pied de page (les mentions, puis le numéro de page). Avec une table (``table``), la
+    table remplace la ligne des zones, et les lignes y deviennent des lignes de toute la
+    largeur (``_band_table``) ; ``style`` : le style résolu, ``word`` : le style Word d'un
+    style nommé (un style de cellule à toi y est écrit).
     """
-    style = HEADER if kind == "hdr" else "Footer"
-    centered = '<w:jc w:val="center"/>' if kind == "hdr" else ""
-    texts = {
-        "left": band.left if band else "",
-        "center": band.center if band else "",
-        "right": band.right if band else "",
-    }
-    position = band.logo.position if band and band.logo else None
-    zones = {
-        name: (logo if position == place else "") + _text(texts[name], title)
-        for name, place in (("left", "left"), ("center", "center"), ("right", "right"))
-    }
+    if band is not None and band.table is not None and style is not None:
+        # L'espacement du style de la table vaut autour d'elle : un paragraphe de sa hauteur
+        # avant, l'espace avant le paragraphe qui la clôt après.
+        around = style.look(band.table.style or ("header" if kind == "hdr" else "footer"))
+        before = twips(around.space_before or 0)
+        return (
+            _HEAD
+            + f'<w:{kind} xmlns:w="{_W}"{f" {_VML}" if watermark else ""}>'
+            + (_band_space(kind, style, before) if before else "")
+            + _band_table(kind, band, style, title=title, width=width, logo=logo, word=word)
+            + _band_end(kind, style, watermark, before=twips(around.space_after or 0))
+            + f"</w:{kind}>"
+        )
+    name = "header" if kind == "hdr" else "footer"
+    style_id = HEADER if kind == "hdr" else "Footer"
+    centered = '<w:jc w:val="center"/>'
+
+    def runs(element: BandElement | None) -> str:
+        """Une zone : ses caractères au style de l'élément (police, taille, couleur, gras…),
+        le logo devant s'il le porte ; sa place est celle de la zone."""
+        if element is None:
+            return ""
+        props = style.between(element.style, name) if style is not None and element.style else {}
+        lead = _with_logo(logo, band, element.text) if element.logo else ""
+        return lead + _text(element.text, title, run_xml(props))
+
+    zones = {zone: runs(element) for zone, element in (band.zones if band else {}).items()}
+    zones = {zone: zones.get(zone, "") for zone in ("left", "center", "right")}
     paragraphs: list[str] = []
-    if zones["left"] or zones["right"]:
+    if band is not None and (band.left is not None or band.right is not None):
         tabs = (
             f'<w:tabs><w:tab w:val="center" w:pos="{width // 2}"/>'
             f'<w:tab w:val="right" w:pos="{width}"/></w:tabs><w:jc w:val="left"/>'
         )
         paragraphs.append(
-            f'<w:p><w:pPr><w:pStyle w:val="{style}"/>{tabs}</w:pPr>{zones["left"]}'
+            f'<w:p><w:pPr><w:pStyle w:val="{style_id}"/>{tabs}</w:pPr>{zones["left"]}'
             f"<w:r><w:tab/></w:r>{zones['center']}<w:r><w:tab/></w:r>{zones['right']}</w:p>"
         )
     elif zones["center"]:
+        # Le centre, seul : toujours centré.
         paragraphs.append(
-            f'<w:p><w:pPr><w:pStyle w:val="{style}"/>{centered}</w:pPr>{zones["center"]}</w:p>'
+            f'<w:p><w:pPr><w:pStyle w:val="{style_id}"/>{centered}</w:pPr>{zones["center"]}</w:p>'
         )
-    lines = [
-        f'<w:p><w:pPr><w:pStyle w:val="{style}"/>{centered}</w:pPr>{_text(line, title)}</w:p>'
-        for line in (band.lines if band else ())
-    ]
+    lines: list[str] = []
+    for element in band.lines if band else ():
+        # Une ligne : un paragraphe au style de l'élément ; dans un en-tête, centrée si son
+        # style ne dit pas d'alignement.
+        own_id = (word(element.style) if word else element.style) if element.style else style_id
+        own = style.element_look(element, name) if style is not None else None
+        line_jc = centered if kind == "hdr" and (own is None or own.align is None) else ""
+        lines.append(
+            f'<w:p><w:pPr><w:pStyle w:val="{own_id}"/>{line_jc}</w:pPr>'
+            f"{(_with_logo(logo, band, element.text) if element.logo else '') + _text(element.text, title)}</w:p>"
+        )
     paragraphs = paragraphs + lines if kind == "hdr" else lines + paragraphs
     if not paragraphs:
-        paragraphs = [f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr></w:p>']
+        paragraphs = [f'<w:p><w:pPr><w:pStyle w:val="{style_id}"/></w:pPr></w:p>']
     if watermark:
         first = paragraphs[0]
         cut = first.index("</w:pPr>") + len("</w:pPr>")
         paragraphs[0] = first[:cut] + _watermark(watermark) + first[cut:]
     space = f" {_VML}" if watermark else ""
     return _HEAD + f'<w:{kind} xmlns:w="{_W}"{space}>' + "".join(paragraphs) + f"</w:{kind}>"
+
+
+_NIL_BORDERS: Final = (
+    '<w:pBdr><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/>'
+    '<w:right w:val="nil"/></w:pBdr>'
+)
+
+
+def _table_side(side: str, value: str | None) -> str:
+    rule = parse_rule(value)
+    if rule is None:
+        return f'<w:{side} w:val="nil"/>'
+    width, color = rule
+    return f'<w:{side} w:val="single" w:sz="{round(width * 8)}" w:space="0" w:color="{color}"/>'
+
+
+def _has_rule(look: Look) -> bool:
+    return any(
+        parse_rule(value) is not None
+        for value in (
+            look.border, look.border_top, look.border_bottom, look.border_left, look.border_right
+        )
+    )
+
+
+def _cell_paragraph(
+    style_id: str, look: Look, align: str | None, content: str, spacing: tuple[float, float]
+) -> str:
+    """Un paragraphe d'une cellule : le style de l'en-tête, du pied ou de la cellule, sans
+    les filets, le fond ni le retrait du style, que porte la table ; son espace avant et
+    après, ``spacing`` (``Style.cell_spacing``), s'il n'est pas celui de son style."""
+    pieces: Pieces = [("pStyle", f'<w:pStyle w:val="{style_id}"/>')]
+    if _has_rule(look):
+        pieces.append(("pBdr", _NIL_BORDERS))
+    if look.fill is not None and look.fill != NONE:
+        pieces.append(("shd", '<w:shd w:val="clear" w:color="auto" w:fill="auto"/>'))
+    if spacing != (look.space_before or 0.0, look.space_after or 0.0):
+        before, after = spacing
+        pieces.append(("spacing", f'<w:spacing w:before="{twips(before)}" w:after="{twips(after)}"/>'))
+    if look.indent:
+        pieces.append(("ind", '<w:ind w:left="0" w:right="0"/>'))
+    if align is not None:
+        pieces.append(("jc", f'<w:jc w:val="{jc(align)}"/>'))
+    return f"<w:p><w:pPr>{ordered(pieces, _PPR)}</w:pPr>{content}</w:p>"
+
+
+def _band_table(
+    kind: str,
+    band: Band,
+    style: Style,
+    *,
+    title: str,
+    width: int,
+    logo: str,
+    word: Callable[[str], str] | None,
+) -> str:
+    """La table d'un en-tête ou d'un pied : ses lignes, et les ``lines`` en lignes de toute
+    la largeur (``band_rows``). Le cadre et le fond du style vont sur la table, l'écart
+    au texte en marges des cellules du bord ; l'écart entre colonnes (``gap``) en deux
+    moitiés, de part et d'autre du filet intérieur."""
+    name = "header" if kind == "hdr" else "footer"
+    table = band.table
+    assert table is not None
+    # Le style de la table : son cadre, ses filets, l'écart entre ses colonnes ; et celui des
+    # cellules qui n'en nomment pas.
+    look = style.look(table.style or name)
+    if table.style is None:
+        base_id = HEADER if kind == "hdr" else "Footer"
+    else:
+        base_id = word(table.style) if word is not None else table.style
+    indent = round((look.indent or 0) * 567)
+    total = width - 2 * indent
+    columns = band_columns(table, total)
+    count = len(columns)
+    (top, bottom, left, right), fill = band_frame(look)
+    # L'écart au cadre, celui des filets d'un paragraphe (``border_space``), en marges des
+    # cellules du bord ; et autour d'un filet intérieur.
+    space = look.border_space or (0.0, 0.0, 0.0, 0.0)
+    above, after_side, below, before_side = (twips(value) for value in space)
+    pads = (
+        above if top or fill else 0,
+        before_side if left or fill else 0,
+        below if bottom or fill else 0,
+        after_side if right or fill else 0,
+    )
+    gap = round((look.column_gap or 0) * 567)
+    half = gap // 2
+    inner_h = look.borders in ("horizontal", "grid")
+    inner_v = look.borders in ("vertical", "grid")
+    line = look.line or style.look("table").line
+    rows = band_rows(band, header=kind == "hdr")
+    # Un filet horizontal intérieur sous une ligne de la table, et l'écart au texte de part
+    # et d'autre, comme celui du cadre.
+    ruled = [
+        inner_h and not row.line and number + 1 < len(rows) and not rows[number + 1].line
+        for number, row in enumerate(rows)
+    ]
+    said = (
+        f'<w:tbl><w:tblPr><w:tblW w:w="{total}" w:type="dxa"/>'
+        + (f'<w:tblInd w:w="{indent}" w:type="dxa"/>' if indent else "")
+        + "<w:tblBorders>"
+        + _table_side("top", top)
+        + _table_side("left", left)
+        + _table_side("bottom", bottom)
+        + _table_side("right", right)
+        + '<w:insideH w:val="nil"/><w:insideV w:val="nil"/></w:tblBorders>'
+        '<w:tblLayout w:type="fixed"/>'
+        '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
+        '<w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>'
+        '<w:tblLook w:val="0000" w:firstRow="0" w:lastRow="0" w:firstColumn="0" '
+        'w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr><w:tblGrid>'
+        + "".join(f'<w:gridCol w:w="{column}"/>' for column in columns)
+        + "</w:tblGrid>"
+    )
+    for number, row in enumerate(rows):
+        cells: list[tuple[BandElement, int, int]] = (
+            [(row.cells[0], 0, count)]
+            if row.line
+            else [(cell, index, 1) for index, cell in enumerate(row.cells)]
+        )
+        ruled_below = ruled[number]
+        ruled_above = number > 0 and ruled[number - 1]
+        said += "<w:tr>"
+        for cell, start, span in cells:
+            end = start + span
+            cell_width = sum(columns[start:end])
+            margins = (
+                pads[0] if number == 0 else above if ruled_above else 0,
+                pads[1] if start == 0 else gap - half,
+                pads[2] if number == len(rows) - 1 else below if ruled_below else 0,
+                pads[3] if end == count else half,
+            )
+            rules = ""
+            if ruled_below:
+                rules += _table_side("bottom", line)
+            if inner_v and not row.line and end < count:
+                rules += _table_side("right", line)
+            own = style.look(cell.style) if cell.style else look
+            # Le fond d'un style de cellule, s'il n'est pas celui du cadre.
+            own_fill = own.fill if cell.style and own.fill not in (None, NONE) else None
+            shade = own_fill or fill
+            properties = (
+                f'<w:tcW w:w="{cell_width}" w:type="dxa"/>'
+                + (f'<w:gridSpan w:val="{span}"/>' if span > 1 else "")
+                + (f"<w:tcBorders>{rules}</w:tcBorders>" if rules else "")
+                + (f'<w:shd w:val="clear" w:color="auto" w:fill="{shade}"/>' if shade else "")
+                + "<w:tcMar>"
+                + "".join(
+                    f'<w:{side} w:w="{value}" w:type="dxa"/>'
+                    for side, value in zip(("top", "left", "bottom", "right"), margins, strict=True)
+                )
+                + "</w:tcMar>"
+                + f'<w:vAlign w:val="{own.valign or look.valign or "top"}"/>'
+            )
+            if cell.style is None:
+                style_id = base_id
+            elif word is not None:
+                style_id = word(cell.style)
+            else:
+                style_id = cell.style
+            # Une ligne de toute la largeur, dans un en-tête : centrée si son style ne dit pas
+            # d'alignement.
+            centered = "center" if row.line and kind == "hdr" and own.align is None else None
+            spacing = style.cell_spacing(cell.style, table.style or name, name)
+            paragraphs = "".join(
+                _cell_paragraph(
+                    style_id,
+                    own,
+                    centered,
+                    (_with_logo(logo, band, text) if cell.logo and index == 0 else "") + _text(text, title),
+                    spacing,
+                )
+                for index, text in enumerate(cell.lines)
+            )
+            said += f"<w:tc><w:tcPr>{properties}</w:tcPr>{paragraphs}</w:tc>"
+        said += "</w:tr>"
+    return said + "</w:tbl>"
+
+
+def _band_space(kind: str, style: Style, height: int, *, before: int = 0, mark: str = "") -> str:
+    """Un paragraphe vide d'un en-tête ou d'un pied, haut de ``height`` twips, sans filet ni
+    fond : l'espace avant une table, ou le paragraphe qui la clôt (Word en veut un)."""
+    look = style.look("header" if kind == "hdr" else "footer")
+    pieces: Pieces = [
+        ("pStyle", f'<w:pStyle w:val="{HEADER if kind == "hdr" else "Footer"}"/>'),
+        ("spacing", f'<w:spacing w:before="{before}" w:after="0" w:line="{height}" w:lineRule="exact"/>'),
+    ]
+    if _has_rule(look):
+        pieces.append(("pBdr", _NIL_BORDERS))
+    if look.fill is not None and look.fill != NONE:
+        pieces.append(("shd", '<w:shd w:val="clear" w:color="auto" w:fill="auto"/>'))
+    return (
+        f"<w:p><w:pPr>{ordered(pieces, _PPR)}"
+        '<w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr>'
+        f"{mark}</w:p>"
+    )
+
+
+# La hauteur du paragraphe qui clôt un en-tête ou un pied après sa table : un point.
+_BAND_END: Final = 20
+
+
+def _band_end(kind: str, style: Style, watermark: Watermark | None, *, before: int = 0) -> str:
+    """Le paragraphe qui clôt un en-tête ou un pied après sa table : haut d'un point, à
+    ``before`` twips d'elle (l'espace après du style de la table) ; il porte le filigrane."""
+    mark = _watermark(watermark) if watermark else ""
+    return _band_space(kind, style, _BAND_END, before=before, mark=mark)
 
 
 def _watermark(watermark: Watermark) -> str:

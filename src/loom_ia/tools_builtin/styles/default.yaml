@@ -7,26 +7,36 @@
 # modèle de document reprennent ces noms et n'écrivent que ce qui change, propriété par
 # propriété. Tailles et espacements en points ; marges, retraits et largeurs en
 # centimètres ; couleurs en six chiffres hexadécimaux, ou par un nom défini dans colors.
-# Un style sans base part de text.
+# Un style sans base part de body.
 
 colors: {}
-page: { size: A4, orientation: portrait, margins: 2 }
+page:
+  paper: A4
+  orientation: portrait
+  margins: 2
+  header_distance: 1        # l'en-tête et le pied, du bord de la page
+  footer_distance: 1
+  column_gap: 1             # entre les colonnes d'une section
+  beside_gap: 0.5           # entre deux sections, deux images, deux signataires côte à côte
+  beside_space: 6pt         # après des sections côte à côte ou encadrées
+  cover_margin_top: 6       # le haut d'une page de garde sans margin_top
 numbering: none
 language: fr
-image: { grid: false }
+image: { side_by_side: false, space_after: 6pt }
 chart:
-  colors: [156082, E97132, 196B24, 0F9ED5, A02B93, 4EA72E, 0D3A4E, 994010, 0F4016, 095F80, 601A58, 2F641C]
-  text: 595959
-  grid: D9D9D9
-  title: 595959
+  series: [156082, E97132, 196B24, 0F9ED5, A02B93, 4EA72E, 0D3A4E, 994010, 0F4016, 095F80, 601A58, 2F641C]
+  text_color: 595959
+  grid_color: D9D9D9
+  title_color: 595959
+  space_after: 6pt
 
-text: { font: Aptos, size: 12, line_spacing: 1.16, space_after: 8 }
+body: { font: Aptos, size: 12, line_spacing: 1.16, space_after: 8, border_space: 4pt 8pt }
 document_title: { size: 28, space_after: 4 }
 heading1: { size: 20, color: 0F4761, space_before: 18, space_after: 4 }
 heading2: { size: 16, color: 0F4761, space_before: 8, space_after: 4 }
 heading3: { size: 14, color: 0F4761, space_before: 8, space_after: 4 }
 paragraph: {}
-list: { space_after: 3 }
+list: { space_after: 3, level_indent: 1.27, marker_space: 0.635 }
 note: { indent: 0.3, space_before: 6, space_after: 10 }
 quote: { italic: true, color: 404040, align: center, space_before: 8 }
 quote_source: { italic: false, align: right }
@@ -35,27 +45,33 @@ caption: { size: 9, italic: true, color: 0E2841, line_spacing: 1, space_after: 1
 table:
   size: 10
   line_spacing: 1
-  space_after: 0
+  space_after: 6            # autour du tableau, après le paragraphe vide qui le suit
+  padding: 2pt 0.15cm       # dans chaque cellule
   borders: grid
   line: 0.5pt 000000
   width: full
   position: left
+  valign: center
 table_header: { bold: true }
 table_total: { bold: true }
 table_group: { bold: true }
 table_subtotal: { italic: true }
 invoice_totals: { width: content, position: right }
 attendance: { row_height: 1.5 }
-box: { border: 0.5pt 000000 }
+box: { border: 0.5pt 000000, padding: 0.3cm 0.3cm 0.15cm }
 code: { font: Courier New, size: 10, line_spacing: 1, indent: 0.3 }
 link: { color: 467886, underline: true }
 footnote: { size: 10, line_spacing: 1, space_after: 0 }
 fields: { label_width: 4, space_after: 2 }
 fields_label: { bold: true }
 
-toc: { base: heading1, levels: 2, page_numbers: true }
-signature: { bold: true, space_before: 12, space_after: 3 }
+toc: { base: heading1, levels: 2, page_numbers: true, level_indent: 0.5 }
+toc1: { bold: true, space_before: 3, space_after: 2 }
+toc2: { space_before: 0, space_after: 2 }
+toc3: { space_before: 0, space_after: 2 }
+signature: { bold: true, space_before: 12, space_after: 3, sign_height: 2 }
 signature_mention: { italic: true, space_after: 3 }
 header: { line_spacing: 1, space_after: 0 }
-footer: { line_spacing: 1, space_after: 0, align: center, center: "Page {page} / {pages}" }
-watermark: { text: "", font: Arial, color: D9D9D9 }
+footer: { line_spacing: 1, space_after: 0 }
+# footer: { line_spacing: 1, space_after: 0, align: center, center: "Created by an agent - Page {page} / {pages}" }
+watermark: { font: Arial, color: D9D9D9 }

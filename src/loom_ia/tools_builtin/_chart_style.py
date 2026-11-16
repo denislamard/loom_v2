@@ -22,9 +22,9 @@ from loom_ia.tools_builtin._values import ColumnType
 
 _HOUSE: Final = default_style().chart
 # La palette de default.yaml : les accents du thème Office 2023, puis les mêmes plus sombres.
-PALETTE: Final = tuple(_HOUSE.colors if _HOUSE is not None and _HOUSE.colors else ())
-GRID: Final = _HOUSE.grid if _HOUSE is not None and _HOUSE.grid else ""
-TEXT: Final = _HOUSE.text if _HOUSE is not None and _HOUSE.text else ""
+PALETTE: Final = tuple(_HOUSE.series if _HOUSE is not None and _HOUSE.series else ())
+GRID: Final = _HOUSE.grid_color if _HOUSE is not None and _HOUSE.grid_color else ""
+TEXT: Final = _HOUSE.text_color if _HOUSE is not None and _HOUSE.text_color else ""
 # Au-delà, des étiquettes de valeur sur chaque barre se chevauchent.
 LABELLED_BARS: Final = 12
 # La place laissée au bout de la plus grande barre pour son étiquette.

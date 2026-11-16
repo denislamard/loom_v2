@@ -31,6 +31,7 @@ from typing import Any, Final, cast
 from xml.sax.saxutils import escape, quoteattr
 
 from reportlab.lib import colors
+from reportlab.lib import utils as reportlab_utils
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
 from reportlab.lib.fonts import ps2tt, tt2ps
 from reportlab.lib.styles import ParagraphStyle
@@ -88,48 +89,46 @@ from loom_ia.tools_builtin._style_params import (
     PDF_FALLBACK,
     PDF_FONTS,
     Band,
+    BandElement,
     Look,
+    Sides,
     Style,
+    band_columns,
+    band_frame,
+    band_rows,
+    cm_twips,
     house,
     parse_rule,
 )
 from loom_ia.tools_builtin._templates import SectionSpec, Template
 from loom_ia.tools_builtin.pdf import chart
 
+# Le texte coupé à une largeur, ligne par ligne, dans une police et une taille.
+_split = cast(Callable[[str, str, float, float], list[str]], reportlab_utils.simpleSplit)  # pyright: ignore[reportUnknownMemberType]
+
 MAX_MISSING_SAID: Final = 10
 # Un twip (vingtième de point) en points : les mesures du style résolu.
 TWIP: Final = 1 / 20
 # L'interligne simple, en part de la taille du texte.
 LEADING: Final = 1.2
-# Les distances de Word : l'en-tête et le pied à 1 cm du bord, l'écart entre deux colonnes
-# de texte, entre deux cellules côte à côte, la marge d'un encadré, l'espace en haut d'une
-# page de garde, la place pour signer.
-BAND_DISTANCE: Final = 1 * cm
+# L'écart entre l'en-tête (le pied) et le corps : une mécanique du PDF, que Word n'a pas
+# (son corps commence à la marge) ; sans clé, pour que les deux rendus restent les mêmes.
 BAND_GAP: Final = 6.0
 # Le soulignement d'un texte d'en-tête ou de pied, en fraction de sa taille : comme
 # ``Paragraph`` (sous la ligne de base, d'un vingtième de la taille).
 UNDERLINE_OFFSET: Final = -0.125
 UNDERLINE_WIDTH: Final = 0.05
-COLUMN_GAP: Final = 1 * cm
-CELL_GAP: Final = 284 * TWIP
-BOX_PAD: Final = 170 * TWIP
-COVER_SPACE: Final = 6 * cm
-SIGN_SPACE: Final = 2 * cm
-# Le filet d'un paragraphe : son écart au texte, en haut et en bas, à gauche et à droite.
-RULE_SPACE: Final = (4.0, 8.0)
-# Les marges d'une cellule de tableau (haut et bas, gauche et droite).
-CELL_PADDING: Final = (2.0, 85 * TWIP)
-# Une liste : le texte à 36 pt du bord par niveau, la puce 18 pt avant.
-LIST_INDENT: Final = 36.0
-LIST_HANG: Final = 18.0
-# Le sommaire : le retrait par niveau, les espacements de ses entrées.
-TOC_INDENT: Final = 284 * TWIP
+# Une liste à cocher : la largeur d'une colonne de case (la géométrie de la case, comme
+# son côté et son trait ; Word a la sienne, dans le style de la case).
+CHECK_COLUMN: Final = 18.0
+# Le titre d'un graphique : l'espace avant et après, comme Word le dessine dans le sien.
+CHART_TITLE_SPACE: Final = (6.0, 4.0)
+# L'espace sous « Date : », dans une signature (``word.writer._DATE_SPACE``).
+DATE_SPACE: Final = 3.0
 # Le filigrane : la place qu'il prend, en diagonale, et son opacité.
 WATERMARK_WIDTH: Final = 440.0
 WATERMARK_HEIGHT: Final = 110.0
 WATERMARK_ALPHA: Final = 0.5
-# L'espace après le paragraphe vide qui suit un tableau dans Word (120 twips).
-AFTER_TABLE: Final = 120 * TWIP
 # La part de la hauteur utile d'une page qu'une image peut prendre, avec sa légende dessous.
 IMAGE_HEIGHT: Final = 0.85
 # La case d'une liste à cocher : son côté, son trait.
@@ -147,6 +146,20 @@ NUMBERS: Final = (("1", "%s."), ("a", "%s)"), ("i", "%s."))
 # Une puce qu'une police n'a pas (le carré du troisième niveau) : la première, plus petite.
 SMALL_BULLET: Final = 0.7
 _LOOK_FIELDS: Final = frozenset(f.name for f in fields(Look))
+
+
+def _twips(value: float) -> float:
+    """Une longueur en cm, en points, au twip près : celle de Word."""
+    return cm_twips(value) * TWIP
+
+
+def _pads(value: Sides | None, unit: str) -> Sides:
+    """Un écart de chaque côté (en haut, à droite, en bas, à gauche), en points : un
+    ``padding`` en cm, au twip près comme dans Word ; un ``border_space`` en points."""
+    top, right, bottom, left = value or (0.0, 0.0, 0.0, 0.0)
+    if unit == "cm":
+        return _twips(top), _twips(right), _twips(bottom), _twips(left)
+    return top, right, bottom, left
 
 
 # --- Les polices ----------------------------------------------------------------------
@@ -214,7 +227,7 @@ def substitutions(style: Style) -> dict[str, str]:
     for name, look in style.looks.items():
         family = look.font
         # Le filigrane sans texte n'écrit rien.
-        if not family or family in said or (name == "watermark" and not look.text):
+        if not family or family in said or (name == "watermark" and not style.watermark):
             continue
         if family in style.fonts:
             said[family] = "embarquée"
@@ -274,7 +287,9 @@ def _framed(look: Look) -> bool:
     """Un style qui dessine autour du texte : un filet, un fond."""
     return any(
         value is not None and value != "none"
-        for value in (look.border, look.border_top, look.border_bottom, look.border_left)
+        for value in (
+            look.border, look.border_top, look.border_bottom, look.border_left, look.border_right
+        )
     ) or (look.fill is not None and look.fill != "none")
 
 
@@ -294,7 +309,7 @@ class _Layout:
     landscape: bool = False
     cover: bool = False
     # Espace avant la section, en points.
-    space_before: float = 0.0
+    margin_top: float = 0.0
     # Une page de garde : son texte centré.
     align: str | None = None
 
@@ -311,7 +326,7 @@ def _layout_of(spec: SectionSpec) -> _Layout:
         columns=spec.columns,
         landscape=spec.landscape,
         cover=spec.cover,
-        space_before=(spec.space_before or 0) * cm,
+        margin_top=(spec.margin_top or 0) * cm,
     )
 
 
@@ -609,15 +624,15 @@ class _Body:
         top = _rule(look.border_top) or every
         bottom = _rule(look.border_bottom) or every
         left = _rule(look.border_left) or every
-        right = every
+        right = _rule(look.border_right) or every
         filled = _color(look.fill)
-        vertical, horizontal = RULE_SPACE
+        above, after_side, below, before_side = _pads(look.border_space, "pt")
         commands: list[tuple[Any, ...]] = [
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("TOPPADDING", (0, 0), (-1, -1), vertical if top or filled else 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), vertical if bottom or filled else 0),
-            ("LEFTPADDING", (0, 0), (-1, -1), horizontal if left or filled else 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), horizontal if right or filled else 0),
+            ("TOPPADDING", (0, 0), (-1, -1), above if top or filled else 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), below if bottom or filled else 0),
+            ("LEFTPADDING", (0, 0), (-1, -1), before_side if left or filled else 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), after_side if right or filled else 0),
         ]
         for command, rule in (
             ("LINEABOVE", top),
@@ -706,24 +721,19 @@ class _Body:
         style = self.style
         toc = style.look("toc")
         heading = self.paragraph("toc", toc, (_run(style.labels.contents),), width, keep=True)
-        text = style.look("text")
+        # Les entrées : les styles toc1 à toc3, en retrait de toc.level_indent par niveau.
+        step = _twips(toc.level_indent or 0)
         levels: list[ParagraphStyle] = []
         for level in range(3):
-            entry = replace(
-                text,
-                bold=True if level == 0 else text.bold,
-                space_before=3.0 if level == 0 else 0.0,
-                space_after=2.0,
-                align="left",
-                indent=None,
-            )
+            entry = style.look(f"toc{level + 1}")
+            margin = _twips(entry.indent or 0)
             pstyle = self.paragraph_style(f"toc{level + 1}", entry)
             levels.append(
                 ParagraphStyle(
                     f"{pstyle.name}-entry",
                     parent=pstyle,
-                    leftIndent=TOC_INDENT * level,
-                    rightIndent=0,
+                    leftIndent=margin + step * level,
+                    rightIndent=margin,
                 )
             )
         for _, label, _ in self.toc:
@@ -742,11 +752,13 @@ class _Body:
             prefix = f"{kind} {number} \u2014 "
         return self.paragraph(name, look, runs, width, prefix=prefix)
 
-    def after(self, look: Look) -> Flowable:
-        """L'espace sous un tableau ou une image sans légende : le paragraphe vide qui les
-        suit dans Word, une ligne de texte et son espace après."""
+    def after(self, points: float) -> Flowable:
+        """L'espace sous un tableau, une image ou un graphique sans légende, des sections
+        côte à côte : le paragraphe vide qui les suit dans Word, une ligne de ``body``, et
+        ``points`` après elle (le ``space_after`` de leur style, de ``image``, ``chart``)."""
+        look = self.style.look("body")
         size = look.size or 11.0
-        return Spacer(1, size * LEADING * (look.line_spacing or 1.0) + AFTER_TABLE)
+        return Spacer(1, size * LEADING * (look.line_spacing or 1.0) + points)
 
     def blocks(
         self, blocks: Sequence[BlockOut], width: float, layout: _Layout = PLAIN
@@ -811,6 +823,10 @@ class _Body:
         name, look = self.look("list", block.style, layout)
         pstyle = self.paragraph_style(name, look, align=layout.align)
         font = self.typefaces.name(look.font)
+        # Le retrait de chaque niveau et la place de la puce : ceux de list, comme la
+        # numérotation de Word.
+        lists = self.style.look("list")
+        step, marker = _twips(lists.level_indent or 0), _twips(lists.marker_space or 0)
 
         def level(entries: Sequence[Entry], depth: int) -> ListFlowable:
             items: list[Flowable | ListItem] = []
@@ -833,8 +849,8 @@ class _Body:
                 bulletType=kind if block.ordered else "bullet",
                 start=None if block.ordered else bullet,
                 bulletFormat=form if block.ordered else None,
-                leftIndent=LIST_INDENT,
-                bulletDedent=LIST_HANG,
+                leftIndent=step,
+                bulletDedent=marker,
                 bulletFontName=font,
                 bulletFontSize=size,
                 bulletColor=pstyle.textColor,
@@ -842,7 +858,7 @@ class _Body:
 
         found = level(block.entries, 0)
         # Après la liste, l'espace d'un paragraphe : celui du texte.
-        found.spaceAfter = self.style.look("text").space_after or 0
+        found.spaceAfter = self.style.look("body").space_after or 0
         return found
 
     def checklist(self, block: ListOut, width: float, layout: _Layout) -> Flowable:
@@ -880,7 +896,7 @@ class _Body:
                     ]
                 )
         table = Table(
-            rows, colWidths=[LIST_HANG, LIST_HANG, LIST_HANG, width - 3 * LIST_HANG], hAlign="LEFT"
+            rows, colWidths=[CHECK_COLUMN, CHECK_COLUMN, CHECK_COLUMN, width - 3 * CHECK_COLUMN], hAlign="LEFT"
         )
         table.setStyle(TableStyle(commands))
         return table
@@ -978,13 +994,13 @@ class _Body:
                     for i, text in enumerate(block.total)
                 ]
             )
-        vertical, horizontal = CELL_PADDING
+        top, right, bottom, left = _pads(tables.padding, "cm")
         commands: list[tuple[Any, ...]] = [
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), vertical),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), vertical),
-            ("LEFTPADDING", (0, 0), (-1, -1), horizontal),
-            ("RIGHTPADDING", (0, 0), (-1, -1), horizontal),
+            ("VALIGN", (0, 0), (-1, -1), _VALIGN[tables.valign or "top"]),
+            ("TOPPADDING", (0, 0), (-1, -1), top),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), bottom),
+            ("LEFTPADDING", (0, 0), (-1, -1), left),
+            ("RIGHTPADDING", (0, 0), (-1, -1), right),
         ]
         commands += _table_lines(tables)
         if block.headers and (fill := _color(header.fill)) is not None:
@@ -1025,7 +1041,7 @@ class _Body:
         if block.caption:
             said.append(self.caption(style.labels.table, block.caption, width, layout))
         else:
-            said.append(self.after(style.look("text")))
+            said.append(self.after(tables.space_after or 0))
         return said
 
     def fields(self, block: FieldsOut, width: float) -> list[Flowable]:
@@ -1041,7 +1057,7 @@ class _Body:
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), CELL_GAP / 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), (style.distances.beside_gap // 2) * TWIP),
             ("BOTTOMPADDING", (0, 0), (-1, -1), look.space_after or 0),
         ]
         line = _rule(style.look("table").line)
@@ -1054,7 +1070,7 @@ class _Body:
                 commands.append(("LINEBELOW", (1, index), (1, index), line[0], line[1]))
         table = Table(rows, colWidths=[label, width - label], hAlign="LEFT")
         table.setStyle(TableStyle(commands))
-        return [table, self.after(style.look("text"))]
+        return [table, self.after(style.look("table").space_after or 0)]
 
     def code(self, block: CodeOut, width: float) -> Flowable:
         """Du code : ses lignes telles quelles (les espaces gardées, une ligne trop longue
@@ -1091,16 +1107,17 @@ class _Body:
         if block.caption:
             parts.append(self.caption(self.style.labels.figure, block.caption, width, layout))
         else:
-            parts.append(self.after(self.style.look("text")))
+            parts.append(self.after(self.style.distances.image_space_after))
         return KeepTogether(parts)
 
     def image_pair(
         self, first: ImageOut, second: ImageOut, width: float, layout: _Layout
     ) -> Flowable:
-        """Deux images ``half`` côte à côte (``image.grid``), chacune avec sa légende."""
+        """Deux images ``half`` côte à côte (``image.side_by_side``), chacune avec sa légende."""
         # La même place pour les deux : l'écart entre elles est pris sur la première cellule.
         half = width / 2
-        room = half - CELL_GAP
+        gap = self.style.distances.beside_gap * TWIP
+        room = half - gap
         cells: list[list[Flowable]] = []
         for block in (first, second):
             content: list[Flowable] = [self.image_flowable(block, room)]
@@ -1113,19 +1130,20 @@ class _Body:
                 [
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
                     ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                    ("RIGHTPADDING", (0, 0), (0, -1), CELL_GAP),
+                    ("RIGHTPADDING", (0, 0), (0, -1), gap),
                     ("RIGHTPADDING", (1, 0), (1, -1), 0),
                     ("TOPPADDING", (0, 0), (-1, -1), 0),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
                 ]
             )
         )
-        return table
+        # Puis le paragraphe vide qui suit leur tableau dans Word.
+        return KeepTogether([table, self.after(self.style.distances.image_space_after)])
 
     def chart(self, block: ChartOut, width: float, layout: _Layout) -> Flowable:
         """Le titre, le dessin et la légende du graphique, sur une même page."""
         style = self.style
-        text = style.look("text")
+        text = style.look("body")
         font = self.typefaces.name(text.font)
         parts: list[Flowable] = []
         if block.title:
@@ -1134,8 +1152,8 @@ class _Body:
                 bold=True,
                 color=style.chart.title or text.color,
                 align="center",
-                space_before=6.0,
-                space_after=4.0,
+                space_before=CHART_TITLE_SPACE[0],
+                space_after=CHART_TITLE_SPACE[1],
                 indent=None,
             )
             parts.append(self.paragraph("chart_title", look, (_run(block.title),), width))
@@ -1146,7 +1164,7 @@ class _Body:
         if block.caption:
             parts.append(self.caption(style.labels.figure, block.caption, width, layout))
         else:
-            parts.append(self.after(text))
+            parts.append(self.after(style.chart.space_after))
         return KeepTogether(parts)
 
     def signature(self, block: SignatureOut, width: float) -> Flowable:
@@ -1154,10 +1172,10 @@ class _Body:
         style = self.style
         count = len(block.signers)
         widths = [width / count] * count
-        text = style.look("text")
+        text = style.look("body")
         signer = style.look("signature")
         mention = style.look("signature_mention")
-        date = self.paragraph_style("signature-date", replace(text, space_before=0, space_after=3))
+        date = self.paragraph_style("signature-date", replace(text, space_before=0, space_after=DATE_SPACE))
         sign = self.paragraph_style("signature-sign", replace(text, space_before=0, space_after=0))
         cells: list[list[Flowable]] = []
         for name in block.signers:
@@ -1172,27 +1190,27 @@ class _Body:
                 )
             content.append(Paragraph(self.plain(style.labels.date, date), date))
             content.append(Paragraph(self.plain(style.labels.signature, sign), sign))
-            content.append(Spacer(1, SIGN_SPACE))
+            content.append(Spacer(1, _twips(signer.sign_height or 0)))
             cells.append(content)
         table = Table([cells], colWidths=widths, hAlign="LEFT")
         commands: list[tuple[Any, ...]] = [
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), CELL_GAP),
+            ("RIGHTPADDING", (0, 0), (-1, -1), style.distances.beside_gap * TWIP),
             ("RIGHTPADDING", (-1, 0), (-1, -1), 0),
             ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]
         table.setStyle(TableStyle(commands))
-        return KeepTogether([table])
+        return KeepTogether([table, self.after(style.look("table").space_after or 0)])
 
     # --- sections
 
-    def box(self, layout: _Layout) -> tuple[Any, Any]:
-        """Le cadre d'une section encadrée : son filet et son fond (``box``, ou celui que la
-        section choisit)."""
+    def box(self, layout: _Layout) -> tuple[Any, Any, Sides]:
+        """Le cadre d'une section encadrée : son filet, son fond et son écart au texte
+        (``box``, ou celui que la section choisit)."""
         look = self.style.look(layout.styles.get("box", "box"))
-        return _rule(look.border), _color(look.fill)
+        return _rule(look.border), _color(look.fill), _pads(look.padding, "cm")
 
     def layout_table(
         self,
@@ -1208,17 +1226,18 @@ class _Body:
             ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]
+        gap = self.style.distances.beside_gap * TWIP
         for index in range(len(cells) - 1):
             if index not in boxed:
-                commands.append(("RIGHTPADDING", (index, 0), (index, 0), CELL_GAP))
+                commands.append(("RIGHTPADDING", (index, 0), (index, 0), gap))
         for index, layout in boxed.items():
-            rule, fill = self.box(layout)
+            rule, fill, (top, right, bottom, left) = self.box(layout)
             spot = (index, 0)
             commands += [
-                ("LEFTPADDING", spot, spot, BOX_PAD),
-                ("RIGHTPADDING", spot, spot, BOX_PAD),
-                ("TOPPADDING", spot, spot, BOX_PAD),
-                ("BOTTOMPADDING", spot, spot, BOX_PAD / 2),
+                ("LEFTPADDING", spot, spot, left),
+                ("RIGHTPADDING", spot, spot, right),
+                ("TOPPADDING", spot, spot, top),
+                ("BOTTOMPADDING", spot, spot, bottom),
             ]
             if rule is not None:
                 commands.append(("BOX", spot, spot, rule[0], rule[1]))
@@ -1253,19 +1272,27 @@ class _Body:
 
     def alone(self, group: _Group, width: float, landscape: bool) -> _Unit:
         layout = group.layout
-        space = COVER_SPACE if layout.cover and not layout.space_before else layout.space_before
+        distances = self.style.distances
+        cover = distances.cover_margin_top * TWIP
+        space = cover if layout.cover and not layout.margin_top else layout.margin_top
         said: list[Flowable] = [Spacer(1, space)] if space else []
         if layout.cover:
             layout = replace(layout, align="center")
         columns = layout.columns
-        room = (width - (columns - 1) * COLUMN_GAP) / columns
+        column_gap = distances.column_gap * TWIP
+        room = (width - (columns - 1) * column_gap) / columns
         if layout.box:
-            content = self.blocks(group.blocks, room - 2 * BOX_PAD, layout)
-            body: list[Flowable] = [self.layout_table([content], [room], {0: layout})]
+            _, _, (_, right, _, left) = self.box(layout)
+            content = self.blocks(group.blocks, room - left - right, layout)
+            # Puis le paragraphe vide qui suit le tableau du cadre dans Word.
+            body: list[Flowable] = [
+                self.layout_table([content], [room], {0: layout}),
+                self.after(distances.beside_space),
+            ]
         else:
             body = self.blocks(group.blocks, room, layout)
         if columns > 1:
-            said.append(BalancedColumns(body, nCols=columns, innerPadding=COLUMN_GAP, endSlack=0.1))
+            said.append(BalancedColumns(body, nCols=columns, innerPadding=column_gap, endSlack=0.1))
         else:
             said += body
         return _Unit(said, landscape, layout.cover, layout.page_break)
@@ -1283,18 +1310,25 @@ class _Body:
             framed = group.layout.box
             if framed:
                 boxed[position] = group.layout
-            room = cell - (2 * BOX_PAD if framed else 0 if last else CELL_GAP)
+                _, _, (_, right, _, left) = self.box(group.layout)
+                room = cell - left - right
+            else:
+                room = cell - (0 if last else self.style.distances.beside_gap * TWIP)
             cells.append(self.blocks(group.blocks, room, group.layout))
         first = together[0].layout
-        said: list[Flowable] = [Spacer(1, first.space_before)] if first.space_before else []
+        said: list[Flowable] = [Spacer(1, first.margin_top)] if first.margin_top else []
         said.append(self.layout_table(cells, widths, boxed))
-        said.append(self.after(self.style.look("text")))
+        said.append(self.after(self.style.distances.beside_space))
         return _Unit(said, landscape, page_break=first.page_break)
 
 
+# Le texte dans la hauteur d'une cellule de tableau (``valign``), pour reportlab.
+_VALIGN: Final[Mapping[str, str]] = {"top": "TOP", "center": "MIDDLE", "bottom": "BOTTOM"}
+
+
 def _table_lines(tables: Look) -> list[tuple[Any, ...]]:
-    """Les filets d'un tableau : ``borders`` (grille, horizontales, aucun) au trait
-    ``line``, puis ``border_top`` et ``border_bottom`` s'ils sont dits."""
+    """Les filets d'un tableau : ``borders`` (grille, horizontales, verticales, aucun) au
+    trait ``line``, puis ``border_top`` et ``border_bottom`` s'ils sont dits."""
     commands: list[tuple[Any, ...]] = []
     line = _rule(tables.line) if tables.borders != "none" else None
     borders = tables.borders or "grid"
@@ -1304,6 +1338,9 @@ def _table_lines(tables: Look) -> list[tuple[Any, ...]]:
         elif borders == "horizontal":
             commands.append(("LINEABOVE", (0, 0), (-1, -1), line[0], line[1]))
             commands.append(("LINEBELOW", (0, -1), (-1, -1), line[0], line[1]))
+        elif borders == "vertical":
+            commands.append(("LINEBEFORE", (0, 0), (-1, -1), line[0], line[1]))
+            commands.append(("LINEAFTER", (-1, 0), (-1, -1), line[0], line[1]))
     for command, value, row in (
         ("LINEABOVE", tables.border_top, 0),
         ("LINEBELOW", tables.border_bottom, -1),
@@ -1359,24 +1396,28 @@ class _Zone:
 class _Box:
     """Les lignes d'un en-tête ou d'un pied dans le cadre de son style, comme Word groupe
     les paragraphes qui se suivent dans un même style : l'espace avant le premier, puis
-    les filets et le fond autour du groupe (à l'écart du texte de ``RULE_SPACE``), entre
+    les filets et le fond autour du groupe (à l'écart du texte de ``border_space``), entre
     deux lignes l'espace après l'une et avant l'autre, l'espace après la dernière ; le
     retrait à gauche et à droite."""
 
     zones: list[_Zone]
     look: Look
+    # Sans écart au cadre : une table d'en-tête ou de pied le met dans ses cellules du bord.
+    padded: bool = True
 
     def _pads(self) -> tuple[float, float, float, float]:
         """L'écart du texte au cadre : en haut, en bas, à gauche, à droite."""
+        if not self.padded:
+            return (0.0, 0.0, 0.0, 0.0)
         look = self.look
         every = look.border
         filled = _color(look.fill) is not None
-        vertical, horizontal = RULE_SPACE
+        above, after_side, below, before_side = _pads(look.border_space, "pt")
         return (
-            vertical if look.border_top or every or filled else 0.0,
-            vertical if look.border_bottom or every or filled else 0.0,
-            horizontal if look.border_left or every or filled else 0.0,
-            horizontal if every or filled else 0.0,
+            above if look.border_top or every or filled else 0.0,
+            below if look.border_bottom or every or filled else 0.0,
+            before_side if look.border_left or every or filled else 0.0,
+            after_side if look.border_right or every or filled else 0.0,
         )
 
     @property
@@ -1410,7 +1451,7 @@ class _Box:
             (_rule(look.border_top) or every, (left, upper, right, upper)),
             (_rule(look.border_bottom) or every, (left, lower, right, lower)),
             (_rule(look.border_left) or every, (left, lower, left, upper)),
-            (every, (right, lower, right, upper)),
+            (_rule(look.border_right) or every, (right, lower, right, upper)),
         ):
             if rule is not None:
                 canvas.setStrokeColor(rule[1])
@@ -1424,17 +1465,52 @@ class _Box:
             y -= zone.height
 
 
+def _leading(look: Look) -> float:
+    """La hauteur d'une ligne de texte d'un style, interligne compris."""
+    return (look.size or 11.0) * LEADING * (look.line_spacing or 1.0)
+
+
+@dataclass(frozen=True, slots=True)
+class _GridCell:
+    """Une cellule de table d'en-tête ou de pied, posée : sa colonne (x0, x1, depuis le bord
+    gauche de la table), ses marges (haut, gauche, bas, droite), ses paragraphes coupés
+    (et s'ils portent le logo), la hauteur de son contenu ; l'espace avant et après de ses
+    paragraphes (``Style.cell_spacing``)."""
+
+    cell: BandElement
+    look: Look
+    x0: float
+    x1: float
+    margins: tuple[float, float, float, float]
+    paragraphs: list[tuple[list[str], bool]]
+    content: float
+    font: str
+    size: float
+    leading: float
+    spacing: tuple[float, float]
+
+
+@dataclass(frozen=True, slots=True)
+class _GridRow:
+    line: bool
+    cells: list[_GridCell]
+    height: float
+
+
 class _Bands:
     """L'en-tête, le pied de page et le filigrane, dessinés à chaque page : à 1 cm du bord,
     comme Word ; trois zones (gauche, centre, droite) et des lignes centrées — sous les
     zones dans un en-tête, au-dessus dans un pied de page."""
 
-    def __init__(self, style: Style, title: str, fonts: _Fonts) -> None:
+    def __init__(self, style: Style, title: str, fonts: _Fonts, total: int | None = None) -> None:
         self.style = style
         self.title = title
         self.header = style.header
         self.footer = style.footer
         self.fonts = fonts
+        # Le nombre de pages du rendu précédent : la hauteur d'une table se mesure avec des
+        # numéros de page de ce nombre de chiffres (trois sans lui), la même à chaque page.
+        self.total = total
 
     def _font(self, look: Look) -> str:
         return self.fonts.name(look.font, bool(look.bold), bool(look.italic))
@@ -1451,109 +1527,287 @@ class _Bands:
         said = _PLACEHOLDER.sub(value, text)
         return said.upper() if look.uppercase else said
 
+    def _logo(self, band: Band) -> tuple[Any, float, float, float]:
+        """Le logo d'un en-tête ou d'un pied : son image, sa largeur, sa hauteur, l'écart à
+        son texte ; pas d'image sans logo."""
+        if band.logo is None:
+            return None, 0.0, 0.0, 0.0
+        picture = ImageReader(io.BytesIO(band.logo.data))
+        pixels = picture.getSize()
+        width = band.logo.width * cm
+        return picture, width, width * pixels[1] / pixels[0], band.logo.gap
+
     def lines(self, band: Band | None, look: Look, *, header: bool) -> list[_Zone]:
-        """Les lignes d'un en-tête ou d'un pied, du haut vers le bas."""
+        """Les lignes d'un en-tête ou d'un pied, du haut vers le bas : la ligne des zones,
+        chacune à sa place et au style de son élément (``center`` toujours centré) ; les
+        ``lines``, chacune un paragraphe au style de son élément, centrée dans un en-tête si
+        ce style ne dit pas d'alignement."""
+        del look
         if band is None:
             return []
-        size = look.size or 11.0
-        leading = size * LEADING * (look.line_spacing or 1.0)
-        font = self._font(look)
-        color = _color(look.color) or colors.black
-        # Comme Word : les lignes d'un en-tête sont centrées ; celles d'un pied, et son
-        # texte du centre quand il est seul, suivent l'alignement de son style.
-        own = "left" if look.align in (None, "justify") else look.align
-        aligned = "center" if header else own
-
-        def write(canvas: Canvas, x: float, baseline: float, text: str) -> None:
-            canvas.setFont(font, size)
-            canvas.setFillColor(color)
-            canvas.drawString(x, baseline, text)
-            if look.underline:
-                below = baseline + size * UNDERLINE_OFFSET
-                canvas.setStrokeColor(color)
-                canvas.setLineWidth(size * UNDERLINE_WIDTH)
-                canvas.line(x, below, x + pdfmetrics.stringWidth(text, font, size), below)
-
+        if band.table is not None:
+            return [self._grid(band, header=header)]
+        name = "header" if header else "footer"
+        picture, logo_width, logo_height, gap = self._logo(band)
+        present = {place: element for place, element in band.zones.items() if element is not None}
         zones: list[_Zone] = []
-        logo = band.logo
-        picture: Any = None
-        logo_width = logo_height = 0.0
-        if logo is not None:
-            picture = ImageReader(io.BytesIO(logo.data))
-            pixels = picture.getSize()
-            logo_width = logo.width * cm
-            logo_height = logo_width * pixels[1] / pixels[0]
-        texts = {"left": band.left, "center": band.center, "right": band.right}
-        alone = (
-            not texts["left"] and not texts["right"] and (logo is None or logo.position == "center")
-        )
-        if any(texts.values()) or logo is not None:
-            height = max(leading, logo_height)
+        if present:
+            looks = {place: self.style.element_look(element, name) for place, element in present.items()}
+            carries = any(element.logo for element in present.values()) and picture is not None
+            height = max([_leading(own) for own in looks.values()] + ([logo_height] if carries else []))
 
             def zone(
                 canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None
             ) -> None:
                 bottom = top - height
-                baseline = bottom + size * 0.22
-                for place in ("left", "center", "right"):
-                    text = self._said(texts[place], page, total, look)
-                    has_logo = logo is not None and logo.position == place
+                for place, element in present.items():
+                    own = looks[place]
+                    size = own.size or 11.0
+                    font = self._font(own)
+                    text = self._said(element.text, page, total, own)
+                    has_logo = element.logo and picture is not None
                     text_width = pdfmetrics.stringWidth(text, font, size) if text else 0.0
-                    gap = 4.0 if has_logo and text else 0.0
-                    group = (logo_width if has_logo else 0.0) + gap + text_width
-                    spot = aligned if place == "center" and alone else place
+                    space = gap if has_logo and text else 0.0
+                    group = (logo_width if has_logo else 0.0) + space + text_width
                     x = (
                         left
-                        if spot == "left"
+                        if place == "left"
                         else right - group
-                        if spot == "right"
+                        if place == "right"
                         else (left + right - group) / 2
                     )
                     if has_logo:
                         drawn: Any = canvas
                         drawn.drawImage(picture, x, bottom, logo_width, logo_height, mask="auto")
-                        x += logo_width + gap
+                        x += logo_width + space
                     if text:
-                        write(canvas, x, baseline, text)
+                        color = _color(own.color) or colors.black
+                        self._write(canvas, own, font, size, color, x, bottom + size * 0.22, text)
 
             zones.append(_Zone(height, zone))
         rows: list[_Zone] = []
-        for line in band.lines:
+        for element in band.lines:
+            own = self.style.element_look(element, name)
+            spot = own.align if own.align in ("left", "center", "right") else "center" if header and own.align is None else "left"
+            carries = element.logo and picture is not None
+            height = max(_leading(own), logo_height if carries else 0.0)
 
-            def centered(
+            def line(
                 canvas: Canvas,
                 top: float,
                 left: float,
                 right: float,
                 page: int,
                 total: int | None,
-                line: str = line,
+                element: BandElement = element,
+                own: Look = own,
+                spot: str = spot,
+                height: float = height,
+                carries: bool = carries,
             ) -> None:
-                text = self._said(line, page, total, look)
-                width = pdfmetrics.stringWidth(text, font, size)
-                x = (
-                    left
-                    if aligned == "left"
-                    else right - width
-                    if aligned == "right"
-                    else (left + right - width) / 2
-                )
-                write(canvas, x, top - leading + size * 0.22, text)
+                size = own.size or 11.0
+                font = self._font(own)
+                text = self._said(element.text, page, total, own)
+                space = gap if carries and text else 0.0
+                group = (logo_width if carries else 0.0) + space + pdfmetrics.stringWidth(text, font, size)
+                x = left if spot == "left" else right - group if spot == "right" else (left + right - group) / 2
+                bottom = top - height
+                if carries:
+                    drawn: Any = canvas
+                    drawn.drawImage(picture, x, bottom, logo_width, logo_height, mask="auto")
+                    x += logo_width + space
+                color = _color(own.color) or colors.black
+                self._write(canvas, own, font, size, color, x, bottom + size * 0.22, text)
 
-            rows.append(_Zone(leading, centered))
+            rows.append(_Zone(height, line))
         return zones + rows if header else rows + zones
 
     def box(self, band: Band | None, look: Look, *, header: bool) -> _Box:
-        """Les lignes d'un en-tête ou d'un pied dans le cadre de son style."""
+        """Les lignes d'un en-tête ou d'un pied dans le cadre de son style. Avec une table,
+        comme dans Word, l'espacement de son style vaut autour d'elle, et l'écart au cadre
+        est dans ses cellules du bord."""
+        if band is not None and band.table is not None:
+            frame = self.style.look(band.table.style or ("header" if header else "footer"))
+            return _Box(self.lines(band, look, header=header), frame, padded=False)
         return _Box(self.lines(band, look, header=header), look)
+
+    def _grid(self, band: Band, *, header: bool) -> _Zone:
+        """La table d'un en-tête ou d'un pied, comme dans Word (``word.style._band_table``) :
+        les colonnes de ``band_columns`` ; dans chaque cellule, ses paragraphes, chacun avec
+        l'espace avant et après de son style, coupés à la largeur de la cellule ; l'écart
+        entre colonnes en deux moitiés, de part et d'autre du filet intérieur ; l'écart au
+        cadre dans les cellules du bord. La hauteur se mesure une fois, à la largeur du
+        texte, avec des numéros de page du plus grand nombre de chiffres."""
+        table = band.table
+        assert table is not None
+        # Le style de la table : son cadre, ses filets, l'écart entre ses colonnes ; et celui
+        # des cellules qui n'en nomment pas.
+        look = self.style.look(table.style or ("header" if header else "footer"))
+        rows = band_rows(band, header=header)
+        count = len(table.widths)
+        (top_rule, bottom_rule, left_rule, right_rule), fill = band_frame(look)
+        above, after_side, below, before_side = _pads(look.border_space, "pt")
+        pads = (
+            above if top_rule or fill else 0.0,
+            before_side if left_rule or fill else 0.0,
+            below if bottom_rule or fill else 0.0,
+            after_side if right_rule or fill else 0.0,
+        )
+        family = "header" if header else "footer"
+        gap = round((look.column_gap or 0) * cm / TWIP)
+        gap_right, gap_left = (gap // 2) * TWIP, (gap - gap // 2) * TWIP
+        inner = _rule(look.line or self.style.look("table").line)
+        inner_h = look.borders in ("horizontal", "grid")
+        inner_v = look.borders in ("vertical", "grid")
+        picture, logo_width, logo_height, logo_gap = self._logo(band)
+        sample = "9" * (len(str(self.total)) if self.total else 3)
+        # Un filet horizontal intérieur sous une ligne de la table, et l'écart au texte de
+        # part et d'autre, comme celui du cadre (Word : ``_band_table``).
+        ruled = [
+            inner_h and not row.line and number + 1 < len(rows) and not rows[number + 1].line
+            for number, row in enumerate(rows)
+        ]
+
+        def text_of(text: str, own: Look, page: int | None, total: int | None) -> str:
+            if page is None:
+                text = text.replace("{page}", sample).replace("{pages}", sample)
+            return self._said(text, page or 0, total, own)
+
+        def layout(width: float, page: int | None, total: int | None) -> list[_GridRow]:
+            columns = [value * TWIP for value in band_columns(table, round(width / TWIP))]
+            placed: list[_GridRow] = []
+            for number, row in enumerate(rows):
+                spans: list[tuple[BandElement, int, int]] = (
+                    [(row.cells[0], 0, count)]
+                    if row.line
+                    else [(cell, index, 1) for index, cell in enumerate(row.cells)]
+                )
+                cells: list[_GridCell] = []
+                for cell, start, span in spans:
+                    end = start + span
+                    own = self.style.look(cell.style) if cell.style else look
+                    size = own.size or 11.0
+                    leading = size * LEADING * (own.line_spacing or 1.0)
+                    font = self._font(own)
+                    margins = (
+                        pads[0] if number == 0 else above if ruled[number - 1] else 0.0,
+                        pads[1] if start == 0 else gap_left,
+                        pads[2] if number == len(rows) - 1 else below if ruled[number] else 0.0,
+                        pads[3] if end == count else gap_right,
+                    )
+                    x0, x1 = sum(columns[:start]), sum(columns[:end])
+                    room = max(x1 - x0 - margins[1] - margins[3], 1.0)
+                    paragraphs: list[tuple[list[str], bool]] = []
+                    for index, text in enumerate(cell.lines):
+                        said = text_of(text, own, page, total)
+                        drawn = cell.logo and index == 0 and picture is not None
+                        beside = (logo_width + (logo_gap if said else 0.0)) if drawn else 0.0
+                        paragraphs.append(
+                            (_split(said, font, size, max(room - beside, 1.0)) or [""], drawn)
+                        )
+                    before, after = self.style.cell_spacing(cell.style, table.style or family, family)
+                    content = sum(
+                        before
+                        + after
+                        + (max(leading, logo_height) if drawn else leading)
+                        + (len(lines) - 1) * leading
+                        for lines, drawn in paragraphs
+                    )
+                    cells.append(
+                        _GridCell(cell, own, x0, x1, margins, paragraphs, content, font, size, leading, (before, after))
+                    )
+                height = max(c.margins[0] + c.content + c.margins[2] for c in cells)
+                placed.append(_GridRow(row.line, cells, height))
+            return placed
+
+        def text_width() -> float:
+            indent = (look.indent or 0) * cm
+            return self.style.text_width * TWIP - 2 * indent
+
+        measured = sum(row.height for row in layout(text_width(), None, None))
+
+        def draw(
+            canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None
+        ) -> None:
+            placed = layout(right - left, page, total)
+            y = top
+            for number, row in enumerate(placed):
+                for cell in row.cells:
+                    x0, x1 = left + cell.x0, left + cell.x1
+                    own = cell.look
+                    # Le fond d'un style de cellule, s'il n'est pas celui du cadre.
+                    shade = _color(own.fill) if cell.cell.style and own.fill != look.fill else None
+                    if shade is not None:
+                        canvas.setFillColor(shade)
+                        canvas.rect(x0, y - row.height, x1 - x0, row.height, stroke=0, fill=1)
+                    m_top, m_left, m_bottom, m_right = cell.margins
+                    room = row.height - m_top - m_bottom
+                    shift = {"top": 0.0, "center": (room - cell.content) / 2, "bottom": room - cell.content}[
+                        own.valign or look.valign or "top"
+                    ]
+                    cursor = y - m_top - max(shift, 0.0)
+                    # Une ligne de toute la largeur, dans un en-tête : centrée si son style ne dit
+                    # pas d'alignement.
+                    centered = row.line and header and own.align is None
+                    align = "center" if centered else own.align if own.align in ("left", "center", "right") else "left"
+                    color = _color(own.color) or colors.black
+                    for lines, drawn in cell.paragraphs:
+                        cursor -= cell.spacing[0]
+                        for index, text in enumerate(lines):
+                            first = index == 0
+                            height = max(cell.leading, logo_height) if first and drawn else cell.leading
+                            image = logo_width + (logo_gap if text else 0.0) if first and drawn else 0.0
+                            group = image + (pdfmetrics.stringWidth(text, cell.font, cell.size) if text else 0.0)
+                            inner_left, inner_right = x0 + m_left, x1 - m_right
+                            x = (
+                                inner_left
+                                if align == "left"
+                                else inner_right - group
+                                if align == "right"
+                                else (inner_left + inner_right - group) / 2
+                            )
+                            bottom = cursor - height
+                            if first and drawn:
+                                logo: Any = canvas
+                                logo.drawImage(picture, x, bottom, logo_width, logo_height, mask="auto")
+                                x += image
+                            if text:
+                                self._write(canvas, own, cell.font, cell.size, color, x, bottom + cell.size * 0.22, text)
+                            cursor = bottom
+                        cursor -= cell.spacing[1]
+                lower = y - row.height
+                if inner is not None and not row.line:
+                    canvas.setStrokeColor(inner[1])
+                    canvas.setLineWidth(inner[0])
+                    if ruled[number]:
+                        canvas.line(left, lower, right, lower)
+                    if inner_v:
+                        for cell in row.cells[:-1]:
+                            canvas.line(left + cell.x1, y, left + cell.x1, lower)
+                y = lower
+
+        return _Zone(measured, draw)
+
+    def _write(
+        self, canvas: Canvas, look: Look, font: str, size: float, color: Any, x: float, baseline: float, text: str
+    ) -> None:
+        canvas.setFont(font, size)
+        canvas.setFillColor(color)
+        canvas.drawString(x, baseline, text)
+        if look.underline:
+            below = baseline + size * UNDERLINE_OFFSET
+            canvas.setStrokeColor(color)
+            canvas.setLineWidth(size * UNDERLINE_WIDTH)
+            canvas.line(x, below, x + pdfmetrics.stringWidth(text, font, size), below)
 
     def heights(self) -> tuple[float, float]:
         """La place que prennent l'en-tête et le pied, depuis le bord de la page."""
         header = self.box(self.header, self.style.look("header"), header=True).height
         footer = self.box(self.footer, self.style.look("footer"), header=False).height
+        distances = self.style.distances
         return (
-            BAND_DISTANCE + header + BAND_GAP if header else 0.0,
-            BAND_DISTANCE + footer + BAND_GAP if footer else 0.0,
+            distances.header_distance * TWIP + header + BAND_GAP if header else 0.0,
+            distances.footer_distance * TWIP + footer + BAND_GAP if footer else 0.0,
         )
 
     def draw(
@@ -1574,17 +1828,17 @@ class _Bands:
         if header:
             self._watermark(canvas, size)
             box = self.box(self.header, style.look("header"), header=True)
-            box.draw(canvas, height - BAND_DISTANCE, left, width - right, page, total)
+            box.draw(canvas, height - style.distances.header_distance * TWIP, left, width - right, page, total)
         if footer:
             box = self.box(self.footer, style.look("footer"), header=False)
-            box.draw(canvas, BAND_DISTANCE + box.height, left, width - right, page, total)
+            box.draw(canvas, style.distances.footer_distance * TWIP + box.height, left, width - right, page, total)
         canvas.restoreState()
 
     def _watermark(self, canvas: Canvas, size: tuple[float, float]) -> None:
         """Le filigrane : un texte en diagonale, derrière le texte de la page, dans la police
         et la couleur du style ``watermark``, à demi transparent."""
         look = self.style.look("watermark")
-        text = look.text
+        text = self.style.watermark
         if not text:
             return
         font = self._font(look)
@@ -1605,7 +1859,7 @@ def _build(
     prepared: Prepared, style: Style, template: Template | None, known: _Pass
 ) -> tuple[bytes, _Pass, _Body]:
     body = _Body(prepared, style, template, known.pages)
-    bands = _Bands(style, body.title, body.typefaces)
+    bands = _Bands(style, body.title, body.typefaces, known.total)
     portrait = style.page
     width, height = (portrait[1], portrait[0]) if style.landscape else portrait
     sizes = {

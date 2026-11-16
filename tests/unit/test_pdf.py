@@ -30,11 +30,13 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.lib.units import cm
 from reportlab.pdfgen.canvas import Canvas
 from test_word_styles import (
+    BAND_TABLE,
     CHARTE,
     FACTURE_SECTIONS,
     FACTURE_YAML,
     RAPPORT_SECTIONS,
     RAPPORT_YAML,
+    numeric_constants,
 )
 
 import loom_ia.tools_builtin.pdf.reader as reader_module
@@ -47,7 +49,7 @@ from loom_ia.core.model import DEFAULT_TENANT, RunId, SessionId
 from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.runtime import build_agent
 from loom_ia.tools_builtin import BuiltinContext
-from loom_ia.tools_builtin._style_params import SAFE_FONTS, font_fault, house
+from loom_ia.tools_builtin._style_params import SAFE_FONTS, Look, font_fault, house
 from loom_ia.tools_builtin.pdf import PdfTool, build
 from loom_ia.tools_builtin.pdf import tool as tool_module
 from loom_ia.tools_builtin.pdf import writer as writer_module
@@ -174,8 +176,9 @@ async def test_writes_a_pdf_in_the_house_style(tool: PdfTool, disk: Path) -> Non
     assert len(found.pages) == 1
     assert found.metadata is not None and found.metadata.title == "Devis D-2026-042"
     first = found.pages[0].extract_text()
-    for said in ("Page 1 / 1", "Devis D-2026-042", "Dupont", "1 430,50 €", "Total", "Conditions"):
+    for said in ("Devis D-2026-042", "Dupont", "1 430,50 €", "Total", "Conditions"):
         assert said in first.replace("\u00a0", " "), said
+    assert "Page 1" not in first  # le pied de default.yaml n'écrit rien
 
 
 async def test_same_description_same_file(tool: PdfTool) -> None:
@@ -600,7 +603,8 @@ async def test_header_words_and_short_values_are_never_cut(
 
     from loom_ia.tools_builtin._document.arguments import WriteArguments
     from loom_ia.tools_builtin._document.content import SHORT_VALUE_CHARS, TableOut, prepare
-    from loom_ia.tools_builtin.pdf.writer import CELL_PADDING, TWIP
+    from loom_ia.tools_builtin._style_params import cm_twips
+    from loom_ia.tools_builtin.pdf.writer import TWIP
 
     request = WriteArguments.model_validate({"path": "s/t.pdf", "title": None, "blocks": [table]})
     [found] = prepare(request, ZoneInfo("Europe/Paris")).blocks
@@ -608,8 +612,11 @@ async def test_header_words_and_short_values_are_never_cut(
     # Le style maison en PDF : Calibri rendu en Helvetica, l'en-tête en gras.
     size = house().look("table").size or 0
     text_width = house().text_width * TWIP
+    # Les marges d'une cellule, à gauche et à droite : le padding de table (default.yaml).
+    _, right, _, left = house().look("table").padding or (0.0, 0.0, 0.0, 0.0)
+    margins = (cm_twips(left) + cm_twips(right)) * TWIP
     for index, (header, part) in enumerate(zip(found.headers, found.widths, strict=True)):
-        width = part * text_width - 2 * CELL_PADDING[1]
+        width = part * text_width - margins
         for word in header.split():
             assert stringWidth(word, "Helvetica-Bold", size) <= width, word
         for row in [*found.rows, found.total or ()]:
@@ -804,6 +811,21 @@ def heights(page: Any) -> list[tuple[str, float]]:
     return found
 
 
+def spots_of(page: Any) -> dict[str, tuple[float, float]]:
+    """Le texte d'une page, morceau par morceau, à sa place depuis le bord gauche et le bas
+    (la matrice du texte dans celle du dessin)."""
+    found: dict[str, tuple[float, float]] = {}
+
+    def seen(text: str, matrix: Any, tm: Any, font: Any, size: Any) -> None:
+        del font, size
+        if text.strip():
+            x = float(tm[4]) * float(matrix[0]) + float(matrix[4])
+            found[text.strip()] = (round(x, 1), round(float(tm[5]) * float(matrix[3]) + float(matrix[5]), 1))
+
+    page.extract_text(visitor_text=seen)
+    return found
+
+
 def drawn(page: Any) -> bytes:
     """Le flux de dessin d'une page : ses couleurs, ses polices, ses filets."""
     return cast(bytes, page.get_contents().get_data())
@@ -821,6 +843,38 @@ def test_no_visual_value_in_the_pdf_code() -> None:
         code = source.read_text(encoding="utf-8")
         assert not re.findall(r"\b[0-9A-F]{6}\b", code), source.name
         assert not fonts.search(code), f"{source.name} : {fonts.search(code)}"
+
+
+# Les nombres restés dans l'écriture PDF, et pourquoi : toute longueur visuelle vient de
+# default.yaml, au twip près comme dans Word (docs/style_format.md § 11).
+PDF_NUMBERS: Final[dict[str, str]] = {
+    "writer.MAX_MISSING_SAID": "le nombre de caractères manquants que dit un avertissement",
+    "writer.TWIP": "un twip en points : les mesures du style résolu",
+    "writer.LEADING": "l'interligne simple, en part de la taille (Word le tient de la police)",
+    "writer.BAND_GAP": "l'écart entre l'en-tête (le pied) et le corps : Word n'en a pas l'équivalent",
+    "writer.UNDERLINE_OFFSET": "le soulignement d'un en-tête, comme Paragraph le dessine",
+    "writer.UNDERLINE_WIDTH": "le soulignement d'un en-tête, comme Paragraph le dessine",
+    "writer.CHECK_COLUMN": "la case d'une liste à cocher (une mécanique)",
+    "writer.CHECK_SIDE": "la case d'une liste à cocher (une mécanique)",
+    "writer.CHECK_LINE": "la case d'une liste à cocher (une mécanique)",
+    "writer.CHART_TITLE_SPACE": "le titre d'un graphique, comme Word le dessine dans le sien",
+    "writer.DATE_SPACE": "l'espace sous « Date : » d'une signature, resté dans le code",
+    "writer.WATERMARK_WIDTH": "la place du filigrane (une mécanique)",
+    "writer.WATERMARK_HEIGHT": "la place du filigrane (une mécanique)",
+    "writer.WATERMARK_ALPHA": "l'opacité du filigrane (une mécanique)",
+    "writer.IMAGE_HEIGHT": "la part d'une page qu'une image peut prendre, avec sa légende",
+    "writer.SMALL_BULLET": "la puce de remplacement, plus petite",
+    "chart.HEIGHT": "la taille d'un graphique (une mécanique)",
+    "chart.AXIS_LABEL": "la place des libellés d'un axe",
+}
+
+
+def test_no_visual_length_in_the_pdf_code() -> None:
+    """Ni distance ni espace dans l'écriture PDF : ils viennent de default.yaml. Restent
+    des unités et des mécaniques, nommées ici (``PDF_NUMBERS``)."""
+    folder = Path(writer_module.__file__).parent
+    writers = [folder / "writer.py", folder / "chart.py"]
+    assert set().union(*(numeric_constants(source) for source in writers)) == set(PDF_NUMBERS)
 
 
 async def test_a_pdf_without_style_is_in_default_yaml(tool: PdfTool, disk: Path) -> None:
@@ -873,17 +927,15 @@ async def test_the_header_and_the_footer_in_the_frame_of_their_style(disk: Path)
         style={
             "spec": {
                 "header": {
-                    "right": "{title}",
                     "border_bottom": "1pt 0B5D3B",
                     "space_after": 6,
                     "uppercase": True,
                     "underline": True,
                 },
-                "footer": {
-                    "lines": ["SIRET 812 345 678 00021"],
-                    "border_top": "0.5pt C0392B",
-                    "fill": "F2F2F2",
-                    "align": "left",
+                "footer": {"border_top": "0.5pt C0392B", "fill": "F2F2F2", "align": "left"},
+                "page": {
+                    "header": {"right": "{title}"},
+                    "footer": {"lines": ["SIRET 812 345 678 00021"], "left": "Page {page} / {pages}"},
                 },
             }
         },
@@ -905,6 +957,169 @@ async def test_the_header_and_the_footer_in_the_frame_of_their_style(disk: Path)
     assert where["Page 1 / 1"] == pytest.approx(2 * cm + 8, abs=0.5)
     first = dict(heights(PdfReader(disk / "sortie" / "a.pdf").pages[0]))
     assert dict(heights(page))["Texte."] < first["Texte."]  # l'en-tête prend plus de place
+
+
+async def test_a_footer_table_in_pdf(disk: Path) -> None:
+    """Le pied en table, comme dans Word : la mention sur toute la largeur, puis les deux
+    lignes à gauche et le numéro de page calé à droite, centré sur elles ; le filet du
+    haut et le filet entre les colonnes ; le corps remonté d'autant que le pied prend."""
+    tool = make(disk, SORTIE, style={"spec": BAND_TABLE})
+    long = {"title": "Long", "blocks": [{"type": "paragraph", "text": "Texte. " * 900}]}
+    written = await call(tool, path="sortie/t.pdf", **long)
+    pages = PdfReader(disk / "sortie" / "t.pdf").pages
+    assert written["pages"] == len(pages) == 2
+    for number, page in enumerate(pages, start=1):
+        where = dict(heights(page))
+        left = {text: x for x, text in xs(page)}
+        said = f"{number}/2"
+        mention, first, second = "Mention de toute la largeur", "App-Novative · 2 allée du Semoir, 77185 Lognes", "SIRET 000 000 000 00000"
+        assert where[mention] > where[first] > where[second]
+        # valign: center : le numéro à mi-hauteur des deux lignes (même taille, même pas).
+        assert where[said] == pytest.approx((where[first] + where[second]) / 2, abs=0.6)
+        assert left[first] == pytest.approx(2 * cm, abs=0.5)
+        # Calé à droite dans 1,5 cm : il commence passé 19 cm - 1,5 cm.
+        assert left[said] > 21 * cm - 2 * cm - 1.5 * cm
+    said = drawn(pages[0])
+    assert b".121569 .227451 .372549 RG\n.5 w" in said  # 1F3A5F, 0,5 pt
+    assert said.count(b" l S") == 2  # le filet du haut, celui entre les colonnes
+    assert b"/F2 8 Tf" in said or b" 8 Tf" in said  # le pied en 8 points
+
+
+def test_vertical_borders_and_the_vertical_alignment_in_pdf() -> None:
+    """``borders: vertical`` : un filet avant chaque cellule et après la dernière colonne ;
+    ``valign`` : la commande de reportlab, centré par default.yaml."""
+    vertical = writer_module._table_lines(Look(borders="vertical", line="0.5pt 000000"))  # pyright: ignore[reportPrivateUsage]
+    assert [command[0] for command in vertical] == ["LINEBEFORE", "LINEAFTER"]
+    assert writer_module._VALIGN[house().look("table").valign or "top"] == "MIDDLE"  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_right_rule_in_pdf(disk: Path) -> None:
+    """``border_right`` dessine un filet de plus qu'un seul ``border_left``."""
+    note = {"title": "N", "blocks": [{"type": "note", "text": "Une note."}]}
+    left = make(disk, SORTIE, style={"spec": {"note": {"border_left": "1pt 1F3A5F"}}})
+    both = make(disk, SORTIE, style={"spec": {"note": {"border_left": "1pt 1F3A5F", "border_right": "1pt 1F3A5F"}}})
+    await call(left, path="sortie/l.pdf", **note)
+    await call(both, path="sortie/b.pdf", **note)
+    one = drawn(PdfReader(disk / "sortie" / "l.pdf").pages[0]).count(b" l S")
+    assert drawn(PdfReader(disk / "sortie" / "b.pdf").pages[0]).count(b" l S") == one + 1
+
+
+async def test_each_line_of_a_footer_has_its_alignment(disk: Path) -> None:
+    """Les ``lines`` d'un pied : chacune à son alignement, sinon à celui du style."""
+    spec = {
+        "footer_center": {"base": "footer", "align": "center"},
+        "footer_right": {"base": "footer", "align": "right"},
+        "page": {"footer": {"lines": [{"text": "Centrée", "style": "footer_center"}, {"text": "À droite", "style": "footer_right"}, "À gauche"]}},
+    }
+    tool = make(disk, SORTIE, style={"spec": spec})
+    await call(tool, path="sortie/l.pdf", title="L", blocks=[{"type": "paragraph", "text": "Corps."}])
+    left = {text: x for x, text in xs(PdfReader(disk / "sortie" / "l.pdf").pages[0])}
+    assert left["À gauche"] == pytest.approx(2 * cm, abs=0.5)
+    assert 9 * cm < left["Centrée"] < 10.5 * cm
+    assert left["À droite"] > 17 * cm
+
+
+async def test_a_zone_of_a_footer_takes_its_style(disk: Path) -> None:
+    """Une zone au style qu'elle nomme : sa police, sa taille, sa couleur ; sans style,
+    celui du pied."""
+    spec = {
+        "footer": {"size": 8},
+        "footer_page": {"base": "footer", "bold": True, "size": 12, "color": "1F3A5F"},
+        "page": {"footer": {"left": "Gauche", "right": {"text": "Page {page}", "style": "footer_page"}}},
+    }
+    tool = make(disk, SORTIE, style={"spec": spec})
+    await call(tool, path="sortie/z.pdf", title="Z", blocks=[{"type": "paragraph", "text": "Corps."}])
+    page = PdfReader(disk / "sortie" / "z.pdf").pages[0]
+    found: dict[str, tuple[str, float]] = {}
+
+    def seen(text: str, cm: Any, tm: Any, font: Any, size: Any) -> None:
+        del cm, tm
+        if text.strip():
+            found[text.strip()] = (str(font["/BaseFont"]), float(size))
+
+    page.extract_text(visitor_text=seen)
+    assert found["Page 1"] == ("/Helvetica-Bold", 12)
+    assert found["Gauche"] == ("/Helvetica", 8)
+    assert b".121569 .227451 .372549 rg" in drawn(page)
+
+
+async def test_the_distances_and_spaces_of_the_page_in_pdf(disk: Path) -> None:
+    """Les mêmes distances que dans Word, du style : l'en-tête et le pied au bord, l'espace
+    après un tableau, le retrait d'une liste, l'écart d'un filet au texte."""
+    blocks = [
+        {"type": "note", "text": "Note."},
+        {"type": "table", "columns": [{"header": "A"}], "rows": [["x"]]},
+        {"type": "paragraph", "text": "Après."},
+        {"type": "list", "items": ["Puce"]},
+    ]
+    found: dict[str, dict[str, tuple[float, float]]] = {}
+    for name, spec in (
+        ("base", {"page": {"header": {"left": "Haut"}, "footer": {"left": "Bas"}}}),
+        (
+            "réglé",
+            {
+                "page": {"header": {"left": "Haut"}, "footer": {"left": "Bas"}, "header_distance": "2cm", "footer_distance": "2cm"},
+                "table": {"space_after": 30},
+                "list": {"level_indent": "2.27cm"},
+                "note": {"border_left": "1pt 000000", "border_space": "0 20pt"},
+            },
+        ),
+    ):
+        tool = make(disk, SORTIE, style={"spec": spec})
+        await call(tool, path=f"sortie/{name}.pdf", title="D", blocks=blocks, overwrite=True)
+        spots = spots_of(PdfReader(disk / "sortie" / f"{name}.pdf").pages[0])
+        found[name] = {text: spots[text] for text in ("Haut", "Bas", "Note.", "Après.", "Puce")}
+    base, tuned = found["base"], found["réglé"]
+    assert base["Haut"][1] - tuned["Haut"][1] == pytest.approx(cm, abs=0.1)  # 1 cm plus bas
+    assert tuned["Bas"][1] - base["Bas"][1] == pytest.approx(cm, abs=0.1)  # 1 cm plus haut
+    # 24 pt de plus après le tableau ; la liste 1 cm plus à droite ; la note à 20 pt de son
+    # filet (et 1 pt de filet), au lieu de rien.
+    gap = (base["Note."][1] - base["Après."][1]) - (tuned["Note."][1] - tuned["Après."][1])
+    assert gap == pytest.approx(-24, abs=0.5)
+    assert tuned["Puce"][0] - base["Puce"][0] == pytest.approx(cm, abs=0.1)
+    assert tuned["Note."][0] - base["Note."][0] == pytest.approx(20, abs=0.5)
+
+
+async def test_the_spacing_of_a_band_table_is_around_it_in_pdf(disk: Path) -> None:
+    """Le style d'une table de pied : son espace après la met plus haut, ses cellules n'ont
+    pas son espacement."""
+    heights_of: dict[str, float] = {}
+    for name, footer in (("sans", {}), ("avec", {"space_after": 12, "space_before": 4})):
+        spec = {"footer": footer, "page": {"footer": {"table": {"widths": ["auto"], "rows": [[["Un", "Deux"]]]}}}}
+        tool = make(disk, SORTIE, style={"spec": spec})
+        await call(tool, path=f"sortie/{name}.pdf", title="T", blocks=[{"type": "paragraph", "text": "Corps."}], overwrite=True)
+        placed_at = dict(heights(PdfReader(disk / "sortie" / f"{name}.pdf").pages[0]))
+        heights_of[name] = placed_at["Un"] - placed_at["Deux"]
+        heights_of[name + "-bas"] = placed_at["Deux"]
+    # Entre les deux lignes d'une cellule : rien de plus (les cellules sans espacement).
+    assert heights_of["avec"] == pytest.approx(heights_of["sans"], abs=0.1)
+    # La table 12 pt plus haut : l'espace après, sous elle.
+    assert heights_of["avec-bas"] - heights_of["sans-bas"] == pytest.approx(12, abs=0.1)
+
+
+async def test_a_header_table_in_pdf_with_lines_below(disk: Path) -> None:
+    """L'en-tête en table : le titre à droite, les lignes centrées sous la table."""
+    charte = {
+        "header_right": {"base": "header", "align": "right"},
+        "page": {
+            "header": {
+                "lines": ["Sous la table"],
+                "table": {"widths": ["auto", "auto"], "rows": [["Gauche", {"text": "{title}", "style": "header_right"}]]},
+            }
+        },
+    }
+    tool = make(disk, SORTIE, style={"spec": charte})
+    await call(tool, path="sortie/h.pdf", title="Le titre", blocks=[{"type": "paragraph", "text": "Corps."}])
+    page = PdfReader(disk / "sortie" / "h.pdf").pages[0]
+    where = dict(heights(page))
+    left = {text: x for x, text in xs(page)}
+    # Le titre est aussi celui du corps : celui de l'en-tête est à la hauteur de « Gauche ».
+    titles = [(y, x) for (text, y), (x, _) in zip(heights(page), xs(page), strict=True) if text == "Le titre"]
+    assert (where["Gauche"], max(titles)[0]) == (max(titles)[0], where["Gauche"])
+    assert max(titles)[1] > 15 * cm  # à droite
+    assert where["Gauche"] > where["Sous la table"] > where["Corps."]
+    assert left["Gauche"] == pytest.approx(2 * cm, abs=0.5)
+    assert 8 * cm < left["Sous la table"] < 11 * cm  # centrée
 
 
 async def test_a_report_with_its_cover_landscape_and_columns(disk: Path) -> None:
@@ -990,7 +1205,7 @@ async def test_an_embedded_font(disk: Path) -> None:
     fichier à chaque fois ; un caractère qu'elle n'a pas, dit."""
     regular = (FONTS / "Caladea-Regular.ttf").read_bytes()
     bold = (FONTS / "Caladea-Bold.ttf").read_bytes()
-    style = {"fonts": {"Caladea": {"regular": regular, "bold": bold}}, "text": {"font": "Caladea"}}
+    style = {"fonts": {"Caladea": {"regular": regular, "bold": bold}}, "body": {"font": "Caladea"}}
     tool = make(disk, SORTIE, style={"spec": style})
     assert ("polices", "Caladea : embarquée ; Courier New → Courier") in tool.settings().options
     blocks = [{"type": "paragraph", "text": "Un **devis** et *une* note 🙂."}]
@@ -1033,7 +1248,7 @@ def test_fonts_are_read_when_the_config_loads(demo: ConfigFactory, tmp_path: Pat
     prompts = tmp_path / "prompts"
     (prompts / "styles").mkdir(parents=True)
     (prompts / "styles" / "charte.yaml").write_text(
-        "fonts:\n  Caladea: { regular: fonts/caladea.ttf }\ntext: { font: Caladea }\n",
+        "fonts:\n  Caladea: { regular: fonts/caladea.ttf }\nbody: { font: Caladea }\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match=r"style\.fonts\.Caladea\.regular — police introuvable"):
@@ -1058,7 +1273,7 @@ def test_fonts_are_read_when_the_config_loads(demo: ConfigFactory, tmp_path: Pat
     assert ("polices", "Caladea : embarquée ; Courier New → Courier") in mounted.settings().options
     # Le format de la 2.0 : fonts nommait les polices du corps et des titres.
     (prompts / "styles" / "charte.yaml").write_text("fonts: { body: Arial }\n", encoding="utf-8")
-    with pytest.raises(ConfigError, match="fonts → font, sur text et sur chaque titre"):
+    with pytest.raises(ConfigError, match="fonts → font, sur body et sur chaque titre"):
         load_config(path)
 
 

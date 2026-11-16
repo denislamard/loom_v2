@@ -1076,7 +1076,7 @@ Un appel décrit le document entier. Celui-ci, tiré d'un run réel (modèle sim
 - **Liens, notes, renvois** (depuis loom-ia 2.1.1) : `[texte](https://…)` pour un lien (`https`, `http` ou `mailto` ; un autre schéma est refusé, et `[voir](page 2)`, sans schéma, reste du texte), `^[texte]` pour une note de bas de page (500 caractères par note, 100 par document, pas de note dans une note), `§[Titre]` pour renvoyer à un titre du document, comparé comme le plan d'un modèle (sans numéro, casse, accents ni emphase). `\^[` et `\§[` s'écrivent tels quels. Ils vont dans un paragraphe, un élément de liste, une note, une citation, une valeur de `fields` et une cellule de texte d'un tableau, qui prend aussi l'emphase ; un titre, une légende, un en-tête de colonne et un libellé n'ont que l'emphase, et le texte fixe d'un modèle n'a que les liens. Dans le `.docx`, un lien prend le style `link` ; une note est une note de bas de page de Word ; un renvoi est le numéro du titre visé (« 2.1 ») si le style numérote les titres, dans un champ que Word recalcule, et sinon le titre entre guillemets (« Travaux »), en lien vers lui. Dans le PDF, les notes vont en fin de document, sous le titre « Notes » (`labels.notes`), et chaque appel mène à sa note ; liens et renvois sont cliquables.
 - **Listes** : trois niveaux depuis loom-ia 2.1.1 : `{text, items}` s'imbrique deux fois. Les puces : •, –, ▪ ; les numéros : 1., a), i. Une liste à cocher en a deux.
 
-Le document produit : A4 portrait, marges de 2 cm, aux valeurs des styles de Word (Microsoft 365) : Aptos 12, interligne 1,16 et 8 pt après chaque paragraphe ; titre du document en 28 pt ; titres de section en 20, 16 et 14 pt, couleur 0F4761 ; citations centrées, en italique ; légendes en 9 pt, en italique. Ce que Word n'a pas n'a ni fond, ni filet, ni couleur : tableaux en grille noire fine, en 10 pt, en-tête en gras répété d'une page à l'autre, ligne de total en gras, nombres alignés à droite et dates centrées ; notes en retrait ; « Page n / N » en pied. Le décor vient de la charte. Le `.docx` est déclaré en français (correcteur, césure). Aptos s'installe avec Microsoft 365 ; un Word plus ancien, ou LibreOffice, la remplace. Le PDF reprend la même page, du même style (`default.yaml`, voir « Des styles de document »), en Helvetica 12, la police standard du PDF qui remplace Aptos, non embarquée : le fichier reste léger. Ce style de base date de loom-ia 2.1.1 ; en 2.1.0, un style maison : Calibri 11, titre bleu nuit souligné d'un filet, en-têtes de tableau bleu pâle, notes en encadré gris à filet bleu. Avant 2.1.0, le PDF avait son propre style maison, en Helvetica 10,5.
+Le document produit : A4 portrait, marges de 2 cm, aux valeurs des styles de Word (Microsoft 365) : Aptos 12, interligne 1,16 et 8 pt après chaque paragraphe ; titre du document en 28 pt ; titres de section en 20, 16 et 14 pt, couleur 0F4761 ; citations centrées, en italique ; légendes en 9 pt, en italique. Ce que Word n'a pas n'a ni fond, ni filet, ni couleur : tableaux en grille noire fine, en 10 pt, en-tête en gras répété d'une page à l'autre, ligne de total en gras, nombres alignés à droite et dates centrées ; notes en retrait ; pas de pied de page (les numéros de page se demandent dans la charte). Le décor vient de la charte. Le `.docx` est déclaré en français (correcteur, césure). Aptos s'installe avec Microsoft 365 ; un Word plus ancien, ou LibreOffice, la remplace. Le PDF reprend la même page, du même style (`default.yaml`, voir « Des styles de document »), en Helvetica 12, la police standard du PDF qui remplace Aptos, non embarquée : le fichier reste léger. Ce style de base date de loom-ia 2.1.1 ; en 2.1.0, un style maison : Calibri 11, titre bleu nuit souligné d'un filet, en-têtes de tableau bleu pâle, notes en encadré gris à filet bleu. Avant 2.1.0, le PDF avait son propre style maison, en Helvetica 10,5.
 
 Les valeurs s'écrivent **à la française**, avec des espaces insécables : `1 250,50 €`, `12 500 k€`, `10,0 %`, `02/10/2026`, `02/10/2026 11:30` (une date-heure qui porte un fuseau passe à l'heure de `timezone`). Contrairement à `excel`, dont les formats suivent la langue du lecteur, un document est du texte figé. Les montants affichent leur unité : un en-tête « Montant HT » suffit.
 
@@ -1322,7 +1322,7 @@ sections:
 | `optional` | `true` : la section peut manquer |
 | `text` | Un texte fixe, que l'outil écrit lui-même (voir plus bas) |
 | `show_title` | `false` : le nom de la section n'est pas imprimé |
-| `styles`, `box`, `beside`, `width`, `page_break`, `columns`, `landscape`, `cover`, `space_before` | La forme de la section, pour `loom.word` (voir « La mise en page des sections ») |
+| `styles`, `box`, `beside`, `width`, `page_break`, `columns`, `landscape`, `cover`, `margin_top` | La forme de la section, pour `loom.word` (voir « La mise en page des sections ») |
 
 - **Les textes s'écrivent après `|`, à la ligne.** Écrit sans guillemets, un texte qui contient une espace suivie de « : » est une erreur YAML, et une espace suivie de « # » le coupe sans prévenir. Le chargeur le dit : `YAML illisible : mapping values are not allowed here … — un texte qui contient « : » ou « # » s'écrit entre guillemets, ou après | à la ligne`.
 - **Ce qui se répète** (un écran, une exigence, un lot de travaux) n'est pas une section : c'est du contenu d'une section, sous des titres de niveau 2.
@@ -1411,14 +1411,14 @@ Sans `templates`, rien ne change : ni action ni champs `template` et `sections`,
 | --- | --- |
 | `show_title` | `false` : le nom de la section n'est pas imprimé (une section d'adresse, une page de garde) |
 | `styles` | Le style nommé de chaque élément dans cette section : `{ heading1: quiet_title, paragraph: small_text, table: summary_table, box: red_box }` (voir « Des styles de document ») |
-| `box` | La section dans un cadre (le style `box`, ou celui que donne `styles`) |
-| `beside` | La section posée à côté de la précédente (3 côte à côte au plus) |
+| `box` | La section dans un cadre (le style `box`, ou celui que donne `styles` : son filet, son fond, son `padding`) |
+| `beside` | La section posée à côté de la précédente (3 côte à côte au plus), à `page.beside_gap` d'elle |
 | `width` | Pour des sections côte à côte : la part de la ligne, en %, 100 en tout (des parts égales sans elle) |
 | `page_break` | La section commence une page |
-| `columns` | Le texte sur 2 ou 3 colonnes, équilibrées |
+| `columns` | Le texte sur 2 ou 3 colonnes, équilibrées, à `page.column_gap` l'une de l'autre |
 | `landscape` | La section sur des pages en paysage |
 | `cover` | Page de garde : la première section du modèle, avec le titre du document, centrée, sans en-tête ni pied de page, suivie d'une nouvelle page |
-| `space_before` | Un espace avant la section, en cm (l'adresse d'un courrier dans la fenêtre de l'enveloppe) |
+| `margin_top` | La marge au-dessus de la section, en cm, ou une longueur (`40mm`) : l'adresse d'un courrier dans la fenêtre de l'enveloppe ; sans elle, une page de garde prend `page.cover_margin_top` (6 cm dans `default.yaml`) ; `space_before` avant loom-ia 2.0.21, refusé depuis |
 
 ```yaml
 # prompts/templates/facture.yaml
@@ -1454,7 +1454,7 @@ sections:
       Paiement à 30 jours. Indemnité forfaitaire pour frais de recouvrement : 40 €.
 ```
 
-L'émetteur et le client se posent côte à côte, sans leurs titres, le client encadré. Les tableaux de la description prennent `summary_table` : le récapitulatif, étroit, se pose à droite, et les prestations, plus larges que la demi-page, gardent toute la largeur. Les deux dernières sections ont un titre discret, les conditions un petit texte justifié. Le modèle de langage ne remplit que trois sections, et ne voit ni l'émetteur ni les conditions. Une section `beside` est par construction la section d'après ; une section facultative absente laisse l'autre seule, en pleine largeur. Une section côte à côte n'a ni `columns`, ni `landscape`, ni `cover`, et `page_break` et `space_before` vont à la première de la ligne. Une page de garde n'a ni `landscape`, ni `columns`, ni `box`. Un style de `styles` doit partir de l'élément qu'il met en forme (`quiet_title` de `heading1`), et se trouver dans la charte ou le style du modèle :
+L'émetteur et le client se posent côte à côte, sans leurs titres, le client encadré. Les tableaux de la description prennent `summary_table` : le récapitulatif, étroit, se pose à droite, et les prestations, plus larges que la demi-page, gardent toute la largeur. Les deux dernières sections ont un titre discret, les conditions un petit texte justifié. Le modèle de langage ne remplit que trois sections, et ne voit ni l'émetteur ni les conditions. Une section `beside` est par construction la section d'après ; une section facultative absente laisse l'autre seule, en pleine largeur. Une section côte à côte n'a ni `columns`, ni `landscape`, ni `cover`, et `page_break` et `margin_top` vont à la première de la ligne. Une page de garde n'a ni `landscape`, ni `columns`, ni `box`. Un style de `styles` doit partir de l'élément qu'il met en forme (`quiet_title` de `heading1`), et se trouver dans la charte ou le style du modèle :
 
 ```text
 tools[loom.word].templates[facture] : « Informations de paiement ».styles.heading1 : « small_text » ne part pas de heading1 (base : paragraph)
@@ -1465,7 +1465,7 @@ tools[loom.word].templates[facture] — modèle facture : « Client » est côte
 
 Depuis loom-ia 2.0.20, pour `loom.word` ; un format plus simple depuis 2.1.0, et pour `loom.pdf` aussi. Sans charte, l'outil écrit tous ses documents dans le style de base : les valeurs de Word (Aptos 12, titres 0F4761, tableaux à grille), sans décor. Une facture d'artisan demande autre chose : son logo, ses couleurs, un récapitulatif étroit à droite, les mentions légales en pied de page. **Le style se décrit dans des fichiers YAML de l'agent**, et l'outil n'en fixe rien : il pose les mêmes blocs, à la manière que le style décrit. La disposition des sections (côte à côte, encadrées, en colonnes) se décrit dans le modèle de document (voir « La mise en page des sections »).
 
-**Un fichier de style est une liste de styles nommés** (`text`, `document_title`, `heading1`…), chacun avec ses propriétés, plus quelques réglages (`colors`, `page`, `language`…). Trois fichiers, du plus général au plus précis :
+**Un fichier de style est une liste de styles nommés** (`body`, `document_title`, `heading1`…), chacun avec ses propriétés, plus quelques réglages (`colors`, `page`, `language`…). Trois fichiers, du plus général au plus précis :
 
 1. **`default.yaml`**, livré avec loom (`loom_ia/tools_builtin/styles/default.yaml`) : le style de base, aux valeurs de Word, au même format que les deux autres ;
 2. **la charte**, sur l'outil (`style:`) : elle vaut pour tous ses documents ;
@@ -1488,32 +1488,38 @@ tools.0.loom.word.templates.facture — le modèle nomme son style dans son fich
 
 **Le modèle de langage n'en voit rien**, sauf les styles qui lui sont proposés (plus bas) : ni le schéma ni la description ne changent, et le style ne coûte aucun token. Un document qui suit un modèle prend `default.yaml`, la charte, puis le style du modèle ; un document libre (`none`), ou un outil sans modèles, s'arrête à la charte ; un outil sans `style` écrit dans `default.yaml` seul, le même fichier qu'avant, octet pour octet.
 
-**Les fichiers d'abord, l'héritage ensuite.** Chaque style complète le même style des fichiers précédents, propriété par propriété : une charte qui écrit `heading1: { color: brand }` garde la taille, le gras et les espacements de `default.yaml`. Puis chaque style prend les propriétés de sa base (`text`, sauf `quote_source`, qui part de `quote`, `fields_label`, qui part de `fields`, et `table_header`, `table_total`, `table_group`, `table_subtotal`, `invoice_totals` et `attendance`, qui partent de `table`), déjà complétée par les fichiers, puis les siennes : la police de `text` vaut pour les titres sans être répétée.
+**Les fichiers d'abord, l'héritage ensuite.** Chaque style complète le même style des fichiers précédents, propriété par propriété : une charte qui écrit `heading1: { color: brand }` garde la taille, le gras et les espacements de `default.yaml`. Puis chaque style prend les propriétés de sa base (`body`, sauf `quote_source`, qui part de `quote`, `fields_label`, qui part de `fields`, et `table_header`, `table_total`, `table_group`, `table_subtotal`, `invoice_totals` et `attendance`, qui partent de `table`), déjà complétée par les fichiers, puis les siennes : la police de `body` vaut pour les titres sans être répétée. Le style de base s'appelle `body` depuis loom-ia 2.0.21 (`text` avant) ; l'ancien nom est refusé avec le nouveau.
 
 ```yaml
 # prompts/styles/charte.yaml
 colors:
   brand: 0B5D3B
   alert: C0392B
-text: { font: Arial, size: 10 }
+body: { font: Arial, size: 10 }
 document_title: { size: 22, color: brand, align: right, uppercase: true, border_bottom: none }
 heading1: { size: 13, color: brand, uppercase: true }
 heading2: { color: brand }
 heading3: { color: alert }
 table: { borders: horizontal, border_top: 1pt brand, border_bottom: 1pt brand }
 table_header: { fill: E8F1EC }
-header: { logo: images/logo.png, logo_width: 3.5, right: "{title}" }
-footer:                    # « Page n / N » vient de default.yaml
-  lines:
-  - "Dupont Plomberie SARL au capital de 8 000 € · 12 rue des Lilas, 69003 Lyon · SIRET 812 345 678 00021"
-  - "TVA FR41 812345678 · Assurance décennale MAAF Pro, contrat 123456, France métropolitaine"
+footer: { size: 8 }
+page:
+  header:
+    logo: { file: images/logo.png, width: 3.5 }
+    left: { logo: true }     # le logo, dans la zone qui le demande
+    right: "{title}"
+  footer:                    # default.yaml n'en écrit pas : les numéros se demandent
+    right: "Page {page} / {pages}"
+    lines:
+    - "Dupont Plomberie SARL au capital de 8 000 € · 12 rue des Lilas, 69003 Lyon · SIRET 812 345 678 00021"
+    - "TVA FR41 812345678 · Assurance décennale MAAF Pro, contrat 123456, France métropolitaine"
 ```
 
 **Les styles prévus.**
 
 | Nom | Ce qu'il met en forme |
 | --- | --- |
-| `text` | Le corps du texte ; la base de tous les autres |
+| `body` | Le corps du texte ; la base de tous les autres |
 | `document_title` | Le titre du document (`title`) |
 | `heading1`, `heading2`, `heading3` | Les titres de niveaux 1 à 3 |
 | `paragraph`, `list`, `note`, `caption` | Les blocs du même nom ; `caption` est la légende d'un tableau, d'une image, d'un graphique |
@@ -1523,14 +1529,15 @@ footer:                    # « Page n / N » vient de default.yaml
 | `invoice_totals` | Le récapitulatif de TVA (étroit, à droite) |
 | `attendance` | La feuille d'émargement |
 | `box` | Le cadre d'une section encadrée (`box: true`) |
-| `toc` | Le titre du sommaire (il part de `heading1`), ses niveaux, ses numéros de page |
+| `toc` | Le titre du sommaire (il part de `heading1`), ses niveaux, ses numéros de page, le retrait de ses entrées |
+| `toc1`, `toc2`, `toc3` | Les entrées du sommaire, niveau par niveau (« toc 1 » à « toc 3 » dans Word) |
 | `signature`, `signature_mention` | Le libellé d'un signataire, la mention (« Bon pour accord ») |
 | `fields`, `fields_label` | La valeur et le libellé des champs (`fields_label` part de `fields`) |
 | `code` | Un bloc de code |
 | `link` | Un lien : sa couleur, son soulignement |
 | `footnote` | Le texte d'une note de bas de page (d'une note de fin dans le PDF) |
-| `header`, `footer` | Le haut et le bas de page |
-| `watermark` | Le filigrane : un texte en travers de chaque page (`watermark: BROUILLON` suffit) |
+| `header`, `footer` | L'apparence du haut et du bas de page ; ce qu'ils écrivent va dans `page.header` et `page.footer` |
+| `watermark` | L'apparence du filigrane, un texte en travers de chaque page (sa police, sa couleur) ; son texte va dans `page.watermark` |
 
 **Les propriétés**, communes à tous les styles et toutes facultatives :
 
@@ -1544,35 +1551,40 @@ footer:                    # « Page n / N » vient de default.yaml
 | `space_before`, `space_after` | En points |
 | `line_spacing` | L'interligne, de 1 à 3 |
 | `indent` | Le retrait à gauche et à droite, en cm |
-| `border_top`, `border_bottom`, `border_left`, `border` | Un filet, « épaisseur couleur » (`1pt 2F5496`, `3pt brand`), ou `none` pour retirer celui de `default.yaml` |
+| `border_top`, `border_bottom`, `border_left`, `border_right`, `border` | Un filet, « épaisseur couleur » (`1pt 2F5496`, `3pt brand`), ou `none` pour retirer celui de `default.yaml` |
+| `border_space` | L'écart entre un filet (ou le fond) et le texte, en points (0 à 20) : une à quatre longueurs, dans l'ordre de CSS (`4pt 8pt` dans `default.yaml` : 4 pt en haut et en bas, 8 pt à gauche et à droite) ; Word l'arrondit au point |
 | `base` | Le style dont celui-ci part |
 
 **Propres à certains styles** (et aux styles qui en partent) :
 
 | Style | Propriétés en plus |
 | --- | --- |
-| `table` | `borders` : `grid`, `horizontal`, `none` ; `line` : le trait des filets (« épaisseur couleur ») ; `bands` : le fond d'une ligne sur deux ; `width` : `full`, `content` ; `position` : `left`, `center`, `right` |
-| `header`, `footer` | `left`, `center`, `right` : un texte, avec `{page}`, `{pages}`, `{title}` ; `lines` : des lignes centrées (4 au plus : des mentions légales) ; `logo` (PNG ou JPEG, relatif à `resources_dir`), `logo_width` (en cm), `logo_position` ; `first_page` : `false` pour une première page sans |
+| `table` | `borders` : `grid`, `horizontal`, `vertical`, `none` ; `valign` : `top`, `center` (dans `default.yaml`), `bottom`, le texte dans la hauteur de sa cellule ; `line` : le trait des filets (« épaisseur couleur ») ; `bands` : le fond d'une ligne sur deux ; `width` : `full`, `content` ; `position` : `left`, `center`, `right` ; `padding` : l'écart entre le bord d'une cellule et son texte, en cm, une à quatre longueurs (`2pt 0.15cm` dans `default.yaml`). Son `space_before` et son `space_after` valent autour du tableau (voir plus bas) |
+| `box` | `padding` : l'écart entre le cadre d'une section et son texte, en cm (0 à 2), une à quatre longueurs (`0.3cm 0.3cm 0.15cm` dans `default.yaml` : le bas plus petit, le dernier paragraphe y ajoute son espace après) |
+| `list` | `level_indent` : le retrait de chaque niveau, en cm (1,27 dans `default.yaml`) ; `marker_space` : la place de la puce ou du numéro devant le texte, en cm (0,635) |
+| `header`, `footer` | Pour leur table (voir plus bas), avec son `space_before` et son `space_after`, qui valent autour d'elle : `borders` : `none` (par défaut), `horizontal`, `vertical`, `grid`, les filets intérieurs ; `line` : leur trait (« épaisseur couleur » ; celui de `table` sans lui) ; `column_gap` : l'écart entre deux colonnes, en cm (0 à 3) ; `valign` : `top` (par défaut), `center`, `bottom`, le texte dans la hauteur de sa cellule |
 | `caption` | `numbered` : « Tableau 1 — », « Figure 1 — » |
-| `toc` | `levels` : les niveaux de titre repris (1 à 3) ; `page_numbers` : `false` pour des liens sans numéros de page |
+| `toc` | `levels` : les niveaux de titre repris (1 à 3) ; `page_numbers` : `false` pour des liens sans numéros de page ; `level_indent` : le retrait des entrées de chaque niveau, en cm (0,5 dans `default.yaml`) |
+| `signature` | `sign_height` : la place pour signer, sous « Signature : », en cm (2 dans `default.yaml`) |
 | `fields` | `label_width` : la largeur des libellés, en cm (1 à 10) |
 | `attendance` | `row_height` : la hauteur d'une ligne, en cm (0,5 à 5) |
-| `watermark` | `text` |
 
 **Les réglages** ne sont pas des styles :
 
 | Clé | Ce qu'elle règle |
 | --- | --- |
 | `colors` | Tes couleurs nommées (`brand: 0B5D3B`), reprises partout par leur nom ; l'outil ne leur donne aucun rôle |
-| `page` | `size` : `A4`, `A5`, `Letter` ; `orientation` : `portrait`, `landscape` ; `margins`, ou `margin_top`, `margin_bottom`, `margin_left`, `margin_right`, en cm (0,5 à 5) |
+| `page` | `paper` : `A4`, `A5`, `Letter` ; `orientation` : `portrait`, `landscape` ; `margins`, ou `margin_top`, `margin_bottom`, `margin_left`, `margin_right`, en cm (0,5 à 5) ; `header_distance`, `footer_distance` : l'en-tête et le pied, du bord de la page, en cm (1) ; `column_gap` : l'écart entre les colonnes d'une section, en cm (1) ; `beside_gap` : l'écart entre deux sections côte à côte, deux images côte à côte, deux signataires, en cm (0,5 ; la moitié entre un libellé et sa valeur, dans `fields`) ; `beside_space` : l'espace après des sections côte à côte ou encadrées, en points (6) ; `cover_margin_top` : le haut d'une page de garde sans `margin_top`, en cm (6) ; `header`, `footer` : ce qu'écrivent l'en-tête et le pied de page (voir « L'en-tête, le pied de page et le filigrane ») ; `watermark` : le texte du filigrane (40 caractères au plus) |
 | `numbering` | La numérotation des titres : `none`, `decimal` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
 | `language` | `fr` ou `en` : la langue déclarée du document (correcteur, césure), l'écriture des nombres et des dates (« 1 250,50 € », « 10/11/2026 » ; « €1,250.50 », « 11/10/2026 »), les libellés |
 | `labels` | Les libellés que l'outil écrit, un par un : `table` (Tableau), `figure` (Figure), `contents` (Sommaire), `date` (Date :), `signature` (Signature :), `article` (Article), `total` (Total), `notes` (Notes, le titre des notes de fin d'un PDF), `subtotal` (Sous-total), `total_excl_tax` (Total HT), `tax` (TVA {rate} sur {base} : `{rate}`, le taux, obligatoire ; `{base}`, le montant HT de ce taux), `total_incl_tax` (Total TTC), `paid` (Acompte versé), `due` (Net à payer), `participant` (Participant) |
-| `image` | `grid` : deux images `half` qui se suivent se posent côte à côte, chacune avec sa légende |
-| `chart` | `colors` : la couleur de chaque série, dans l'ordre (12 au plus) ; `text`, `grid`, `title` : le texte, la grille, le titre |
+| `image` | `side_by_side` : deux images `half` qui se suivent se posent côte à côte, chacune avec sa légende ; `space_after` : l'espace après une image sans légende, en points (6) |
+| `chart` | `series` : la couleur de chaque série, dans l'ordre (12 au plus) ; `text_color`, `grid_color`, `title_color` : le texte, la grille, le titre ; `space_after` : l'espace après un graphique sans légende, en points (6) |
 | `fonts` | Les fichiers TrueType d'une police, que le PDF embarque : `fonts: { Inter: { regular: fonts/Inter-Regular.ttf, bold: …, italic: …, bold_italic: … } }` (voir plus bas) |
 
-Une couleur s'écrit en six chiffres hexadécimaux, sans `#` (un `#` ouvre un commentaire YAML), ou par un nom de `colors`. Les tailles et les espacements sont en points ; les marges, les retraits et les largeurs en centimètres. `width: content` : un tableau étroit — la moitié de la page au plus, un récapitulatif — prend sa largeur, posé selon `position` ; un plus large garde toute la largeur. Pour retirer les numéros de page du pied de page : `footer: { center: "" }`. Aucune date n'est permise dans un en-tête ou un pied de page : deux documents identiques donneraient deux fichiers, et la date d'un document est son contenu.
+Une couleur s'écrit en six chiffres hexadécimaux, sans `#` (un `#` ouvre un commentaire YAML), ou par un nom de `colors`. Les tailles et les espacements sont en points ; les marges, les retraits et les largeurs en centimètres. Une longueur peut dire son unité, collée au nombre : `pt`, `mm`, `cm` ou `in` (`size: 11pt`, `margins: 20mm`, `indent: 0,5cm`, `margin_left: 1in`) ; un nombre seul garde l'unité de sa propriété. Une largeur de section (`width: 55%`) ou de colonne d'une table d'en-tête ou de pied (`widths: [ 50%, auto ]`) peut être une proportion. Ni `px` ni `em`. `border_space` et `padding` prennent une à quatre longueurs, dans l'ordre de CSS : une, les quatre côtés ; deux, en haut et en bas puis à gauche et à droite (`4pt 8pt`) ; trois, en haut, les côtés, en bas ; quatre, en haut, à droite, en bas, à gauche.
+
+**L'espace autour d'un tableau.** Le `space_before` et le `space_after` du style d'un tableau (`table`, `invoice_totals`, `attendance`, un style à toi qui en part) valent autour du tableau, et non pour chaque paragraphe de ses cellules : `space_before`, un espace avant lui ; `space_after`, l'espace après le paragraphe vide qui le suit dans Word (une ligne de `body` : deux tableaux voisins ne fusionnent pas), 6 pt dans `default.yaml`. Un tableau légendé est suivi de sa légende, et non de cet espace. Les paragraphes des cellules n'ont que l'espacement que leur style de ligne écrit en plus de `table` (`table_group: { space_after: 2 }`) ; sans lui, aucun. Une signature et des champs (`fields`) gardent leur espacement de ligne, et prennent après eux le `space_after` de `table`. `width: content` : un tableau étroit — la moitié de la page au plus, un récapitulatif — prend sa largeur, posé selon `position` ; un plus large garde toute la largeur. Le pied de page de `default.yaml` n'écrit rien : pour des numéros de page, `page: { footer: { center: "Page {page} / {pages}" } }` (ou `left`, `right`). Aucune date n'est permise dans un en-tête ou un pied de page : deux documents identiques donneraient deux fichiers, et la date d'un document est son contenu.
 
 Dans un texte écrit sans guillemets, deux caractères posent problème en YAML : une espace suivie de « : » est une erreur (« Qui joindre : le standard »), une espace suivie de « # » coupe le texte sans prévenir. Un texte qui en contient s'écrit entre guillemets.
 
@@ -1612,12 +1624,14 @@ Quand plusieurs styles s'appliquent, le plus précis gagne : le `style` du bloc,
 Une faute de style arrête le chargement, et `loom validate` la dit, avec le style de chaque outil. Un fichier au format de la 2.0 est refusé avec ce qui remplace ses clés :
 
 ```text
-tools[loom.word].style : style au format de la 2.0 : title → document_title ; headings → heading1, heading2, heading3 (et numbering : decimal, article). Un fichier de style est depuis 2.1.0 une liste de styles nommés (text, document_title, heading1…)
+tools[loom.word].style : style au format de la 2.0 : title → document_title ; headings → heading1, heading2, heading3 (et numbering : decimal, article). Un fichier de style est depuis 2.1.0 une liste de styles nommés (body, document_title, heading1…)
 tools[loom.word].style : heading_1 : ni un style prévu, ni un réglage ; un style à toi dit de quel style il part (base: note) — vouliez-vous dire heading1 ?
 tools[loom.word].templates[facture].style : heading2.color : couleur « red » inconnue (colors : brand)
 tools[loom.word].templates[facture].style : sections : la disposition des sections se déclare dans le modèle de document depuis 2.1.0 (sections.<nom> : box, beside, width, page_break, columns, landscape, cover, styles)
 tools[loom.word].templates[facture].style : style note : une description ne sert qu'à un style à toi qui part d'un style de bloc (heading1, heading2, heading3, paragraph, list, note, quote, table) : il est alors proposé au modèle de langage
-tools[loom.word].style.header.logo — logo introuvable : …/prompts/images/logo.png
+tools[loom.word].style : header.right → page.header.right ; header.logo → page.header.logo ; header.logo_width → page.header.logo.width : le contenu de l'en-tête, du pied et du filigrane va dans page depuis 2.0.21 (docs/style_format.md) ; le style n'en garde que l'apparence
+tools[loom.word].style.page.footer.lines.0 — align : une propriété de style, pas d'un élément ; l'écrire dans un style, nommé par style: (footer_page: {base: footer, align: right})
+tools[loom.word].style.page.header.logo — logo introuvable : …/prompts/images/logo.png
 ```
 
 ```text
@@ -1637,7 +1651,7 @@ fonts:
     regular: fonts/Inter-Regular.ttf
     bold: fonts/Inter-Bold.ttf    # facultatifs : sans eux, le gras et l'italique
     italic: fonts/Inter-Italic.ttf  # s'écrivent dans la graisse normale
-text: { font: Inter }
+body: { font: Inter }
 ```
 
 Les fichiers, relatifs à `resources_dir`, sont lus au chargement et vérifiés : une police TrueType (`.ttf`, contours `glyf`), 2 Mo au plus, 4 familles par fichier de style. Sa licence doit permettre de l'embarquer dans un document modifiable (`fsType` 0 ou 8) ; une police « aperçu et impression seulement », restreinte ou à embarquer entière est refusée, comme un `.otf` à contours CFF, une police web (`.woff2`) ou une collection (`.ttc`). loom lit les droits que déclare la police, pas sa licence : l'embarquement doit aussi être permis par celle-ci (l'OFL des polices Google le permet). Word, lui, nomme la police sans l'embarquer.
@@ -1649,7 +1663,69 @@ tools[loom.pdf].style.fonts.Inter.regular — une police web (WOFF) : le fichier
 
 `loom validate` dit, pour `loom.pdf`, comment s'écrit chaque police du style : `polices : Calibri → Helvetica ; Georgia → Times ; Inter : embarquée`.
 
-**En PDF**, le même style donne la même page : les mêmes styles nommés, la même disposition des sections, l'en-tête et le pied de page (logo, zones, mentions, « Page n / N ») et le filigrane dessinés à chaque page, à 1 cm du bord comme dans Word. Les styles `header` et `footer` y valent tout entiers, comme dans Word : leurs filets (`border_bottom` sous le logo, `border_top` au-dessus des mentions) et leur fond autour de toutes leurs lignes, leurs espacements, leur retrait, les capitales et le soulignement ; les lignes d'un pied et son texte du centre, quand il est seul, suivent son alignement (`align: left`), celles d'un en-tête restent centrées. Un en-tête plus haut que la marge du haut descend le texte, comme dans Word. Les en-têtes d'une page en paysage suivent le bord de la page couchée, ce que Word ne fait pas. Un PDF ne se relit pas en blocs : sa mise en page n'a pas à revenir.
+**L'en-tête, le pied de page et le filigrane** s'écrivent dans `page` : `page.header`, `page.footer`, `page.watermark`. Les styles `header`, `footer` et `watermark` n'en gardent que l'apparence : police, taille, couleur, filets, fond, espacements.
+
+```yaml
+page:
+  header:
+    logo: { file: images/logo.png, width: 3.5, gap: 6pt }   # ou, en court : logo: images/logo.png
+    left: { logo: true }                  # le logo, dans la zone qui le demande
+    right: { text: "{title}", style: header_title }
+    first_page: false                     # une première page sans en-tête
+  footer:
+    center: "Page {page} / {pages}"
+    lines:
+    - "Dupont Plomberie SARL · 12 rue des Lilas, 69003 Lyon · SIRET 812 345 678 00021"
+    - { text: "Document confidentiel", style: footer_note }
+  watermark: BROUILLON
+footer: { size: 8, color: 595959 }
+header_title: { base: header, bold: true, color: brand }
+footer_note: { base: footer, italic: true, align: center }
+```
+
+| Clé | Ce qu'elle écrit |
+| --- | --- |
+| `left`, `center`, `right` | Trois zones sur une ligne : `left` à gauche, `right` à droite, `center` au milieu, même seul |
+| `lines` | Des lignes de toute la largeur (4 au plus : des mentions légales) : au-dessus des zones dans un pied, en dessous dans un en-tête |
+| `table` | Une table à la place des trois zones (voir plus bas) |
+| `logo` | Le logo : `file` (PNG ou JPEG, relatif à `resources_dir`), `width` (en cm, 3 par défaut), `gap` (l'écart à son texte, en points, 4 par défaut) ; `logo: images/logo.png` suffit. Il se pose dans l'élément qui porte `logo: true` (une zone, une ligne ou une cellule), un seul |
+| `first_page` | `false` : une première page sans cet en-tête ou ce pied |
+
+Une zone, une ligne ou une cellule s'écrit en court — un texte, avec `{page}`, `{pages}`, `{title}` — ou en entier : `text` ; `style`, le nom d'un style à toi qui part de `header` ou de `footer` (sa police, sa taille, sa couleur, son gras, son alignement) ; `logo: true`. Un élément ne porte aucune propriété de style : `align` ou `valign` sur un élément, ou un style écrit en ligne (`style: { bold: true }`), est refusé, avec le style à écrire. Une ligne suit l'alignement de son style (`footer` sans le sien : à gauche, sauf si la charte dit autre chose) ; une ligne d'en-tête dont le style ne dit pas d'alignement est centrée. `page.header` et `page.footer` se complètent d'un fichier à l'autre, clé par clé (la charte, puis le style du modèle) ; `null` efface une clé d'un fichier précédent (`right: null`, `table: null`), `footer: null` tout le pied. Le texte du filigrane, 40 caractères au plus, prend la police et la couleur du style `watermark`.
+
+**Une table dans l'en-tête ou le pied de page** (`table`). Les trois zones tiennent sur une ligne : pour des mentions sur plusieurs lignes à gauche et le numéro de page dans une colonne étroite à droite, ou un logo à côté des coordonnées, `page.header` et `page.footer` prennent une table, sans filet par défaut, de toute la largeur du texte.
+
+```yaml
+page:
+  footer:
+    lines: [ "Document confidentiel" ]   # au-dessus de la table, sur toute la largeur
+    table:
+      widths: [ auto, 1.5 ]         # en cm ; auto : la place qui reste, partagée entre les auto
+      style: footer_grid            # le style qui l'habille ; footer sans lui
+      rows:
+      - - [ "App-Novative · 2 allée du Semoir, 77185 Lognes", "SIRET 000 000 000 00000" ]
+        - { text: "{page}/{pages}", style: footer_page }
+footer: { size: 8, color: 595959 }
+footer_grid:
+  base: footer
+  border_top: 0.5pt brand           # le cadre du style : autour de la table
+  borders: vertical                 # none (défaut), horizontal, vertical, grid : les filets intérieurs
+  line: 0.5pt brand                 # leur trait ; celui des tableaux (table.line) sans lui
+  column_gap: 0.4                   # l'écart entre deux colonnes, en cm (0 par défaut)
+footer_page: { base: footer_grid, bold: true, align: right, valign: center }
+```
+
+| Clé | Ce qu'elle règle |
+| --- | --- |
+| `widths` | Une largeur par colonne (4 colonnes au plus), en cm, en proportion (`50%`) ou `auto` : la place qui reste, partagée entre les `auto` (1 cm au moins chacune) |
+| `rows` | Les lignes de la table (3 au plus), chacune une cellule par colonne |
+| `style` | Le style qui l'habille, qui part de `header` ou de `footer` (celui-ci sans lui) : son cadre et son fond (`border`, `border_top`, `border_bottom`, `border_left`, `border_right`, `fill`), son retrait (`indent`), ses filets intérieurs (`borders` : `horizontal` entre les lignes, `vertical` entre les colonnes, `grid` les deux ; `line`, leur trait), l'écart entre ses colonnes (`column_gap`, moitié de part et d'autre du filet intérieur), le texte dans la hauteur des cellules (`valign`, en haut sans lui) |
+
+Une cellule s'écrit comme une zone — un texte, `{ text, style, logo }` — ou en liste de lignes (4 au plus), ou en entier avec `lines`. Elle prend son `style` (un style à toi qui part de `header` ou de `footer` : sa police, sa taille, sa couleur, son gras, son fond, son alignement, son `valign`), et celui de la table sans lui. Une ligne trop longue passe à la ligne dans sa cellule.
+
+Le cadre et le fond du style de la table entourent toute la table, ses `lines` comprises, à l'écart du texte des filets d'un paragraphe ; son retrait (`indent`) la rétrécit des deux côtés. L'espacement du style de la table (`space_before`, `space_after`) vaut autour d'elle, ses `lines` comprises ; les paragraphes d'une cellule n'ont que ce que son style écrit en plus de celui de la table (`footer_page: { base: footer, space_after: 2 }`), et rien sans lui. Les `lines` restent à leur place : au-dessus de la table dans un pied, en dessous dans un en-tête, chacune sur toute la largeur. Une table ne va pas avec `left`, `center` ni `right` (leurs textes vont dans ses cellules) : `loom validate` le refuse et dit lesquels effacer (`center: null`) ; `table: null` efface la table d'un fichier précédent. Les largeurs se vérifient au chargement, sur la largeur du texte de la page ; dans Word, une page en paysage garde la table de la page en portrait, comme les taquets des zones.
+
+**En PDF**, le même style donne la même page : les mêmes styles nommés, la même disposition des sections, l'en-tête et le pied de page (logo, zones ou table, mentions, numéros de page) et le filigrane dessinés à chaque page, à `page.header_distance` et `page.footer_distance` du bord comme dans Word. Les distances du style y sont prises au twip près, comme Word les écrit. Les styles `header` et `footer` y valent tout entiers, comme dans Word : leurs filets (`border_bottom` sous le logo, `border_top` au-dessus des mentions) et leur fond autour de toutes leurs lignes, leurs espacements, leur retrait, les capitales et le soulignement ; le texte du centre est au milieu, même seul ; une ligne suit l'alignement de son style, et une ligne d'en-tête dont le style n'en dit pas est centrée ; une zone, une ligne ou une cellule prend la police, la taille, la couleur de son style. Un en-tête plus haut que la marge du haut descend le texte, comme dans Word. Les en-têtes d'une page en paysage suivent le bord de la page couchée, ce que Word ne fait pas. Un PDF ne se relit pas en blocs : sa mise en page n'a pas à revenir.
 
 #### Signature, sommaire, liste à cocher
 
@@ -1668,8 +1744,8 @@ Depuis loom-ia 2.0.20, pour `loom.word`, et pour `loom.pdf` depuis 2.1.0, avec `
  "items": ["[x] Coupure d'eau faite", {"text": "[x] Fuite localisée", "items": ["[ ] Canalisation"]}]}
 ```
 
-- **`signature`** : une colonne par signataire (4 au plus, 80 caractères chacun), sans cadre : le libellé en gras, la mention en italique (200 caractères au plus ; les styles `signature` et `signature_mention`), « Date : », « Signature : » (`labels`) et 2 cm pour signer.
-- **`toc`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si le style numérote les titres ; une section dont le nom ne s'imprime pas, `show_title: false`, n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». Le PDF, lui, a ses vrais numéros dès l'écriture, et chaque entrée est un lien vers son titre. Le style `toc` règle le sommaire : `toc: {levels: 2, page_numbers: true}` (les niveaux de titre repris, 1 à 3 ; `page_numbers: false` pour des liens sans numéros de page).
+- **`signature`** : une colonne par signataire (4 au plus, 80 caractères chacun), sans cadre : le libellé en gras, la mention en italique (200 caractères au plus ; les styles `signature` et `signature_mention`), « Date : », « Signature : » (`labels`) et la place pour signer (`signature.sign_height`, 2 cm dans `default.yaml`).
+- **`toc`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si le style numérote les titres ; une section dont le nom ne s'imprime pas, `show_title: false`, n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». Le PDF, lui, a ses vrais numéros dès l'écriture, et chaque entrée est un lien vers son titre. Le style `toc` règle le sommaire : `toc: {levels: 2, page_numbers: true, level_indent: 0.5}` (les niveaux de titre repris, 1 à 3 ; `page_numbers: false` pour des liens sans numéros de page ; le retrait des entrées de chaque niveau, en cm) ; `toc1` à `toc3` mettent en forme ses entrées (le niveau 1 en gras, 3 pt avant, 2 pt après chaque entrée, dans `default.yaml`).
 - **Liste à cocher** : `checkboxes: true` sur une `list`, et chaque élément, sous-éléments compris, commence par `[x]` (coché) ou `[ ]` (vide), la convention markdown. Une case ☒ ou ☐ se pose devant ; dans le PDF, elle est dessinée (les polices standard n'ont pas ces caractères). Une liste à cocher n'est pas numérotée.
 
 ```text

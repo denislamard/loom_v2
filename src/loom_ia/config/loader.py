@@ -547,14 +547,18 @@ def _files_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Pat
 
 
 def _logos_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
-    """Les logos d'un style, lus : leurs octets à la place de leur fichier."""
-    styles = dict(spec.styles)
-    changed = False
-    for name, props in spec.styles.items():
-        if not isinstance(props.logo, str):
+    """Les logos d'un style (``page.header.logo``, ``page.footer.logo``), lus : leurs octets
+    à la place de leur fichier."""
+    page = spec.page
+    if page is None:
+        return spec
+    bands: dict[str, object] = {}
+    for name in ("header", "footer"):
+        band = getattr(page, name)
+        if band is None or band.logo is None or not isinstance(band.logo.file, str):
             continue
-        label = f"{where}.{name}.logo"
-        written = Path(props.logo)
+        label = f"{where}.page.{name}.logo"
+        written = Path(band.logo.file)
         path = _within_resources(resources_dir, written, label, source=source)
         if not path.is_file():
             raise ConfigError(
@@ -571,9 +575,10 @@ def _logos_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Pat
             data = path.read_bytes()
         except OSError as exc:
             raise ConfigError(f"{label} — logo illisible : {exc}", source=source) from exc
-        styles[name] = props.model_copy(update={"logo": data})
-        changed = True
-    return spec.model_copy(update={"styles": styles}) if changed else spec
+        bands[name] = band.model_copy(update={"logo": band.logo.model_copy(update={"file": data})})
+    if not bands:
+        return spec
+    return spec.model_copy(update={"page": page.model_copy(update=bands)})
 
 
 def _fonts_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
