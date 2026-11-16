@@ -61,16 +61,12 @@ NONE: Final = "none"
 # Une section côte à côte : 3 au plus sur une ligne.
 MAX_BESIDE: Final = 3
 # « 1. », « 2.3 - », « 4) », « a) », « IV. » : la numérotation que le modèle de langage ajoute.
-_NUMBERING: Final = re.compile(
-    r"^\s*(?:\d+(?:\.\d+)*\s*[.)\-\u2013\u2014:]?|[a-z]\)|[ivx]{1,4}[.)])\s+"
-)
+_NUMBERING: Final = re.compile(r"^\s*(?:\d+(?:\.\d+)*\s*[.)\-\u2013\u2014:]?|[a-z]\)|[ivx]{1,4}[.)])\s+")
 _STYLE_NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _CONTROL: Final = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 # Le message de PyYAML devant un texte qui contient « : » sans guillemets.
 COLON: Final = "mapping values are not allowed here"
-COLON_HINT: Final = (
-    "un texte qui contient « : » ou « # » s'écrit entre guillemets, ou après | à la ligne"
-)
+COLON_HINT: Final = "un texte qui contient « : » ou « # » s'écrit entre guillemets, ou après | à la ligne"
 
 # Les éléments dont une section choisit le style nommé (``styles``).
 type Element = Literal[
@@ -136,10 +132,7 @@ class SectionSpec(_Spec):
             return value
         entries = cast(Mapping[object, object], value)
         if "space_before" in entries:
-            raise ValueError(
-                "space_before → margin_top : renommé en 2.0.21 (une marge de la section, en cm ; "
-                "space_before est l'espace d'un style, en points)"
-            )
+            raise ValueError("space_before → margin_top : renommé en 2.0.21 (une marge de la section, en cm ; space_before est l'espace d'un style, en points)")
         return entries
 
 
@@ -226,8 +219,7 @@ def key(title: str) -> str:
 def check_name(name: str) -> None:
     if not NAME.match(name) or len(name) > MAX_NAME or name == NONE:
         raise ValueError(
-            f"nom de modèle {name!r} : minuscules, chiffres et tirets ({MAX_NAME} caractères "
-            f"au plus), et pas « {NONE} », qui choisit un document libre"
+            f"nom de modèle {name!r} : minuscules, chiffres et tirets ({MAX_NAME} caractères au plus), et pas « {NONE} », qui choisit un document libre"
         )
 
 
@@ -240,9 +232,7 @@ def _mapping(loader: yaml.SafeLoader, node: yaml.MappingNode) -> dict[Any, Any]:
     for key_node, _ in node.value:
         name: object = cast(Any, loader).construct_object(key_node, deep=True)
         if name in seen:
-            raise yaml.constructor.ConstructorError(
-                None, None, f"clé donnée deux fois : {name}", key_node.start_mark
-            )
+            raise yaml.constructor.ConstructorError(None, None, f"clé donnée deux fois : {name}", key_node.start_mark)
         seen.add(name)
     return cast(dict[Any, Any], loader.construct_mapping(node, deep=True))
 
@@ -283,9 +273,7 @@ def parse(name: str, text: str) -> Template:
         spec = TemplateSpec.model_validate(data)
     except ValidationError as exc:
         lines = [
-            f"{where} : {'.'.join(str(part) for part in item['loc'])} — "
-            + item["msg"].removeprefix("Value error, ")
-            for item in exc.errors(include_url=False)
+            f"{where} : {'.'.join(str(part) for part in item['loc'])} — " + item["msg"].removeprefix("Value error, ") for item in exc.errors(include_url=False)
         ]
         raise ValueError("\n".join(lines)) from None
     sections = _sections(where, spec)
@@ -308,39 +296,23 @@ def _sections(where: str, spec: TemplateSpec) -> list[Section]:
     for position, (written, given) in enumerate(spec.sections.items(), start=1):
         name = str(written).strip()
         if not key(name) or "\n" in name or len(name) > MAX_SECTION_NAME:
-            raise ValueError(
-                f"{where} : nom de section {written!r} : un titre d'une ligne, "
-                f"{MAX_SECTION_NAME} caractères au plus"
-            )
+            raise ValueError(f"{where} : nom de section {written!r} : un titre d'une ligne, {MAX_SECTION_NAME} caractères au plus")
         if key(name) in seen:
-            raise ValueError(
-                f"{where} : section donnée deux fois : « {seen[key(name)]} » et « {name} »"
-            )
+            raise ValueError(f"{where} : section donnée deux fois : « {seen[key(name)]} » et « {name} »")
         seen[key(name)] = name
         section = Section(name, position, given or SectionSpec())
         for element, style in section.spec.styles.items():
             if not _STYLE_NAME.match(style):
-                raise ValueError(
-                    f"{where} : « {name} ».styles.{element} : {style!r} n'est pas un nom de style"
-                )
+                raise ValueError(f"{where} : « {name} ».styles.{element} : {style!r} n'est pas un nom de style")
         fixed = section.spec.text
         if fixed is not None:
             if section.spec.instructions is not None:
-                raise ValueError(
-                    f"{where} : « {name} » : text (un texte fixe, écrit par l'outil) ou "
-                    "instructions (pour le modèle de langage), pas les deux"
-                )
+                raise ValueError(f"{where} : « {name} » : text (un texte fixe, écrit par l'outil) ou instructions (pour le modèle de langage), pas les deux")
             if section.optional:
-                raise ValueError(
-                    f"{where} : « {name} » : une section au texte fixe est toujours écrite "
-                    "(pas optional)"
-                )
+                raise ValueError(f"{where} : « {name} » : une section au texte fixe est toujours écrite (pas optional)")
             control = _CONTROL.search(fixed)
             if control:
-                raise ValueError(
-                    f"{where} : « {name} ».text : caractère de contrôle "
-                    f"U+{ord(control.group()):04X} refusé"
-                )
+                raise ValueError(f"{where} : « {name} ».text : caractère de contrôle U+{ord(control.group()):04X} refusé")
         sections.append(section)
     return sections
 
@@ -349,10 +321,7 @@ def _check_layout(where: str, sections: Sequence[Section]) -> None:
     """La mise en page des sections : ce qui ne se pose pas est dit au chargement."""
     first = sections[0]
     if first.spec.beside:
-        raise ValueError(
-            f"{where} : « {first.name} » : beside pose une section à côté de la précédente ; "
-            "la première n'en a pas"
-        )
+        raise ValueError(f"{where} : « {first.name} » : beside pose une section à côté de la précédente ; la première n'en a pas")
     rows: list[list[Section]] = []
     for section in sections:
         if section.spec.beside:
@@ -366,26 +335,17 @@ def _check_layout(where: str, sections: Sequence[Section]) -> None:
         for index, section in enumerate(row):
             spec = section.spec
             if len(row) > 1 and (spec.columns > 1 or spec.landscape or spec.cover):
-                raise ValueError(
-                    f"{where} : « {section.name} » est côte à côte (beside) : ni columns, ni "
-                    "landscape, ni cover"
-                )
+                raise ValueError(f"{where} : « {section.name} » est côte à côte (beside) : ni columns, ni landscape, ni cover")
             if index and (spec.page_break or spec.margin_top):
                 raise ValueError(
-                    f"{where} : « {section.name} » suit une autre section sur la même ligne "
-                    "(beside) : page_break et margin_top vont à la première"
+                    f"{where} : « {section.name} » suit une autre section sur la même ligne (beside) : page_break et margin_top vont à la première"
                 )
         widths = [s.spec.width for s in row]
         if len(row) == 1 and widths[0] is not None:
-            raise ValueError(
-                f"{where} : « {row[0].name} » : width ne sert qu'à des sections côte à côte "
-                "(beside)"
-            )
+            raise ValueError(f"{where} : « {row[0].name} » : width ne sert qu'à des sections côte à côte (beside)")
         given = [width for width in widths if width is not None]
         if given and len(given) != len(row):
-            raise ValueError(
-                f"{where} : {names} : width à toutes les sections de la ligne, ou à aucune"
-            )
+            raise ValueError(f"{where} : {names} : width à toutes les sections de la ligne, ou à aucune")
         if given and sum(given) != 100:
             raise ValueError(f"{where} : {names} : des largeurs (width, en %) qui font 100 en tout")
     for section in sections:
@@ -393,13 +353,9 @@ def _check_layout(where: str, sections: Sequence[Section]) -> None:
         if not spec.cover:
             continue
         if section.position != 1:
-            raise ValueError(
-                f"{where} : cover (page de garde) va à la première section, « {first.name} »"
-            )
+            raise ValueError(f"{where} : cover (page de garde) va à la première section, « {first.name} »")
         if spec.landscape or spec.columns > 1 or spec.box:
-            raise ValueError(
-                f"{where} : une page de garde (cover) n'a ni landscape, ni columns, ni box"
-            )
+            raise ValueError(f"{where} : une page de garde (cover) n'a ni landscape, ni columns, ni box")
 
 
 def fixed_paragraphs(text: str) -> list[str]:

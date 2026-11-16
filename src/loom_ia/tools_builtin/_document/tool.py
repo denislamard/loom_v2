@@ -99,8 +99,7 @@ WRITING_HELP: Final = (
     'formule sur les nombres de la ligne ("{Qté} * {PU HT}", + - * / et parenthèses), '
     "absente des lignes. Groupes (un lot) : rows en [{group, rows}], sous-total par groupe "
     "si totals. Ne rien calculer soi-même.",
-    "Décrire ce que SONT les blocs, jamais leur apparence : police, tailles, couleurs, "
-    "marges, sauts de page et numéros de page sont décidés par le style.",
+    "Décrire ce que SONT les blocs, jamais leur apparence : police, tailles, couleurs, marges, sauts de page et numéros de page sont décidés par le style.",
 )
 
 # Le mode d'emploi de chaque bloc facultatif, seulement s'il est déclaré (``blocks``).
@@ -121,33 +120,22 @@ OPTIONAL_HELP: Final[Mapping[str, str]] = {
         "L'image est centrée, dans ses proportions ; l'outil la lit lui-même, ne jamais en "
         f"envoyer le contenu. {MAX_IMAGES} images au plus."
     ),
-    "signature": (
-        "Signature ('type': 'signature') : signers (« Le client », « L'entreprise » ; 4 au "
-        "plus), mention (« Bon pour accord »)."
-    ),
+    "signature": ("Signature ('type': 'signature') : signers (« Le client », « L'entreprise » ; 4 au plus), mention (« Bon pour accord »)."),
     "toc": "Sommaire ('type': 'toc') : la table des matières, tirée des titres.",
-    "checkboxes": (
-        "Liste à cocher : checkboxes sur une list, chaque élément commence par [x] ou [ ]."
-    ),
+    "checkboxes": ("Liste à cocher : checkboxes sur une list, chaque élément commence par [x] ou [ ]."),
     "fields": (
         "Champs ('type': 'fields') : items, des paires [libellé, valeur] ([\"Référence\", "
         '"D-2026-042"]) ; une valeur vide laisse une ligne à remplir à la main. '
         f"{MAX_FIELDS} paires au plus."
     ),
-    "code": (
-        "Code ('type': 'code') : text, du texte préformaté (code, commande, journal), écrit "
-        f"tel quel, sans balisage ; {MAX_CODE_LINES} lignes au plus."
-    ),
+    "code": (f"Code ('type': 'code') : text, du texte préformaté (code, commande, journal), écrit tel quel, sans balisage ; {MAX_CODE_LINES} lignes au plus."),
     "invoice_totals": (
         "Récapitulatif de TVA ('type': 'invoice_totals') : from_table {amount : en-tête des "
         "montants HT, amount_eur ; rate : en-tête des taux, percent}, du tableau qui le "
         "précède ; paid : l'acompte déjà versé. L'outil écrit le total HT, la TVA de chaque "
         "taux, le total TTC et le net à payer."
     ),
-    "attendance": (
-        "Feuille d'émargement ('type': 'attendance') : participants (les noms, 100 au plus), "
-        "sessions (une colonne à signer chacune, 10 au plus)."
-    ),
+    "attendance": ("Feuille d'émargement ('type': 'attendance') : participants (les noms, 100 au plus), sessions (une colonne à signer chacune, 10 au plus)."),
 }
 
 
@@ -205,30 +193,22 @@ def read_styles(
     charte = _spec(params.style, f"{reference}.style")
     own: dict[str, StyleFile] = {}
     for name, ref in params.templates.items():
-        spec = _spec(ref.style, f"{reference}.templates[{name}].style") or _written(
-            templates[name], f"{reference}.templates[{name}].style"
-        )
+        spec = _spec(ref.style, f"{reference}.templates[{name}].style") or _written(templates[name], f"{reference}.templates[{name}].style")
         if spec is not None:
             own[name] = spec
     declared = [spec for spec in (charte, *own.values()) if spec is not None]
     for spec in declared:
         _check_files(spec, reference)
     default = _resolved(f"{reference}.style", charte)
-    by_template = {
-        name: _resolved(f"{reference}.templates[{name}].style", charte, spec)
-        for name, spec in own.items()
-    }
+    by_template = {name: _resolved(f"{reference}.templates[{name}].style", charte, spec) for name, spec in own.items()}
     for name, template in templates.items():
-        check_section_styles(
-            template, by_template.get(name, default), f"{reference}.templates[{name}]"
-        )
+        check_section_styles(template, by_template.get(name, default), f"{reference}.templates[{name}]")
     if not declared:
         return HOUSE_STYLES
     said = [
         (
             "style",
-            ("charte" if charte is not None else "style maison")
-            + (f" ; style de modèle : {', '.join(own)}" if own else ""),
+            ("charte" if charte is not None else "style maison") + (f" ; style de modèle : {', '.join(own)}" if own else ""),
         )
     ]
     fonts = fonts_said([default, *by_template.values()])
@@ -239,10 +219,7 @@ def read_styles(
         said.append(
             (
                 "styles proposés",
-                " · ".join(
-                    f"{kind} : {', '.join(name for name, _ in names)}"
-                    for kind, names in proposed.items()
-                ),
+                " · ".join(f"{kind} : {', '.join(name for name, _ in names)}" for kind, names in proposed.items()),
             )
         )
     return Styles(default=default, by_template=by_template, said=tuple(said))
@@ -271,8 +248,7 @@ def _written(template: Template, where: str) -> StyleFile | None:
         return None
     if isinstance(template.style, str):
         raise ValueError(
-            f"{where} ({template.style}) non lu — les styles se lisent au chargement de la "
-            "config (load_config), ou se donnent par leur contenu (spec)"
+            f"{where} ({template.style}) non lu — les styles se lisent au chargement de la config (load_config), ou se donnent par leur contenu (spec)"
         )
     try:
         return StyleFile.model_validate(template.style)
@@ -291,10 +267,7 @@ def _spec(ref: StyleRef | None, where: str) -> StyleFile | None:
     if ref is None:
         return None
     if ref.spec is None:
-        raise ValueError(
-            f"{where} ({ref.file}) non lu — les styles se lisent au chargement de la config "
-            "(load_config), ou se donnent par leur contenu (spec)"
-        )
+        raise ValueError(f"{where} ({ref.file}) non lu — les styles se lisent au chargement de la config (load_config), ou se donnent par leur contenu (spec)")
     return ref.spec
 
 
@@ -332,9 +305,7 @@ class DocumentTool(ABC):
         self._templates = dict(templates or {})
         folders = space.folders
         if self._templates and not any("write" in f.rights for f in folders):
-            raise ValueError(
-                "templates : des modèles de document, mais aucun dossier n'a le droit write"
-            )
+            raise ValueError("templates : des modèles de document, mais aucun dossier n'a le droit write")
         # Le schéma vu par le modèle n'a les blocs facultatifs, et les modèles, que s'ils
         # servent.
         self._call = variant(
@@ -346,11 +317,7 @@ class DocumentTool(ABC):
         # Le pire de ses appels ; un outil qui ne fait que lire n'en a aucun, et se
         # rejoue donc en variante (une lecture sans effet s'y exécute).
         effects: SideEffects = (
-            "irreversible"
-            if any("overwrite" in f.rights for f in folders)
-            else "reversible"
-            if any("write" in f.rights for f in folders)
-            else "none"
+            "irreversible" if any("overwrite" in f.rights for f in folders) else "reversible" if any("write" in f.rights for f in folders) else "none"
         )
         self._spec = ToolSpec(
             name=self.NAME,
@@ -378,9 +345,7 @@ class DocumentTool(ABC):
                 return CallAssessment(side_effects="none", idempotent=True)
             if isinstance(request, ReadArguments):
                 return self._assess_read(self._source(request.path))
-            reads: list[tuple[Located, Right]] = [
-                (self._image_source(path), "read") for path in _image_paths(request)
-            ]
+            reads: list[tuple[Located, Right]] = [(self._image_source(path), "read") for path in _image_paths(request)]
             return self._assess_write(request, self._output(request), reads)
         except ToolError:
             # L'appel sera refusé à l'exécution, pour la même raison : aucun effet.
@@ -406,9 +371,7 @@ class DocumentTool(ABC):
     ) -> CallAssessment:
         """Les droits de la sortie, et le droit read de chaque image lue."""
         rights: tuple[Right, ...] = ("write", "overwrite") if request.overwrite else ("write",)
-        asking: list[tuple[Located, Right]] = [
-            (located, right) for right in Folders.asked(located, rights)
-        ]
+        asking: list[tuple[Located, Right]] = [(located, right) for right in Folders.asked(located, rights)]
         images = list(reads)
         asking.extend(pair for pair in images if Folders.asked(pair[0], (pair[1],)))
         effects: SideEffects = "irreversible" if request.overwrite else "reversible"
@@ -463,11 +426,7 @@ class DocumentTool(ABC):
     # --- Exécution ----------------------------------------------------------------------
 
     def _write(self, request: WriteArguments, located: Located) -> dict[str, JsonValue]:
-        followed = (
-            self._templates[request.template]
-            if request.template is not None and request.template != NO_TEMPLATE
-            else None
-        )
+        followed = self._templates[request.template] if request.template is not None and request.template != NO_TEMPLATE else None
         prepared = prepare(
             request,
             self._zone,
@@ -590,9 +549,7 @@ class DocumentTool(ABC):
         charte = (self._styles.default or house()).proposed()
         found: dict[str, JsonValue] = {}
         for kind, names in own.proposed().items():
-            added = {
-                style: said for style, said in names if (style, said) not in charte.get(kind, [])
-            }
+            added = {style: said for style, said in names if (style, said) not in charte.get(kind, [])}
             if added:
                 found[kind] = dict(added)
         return found
@@ -604,11 +561,7 @@ class DocumentTool(ABC):
             return []
         return [
             "Styles proposés ('style' d'un bloc, facultatif ; ceux d'un modèle se lisent par "
-            "action=template) : "
-            + " ; ".join(
-                f"{kind} : " + ", ".join(f"{name} ({said})" for name, said in names)
-                for kind, names in proposed.items()
-            )
+            "action=template) : " + " ; ".join(f"{kind} : " + ", ".join(f"{name} ({said})" for name, said in names) for kind, names in proposed.items())
         ]
 
     def _labels(self, template: str | None) -> Labels:
@@ -655,10 +608,7 @@ class DocumentTool(ABC):
             "de section, dans l'ordre du modèle, et dans une section les titres sont de "
             "niveau 2 ou 3. Avant d'écrire, lire le modèle : action=template, template=<nom> "
             "(ses consignes et ses sections).",
-            *(
-                f"- {name}" + (f" : {template.description}" if template.description else "")
-                for name, template in self._templates.items()
-            ),
+            *(f"- {name}" + (f" : {template.description}" if template.description else "") for name, template in self._templates.items()),
         ]
 
     def _description(self) -> str:
@@ -667,8 +617,7 @@ class DocumentTool(ABC):
         reads = [folder.name for folder in space.folders if "read" in folder.rights]
         lines = [
             (
-                f"Écrit un {self.LABEL} ({self.SUFFIX}) mis en forme ; avec action=read, lit "
-                f"un fichier existant."
+                f"Écrit un {self.LABEL} ({self.SUFFIX}) mis en forme ; avec action=read, lit un fichier existant."
                 if writes
                 else f"Lit un {self.LABEL} existant (action=read)."
             ),
@@ -677,15 +626,13 @@ class DocumentTool(ABC):
         ]
         if writes:
             lines += [
-                f"Le fichier s'écrit dans : {', '.join(writes)} ; un fichier existant n'est "
-                "remplacé qu'avec overwrite=true (droit overwrite).",
+                f"Le fichier s'écrit dans : {', '.join(writes)} ; un fichier existant n'est remplacé qu'avec overwrite=true (droit overwrite).",
                 *WRITING_HELP,
                 *(OPTIONAL_HELP[name] for name in self._blocks),
                 *self._templates_help(),
                 *self._styles_help(),
                 *self._writing_notes(),
-                f"Bornes : {MAX_BLOCKS} blocs, {MAX_ITEMS} éléments par liste. Résultat : le "
-                "chemin écrit et les avertissements ; jamais le contenu.",
+                f"Bornes : {MAX_BLOCKS} blocs, {MAX_ITEMS} éléments par liste. Résultat : le chemin écrit et les avertissements ; jamais le contenu.",
             ]
         else:
             lines.append("Aucun dossier n'a le droit write : l'outil ne fait que lire.")

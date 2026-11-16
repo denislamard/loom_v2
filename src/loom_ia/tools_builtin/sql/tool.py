@@ -69,11 +69,7 @@ class Database:
     def granted(self, table: str) -> str:
         """« select, update (approbation) »."""
         rights = self.spec.tables[table].rights
-        return ", ".join(
-            f"{right}{' (approbation)' if rights[right] == 'always' else ''}"
-            for right in SQL_RIGHTS
-            if right in rights
-        )
+        return ", ".join(f"{right}{' (approbation)' if rights[right] == 'always' else ''}" for right in SQL_RIGHTS if right in rights)
 
 
 class SqlTool:
@@ -84,16 +80,8 @@ class SqlTool:
             raise ValueError("au moins une base est attendue")
         self._databases = {database.name: database for database in databases}
         self._zone = zone
-        rights = {
-            right for db in databases for table in db.spec.tables.values() for right in table.rights
-        }
-        effects: SideEffects = (
-            "irreversible"
-            if rights & {"update", "delete"}
-            else "reversible"
-            if "insert" in rights
-            else "none"
-        )
+        rights = {right for db in databases for table in db.spec.tables.values() for right in table.rights}
+        effects: SideEffects = "irreversible" if rights & {"update", "delete"} else "reversible" if "insert" in rights else "none"
         asking = any(db.asking(table) for db in databases for table in db.spec.tables)
         self._spec = ToolSpec(
             name=NAME,
@@ -121,10 +109,7 @@ class SqlTool:
         places: list[Place] = []
         for db in self._databases.values():
             spec = db.spec
-            limits = [
-                f"≤ {spec.max_rows} lignes lues · ≤ {spec.max_affected_rows} modifiées · "
-                f"{spec.statement_timeout:g} s/instruction"
-            ]
+            limits = [f"≤ {spec.max_rows} lignes lues · ≤ {spec.max_affected_rows} modifiées · {spec.statement_timeout:g} s/instruction"]
             if spec.allow_full_table:
                 limits.append("UPDATE/DELETE sans WHERE permis")
             if spec.functions:
@@ -133,9 +118,7 @@ class SqlTool:
                 (
                     table,
                     tuple(
-                        Grant(right, approval == "always", right in DESTRUCTIVE)
-                        for right in SQL_RIGHTS
-                        if (approval := rules.rights.get(right)) is not None
+                        Grant(right, approval == "always", right in DESTRUCTIVE) for right in SQL_RIGHTS if (approval := rules.rights.get(right)) is not None
                     ),
                 )
                 for table, rules in spec.tables.items()
@@ -162,18 +145,8 @@ class SqlTool:
             return CallAssessment(side_effects="none")
         exercised = list(dict.fromkeys(pair for a in analyses for pair in a.exercised()))
         operations = {a.operation for a in analyses}
-        effects: SideEffects = (
-            "irreversible"
-            if operations & {"update", "delete"}
-            else "reversible"
-            if "insert" in operations
-            else "none"
-        )
-        asking = [
-            f"{right.upper()} sur {table}"
-            for table, right in exercised
-            if database.spec.tables[table].rights.get(right) == "always"
-        ]
+        effects: SideEffects = "irreversible" if operations & {"update", "delete"} else "reversible" if "insert" in operations else "none"
+        asking = [f"{right.upper()} sur {table}" for table, right in exercised if database.spec.tables[table].rights.get(right) == "always"]
         if not asking:
             return CallAssessment(side_effects=effects)
         # Ce que fait l'appel : ses écritures, ou ses lectures s'il n'écrit rien.
@@ -186,8 +159,7 @@ class SqlTool:
         return CallAssessment(
             approval="always",
             side_effects=effects,
-            reason=f"base {database.name} : {', '.join(done)} — la config exige une approbation "
-            f"pour {rule}",
+            reason=f"base {database.name} : {', '.join(done)} — la config exige une approbation pour {rule}",
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
@@ -219,9 +191,7 @@ class SqlTool:
     def _database(self, name: str) -> Database:
         found = self._databases.get(name)
         if found is None:
-            raise ToolError(
-                f"Base « {name} » inconnue. Bases permises : {', '.join(self._databases)}."
-            )
+            raise ToolError(f"Base « {name} » inconnue. Bases permises : {', '.join(self._databases)}.")
         return found
 
     def _analyses(self, request: SqlArguments, database: Database) -> list[Analysis]:
@@ -272,15 +242,13 @@ class SqlTool:
 def _description(databases: Sequence[Database], zone: ZoneInfo) -> str:
     lines = [
         "Interroge et modifie des bases SQL permises, avec le SQL que vous écrivez.",
-        "Bases, tables et droits (« approbation » : un humain valide chaque appel qui "
-        "exerce ce droit) :",
+        "Bases, tables et droits (« approbation » : un humain valide chaque appel qui exerce ce droit) :",
     ]
     for db in databases:
         spec = db.spec
         lines.append(
             f"- {db.name} ({spec.dialect} ; {spec.max_rows} lignes lues, "
-            f"{spec.max_affected_rows} modifiées au plus) : "
-            + " ; ".join(f"{table} ({db.granted(table)})" for table in spec.tables)
+            f"{spec.max_affected_rows} modifiées au plus) : " + " ; ".join(f"{table} ({db.granted(table)})" for table in spec.tables)
         )
         for key, text in spec.describe.items():
             lines.append(f"  · {key} : {text}")
@@ -331,16 +299,10 @@ def _sqlite_path(spec: DatabaseSpec, context: BuiltinContext) -> Path:
         given = context.base_dir / given
     path = given.resolve()
     if not path.is_file():
-        raise ValueError(
-            f"base {spec.name!r} : {path} n'existe pas ou n'est pas un fichier — loom.sql "
-            "n'en crée pas"
-        )
+        raise ValueError(f"base {spec.name!r} : {path} n'existe pas ou n'est pas un fichier — loom.sql n'en crée pas")
     problem = _exposes(path, context.protected)
     if problem is not None:
-        raise ValueError(
-            f"base {spec.name!r} : {path} {problem} — le modèle pourrait y réécrire ce que "
-            "loom a journalisé ; exposer une autre base"
-        )
+        raise ValueError(f"base {spec.name!r} : {path} {problem} — le modèle pourrait y réécrire ce que loom a journalisé ; exposer une autre base")
     return path
 
 
@@ -369,7 +331,6 @@ def _dsn(spec: DatabaseSpec, secrets: Mapping[str, str], context: BuiltinContext
         # Le stockage lit son DSN dans l'environnement du process, pas dans la table du client.
         if value in (secrets.get(guarded), os.environ.get(guarded)):
             raise ValueError(
-                f"base {spec.name!r} : {env} porte le même DSN que {guarded}, celui du "
-                "stockage de loom — donner la base de l'application, sous un rôle dédié"
+                f"base {spec.name!r} : {env} porte le même DSN que {guarded}, celui du stockage de loom — donner la base de l'application, sous un rôle dédié"
             )
     return value

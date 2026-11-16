@@ -146,10 +146,7 @@ def _check_one(
     wanted = [spec.categories, *spec.values]
     unknown = [name for name in wanted if name.strip() not in headers]
     if unknown:
-        problems.error(
-            f"{where} : colonne(s) inconnue(s) : {', '.join(unknown)} "
-            f"(colonnes : {', '.join(headers)})"
-        )
+        problems.error(f"{where} : colonne(s) inconnue(s) : {', '.join(unknown)} (colonnes : {', '.join(headers)})")
         return None
     category = headers.index(spec.categories.strip())
     values = [headers.index(name.strip()) for name in spec.values]
@@ -159,10 +156,7 @@ def _check_one(
     kinds = {sheet.columns[index].type for index in values}
     kind = next(iter(sorted(kinds)))
     if len(kinds) > 1 or kind not in NUMERIC:
-        problems.error(
-            f"{where} : les séries viennent de colonnes de nombres d'un même type "
-            f"(ici : {', '.join(sorted(kinds))})"
-        )
+        problems.error(f"{where} : les séries viennent de colonnes de nombres d'un même type (ici : {', '.join(sorted(kinds))})")
         return None
     if len(values) > MAX_SERIES:
         problems.error(f"{where} : {len(values)} séries, au-delà de {MAX_SERIES}")
@@ -171,10 +165,7 @@ def _check_one(
     if not count:
         problems.error(f"{where} : aucune ligne de données, le graphique serait vide")
     elif count > limit:
-        problems.error(
-            f"{where} : {count} lignes, au-delà de {limit} pour {KIND_SAID[spec.kind]} — "
-            "regrouper, ou garder les principales"
-        )
+        problems.error(f"{where} : {count} lignes, au-delà de {limit} pour {KIND_SAID[spec.kind]} — regrouper, ou garder les principales")
     known: list[float] = []
     complete = True
     for row in rows:
@@ -189,8 +180,7 @@ def _check_one(
             problems.error(f"{where} : un graphique pie n'a qu'une série")
         if count > MAX_SLICES:
             problems.error(
-                f"{where} : {count} secteurs, au-delà de {MAX_SLICES} — illisible ; garder les "
-                "principaux et regrouper le reste en « Autres », ou bar"
+                f"{where} : {count} secteurs, au-delà de {MAX_SLICES} — illisible ; garder les principaux et regrouper le reste en « Autres », ou bar"
             )
         if any(value < 0 for value in known):
             problems.error(f"{where} : une valeur négative n'a pas de secteur")
@@ -264,11 +254,7 @@ def _chart(ws: Worksheet, found: Plotted) -> Drawn:
     if spec.title:
         _title_style(chart)
     several = len(found.values) > 1
-    chart.legend = (
-        Legend(legendPos="r" if spec.kind == "pie" else "b", txPr=_text(900))
-        if spec.kind == "pie" or several
-        else None
-    )
+    chart.legend = Legend(legendPos="r" if spec.kind == "pie" else "b", txPr=_text(900)) if spec.kind == "pie" or several else None
     label = LABEL_FORMATS[found.value_type]
     match chart:
         case PieChart():
@@ -306,9 +292,7 @@ def _title_style(chart: Drawn) -> None:
     rich = title.tx.rich if title.tx is not None else None
     if rich is not None:
         for paragraph in rich.p:
-            props = CharacterProperties(
-                sz=1100, b=True, solidFill=PALETTE[0], latin=Font(typeface="Calibri")
-            )
+            props = CharacterProperties(sz=1100, b=True, solidFill=PALETTE[0], latin=Font(typeface="Calibri"))
             paragraph.pPr = ParagraphProperties(defRPr=props)
             for run in paragraph.r:
                 run.rPr = props
@@ -335,9 +319,7 @@ def _bars(chart: BarChart, found: Plotted, label: str) -> None:
 def _lines(chart: LineChart) -> None:
     for index, series in enumerate(_series(chart)):
         color = PALETTE[index % len(PALETTE)]
-        series.graphicalProperties = GraphicalProperties(
-            ln=LineProperties(solidFill=color, w=28575, cap="rnd")
-        )
+        series.graphicalProperties = GraphicalProperties(ln=LineProperties(solidFill=color, w=28575, cap="rnd"))
         series.marker = Marker(symbol="circle", size=5, spPr=GraphicalProperties(solidFill=color))
         series.smooth = False
 
@@ -374,9 +356,7 @@ def _axes(chart: Axed, found: Plotted) -> None:
     categories.txPr = _text(900)
     values.number_format = AXIS_FORMATS[found.value_type]
     values.majorTickMark = "none"
-    values.majorGridlines = ChartLines(
-        spPr=GraphicalProperties(ln=LineProperties(solidFill=GRID, w=6350))
-    )
+    values.majorGridlines = ChartLines(spPr=GraphicalProperties(ln=LineProperties(solidFill=GRID, w=6350)))
     values.graphicalProperties = GraphicalProperties(ln=LineProperties(noFill=True))
     values.txPr = _text(900)
     if horizontal:

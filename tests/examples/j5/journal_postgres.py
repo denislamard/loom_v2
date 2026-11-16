@@ -156,9 +156,7 @@ async def cas_journal(loom: Loom, prefixe: str, agent: str, controle: Controle) 
     print(f"Table : {EVENTS_TABLE}, créée à la première requête (loom storage sql l'imprime)")
     for tenant in (DUPONT, MARTIN):
         session = SessionId(f"{prefixe}-{tenant}")
-        result = await loom.run(
-            agent, demande(tenant), tenant=tenant, session_id=session, user=tenant
-        )
+        result = await loom.run(agent, demande(tenant), tenant=tenant, session_id=session, user=tenant)
         print(f"\n  {tenant} : run {result.run_id}, statut {result.status}")
         print(f"    coût {result.cost_usd:.6f} $, {result.iterations} itération(s)")
         # La base garde ce que les lancements précédents y ont écrit : on ne
@@ -197,9 +195,7 @@ async def cas_barriere(dsn: str, controle: Controle) -> None:
         for tenant in (DUPONT, MARTIN):
             async with connection.transaction():
                 await connection.execute("SELECT set_config('loom.tenant_id', $1, true)", tenant)
-                comptes[tenant] = int(
-                    await connection.fetchval(f"SELECT count(*) FROM {EVENTS_TABLE}") or 0
-                )
+                comptes[tenant] = int(await connection.fetchval(f"SELECT count(*) FROM {EVENTS_TABLE}") or 0)
         somme = " + ".join(f"{tenant} {n}" for tenant, n in comptes.items())
         print(f"  la table porte les deux journaux : {somme}")
 
@@ -307,9 +303,7 @@ async def joignable(dsn: str) -> str | None:
 async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Journal Postgres : table partagée, barrière RLS")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
-    parser.add_argument(
-        "--dsn", default=DSN_PAR_DEFAUT, help=f"DSN Postgres (défaut : {DSN_PAR_DEFAUT})"
-    )
+    parser.add_argument("--dsn", default=DSN_PAR_DEFAUT, help=f"DSN Postgres (défaut : {DSN_PAR_DEFAUT})")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument("--session", default=None, help="préfixe des sessions")
     args = parser.parse_args(argv)

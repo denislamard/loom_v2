@@ -61,9 +61,7 @@ async def attendre(secondes: float) -> str:
 def patient(tmp_path: Path) -> ConfigFactory:
     """Agent dont le seul outil dort : de quoi dépasser un délai en plein effet."""
 
-    def build(
-        *, timeout: float | None = None, attente: float = 5.0, code: str = LENT, **root: Any
-    ) -> Path:
+    def build(*, timeout: float | None = None, attente: float = 5.0, code: str = LENT, **root: Any) -> Path:
         (tmp_path / "agents").mkdir(exist_ok=True)
         (tmp_path / "outils_lents.py").write_text(code, encoding="utf-8")
         config: dict[str, Any] = {
@@ -78,9 +76,7 @@ def patient(tmp_path: Path) -> ConfigFactory:
                         "script": [
                             {
                                 "text": "J'attends.",
-                                "tool_calls": [
-                                    {"name": "attendre", "arguments": {"secondes": attente}}
-                                ],
+                                "tool_calls": [{"name": "attendre", "arguments": {"secondes": attente}}],
                             },
                             {"text": "Voilà."},
                         ]
@@ -121,11 +117,7 @@ def delegating(tmp_path: Path) -> Path:
                 "model": "main-1",
                 "params": {
                     "script": [
-                        {
-                            "tool_calls": [
-                                {"name": "verifier", "arguments": {"message": "Vérifie."}}
-                            ]
-                        },
+                        {"tool_calls": [{"name": "verifier", "arguments": {"message": "Vérifie."}}]},
                         {"text": "Vérifié."},
                     ]
                 },
@@ -290,9 +282,7 @@ def test_cancelling_a_running_run_closes_it(patient: ConfigFactory) -> None:
     async def go() -> list[Event]:
         run_id = new_run_id()
         async with Loom.from_config(path) as loom:
-            run = asyncio.create_task(
-                loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id, user=DEV)
-            )
+            run = asyncio.create_task(loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id, user=DEV))
             await asyncio.sleep(0.15)
             assert await loom.cancel(run_id, session_id=SESSION, user=DEV)
             run.cancel()
@@ -317,10 +307,7 @@ async def _until_called(loom: Loom, tool: str, *, limit: float = 10.0) -> None:
         while True:
             with suppress(UnknownSession):
                 events = await loom.export_session(SESSION)
-                if any(
-                    isinstance(e.payload, ToolCalled) and e.payload.tool_name == tool
-                    for e in events
-                ):
+                if any(isinstance(e.payload, ToolCalled) and e.payload.tool_name == tool for e in events):
                     return
             await asyncio.sleep(0.02)
 
@@ -333,9 +320,7 @@ def test_a_cancel_whose_caller_gives_up_still_closes_the_run(patient: ConfigFact
     async def go() -> tuple[bool, list[Event]]:
         run_id = new_run_id()
         async with Loom.from_config(path) as loom:
-            run = asyncio.create_task(
-                loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id, user=DEV)
-            )
+            run = asyncio.create_task(loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id, user=DEV))
             # L'outil doit être en plein effet : une attente fixe (0,15 s) ne suffisait pas
             # sur la CI du 23/10, où l'arrêt a fini avant le délai, l'outil pas encore lancé.
             await _until_called(loom, "attendre")
@@ -399,13 +384,9 @@ class Watching(InMemoryEventStore):
         super().__init__()
         self.started = asyncio.Event()
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         events = await super().append(drafts, expected_seq=expected_seq)
-        if any(
-            isinstance(e.payload, ToolCalled) and e.payload.tool_name == "attendre" for e in events
-        ):
+        if any(isinstance(e.payload, ToolCalled) and e.payload.tool_name == "attendre" for e in events):
             self.started.set()
         return events
 
@@ -417,9 +398,7 @@ def test_cancelling_a_parent_cancels_the_subruns_it_left_open(delegating: Path) 
         run_id = new_run_id()
         store = Watching()
         async with Loom(load_config(delegating), store=store) as loom:
-            run = asyncio.create_task(
-                loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id, user=DEV)
-            )
+            run = asyncio.create_task(loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id, user=DEV))
             async with asyncio.timeout(10):
                 # Le sous-agent est dans son outil : il ne rendra rien avant l'arrêt.
                 await store.started.wait()

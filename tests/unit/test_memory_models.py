@@ -157,9 +157,7 @@ class Tokenizer:
             rows = [[0, *self.ids(t), 2] for t in texts]
         else:
             assert options["truncation"] == "only_second"
-            rows = [
-                [0, *self.ids(q), 2, *self.ids(p), 2] for q, p in zip(texts, pairs, strict=True)
-            ]
+            rows = [[0, *self.ids(q), 2, *self.ids(p), 2] for q, p in zip(texts, pairs, strict=True)]
         width = max(len(row) for row in rows)
         return Batch({"input_ids": Tensor([row + [1] * (width - len(row)) for row in rows])})
 
@@ -423,8 +421,7 @@ def test_offline_a_model_missing_from_the_cache_says_how_to_get_it(
     with pytest.raises(ModelLoadError) as caught:
         embedder.embed_query("x")
     assert str(caught.value) == (
-        "Modèle BAAI/bge-m3 absent du cache local de Hugging Face (models.offline) : "
-        "le télécharger avec « hf download BAAI/bge-m3 », ou retirer models.offline"
+        "Modèle BAAI/bge-m3 absent du cache local de Hugging Face (models.offline) : le télécharger avec « hf download BAAI/bge-m3 », ou retirer models.offline"
     )
     with pytest.raises(ModelLoadError, match="hf download BAAI/bge-reranker-v2-m3"):
         BgeReranker(ModelsSpec(device="cpu", offline=True)).score("q", ["p"])
@@ -444,9 +441,7 @@ def test_online_a_hub_error_keeps_the_general_message(monkeypatch: pytest.Monkey
     )
     with pytest.raises(ModelLoadError) as caught:
         BgeM3Embedder(CPU).embed_query("x")
-    assert str(caught.value).startswith(
-        "Chargement du modèle BAAI/bge-m3 impossible sur cpu : We couldn't connect"
-    )
+    assert str(caught.value).startswith("Chargement du modèle BAAI/bge-m3 impossible sur cpu : We couldn't connect")
     assert found.built == 0
 
 
@@ -494,9 +489,7 @@ def test_a_missing_dependency_names_the_extra(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setitem(sys.modules, "torch", None)
     with pytest.raises(ModelLoadError) as caught:
         BgeM3Embedder(CPU).embed_query("x")
-    assert str(caught.value) == (
-        "Modèle BAAI/bge-m3 : dépendance 'torch' absente (installer l'extra : loom-ia[memory])"
-    )
+    assert str(caught.value) == ("Modèle BAAI/bge-m3 : dépendance 'torch' absente (installer l'extra : loom-ia[memory])")
 
 
 def test_a_failed_computation_keeps_the_model() -> None:
@@ -514,8 +507,7 @@ def test_a_failed_computation_keeps_the_model() -> None:
     with pytest.raises(ModelRunError) as caught:
         lazy.run(run)
     assert str(caught.value) == (
-        "Calcul du modèle BAAI/bge-m3 impossible : CUDA out of memory. Tried to allocate "
-        "2.00 GiB. Réessayer ; si l'erreur persiste, relancer loom."
+        "Calcul du modèle BAAI/bge-m3 impossible : CUDA out of memory. Tried to allocate 2.00 GiB. Réessayer ; si l'erreur persiste, relancer loom."
     )
     assert builds == ["cpu"]  # le modèle n'est pas jeté
 
@@ -660,9 +652,7 @@ def test_preload_loads_both_models_in_the_background(monkeypatch: pytest.MonkeyP
     assert found.built == 2
 
 
-def test_a_failed_preload_is_logged_not_raised(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_failed_preload_is_logged_not_raised(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     monkeypatch.setitem(sys.modules, "torch", None)
     models = shared_models(ModelsSpec(device="cpu", embedder="pre/absent"))
     with caplog.at_level(logging.ERROR, logger="loom_ia.memory"):
@@ -676,9 +666,7 @@ def test_a_failed_preload_is_logged_not_raised(
 # --- Device -----------------------------------------------------------------------------
 
 
-def _torch(
-    capability: tuple[int, int], archs: list[str], *, cuda: bool = True, cards: int = 1
-) -> Any:
+def _torch(capability: tuple[int, int], archs: list[str], *, cuda: bool = True, cards: int = 1) -> Any:
     def name_of(_: int) -> str:
         return "NVIDIA GeForce GTX 1050 Ti"
 
@@ -694,9 +682,7 @@ def _torch(
         get_arch_list=lambda: archs,
     )
     mps = types.SimpleNamespace(is_available=lambda: False)
-    return types.SimpleNamespace(
-        __version__="2.14.0+cu130", cuda=devices, backends=types.SimpleNamespace(mps=mps)
-    )
+    return types.SimpleNamespace(__version__="2.14.0+cu130", cuda=devices, backends=types.SimpleNamespace(mps=mps))
 
 
 CU130 = ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120"]
@@ -711,9 +697,7 @@ def fresh_devices() -> Generator[None]:
         resolve_device.cache_clear()
 
 
-def test_an_old_gpu_is_left_aside_with_one_warning(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_an_old_gpu_is_left_aside_with_one_warning(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     monkeypatch.setitem(sys.modules, "torch", _torch((6, 1), CU130))
     with fresh_devices(), warnings.catch_warnings(record=True) as seen:
         warnings.simplefilter("always")
@@ -739,9 +723,7 @@ def test_an_old_gpu_is_left_aside_with_one_warning(
         ((6, 1), [], True),  # rien à juger : la carte est gardée
     ],
 )
-def test_gpu_support_follows_the_torch_rule(
-    capability: tuple[int, int], archs: Sequence[str], usable: bool
-) -> None:
+def test_gpu_support_follows_the_torch_rule(capability: tuple[int, int], archs: Sequence[str], usable: bool) -> None:
     assert (unsupported_gpu(_torch(capability, list(archs))) is None) is usable
 
 
@@ -778,15 +760,10 @@ def test_a_supported_gpu_is_used_and_an_explicit_device_is_kept(
         ),
     ],
 )
-def test_a_forced_gpu_that_cannot_serve_is_refused_at_load(
-    monkeypatch: pytest.MonkeyPatch, torch: Any, device: str, said: str
-) -> None:
+def test_a_forced_gpu_that_cannot_serve_is_refused_at_load(monkeypatch: pytest.MonkeyPatch, torch: Any, device: str, said: str) -> None:
     """Forcé, ``cuda`` est vérifié comme ``auto`` : l'erreur dit pourquoi, avant tout calcul."""
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "transformers", Fakes().transformers())
     with fresh_devices(), pytest.raises(ModelLoadError) as caught:
         BgeM3Embedder(ModelsSpec(device=device)).embed_query("x")
-    assert str(caught.value) == (
-        f"Modèle BAAI/bge-m3 : {said}. Mettre models.device à auto (qui se replie sur cpu "
-        "quand la carte ne convient pas) ou à cpu"
-    )
+    assert str(caught.value) == (f"Modèle BAAI/bge-m3 : {said}. Mettre models.device à auto (qui se replie sur cpu quand la carte ne convient pas) ou à cpu")

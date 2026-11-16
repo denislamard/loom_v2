@@ -65,10 +65,7 @@ def reply_problem(pending: PendingQuestion, reply: QuestionReply) -> str | None:
     answers = reply.answers or ()
     wanted = pending.questions
     if len(answers) != len(wanted):
-        return (
-            f"{_count(len(answers), 'réponse')} pour {_count(len(wanted), 'question')} "
-            f"({_names(wanted)}) : une réponse par question, dans leur ordre"
-        )
+        return f"{_count(len(answers), 'réponse')} pour {_count(len(wanted), 'question')} ({_names(wanted)}) : une réponse par question, dans leur ordre"
     for number, (question, values) in enumerate(zip(wanted, answers, strict=True), 1):
         if not values or not all(value.strip() for value in values):
             return f"{named_question(number, question)} : réponse vide"
@@ -113,13 +110,11 @@ def answered_output(pending: PendingQuestion) -> ToolOutput:
         text = f"Réponse de l'utilisateur, en message libre : {reply.text}\n\n{OFF_TOPIC}"
     else:
         pairs: list[JsonValue] = [
-            {"question": question.question, "answer": list(values)}
-            for question, values in zip(pending.questions, reply.answers or (), strict=True)
+            {"question": question.question, "answer": list(values)} for question, values in zip(pending.questions, reply.answers or (), strict=True)
         ]
         data = {"answers": pairs}
         text = "Réponse de l'utilisateur :\n" + "\n".join(
-            f"- {question.question} → {', '.join(values)}"
-            for question, values in zip(pending.questions, reply.answers or (), strict=True)
+            f"- {question.question} → {', '.join(values)}" for question, values in zip(pending.questions, reply.answers or (), strict=True)
         )
     return ToolOutput(blocks=(TextBlock(text=text),), data=data)
 
@@ -137,6 +132,4 @@ def summary(questions: Sequence[Question]) -> str:
 
 
 def as_json(questions: Sequence[Question]) -> str:
-    return json.dumps(
-        [q.model_dump(mode="json", exclude_none=True) for q in questions], ensure_ascii=False
-    )
+    return json.dumps([q.model_dump(mode="json", exclude_none=True) for q in questions], ensure_ascii=False)

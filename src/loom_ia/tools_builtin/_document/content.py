@@ -97,9 +97,7 @@ BOLD_WIDTH: Final = 1.15
 # Une valeur jusqu'à cette longueur (un rang, un code, un montant, une date) n'est
 # jamais coupée ; une plus longue (un nom, un texte) peut passer à la ligne.
 SHORT_VALUE_CHARS: Final = 14
-NUMERIC: Final[frozenset[ColumnType]] = frozenset(
-    {"integer", "decimal", "amount_eur", "amount_keur", "percent"}
-)
+NUMERIC: Final[frozenset[ColumnType]] = frozenset({"integer", "decimal", "amount_eur", "amount_keur", "percent"})
 ORDERED_TYPES: Final[frozenset[ColumnType]] = NUMERIC | frozenset[ColumnType]({"date", "datetime"})
 CENTERED: Final[frozenset[ColumnType]] = frozenset({"date", "datetime", "year", "boolean"})
 # Espace insécable : présente dans toutes les polices, y compris Helvetica (WinAnsi),
@@ -274,19 +272,7 @@ class ImageOut:
 
 
 type BlockOut = (
-    TitleOut
-    | HeadingOut
-    | ParagraphOut
-    | ListOut
-    | TableOut
-    | NoteOut
-    | QuoteOut
-    | ChartOut
-    | ImageOut
-    | SignatureOut
-    | ContentsOut
-    | FieldsOut
-    | CodeOut
+    TitleOut | HeadingOut | ParagraphOut | ListOut | TableOut | NoteOut | QuoteOut | ChartOut | ImageOut | SignatureOut | ContentsOut | FieldsOut | CodeOut
 )
 
 
@@ -418,34 +404,19 @@ def _sections(arguments: WriteArguments, template: Template, state: _State) -> l
             problems.error(f"{where} : section inconnue « {name} »")
             faults += 1
         elif section.position in given:
-            problems.error(
-                f"{where} : section donnée deux fois : « {given[section.position][0]} » et "
-                f"« {name} »"
-            )
+            problems.error(f"{where} : section donnée deux fois : « {given[section.position][0]} » et « {name} »")
             faults += 1
         elif section.fixed:
-            problems.error(
-                f"{where} : « {section.name} » est une section au texte fixe, écrite par "
-                "l'outil : ne pas la remplir"
-            )
+            problems.error(f"{where} : « {section.name} » est une section au texte fixe, écrite par l'outil : ne pas la remplir")
             faults += 1
         elif not written:
-            problems.error(
-                f"{where} : « {section.name} » est vide — "
-                + ("la retirer (elle est facultative)" if section.optional else "la remplir")
-            )
+            problems.error(f"{where} : « {section.name} » est vide — " + ("la retirer (elle est facultative)" if section.optional else "la remplir"))
             faults += 1
         else:
             given[section.position] = (name, written)
-    missing = [
-        s.name
-        for s in template.sections
-        if not s.optional and not s.fixed and s.position not in named
-    ]
+    missing = [s.name for s in template.sections if not s.optional and not s.fixed and s.position not in named]
     if missing:
-        problems.error(
-            f"{where} : section(s) absente(s) : {', '.join(f'« {m} »' for m in missing)}"
-        )
+        problems.error(f"{where} : section(s) absente(s) : {', '.join(f'« {m} »' for m in missing)}")
         faults += 1
     if faults:
         problems.error(f"{where}, sections attendues : {template.outline()}")
@@ -454,30 +425,19 @@ def _sections(arguments: WriteArguments, template: Template, state: _State) -> l
         fixed = section.spec.text
         if fixed is not None:
             at = f"section « {section.name} », texte fixe"
-            blocks: list[BlockOut] = [
-                ParagraphOut(rich(text, at, state, allow=LINKS_ONLY))
-                for text in fixed_paragraphs(fixed)
-            ]
+            blocks: list[BlockOut] = [ParagraphOut(rich(text, at, state, allow=LINKS_ONLY)) for text in fixed_paragraphs(fixed)]
         elif section.position in given:
             state.level = 1
             label = f"section « {section.name} », bloc"
             blocks = _blocks(given[section.position][1], label, state, in_section=True)
         else:
             continue
-        title = (
-            HeadingOut(1, inline(section.name), section=section.position)
-            if section.spec.show_title
-            else None
-        )
-        found.append(
-            SectionOut(section.position, section.name, title, tuple(blocks), section.fixed)
-        )
+        title = HeadingOut(1, inline(section.name), section=section.position) if section.spec.show_title else None
+        found.append(SectionOut(section.position, section.name, title, tuple(blocks), section.fixed))
     return found
 
 
-def _blocks(
-    written: Sequence[WrittenBlock], label: str, state: _State, *, in_section: bool = False
-) -> list[BlockOut]:
+def _blocks(written: Sequence[WrittenBlock], label: str, state: _State, *, in_section: bool = False) -> list[BlockOut]:
     """Les blocs validés ; ``label`` nomme leur place dans les messages (« bloc »,
     « section « Message », bloc »)."""
     problems = state.problems
@@ -491,15 +451,9 @@ def _blocks(
                 text = _text(block.text, where, problems, required=True)
                 _bare(text, where, problems)
                 if in_section and block.level == 1:
-                    problems.error(
-                        f"{where} : le niveau 1 est le titre de la section, que l'outil écrit ; "
-                        "dans une section, les titres sont de niveau 2 ou 3"
-                    )
+                    problems.error(f"{where} : le niveau 1 est le titre de la section, que l'outil écrit ; dans une section, les titres sont de niveau 2 ou 3")
                 elif block.level > state.level + 1:
-                    problems.warn(
-                        f"{where} : titre de niveau {block.level} après un niveau {state.level} "
-                        "— un niveau sauté brouille le plan du document"
-                    )
+                    problems.warn(f"{where} : titre de niveau {block.level} après un niveau {state.level} — un niveau sauté brouille le plan du document")
                 state.level = block.level
                 blocks.append(HeadingOut(block.level, inline(text), style))
             case Paragraph():
@@ -513,9 +467,7 @@ def _blocks(
                 blocks.append(dataclasses.replace(table, style=style) if style else table)
                 state.last_table = (block, stored)
             case Chart():
-                blocks.append(
-                    _chart(block, state.last_table, where, problems, zone, state.labels.language)
-                )
+                blocks.append(_chart(block, state.last_table, where, problems, zone, state.labels.language))
             case InvoiceTotals():
                 invoice = _invoice(block, where, state)
                 if invoice is not None:
@@ -557,16 +509,11 @@ def _style(block: WrittenBlock, where: str, state: _State) -> str | None:
     names = state.allowed.get(kind, {})
     if style not in names:
         permitted = ", ".join(sorted(names)) or "aucun"
-        state.problems.error(
-            f"{where} : style « {style} » : pas proposé pour un bloc {kind} dans ce document "
-            f"(styles : {permitted})"
-        )
+        state.problems.error(f"{where} : style « {style} » : pas proposé pour un bloc {kind} dans ce document (styles : {permitted})")
         return None
     level = names[style]
     if isinstance(block, Heading) and level and block.level != level:
-        state.problems.error(
-            f"{where} : style « {style} » : un titre de niveau {level}, pas {block.level}"
-        )
+        state.problems.error(f"{where} : style « {style} » : un titre de niveau {level}, pas {block.level}")
         return None
     return style
 
@@ -615,26 +562,17 @@ def _list(block: ListBlock, where: str, state: _State) -> ListOut:
         if checkboxes:
             found = _CHECKBOX.match(said)
             if found is None:
-                problems.error(
-                    f"{at} : dans une liste à cocher (checkboxes), chaque élément commence par "
-                    "[x] (coché) ou [ ] (vide)"
-                )
+                problems.error(f"{at} : dans une liste à cocher (checkboxes), chaque élément commence par [x] (coché) ou [ ] (vide)")
             else:
                 said, checked = said[found.end() :], found.group(1) != " "
         children: list[Entry] = []
         if not isinstance(item, str):
             if checkboxes and depth == 1:
                 problems.error(f"{at} : une liste à cocher a deux niveaux")
-            children = [
-                entry(child, f"{at}.{sub}", depth + 1)
-                for sub, child in enumerate(item.items, start=1)
-            ]
+            children = [entry(child, f"{at}.{sub}", depth + 1) for sub, child in enumerate(item.items, start=1)]
         return Entry(rich(said, at, state), tuple(children), checked)
 
-    entries = [
-        entry(item, f"{where}, élément {number}", 0)
-        for number, item in enumerate(block.items, start=1)
-    ]
+    entries = [entry(item, f"{where}, élément {number}", 0) for number, item in enumerate(block.items, start=1)]
     if count > MAX_ITEMS:
         problems.error(f"{where} : {count} éléments, au-delà de {MAX_ITEMS}")
     return ListOut(block.ordered, tuple(entries), checkboxes)
@@ -682,9 +620,7 @@ def _signature(block: Signature, where: str, problems: Problems) -> SignatureOut
     for number, signer in enumerate(block.signers, start=1):
         said = _text(signer, f"{where}, signataire {number}", problems, required=True)
         if len(said) > MAX_SIGNER:
-            problems.error(
-                f"{where}, signataire {number} : {len(said)} caractères, au-delà de {MAX_SIGNER}"
-            )
+            problems.error(f"{where}, signataire {number} : {len(said)} caractères, au-delà de {MAX_SIGNER}")
         signers.append(said)
     mention = _text(block.mention, f"{where}, mention", problems) or None
     if mention is not None and len(mention) > MAX_MENTION:
@@ -711,18 +647,9 @@ def _table(block: Table, where: str, state: _State) -> tuple[TableOut, list[list
     groups = _groups(block, where, problems)
     count = sum(len(rows) for _, _, rows in groups)
     if count > MAX_TABLE_ROWS:
-        problems.error(
-            f"{where} : {count} lignes, au-delà de {MAX_TABLE_ROWS} — un tableau "
-            "plus long se lit mieux dans un classeur (excel)"
-        )
+        problems.error(f"{where} : {count} lignes, au-delà de {MAX_TABLE_ROWS} — un tableau plus long se lit mieux dans un classeur (excel)")
     given = [index for index, column in enumerate(columns) if column.compute is None]
-    members = [
-        [
-            _row(row, columns, given, formulas, f"{at}, ligne {number}", state)
-            for number, row in enumerate(rows, start=1)
-        ]
-        for _, at, rows in groups
-    ]
+    members = [[_row(row, columns, given, formulas, f"{at}, ligne {number}", state) for number, row in enumerate(rows, start=1)] for _, at, rows in groups]
     stored = [row for rows in members for row in rows]
     _check_totals(block, where, problems)
     total = _total_row(block, stored, labels.total, labels.language) if block.totals else None
@@ -773,9 +700,7 @@ MAX_GROUPS: Final = 20
 MAX_GROUP_LABEL: Final = 200
 
 
-def _groups(
-    block: Table, where: str, problems: Problems
-) -> list[tuple[str | None, str, list[list[Scalar]]]]:
+def _groups(block: Table, where: str, problems: Problems) -> list[tuple[str | None, str, list[list[Scalar]]]]:
     """Les lignes du tableau, par groupe : le libellé du groupe (``None`` sans groupe), sa
     place dans les messages, ses lignes. Pas de lignes simples entre des groupes."""
     groups = [row for row in block.rows if isinstance(row, Group)]
@@ -783,10 +708,7 @@ def _groups(
     if not groups:
         return [(None, where, simple)]
     if simple:
-        problems.error(
-            f"{where} : des groupes ({{group, rows}}) et des lignes simples mêlés — toutes les "
-            "lignes dans des groupes, ou aucun groupe"
-        )
+        problems.error(f"{where} : des groupes ({{group, rows}}) et des lignes simples mêlés — toutes les lignes dans des groupes, ou aucun groupe")
     if len(groups) > MAX_GROUPS:
         problems.error(f"{where} : {len(groups)} groupes, au-delà de {MAX_GROUPS}")
     found: list[tuple[str | None, str, list[list[Scalar]]]] = []
@@ -816,8 +738,7 @@ def _row(
     if len(row) > len(given):
         computed = [column.header for column in columns if column.compute is not None]
         problems.error(
-            f"{at} : {len(row)} valeurs pour {len(given)} colonnes"
-            + (f" données ({', '.join(computed)} : calculée par l'outil)" if computed else "")
+            f"{at} : {len(row)} valeurs pour {len(given)} colonnes" + (f" données ({', '.join(computed)} : calculée par l'outil)" if computed else "")
         )
     cells: list[Stored] = [None] * len(columns)
     for position, index in enumerate(given):
@@ -867,9 +788,7 @@ class _Formula:
     sources: tuple[int, ...]
 
 
-def _formulas(
-    columns: Sequence[Column], headers: Sequence[str], where: str, problems: Problems
-) -> dict[int, _Formula]:
+def _formulas(columns: Sequence[Column], headers: Sequence[str], where: str, problems: Problems) -> dict[int, _Formula]:
     """Les colonnes calculées, dans l'ordre : leur formule lue et vérifiée."""
     found: dict[int, _Formula] = {}
     for index, column in enumerate(columns):
@@ -877,10 +796,7 @@ def _formulas(
             continue
         at = f"{where}, « {headers[index]} »"
         if column.type not in NUMERIC:
-            problems.error(
-                f"{at} : une colonne calculée est une colonne de nombres (integer, decimal, "
-                f"amount_eur, amount_keur ou percent ; ici {column.type})"
-            )
+            problems.error(f"{at} : une colonne calculée est une colonne de nombres (integer, decimal, amount_eur, amount_keur ou percent ; ici {column.type})")
         formula = _formula(column.compute, index, columns, headers, at, problems)
         if formula is not None:
             found[index] = formula
@@ -913,10 +829,7 @@ def _formula(
         elif position == index:
             faults.append("la formule cite sa propre colonne")
         elif columns[position].compute is not None and position > index:
-            faults.append(
-                f"« {header} » est calculée plus loin : une formule prend les colonnes "
-                "données, ou celles calculées avant elle"
-            )
+            faults.append(f"« {header} » est calculée plus loin : une formule prend les colonnes données, ou celles calculées avant elle")
         sources.append(position)
         return f"c{len(sources) - 1}"
 
@@ -928,10 +841,7 @@ def _formula(
     except SyntaxError, ValueError:
         tree = None
     if tree is None or not _allowed(tree, len(sources)):
-        problems.error(
-            f"{at} : formule {said!r} : seuls + - * / ( ), des nombres et des {{colonnes}} "
-            "(une colonne s'écrit entre accolades : {Qté})"
-        )
+        problems.error(f"{at} : formule {said!r} : seuls + - * / ( ), des nombres et des {{colonnes}} (une colonne s'écrit entre accolades : {{Qté}})")
         return None
     return None if faults else _Formula(tree, tuple(sources))
 
@@ -944,20 +854,14 @@ def _allowed(node: ast.expr, count: int) -> bool:
         case ast.UnaryOp(op=ast.USub() | ast.UAdd(), operand=operand):
             return _allowed(operand, count)
         case ast.Constant(value=value):
-            return (
-                isinstance(value, int | float)
-                and not isinstance(value, bool)
-                and math.isfinite(value)
-            )
+            return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
         case ast.Name(id=name):
             return _PLACEHOLDER.fullmatch(name) is not None and int(name[1:]) < count
         case _:
             return False
 
 
-def _computed(
-    formula: _Formula, cells: Sequence[Stored], kind: ColumnType, at: str, problems: Problems
-) -> Stored:
+def _computed(formula: _Formula, cells: Sequence[Stored], kind: ColumnType, at: str, problems: Problems) -> Stored:
     """La valeur d'une colonne calculée, arrondie à ce que le document écrit ; vide si une
     colonne citée l'est."""
     values: list[Decimal] = []
@@ -967,9 +871,7 @@ def _computed(
             return None
         values.append(Decimal(str(value)))
     try:
-        result = _evaluated(formula.tree, values).quantize(
-            _QUANTUM.get(kind, CENT), rounding=ROUND_HALF_UP
-        )
+        result = _evaluated(formula.tree, values).quantize(_QUANTUM.get(kind, CENT), rounding=ROUND_HALF_UP)
     except ZeroDivisionError:
         problems.error(f"{at} : division par zéro")
         return None
@@ -1029,10 +931,7 @@ def _invoice(block: InvoiceTotals, where: str, state: _State) -> TableOut | None
     amount, rate = block.from_table.amount.strip(), block.from_table.rate.strip()
     unknown = [name for name in (amount, rate) if name not in headers]
     if unknown:
-        problems.error(
-            f"{where} : from_table, colonne(s) inconnue(s) du tableau précédent : "
-            f"{', '.join(unknown)} (colonnes : {', '.join(headers)})"
-        )
+        problems.error(f"{where} : from_table, colonne(s) inconnue(s) du tableau précédent : {', '.join(unknown)} (colonnes : {', '.join(headers)})")
         return None
     amount_at, rate_at = headers.index(amount), headers.index(rate)
     kinds = (table.columns[amount_at].type, table.columns[rate_at].type)
@@ -1061,9 +960,7 @@ def _invoice(block: InvoiceTotals, where: str, state: _State) -> TableOut | None
     for taxed in sorted(bases):
         tax = (bases[taxed] * taxed).quantize(CENT, rounding=ROUND_HALF_UP)
         taxes += tax
-        label = labels.tax.format(
-            rate=_rate(taxed, language), base=display(float(bases[taxed]), "amount_eur", language)
-        )
+        label = labels.tax.format(rate=_rate(taxed, language), base=display(float(bases[taxed]), "amount_eur", language))
         found_lines.append((label, tax, "body"))
     included = excluded + taxes
     found_lines.append((labels.total_incl_tax, included, "total"))
@@ -1077,9 +974,7 @@ def _invoice(block: InvoiceTotals, where: str, state: _State) -> TableOut | None
             deposit = _decimal(_cents(paid))
             found_lines.append((labels.paid, deposit, "body"))
             found_lines.append((labels.due, included - deposit, "total"))
-    rows = tuple(
-        (label, display(float(value), "amount_eur", language)) for label, value, _ in found_lines
-    )
+    rows = tuple((label, display(float(value), "amount_eur", language)) for label, value, _ in found_lines)
     widths, natural = _widths(("", ""), rows)
     return TableOut(
         headers=(),
@@ -1186,9 +1081,7 @@ def _chart(
         for number, given in enumerate(block.series or [], start=1):
             at = f"{where}, série {number} « {given.name} »"
             if len(given.values) != len(categories):
-                problems.error(
-                    f"{at} : {len(given.values)} valeurs pour {len(categories)} libellés"
-                )
+                problems.error(f"{at} : {len(given.values)} valeurs pour {len(categories)} libellés")
             values = [_numeric(convert(value, kind, at, problems, zone)) for value in given.values]
             series.append((lines(given.name).strip(), tuple(values)))
     if found:
@@ -1226,23 +1119,15 @@ def _from_table(
     wanted = [source.categories, *source.values]
     unknown = [name for name in wanted if name.strip() not in headers]
     if unknown:
-        problems.error(
-            f"{where} : from_table, colonne(s) inconnue(s) du tableau précédent : "
-            f"{', '.join(unknown)} (colonnes : {', '.join(headers)})"
-        )
+        problems.error(f"{where} : from_table, colonne(s) inconnue(s) du tableau précédent : {', '.join(unknown)} (colonnes : {', '.join(headers)})")
         return None
     label_at = headers.index(source.categories.strip())
     label_kind = table.columns[label_at].type
     categories = [display(row[label_at], label_kind, language) for row in stored]
-    kinds: set[ColumnType] = {
-        table.columns[headers.index(name.strip())].type for name in source.values
-    }
+    kinds: set[ColumnType] = {table.columns[headers.index(name.strip())].type for name in source.values}
     kind: ColumnType = next(iter(kinds))
     if len(kinds) > 1 or kind not in NUMERIC:
-        problems.error(
-            f"{where} : from_table, les séries viennent de colonnes de nombres d'un même type "
-            f"(ici : {', '.join(sorted(kinds))})"
-        )
+        problems.error(f"{where} : from_table, les séries viennent de colonnes de nombres d'un même type (ici : {', '.join(sorted(kinds))})")
     series = [
         (
             name.strip(),
@@ -1267,10 +1152,7 @@ def _check_chart(
     if not categories:
         problems.error(f"{where} : aucun libellé, le graphique serait vide")
     if len(categories) > MAX_CATEGORIES:
-        problems.error(
-            f"{where} : {len(categories)} libellés, au-delà de {MAX_CATEGORIES} — regrouper, "
-            "ou garder les principaux"
-        )
+        problems.error(f"{where} : {len(categories)} libellés, au-delà de {MAX_CATEGORIES} — regrouper, ou garder les principaux")
     if not series:
         problems.error(f"{where} : aucune série")
     if len(series) > MAX_SERIES:
@@ -1282,8 +1164,7 @@ def _check_chart(
             problems.error(f"{where} : un graphique pie n'a qu'une série")
         if len(categories) > MAX_SLICES:
             problems.error(
-                f"{where} : {len(categories)} secteurs, au-delà de {MAX_SLICES} — illisible ; "
-                "garder les principaux et regrouper le reste en « Autres », ou bar"
+                f"{where} : {len(categories)} secteurs, au-delà de {MAX_SLICES} — illisible ; garder les principaux et regrouper le reste en « Autres », ou bar"
             )
         values = [value for _, values in series[:1] for value in values if value is not None]
         if any(value < 0 for value in values):
@@ -1326,15 +1207,12 @@ def _image(block: Image, pictures: Pictures, where: str, problems: Problems) -> 
         )
     if found.orientation in (5, 6, 7, 8):
         problems.warn(
-            f"{where} : {path} est une photo prise de côté (orientation EXIF "
-            f"{found.orientation}) : elle peut s'afficher couchée ; la redresser avant"
+            f"{where} : {path} est une photo prise de côté (orientation EXIF {found.orientation}) : elle peut s'afficher couchée ; la redresser avant"
         )
     if found.animated:
         problems.warn(f"{where} : {path} est animée : seule sa première image s'affiche")
     if not alt and caption is None:
-        problems.warn(
-            f"{where} : ni alt ni caption : l'image n'a pas de texte pour qui ne la voit pas"
-        )
+        problems.warn(f"{where} : ni alt ni caption : l'image n'a pas de texte pour qui ne la voit pas")
     return ImageOut(
         picture=found,
         source=path,
@@ -1367,10 +1245,7 @@ def _check_images(arguments: WriteArguments, pictures: Pictures, problems: Probl
         problems.error(f"{count} images, au-delà de {MAX_IMAGES}")
     distinct = {p.digest: len(p.data) for p in pictures.values() if isinstance(p, Picture)}
     if sum(distinct.values()) > MAX_IMAGES_BYTES:
-        problems.error(
-            f"images de {sum(distinct.values())} octets en tout, au-delà de {MAX_IMAGES_BYTES} "
-            "— des images plus légères (JPEG pour une photo)"
-        )
+        problems.error(f"images de {sum(distinct.values())} octets en tout, au-delà de {MAX_IMAGES_BYTES} — des images plus légères (JPEG pour une photo)")
 
 
 def _check_totals(block: Table, where: str, problems: Problems) -> None:
@@ -1382,16 +1257,12 @@ def _check_totals(block: Table, where: str, problems: Problems) -> None:
             continue
         kind = block.columns[headers.index(header)].type
         if aggregate in {"sum", "average"} and kind not in NUMERIC:
-            problems.error(
-                f"{where} : {aggregate} sur « {header} », colonne {kind} : pas un nombre"
-            )
+            problems.error(f"{where} : {aggregate} sur « {header} », colonne {kind} : pas un nombre")
         elif aggregate in {"min", "max"} and kind not in ORDERED_TYPES:
             problems.error(f"{where} : {aggregate} sur « {header} », colonne {kind} : sans ordre")
 
 
-def _total_row(
-    block: Table, stored: Sequence[Sequence[Stored]], label: str, language: Language
-) -> tuple[str, ...]:
+def _total_row(block: Table, stored: Sequence[Sequence[Stored]], label: str, language: Language) -> tuple[str, ...]:
     """La ligne de total (ou de sous-total) de ces lignes : un agrégat par colonne qui en a
     un, ``label`` à la place de la première sans."""
     totals = block.totals or {}
@@ -1417,9 +1288,7 @@ def _total_label(block: Table) -> int | None:
     return free[0][0] if free else None
 
 
-def _aggregate(
-    aggregate: Aggregate, values: Sequence[Stored], kind: ColumnType, language: Language
-) -> str:
+def _aggregate(aggregate: Aggregate, values: Sequence[Stored], kind: ColumnType, language: Language) -> str:
     if aggregate == "count":
         return display(len(values), "integer", language)
     if not values:
@@ -1463,9 +1332,7 @@ def _align(kind: ColumnType) -> Align:
     return "center" if kind in CENTERED else "left"
 
 
-def _widths(
-    headers: Sequence[str], rows: Sequence[Sequence[str]]
-) -> tuple[tuple[float, ...], float]:
+def _widths(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> tuple[tuple[float, ...], float]:
     """La part de la largeur utile de chaque colonne, d'après ce qu'elle contient ; et la
     part de la page que le tableau demande (1 au plus).
 
@@ -1599,9 +1466,7 @@ def inline(text: str) -> Inline:
         position = end
         if mark in ("<u>", "</u>"):
             # Une balise : <u> ouvre s'il est refermé plus loin, </u> ferme ce qui est ouvert.
-            if (mark == "<u>" and not underline and "</u>" in text[end:]) or (
-                mark == "</u>" and underline
-            ):
+            if (mark == "<u>" and not underline and "</u>" in text[end:]) or (mark == "</u>" and underline):
                 flush()
                 underline = not underline
             else:
@@ -1716,11 +1581,7 @@ def _targets(arguments: WriteArguments, template: Template | None) -> Targets:
     hidden: set[str] = set()
 
     def headings(written: Sequence[WrittenBlock]) -> None:
-        titles.extend(
-            plain(inline(lines(block.text).strip()))
-            for block in written
-            if isinstance(block, Heading)
-        )
+        titles.extend(plain(inline(lines(block.text).strip())) for block in written if isinstance(block, Heading))
 
     if template is None:
         headings(arguments.blocks)
@@ -1777,10 +1638,7 @@ def rich(text: str, where: str, state: _State, *, allow: frozenset[Markup] = EVE
         if rest.startswith("^[") and "note" in allow:
             end = _closing(text, position + 1)
             if end is None:
-                problems.error(
-                    f"{where} : « ^[ » sans « ] » : une note se ferme par ] (\\^[ pour écrire "
-                    "^[ tel quel)"
-                )
+                problems.error(f"{where} : « ^[ » sans « ] » : une note se ferme par ] (\\^[ pour écrire ^[ tel quel)")
                 said.append("^[")
                 position += 2
                 continue
@@ -1788,9 +1646,7 @@ def rich(text: str, where: str, state: _State, *, allow: frozenset[Markup] = EVE
             if not content:
                 problems.error(f"{where} : note vide (^[])")
             elif len(content) > MAX_NOTE:
-                problems.error(
-                    f"{where} : note de {len(content)} caractères, au-delà de {MAX_NOTE}"
-                )
+                problems.error(f"{where} : note de {len(content)} caractères, au-delà de {MAX_NOTE}")
             if "^[" in content.replace("\\^[", ""):
                 problems.error(f"{where} : pas de note dans une note")
             inner = rich(content, f"{where}, note", state, allow=allow - {"note"})
@@ -1802,10 +1658,7 @@ def rich(text: str, where: str, state: _State, *, allow: frozenset[Markup] = EVE
         if rest.startswith("§[") and "ref" in allow:
             end = text.find("]", position + 2)
             if end < 0:
-                problems.error(
-                    f"{where} : « §[ » sans « ] » : un renvoi se ferme par ] (\\§[ pour écrire "
-                    "§[ tel quel)"
-                )
+                problems.error(f"{where} : « §[ » sans « ] » : un renvoi se ferme par ] (\\§[ pour écrire §[ tel quel)")
                 said.append("§[")
                 position += 2
                 continue
@@ -1820,9 +1673,7 @@ def rich(text: str, where: str, state: _State, *, allow: frozenset[Markup] = EVE
             scheme = _SCHEME.match(address)
             if scheme is not None:
                 if scheme.group(1).lower() not in LINK_SCHEMES:
-                    problems.error(
-                        f"{where} : lien {address!r} : seuls https, http et mailto sont permis"
-                    )
+                    problems.error(f"{where} : lien {address!r} : seuls https, http et mailto sont permis")
                 places.append((address, inline(found.group(1))))
                 said.append(chr(_PLACE + len(places) - 1))
                 position = found.end()
@@ -1861,15 +1712,10 @@ def _target(written: str, where: str, state: _State) -> Run:
     if wanted in targets.by_key:
         state.problems.error(f"{where} : renvoi §[{written}] : deux titres de ce nom")
     elif wanted in targets.hidden:
-        state.problems.error(
-            f"{where} : renvoi §[{written}] : cette section n'imprime pas son titre "
-            "(show_title: false), un renvoi ne peut pas la viser"
-        )
+        state.problems.error(f"{where} : renvoi §[{written}] : cette section n'imprime pas son titre (show_title: false), un renvoi ne peut pas la viser")
     else:
         known = " · ".join(targets.titles) or "aucun"
-        state.problems.error(
-            f"{where} : renvoi §[{written}] : aucun titre de ce nom (titres : {known})"
-        )
+        state.problems.error(f"{where} : renvoi §[{written}] : aucun titre de ce nom (titres : {known})")
     return Run(written)
 
 
@@ -1889,13 +1735,7 @@ def _expanded(runs: Inline, places: Sequence[Run | tuple[str, Inline]]) -> list[
                 piece = ""
             place = places[index]
             if isinstance(place, Run):
-                found.append(
-                    dataclasses.replace(
-                        place, bold=run.bold, italic=run.italic, underline=run.underline
-                    )
-                    if place.ref is not None
-                    else place
-                )
+                found.append(dataclasses.replace(place, bold=run.bold, italic=run.italic, underline=run.underline) if place.ref is not None else place)
                 continue
             address, label = place
             found.extend(
@@ -1924,8 +1764,7 @@ def _merged(runs: Sequence[Run]) -> Inline:
             and run.ref is None
             and last.note is None
             and last.ref is None
-            and (last.bold, last.italic, last.underline, last.link)
-            == (run.bold, run.italic, run.underline, run.link)
+            and (last.bold, last.italic, last.underline, last.link) == (run.bold, run.italic, run.underline, run.link)
         ):
             merged[-1] = dataclasses.replace(last, text=last.text + run.text)
         else:

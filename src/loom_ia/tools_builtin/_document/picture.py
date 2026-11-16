@@ -90,14 +90,11 @@ def parse(data: bytes) -> Picture:
             said = (
                 "image SVG : la convertir en PNG"
                 if data.lstrip()[:5] in (b"<?xml", b"<svg ", b"<svg>")
-                else "format non reconnu : PNG ou JPEG attendu (le format se lit dans le "
-                "fichier, pas dans son nom)"
+                else "format non reconnu : PNG ou JPEG attendu (le format se lit dans le fichier, pas dans son nom)"
             )
             raise PictureError(said)
     if width * height > MAX_PIXELS:
-        raise PictureError(
-            f"{width} x {height} pixels, au-delà de {MAX_PIXELS // 1_000_000} millions : la réduire"
-        )
+        raise PictureError(f"{width} x {height} pixels, au-delà de {MAX_PIXELS // 1_000_000} millions : la réduire")
     fmt: PictureFormat = "png" if data.startswith(PNG_SIGNATURE) else "jpeg"
     return Picture(
         format=fmt,
@@ -190,9 +187,7 @@ def _png_header(body: bytes) -> tuple[int, int, int, int, int]:
     if depth not in _PNG_DEPTHS.get(color, set()) or compression or filtering or interlace > 1:
         raise PictureError("PNG abîmé (en-tête)")
     if width * height > MAX_PIXELS:
-        raise PictureError(
-            f"{width} x {height} pixels, au-delà de {MAX_PIXELS // 1_000_000} millions : la réduire"
-        )
+        raise PictureError(f"{width} x {height} pixels, au-delà de {MAX_PIXELS // 1_000_000} millions : la réduire")
     return width, height, depth, color, interlace
 
 
@@ -244,8 +239,7 @@ def _jpeg(data: bytes) -> tuple[int, int, int]:
             size = (width, height)
         elif marker in _JPEG_OTHER_SOF:
             raise PictureError(
-                "JPEG d'un codage que Word n'affiche pas (sans perte, hiérarchique ou "
-                "arithmétique) : le réenregistrer en JPEG standard ou en PNG"
+                "JPEG d'un codage que Word n'affiche pas (sans perte, hiérarchique ou arithmétique) : le réenregistrer en JPEG standard ou en PNG"
             )
         elif marker == 0xE1 and segment.startswith(b"Exif\x00\x00"):
             orientation = _orientation(segment[6:])

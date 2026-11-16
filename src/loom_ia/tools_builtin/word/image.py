@@ -34,9 +34,7 @@ def inline(relation: str, drawing: int, image: ImageOut, *, keep_next: bool) -> 
     keep = "<w:keepNext/>" if keep_next else ""
     return (
         f'<w:p><w:pPr>{keep}<w:spacing w:before="120" w:after="60"/><w:jc w:val="center"/>'
-        "</w:pPr>"
-        + run(relation, drawing, image.width * EMU, image.height * EMU, image.source, image.alt)
-        + "</w:p>"
+        "</w:pPr>" + run(relation, drawing, image.width * EMU, image.height * EMU, image.source, image.alt) + "</w:p>"
     )
 
 

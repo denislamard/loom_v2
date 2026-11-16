@@ -140,10 +140,7 @@ def pose(config: LoomConfig, agent: str) -> tuple[LoomConfig, dict[str, str]]:
         TriggerSpec(
             name=MATIN,
             agent=agent,
-            message=(
-                "C'est l'heure de la tournée : relance le client du devis "
-                f"{DEVIS[DUPONT]}, sur un ton cordial."
-            ),
+            message=(f"C'est l'heure de la tournée : relance le client du devis {DEVIS[DUPONT]}, sur un ton cordial."),
             delivery_header=LIVRAISON,
         ),
         # Le CRM de l'artisan : il envoie sa charge à lui, et le gabarit y
@@ -151,10 +148,7 @@ def pose(config: LoomConfig, agent: str) -> tuple[LoomConfig, dict[str, str]]:
         TriggerSpec(
             name=CRM,
             agent=agent,
-            message=(
-                "Relance le client du devis {{ payload.devis.numero }} "
-                "({{ payload.client.nom }}), sur un ton cordial."
-            ),
+            message=("Relance le client du devis {{ payload.devis.numero }} ({{ payload.client.nom }}), sur un ton cordial."),
             session="devis-{{ payload.devis.numero }}",
             delivery_header=LIVRAISON,
         ),
@@ -294,9 +288,7 @@ async def porte(loom: Loom, base: str, jetons: dict[str, str], controle: Control
         "devis": {"numero": DEVIS[DUPONT], "montant": 1840},
         "client": {"nom": "Mme Martin", "email": "mme.martin@example.com"},
     }
-    code, vu = await livre(
-        base, CRM, key=jetons["planificateur"], charge=charge, delivery=f"crm-{TOUR}"
-    )
+    code, vu = await livre(base, CRM, key=jetons["planificateur"], charge=charge, delivery=f"crm-{TOUR}")
     ligne = controle.code(f"POST hooks/{CRM}", 202, code, vu)
     print(f"  avec charge → {ligne} run {bref(str(vu.get('run_id')))}")
     print(f"  {'':<14}session {vu.get('session_id')}")
@@ -305,9 +297,7 @@ async def porte(loom: Loom, base: str, jetons: dict[str, str], controle: Control
     titre("Ce que le journal porte")
     for nom, ouvre in ((MATIN, ouvert), (CRM, vu)):
         session_id = SessionId(str(ouvre["session_id"]))
-        events = await loom.events(
-            RunId(str(ouvre["run_id"])), session_id=session_id, tenant_id=DUPONT
-        )
+        events = await loom.events(RunId(str(ouvre["run_id"])), session_id=session_id, tenant_id=DUPONT)
         [started] = [event for event in events if event.type == "run.started"]
         print(f"  {nom}")
         print(f"  {'':<2}facette trigger : {started.facets.get('trigger')}")
@@ -316,9 +306,7 @@ async def porte(loom: Loom, base: str, jetons: dict[str, str], controle: Control
             f"le run de {nom} ne porte pas sa porte en facette",
             started.facets.get("trigger") == nom,
         )
-    events = await loom.events(
-        RunId(str(vu["run_id"])), session_id=SessionId(str(vu["session_id"])), tenant_id=DUPONT
-    )
+    events = await loom.events(RunId(str(vu["run_id"])), session_id=SessionId(str(vu["session_id"])), tenant_id=DUPONT)
     controle.tient(
         "le gabarit n'a pas puisé dans la charge du CRM",
         DEVIS[DUPONT] in demande(events) and "Mme Martin" in demande(events),
@@ -329,9 +317,7 @@ async def porte(loom: Loom, base: str, jetons: dict[str, str], controle: Control
     )
 
     titre("La porte est une facette : on peut demander au journal ce qu'elle a lancé")
-    ouverts = await loom.query(
-        EventQuery(tenant_id=DUPONT, types=("run.started",), facets={"trigger": MATIN})
-    )
+    ouverts = await loom.query(EventQuery(tenant_id=DUPONT, types=("run.started",), facets={"trigger": MATIN}))
     print(f"  EventQuery(facets={{trigger: {MATIN}}}) → {len(ouverts)} run(s)")
     for event in ouverts[-3:]:
         print(f"  {'':<2}{bref(event.run_id)}  {event.ts:%H:%M:%S}")
@@ -339,8 +325,7 @@ async def porte(loom: Loom, base: str, jetons: dict[str, str], controle: Control
         "  le run du planificateur en fait partie, celui du CRM non : "
         + controle.tient(
             "la recherche par facette ne distingue pas les portes",
-            str(ouvert["run_id"]) in [e.run_id for e in ouverts]
-            and str(vu["run_id"]) not in [e.run_id for e in ouverts],
+            str(ouvert["run_id"]) in [e.run_id for e in ouverts] and str(vu["run_id"]) not in [e.run_id for e in ouverts],
         )
     )
 
@@ -372,9 +357,7 @@ async def doublons(loom: Loom, base: str, jetons: dict[str, str], controle: Cont
         "  un run, pas deux : "
         + controle.tient(
             "la seconde livraison a ouvert un second run",
-            premier.get("run_id") == second.get("run_id")
-            and premier.get("repeated") is False
-            and second.get("repeated") is True,
+            premier.get("run_id") == second.get("run_id") and premier.get("repeated") is False and second.get("repeated") is True,
         )
     )
     print("  (l'identifiant de livraison **est** l'identifiant du run : rien à tenir à côté)")
@@ -407,12 +390,7 @@ async def doublons(loom: Loom, base: str, jetons: dict[str, str], controle: Cont
     print(f"  corps « {{pas du json » → {ligne}")
     await loom.drain()
     journaux = {record.session_id for record in await loom.sessions(tenant_id=DUPONT)}
-    print(
-        "  rien au journal pour une charge refusée : "
-        + controle.tient(
-            "une charge illisible a laissé un journal", f"casse-{TOUR}" not in journaux
-        )
-    )
+    print("  rien au journal pour une charge refusée : " + controle.tient("une charge illisible a laissé un journal", f"casse-{TOUR}" not in journaux))
 
 
 # --- Cas 3 : ce que la clé décide -------------------------------------------
@@ -462,9 +440,7 @@ async def cles(loom: Loom, base: str, jetons: dict[str, str], controle: Controle
 # --- Mise en route -----------------------------------------------------------
 
 
-async def jouer(
-    nom: str, loom: Loom, base: str, jetons: dict[str, str], controle: Controle
-) -> None:
+async def jouer(nom: str, loom: Loom, base: str, jetons: dict[str, str], controle: Controle) -> None:
     print(f"\n{'─' * 78}\nCas {nom}\n{'─' * 78}")
     if nom == "porte":
         await porte(loom, base, jetons, controle)
@@ -475,9 +451,7 @@ async def jouer(
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="Déclencheurs : une porte déclarée, sa charge, ses doublons, sa clé"
-    )
+    parser = argparse.ArgumentParser(description="Déclencheurs : une porte déclarée, sa charge, ses doublons, sa clé")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     args = parser.parse_args(argv)

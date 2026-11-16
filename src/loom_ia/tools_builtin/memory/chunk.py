@@ -90,10 +90,7 @@ def chunk_document(doc_id: str, title: str, text: str, spec: ChunkingSpec) -> li
         for section in _carry_leads(_split_sections(title, text))
         for body in _split_body(section.body, spec)
     ]
-    return [
-        Chunk(doc_id=doc_id, index=i, heading_path=piece.heading_path, text=piece.body)
-        for i, piece in enumerate(_merge_tiny(pieces, spec))
-    ]
+    return [Chunk(doc_id=doc_id, index=i, heading_path=piece.heading_path, text=piece.body) for i, piece in enumerate(_merge_tiny(pieces, spec))]
 
 
 def _split_sections(title: str, text: str) -> list[_Section]:

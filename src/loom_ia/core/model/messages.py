@@ -35,13 +35,9 @@ class Message(DomainModel):
             raise ValueError("Un message doit contenir au moins un bloc")
         for block in self.blocks:
             if isinstance(block, ToolResultBlock) != (self.role == "tool"):
-                raise ValueError(
-                    "Les résultats d'outils vont dans un message 'tool', et uniquement là"
-                )
+                raise ValueError("Les résultats d'outils vont dans un message 'tool', et uniquement là")
             if isinstance(block, ToolCallBlock | ReasoningBlock) and self.role != "assistant":
-                raise ValueError(
-                    f"Un bloc {block.type!r} n'est permis que dans un message 'assistant'"
-                )
+                raise ValueError(f"Un bloc {block.type!r} n'est permis que dans un message 'assistant'")
         return self
 
     @classmethod
@@ -80,12 +76,7 @@ def is_session_state(message: Message) -> bool:
     valeurs du state : seul un message qui commence par elle passe pour lui.
     """
     first = message.blocks[0]
-    return (
-        message.role == "user"
-        and len(message.blocks) == 1
-        and isinstance(first, TextBlock)
-        and first.text.startswith(f"<{SESSION_STATE_TAG}>")
-    )
+    return message.role == "user" and len(message.blocks) == 1 and isinstance(first, TextBlock) and first.text.startswith(f"<{SESSION_STATE_TAG}>")
 
 
 # Début des notes que le moteur ajoute à une requête, entre crochets : « [Note
@@ -100,9 +91,4 @@ def is_system_note(message: Message) -> bool:
     arguments remplacés suit les résultats d'un tour, au milieu de la boucle.
     """
     first = message.blocks[0]
-    return (
-        message.role == "user"
-        and len(message.blocks) == 1
-        and isinstance(first, TextBlock)
-        and first.text.startswith(f"[{SYSTEM_NOTE} : ")
-    )
+    return message.role == "user" and len(message.blocks) == 1 and isinstance(first, TextBlock) and first.text.startswith(f"[{SYSTEM_NOTE} : ")

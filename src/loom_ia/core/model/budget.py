@@ -166,9 +166,7 @@ class Budgets(DomainModel):
             if part in given:
                 mine: RunBudget | SessionBudget | TenantBudget = getattr(self, part)
                 theirs: RunBudget | SessionBudget | TenantBudget = getattr(override, part)
-                update[part] = mine.model_copy(
-                    update={name: getattr(theirs, name) for name in theirs.model_fields_set}
-                )
+                update[part] = mine.model_copy(update={name: getattr(theirs, name) for name in theirs.model_fields_set})
         if "on_exceed" in given:
             update["on_exceed"] = override.on_exceed
         return self.model_copy(update=update)

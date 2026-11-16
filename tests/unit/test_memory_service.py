@@ -62,9 +62,7 @@ async def test_a_note_is_found_by_its_words_within_its_project(memory: MemorySer
 
 
 async def test_tags_filter_the_search(memory: MemoryService) -> None:
-    first = await memory.add(
-        Extracted("Devis", NOTE), kind="text", source=None, project="p", tags=["Devis", " 2026 "]
-    )
+    first = await memory.add(Extracted("Devis", NOTE), kind="text", source=None, project="p", tags=["Devis", " 2026 "])
     await memory.add(Extracted("Autre", NOTE + " Bis."), kind="text", source=None, project="p")
     found = await memory.search("chauffe-eau", project="p", tags=["devis"])
     assert [hit.doc_id for hit in found] == [first.doc_id]
@@ -75,9 +73,7 @@ async def test_tags_filter_the_search(memory: MemoryService) -> None:
 async def test_the_same_text_is_kept_once_per_project(memory: MemoryService) -> None:
     doc_id = await add(memory, NOTE, "Devis Martin")
     again = await memory.add(
-        Extracted(
-            "Autre titre", "  le DEVIS d-2026-042 de mme martin porte sur un chauffe-eau de 200 l. "
-        ),
+        Extracted("Autre titre", "  le DEVIS d-2026-042 de mme martin porte sur un chauffe-eau de 200 l. "),
         kind="text",
         source=None,
         project="dupont",
@@ -92,17 +88,11 @@ async def test_the_same_text_is_kept_once_per_project(memory: MemoryService) -> 
 async def test_a_source_is_one_document_per_project_and_never_moves(
     memory: MemoryService,
 ) -> None:
-    first = await memory.add(
-        Extracted("Page", "Version 1."), kind="url", source="https://x.fr/p", project="a"
-    )
-    again = await memory.add(
-        Extracted("Page", "Version 2."), kind="url", source="https://x.fr/p", project="a"
-    )
+    first = await memory.add(Extracted("Page", "Version 1."), kind="url", source="https://x.fr/p", project="a")
+    again = await memory.add(Extracted("Page", "Version 2."), kind="url", source="https://x.fr/p", project="a")
     assert again.doc_id == first.doc_id
     assert again.updated
-    other = await memory.add(
-        Extracted("Page", "Version 3."), kind="url", source="https://x.fr/p", project="b"
-    )
+    other = await memory.add(Extracted("Page", "Version 3."), kind="url", source="https://x.fr/p", project="b")
     # Dans un autre projet, la même source est un autre document : celui de « a » reste.
     assert other.doc_id != first.doc_id
     assert (await memory.get(first.doc_id, project="a")).text == "Version 2."
@@ -144,9 +134,7 @@ async def test_a_shorter_rewrite_leaves_no_stale_passage(tmp_path: Path) -> None
     assert memory.store.count() == (1, 1)
 
 
-async def test_a_failed_write_leaves_nothing_behind(
-    memory: MemoryService, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_failed_write_leaves_nothing_behind(memory: MemoryService, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
     real = store_module.pack_sparse
 
@@ -232,9 +220,7 @@ async def test_another_process_writing_refreshes_the_index(tmp_path: Path) -> No
 async def test_concurrent_writes_on_one_file_all_land(tmp_path: Path) -> None:
     path = tmp_path / "concurrente.db"
     services = [service_on(path) for _ in range(4)]
-    await asyncio.gather(
-        *(add(service, f"Note numéro {i}.", f"Note {i}") for i, service in enumerate(services))
-    )
+    await asyncio.gather(*(add(service, f"Note numéro {i}.", f"Note {i}") for i, service in enumerate(services)))
     assert services[0].store.count() == (4, 4)
 
 
@@ -295,9 +281,7 @@ class SlowEmbedder(FakeEmbedder):
         self.lazy = LazyModel[FakeEmbedder]("lent", lambda: "cpu", lambda _: FakeEmbedder(), id)
         self.computed = 0
 
-    def embed_documents(
-        self, texts: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[Embedding]:
+    def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
         def run(model: FakeEmbedder) -> list[Embedding]:
             found: list[Embedding] = []
             for text in texts:

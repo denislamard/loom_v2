@@ -92,9 +92,7 @@ _NAMESPACES: Final = (
 )
 _REL_NS: Final = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _DC_TITLE: Final = "{http://purl.org/dc/elements/1.1/}title"
-_CP_CATEGORY: Final = (
-    "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}category"
-)
+_CP_CATEGORY: Final = "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}category"
 _FALSE: Final = frozenset({"0", "false", "off"})
 # Le nom du style de tableau de disposition qu'écrit l'outil (``word/style.py``).
 LAYOUT_STYLE: Final = "loom layout"
@@ -137,10 +135,7 @@ def check_suffix(path: str) -> None:
     lowered = path.lower()
     for suffix, name in OTHER_FORMATS.items():
         if lowered.endswith(suffix):
-            raise ToolError(
-                f"{path} : format {name} non lu — l'enregistrer en .docx depuis Word "
-                "ou LibreOffice."
-            )
+            raise ToolError(f"{path} : format {name} non lu — l'enregistrer en .docx depuis Word ou LibreOffice.")
     if not lowered.endswith(READABLE):
         raise ToolError(f"{path} : seuls les documents .docx, .docm et .dotx sont lus.")
 
@@ -247,18 +242,13 @@ def _open(data: bytes, where: str) -> _Package:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
         # Un document protégé par mot de passe est un conteneur OLE, pas un zip.
-        raise ToolError(
-            f"{where} : pas un document .docx lisible (fichier vide, renommé, ou protégé "
-            "par mot de passe)."
-        ) from None
+        raise ToolError(f"{where} : pas un document .docx lisible (fichier vide, renommé, ou protégé par mot de passe).") from None
     members = archive.infolist()
     if len(members) > MAX_MEMBERS:
         raise ToolError(f"{where} : {len(members)} fichiers dans le document, refusé.")
     total = sum(member.file_size for member in members)
     if total > MAX_UNCOMPRESSED:
-        raise ToolError(
-            f"{where} : {total} octets une fois décompressé, au-delà de {MAX_UNCOMPRESSED}."
-        )
+        raise ToolError(f"{where} : {total} octets une fois décompressé, au-delà de {MAX_UNCOMPRESSED}.")
     names = {member.filename for member in members}
     body = _main_part(archive, names) or "word/document.xml"
     if body not in names:
@@ -295,14 +285,11 @@ def _external(archive: zipfile.ZipFile, names: set[str], part: str) -> dict[str,
     return {
         relation.get("Id", ""): relation.get("Target", "")
         for relation in _parse(archive.read(rels)).iter(f"{_REL_NS}Relationship")
-        if relation.get("TargetMode") == "External"
-        and relation.get("Type", "").endswith("/hyperlink")
+        if relation.get("TargetMode") == "External" and relation.get("Type", "").endswith("/hyperlink")
     }
 
 
-def _note_texts(
-    archive: zipfile.ZipFile, names: set[str], related: Mapping[str, str], where: str
-) -> dict[str, str]:
+def _note_texts(archive: zipfile.ZipFile, names: set[str], related: Mapping[str, str], where: str) -> dict[str, str]:
     """Le texte de chaque note de bas de page et de fin (sans ses séparateurs), ses liens
     et ses renvois compris, ses paragraphes en lignes."""
     found: dict[str, str] = {}
@@ -317,11 +304,7 @@ def _note_texts(
                 continue
             if _attribute(note, "type") not in (None, "normal"):
                 continue
-            lines = (
-                _markdown(_segments(paragraph, inline))
-                for paragraph in note.iter()
-                if _local(paragraph.tag) == "p"
-            )
+            lines = (_markdown(_segments(paragraph, inline)) for paragraph in note.iter() if _local(paragraph.tag) == "p")
             text = "\n".join(line for line in lines if line)
             if text:
                 found[f"{prefix}{_attribute(note, 'id')}"] = text
@@ -349,9 +332,7 @@ def _main_part(archive: zipfile.ZipFile, names: set[str]) -> str | None:
     return None
 
 
-def _relations(
-    archive: zipfile.ZipFile, names: set[str], body: str, *, by_id: str | None = None
-) -> dict[str, str]:
+def _relations(archive: zipfile.ZipFile, names: set[str], body: str, *, by_id: str | None = None) -> dict[str, str]:
     """Les parties liées au corps, par type (« styles », « numbering »…) ; avec ``by_id``,
     celles de ce type, par identifiant de relation (les graphiques)."""
     folder, _, file = body.rpartition("/")
@@ -464,9 +445,7 @@ def _numbering(root: Element | None) -> dict[str, dict[int, bool]]:
     return found
 
 
-def _properties(
-    archive: zipfile.ZipFile, names: set[str], where: str
-) -> tuple[str | None, str | None]:
+def _properties(archive: zipfile.ZipFile, names: set[str], where: str) -> tuple[str | None, str | None]:
     """Le titre et la catégorie du document (où l'écriture range le modèle suivi)."""
     if "docProps/core.xml" not in names:
         return None, None
@@ -586,8 +565,7 @@ def read(
     elif templates is not None and package.category is not None:
         result["template"] = package.category
         notes.append(
-            f"Le document dit suivre le modèle « {package.category} », que cet outil ne "
-            "déclare pas : pour le réécrire, nommer un modèle déclaré, ou none."
+            f"Le document dit suivre le modèle « {package.category} », que cet outil ne déclare pas : pour le réécrire, nommer un modèle déclaré, ou none."
         )
     if notes:
         result["notes"] = notes
@@ -611,9 +589,7 @@ def _resolved(value: JsonValue, anchors: Mapping[str, str]) -> JsonValue:
     return value
 
 
-def _by_section(
-    result: dict[str, JsonValue], reading: _Reading, template: Template, notes: list[JsonValue]
-) -> None:
+def _by_section(result: dict[str, JsonValue], reading: _Reading, template: Template, notes: list[JsonValue]) -> None:
     """Un document qui suit un modèle : ses blocs rangés par section, dans l'ordre ; le
     titre du document est déjà dans ``title`` (il est dans la section d'une page de garde,
     qui le porte : il n'en est pas un bloc)."""
@@ -633,10 +609,7 @@ def _by_section(
     del result["blocks"]
     if outside:
         result["blocks"] = outside
-        notes.append(
-            f"{len(outside)} bloc(s) hors des sections du modèle (dans 'blocks') : à mettre "
-            "dans une section pour réécrire le document."
-        )
+        notes.append(f"{len(outside)} bloc(s) hors des sections du modèle (dans 'blocks') : à mettre dans une section pour réécrire le document.")
 
 
 def _mark(reading: _Reading, element: Element) -> None:
@@ -698,10 +671,7 @@ def _walk(package: _Package, reading: _Reading, deadline: float, where: str) -> 
                 if body is not None and body_depth is not None and depth == body_depth:
                     seen += 1
                     if seen % 200 == 0 and time.monotonic() > deadline:
-                        raise ToolError(
-                            f"{where} : lecture arrêtée après {READ_DEADLINE:g} s ; "
-                            "document trop long ou trop complexe."
-                        )
+                        raise ToolError(f"{where} : lecture arrêtée après {READ_DEADLINE:g} s ; document trop long ou trop complexe.")
                     _block(package, reading, element)
                     # Libéré une fois rendu : la mémoire ne suit pas la taille du corps.
                     body.remove(element)
@@ -791,9 +761,7 @@ def _row_style(package: _Package, row: Element) -> str:
         if _local(paragraph.tag) == "p":
             properties = _child(paragraph, "pPr")
             style = _child(properties, "pStyle") if properties is not None else None
-            return _style_name(
-                package.styles, _attribute(style, "val") if style is not None else None
-            )
+            return _style_name(package.styles, _attribute(style, "val") if style is not None else None)
     return ""
 
 
@@ -817,9 +785,7 @@ def _attendance(package: _Package, table: Element) -> dict[str, JsonValue] | Non
 
     # L'en-tête est en gras par son style : son emphase ne revient pas.
     sessions: list[JsonValue] = [*texts(rows[0], emphasis=False)[1:]]
-    participants: list[JsonValue] = [
-        found[0] for row in rows[1:] if (found := texts(row)) and found[0]
-    ]
+    participants: list[JsonValue] = [found[0] for row in rows[1:] if (found := texts(row)) and found[0]]
     return {"type": "attendance", "participants": participants, "sessions": sessions}
 
 
@@ -856,17 +822,10 @@ def _fields(package: _Package, table: Element) -> dict[str, JsonValue]:
     ses liens, ses notes)."""
     items: list[JsonValue] = []
     for row in table:
-        cells = (
-            [cell for cell in row if _local(cell.tag) == "tc"] if _local(row.tag) == "tr" else []
-        )
+        cells = [cell for cell in row if _local(cell.tag) == "tc"] if _local(row.tag) == "tr" else []
         if len(cells) < 2:
             continue
-        value = "\n".join(
-            said
-            for paragraph in cells[1].iter()
-            if _local(paragraph.tag) == "p"
-            and (said := _markdown(_segments(paragraph, package.inline)))
-        )
+        value = "\n".join(said for paragraph in cells[1].iter() if _local(paragraph.tag) == "p" and (said := _markdown(_segments(paragraph, package.inline))))
         items.append([_cell_text(cells[0]), value])
     return {"type": "fields", "items": items}
 
@@ -1037,11 +996,7 @@ def _without_number(paragraph: Element) -> Element:
             for part in child:
                 if _local(part.tag) == "instrText" and (part.text or "").split()[:1] == ["SEQ"]:
                     sequence = True
-                elif (
-                    sequence
-                    and _local(part.tag) == "fldChar"
-                    and _attribute(part, "fldCharType") == "end"
-                ):
+                elif sequence and _local(part.tag) == "fldChar" and _attribute(part, "fldCharType") == "end":
                     after = index + 1
             if after is not None:
                 break
@@ -1117,11 +1072,7 @@ def _chart(package: _Package, relation: str) -> dict[str, JsonValue]:
         if not categories and cat is not None:
             categories = [str(v) for v in _points(cat)]
         name_at = ser.find(f"{_CHART_NS}tx")
-        series_name = (
-            "".join(v.text or "" for v in name_at.iter(f"{_CHART_NS}v"))
-            if name_at is not None
-            else ""
-        )
+        series_name = "".join(v.text or "" for v in name_at.iter(f"{_CHART_NS}v")) if name_at is not None else ""
         val = ser.find(f"{_CHART_NS}val")
         values = [_float(v) for v in _points(val)] if val is not None else []
         series.append({"name": series_name[:MAX_CELL_CHARS], "values": values})
@@ -1212,9 +1163,7 @@ def _width(package: _Package, frame: Element, relation: str) -> ImageWidth:
     return min(IMAGE_WIDTHS, key=lambda wanted: abs(IMAGE_WIDTHS[wanted] - width))
 
 
-def _style_meaning(
-    styles: dict[str, _Style], style_id: str | None
-) -> tuple[bool, int | None, str | None]:
+def _style_meaning(styles: dict[str, _Style], style_id: str | None) -> tuple[bool, int | None, str | None]:
     """Le style d'un paragraphe : titre du document ? niveau de titre ? élément de liste ?
 
     Suivi de ``basedOn`` en ``basedOn`` (borné : une boucle ne bloque pas) ;
@@ -1424,13 +1373,7 @@ def _table(package: _Package, reading: _Reading, element: Element) -> list[JsonV
             group = None
             continue
         tiles = [
-            [
-                _segments(paragraph, package.inline)
-                for paragraph in cell.iter()
-                if _local(paragraph.tag) == "p"
-            ]
-            for cell in row
-            if _local(cell.tag) == "tc"
+            [_segments(paragraph, package.inline) for paragraph in cell.iter() if _local(paragraph.tag) == "p"] for cell in row if _local(cell.tag) == "tc"
         ]
         if kind == GROUP_STYLE:
             group = []
@@ -1496,14 +1439,10 @@ def _cell_text(cell: Element) -> str:
     return "\n".join(lines)
 
 
-def _list_item(
-    reading: _Reading, text: str, level: int, ordered: bool, style: str | None = None
-) -> None:
+def _list_item(reading: _Reading, text: str, level: int, ordered: bool, style: str | None = None) -> None:
     pending = reading.pending
     if pending is None:
-        pending = reading.pending = _styled(
-            {"type": "list", "ordered": ordered, "items": []}, style
-        )
+        pending = reading.pending = _styled({"type": "list", "ordered": ordered, "items": []}, style)
     items = cast(list[JsonValue], pending["items"])
     # Une sous-liste : sous l'élément précédent, trois niveaux en tout (au-delà, aplatie
     # au troisième).
@@ -1555,9 +1494,7 @@ def _close_list(reading: _Reading) -> None:
         _emit(reading, pending)
 
 
-def _emit(
-    reading: _Reading, block: dict[str, JsonValue], heading: tuple[int, str] | None = None
-) -> None:
+def _emit(reading: _Reading, block: dict[str, JsonValue], heading: tuple[int, str] | None = None) -> None:
     # Une légende ne se rattache qu'à l'image qui la précède immédiatement.
     reading.last_image = None
     template = reading.template
@@ -1608,9 +1545,7 @@ def _bounded(outline: list[JsonValue]) -> list[JsonValue]:
 def _notes(package: _Package, reading: _Reading, start: int) -> list[JsonValue]:
     notes: list[JsonValue] = []
     if start >= reading.count and reading.count:
-        notes.append(
-            f"Le document a {reading.count} bloc(s) : start va de 0 à {reading.count - 1}."
-        )
+        notes.append(f"Le document a {reading.count} bloc(s) : start va de 0 à {reading.count - 1}.")
     if reading.next_start is not None:
         notes.append(
             f"Lecture coupée par la taille du résultat ({reading.budget} caractères) : la suite "
@@ -1618,20 +1553,14 @@ def _notes(package: _Package, reading: _Reading, start: int) -> list[JsonValue]:
         )
     if reading.images:
         notes.append(f"{reading.images} image(s) ou forme(s) non lue(s).")
-    sourceless = sum(
-        1
-        for block in reading.blocks
-        if isinstance(block, dict) and block.get("type") == "image" and "path" not in block
-    )
+    sourceless = sum(1 for block in reading.blocks if isinstance(block, dict) and block.get("type") == "image" and "path" not in block)
     if sourceless:
         notes.append(
             f"{sourceless} image(s) sans fichier source (pas de path) : pour réécrire le "
             "document, donner un path vers un fichier d'un dossier read, ou retirer le bloc."
         )
     if reading.revisions:
-        notes.append(
-            "Modifications suivies présentes : le texte inséré est rendu, le texte supprimé omis."
-        )
+        notes.append("Modifications suivies présentes : le texte inséré est rendu, le texte supprimé omis.")
     if package.comments:
         notes.append("Le document a des commentaires, non lus.")
     if reading.cut:

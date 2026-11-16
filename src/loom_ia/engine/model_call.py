@@ -131,9 +131,7 @@ class ModelCall:
         # orchestrateur, rôles, juges, secours.
         self.raw_max_bytes = client.raw_max_bytes if isinstance(client, Recorded) else None
 
-    async def run(
-        self, request: ModelRequest
-    ) -> AsyncGenerator[ModelExchanged | ModelRetried | ModelResponse]:
+    async def run(self, request: ModelRequest) -> AsyncGenerator[ModelExchanged | ModelRetried | ModelResponse]:
         """Émet un ``ModelRetried`` par tentative ratée, puis la réponse.
 
         Avec la capture des échanges bruts, chaque tentative émet d'abord ses
@@ -214,9 +212,7 @@ class ModelCall:
             final=final,
         )
 
-    def _exchanged(
-        self, log: ExchangeLog | None, request: ModelRequest, attempt: int
-    ) -> list[ModelExchanged]:
+    def _exchanged(self, log: ExchangeLog | None, request: ModelRequest, attempt: int) -> list[ModelExchanged]:
         if log is None or self.raw_max_bytes is None:
             return []
         return [
@@ -253,9 +249,7 @@ class ModelCall:
             return error.retry_after if error.retry_after <= policy.max_delay else None
         return policy.backoff(attempt, self._jitter())
 
-    async def _attempt(
-        self, request: ModelRequest, sent: ModelRequest, progress: _Progress
-    ) -> ModelResponse:
+    async def _attempt(self, request: ModelRequest, sent: ModelRequest, progress: _Progress) -> ModelResponse:
         """Une tentative : ``request`` est la requête d'origine, ``sent`` celle qui part."""
         if isinstance(self.client, AnsweringClient):
             # Rejeu (J6.2a) : la réponse est connue, entière ; sans flux, rien
@@ -287,9 +281,7 @@ class ModelCall:
             raise
         return accumulator.result(model_id=request.model_id, provider=self.client.provider)
 
-    async def _stream(
-        self, sent: ModelRequest, accumulator: ResponseAccumulator, progress: _Progress
-    ) -> None:
+    async def _stream(self, sent: ModelRequest, accumulator: ResponseAccumulator, progress: _Progress) -> None:
         """Lit le flux d'une tentative dans ``accumulator``, sous ses délais.
 
         Le premier morceau attendu est le premier **contenu** : un ``UsageDelta``
@@ -307,11 +299,7 @@ class ModelCall:
             async with total, aclosing(self.client.stream(sent)) as chunks:
                 while True:
                     limit = timeouts.idle if content else first
-                    gap = (
-                        asyncio.timeout(limit)
-                        if content or deadline is None
-                        else asyncio.timeout_at(deadline)
-                    )
+                    gap = asyncio.timeout(limit) if content or deadline is None else asyncio.timeout_at(deadline)
                     try:
                         async with gap:
                             chunk = await anext(chunks)
@@ -320,9 +308,7 @@ class ModelCall:
                     except TimeoutError as exc:
                         if gap.expired():
                             waiting = "nouveau morceau" if content else "premier morceau"
-                            raise ModelError(
-                                "transient", f"Délai dépassé : aucun {waiting} en {limit:g} s"
-                            ) from exc
+                            raise ModelError("transient", f"Délai dépassé : aucun {waiting} en {limit:g} s") from exc
                         raise
                     accumulator.add(chunk)
                     counted = not isinstance(chunk, UsageDelta)
@@ -333,9 +319,7 @@ class ModelCall:
                     content = content or counted
         except TimeoutError as exc:
             if total.expired():
-                raise ModelError(
-                    "transient", f"Délai total dépassé : {timeouts.total:g} s"
-                ) from exc
+                raise ModelError("transient", f"Délai total dépassé : {timeouts.total:g} s") from exc
             raise
 
 

@@ -78,9 +78,7 @@ def chercher(numero: str) -> str:
 
 @pytest.fixture(params=["memory", "jsonl"])
 async def store(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[EventStore]:
-    instance: EventStore = (
-        InMemoryEventStore() if request.param == "memory" else JsonlEventStore(tmp_path)
-    )
+    instance: EventStore = InMemoryEventStore() if request.param == "memory" else JsonlEventStore(tmp_path)
     yield instance
     await instance.aclose()
 
@@ -94,9 +92,7 @@ def searching(times: int, answer: str = "Trouvé.") -> list[Message]:
     return [*calls, Message.assistant(answer)]
 
 
-def context(
-    store: EventStore, model: ScriptedModel, budgets: Budgets | None, *tools: object
-) -> RunContext:
+def context(store: EventStore, model: ScriptedModel, budgets: Budgets | None, *tools: object) -> RunContext:
     bound: list[BoundPolicy] = []
     if budgets is not None:
         guard = BudgetGuard(budgets)
@@ -116,9 +112,7 @@ def budgets(**fields: Any) -> Budgets:
     return Budgets.model_validate(fields)
 
 
-async def run(
-    ctx: RunContext, prompt: str = "Cherche.", session: SessionId | None = None
-) -> RunState:
+async def run(ctx: RunContext, prompt: str = "Cherche.", session: SessionId | None = None) -> RunState:
     state = await begin_run(ctx, prompt, session_id=session)
     return await drive(ctx, state.run_id, session_id=state.session_id)
 
@@ -192,12 +186,8 @@ def test_a_share_is_part_of_what_is_left() -> None:
     assert share is not None
     assert (share.max_cost, share.max_tokens, share.max_calls) == (pytest.approx(0.03), 3_000, 1)
     assert limits.share(0.5, Spent(Usage(), 0.10, 0)) is None
-    assert RunBudget(max_cost=0.1).tightest(RunBudget(max_cost=0.05, max_calls=3)) == RunBudget(
-        max_cost=0.05, max_calls=3
-    )
-    assert RunBudget(max_calls=3).tightest(RunBudget(max_cost=1.0)) == RunBudget(
-        max_cost=1.0, max_calls=3
-    )
+    assert RunBudget(max_cost=0.1).tightest(RunBudget(max_cost=0.05, max_calls=3)) == RunBudget(max_cost=0.05, max_calls=3)
+    assert RunBudget(max_calls=3).tightest(RunBudget(max_cost=1.0)) == RunBudget(max_cost=1.0, max_calls=3)
     assert RunBudget(max_calls=3).tightest(None) == RunBudget(max_calls=3)
 
 
@@ -256,11 +246,7 @@ async def test_on_output_policies_know_the_answer_is_forced(store: EventStore) -
 
 async def test_warn_reports_each_limit_once(store: EventStore) -> None:
     model = scripted(*searching(3))
-    state = await run(
-        context(
-            store, model, budgets(run={"max_cost": 0.002, "max_tokens": 2_000}, on_exceed="warn")
-        )
-    )
+    state = await run(context(store, model, budgets(run={"max_cost": 0.002, "max_tokens": 2_000}, on_exceed="warn")))
     assert state.status is RunStatus.COMPLETED and state.output == Message.assistant("Trouvé.")
     events = await journal(store, state)
     assert [(b.limit, b.action) for b in exceeded(events)] == [
@@ -269,9 +255,7 @@ async def test_warn_reports_each_limit_once(store: EventStore) -> None:
     ]
     assert not [e for e in events if isinstance(e.payload, PolicyDecided)]
     assert all(e.status == "warning" for e in events if isinstance(e.payload, BudgetExceeded))
-    assert line_of(events[kinds(events).index("budget:run.max_cost:warn")]) == (
-        "budget du run atteint : 0,00300 $ (plafond 0,00200 $) — avertissement"
-    )
+    assert line_of(events[kinds(events).index("budget:run.max_cost:warn")]) == ("budget du run atteint : 0,00300 $ (plafond 0,00200 $) — avertissement")
 
 
 async def test_the_session_budget_counts_earlier_runs(store: EventStore) -> None:
@@ -306,9 +290,7 @@ def child_context(store: EventStore, model: ScriptedModel, budgets: Budgets | No
     )
 
 
-def verifier(
-    agents: dict[str, RunContext], *, share: float | None = None, parent: RunBudget | None = None
-) -> AgentTool:
+def verifier(agents: dict[str, RunContext], *, share: float | None = None, parent: RunBudget | None = None) -> AgentTool:
     definition = SubAgentDefinition(
         name="verifier",
         agent="verificateur",
@@ -414,9 +396,7 @@ async def test_a_subagent_gets_a_share_of_what_is_left(store: EventStore) -> Non
         tool_call_message(("c1", "verifier", {"message": "Vérifie."})),
         Message.assistant("Fini."),
     )
-    ctx = context(
-        store, main, budgets(run={"max_cost": 0.01}), verifier(agents, share=0.5, parent=parent)
-    )
+    ctx = context(store, main, budgets(run={"max_cost": 0.01}), verifier(agents, share=0.5, parent=parent))
     state = await run(ctx)
 
     events = await journal(store, state)
@@ -442,10 +422,7 @@ async def test_no_subagent_once_the_budget_is_spent(store: EventStore) -> None:
     events = await journal(store, state)
     [completed] = [e.payload for e in events if isinstance(e.payload, ToolCompleted)]
     assert completed.output.is_error
-    assert (
-        completed.output.as_text
-        == "Budget du run atteint : le sous-agent verifier n'est pas lancé."
-    )
+    assert completed.output.as_text == "Budget du run atteint : le sous-agent verifier n'est pas lancé."
     assert not child.requests
     assert not [e for e in events if isinstance(e.payload, RunStarted) and e.payload.depth]
 

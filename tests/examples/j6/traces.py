@@ -92,10 +92,7 @@ def agent_de(args: argparse.Namespace) -> str:
 
 
 def demande(tenant: TenantId) -> str:
-    return (
-        f"Relance le client du devis {DEVIS[tenant]}, sur un ton cordial. "
-        f"Qu'il réponde à {COURRIEL} ou au {TELEPHONE}."
-    )
+    return f"Relance le client du devis {DEVIS[tenant]}, sur un ton cordial. Qu'il réponde à {COURRIEL} ou au {TELEPHONE}."
 
 
 class Controle:
@@ -157,9 +154,7 @@ class Span:
     start_ns: int
     end_ns: int
     attributes: dict[str, Any]
-    events: list[tuple[str, dict[str, Any]]] = field(
-        default_factory=list[tuple[str, dict[str, Any]]]
-    )
+    events: list[tuple[str, dict[str, Any]]] = field(default_factory=list[tuple[str, dict[str, Any]]])
 
     @property
     def tenant(self) -> str:
@@ -232,10 +227,7 @@ class Collecteur:
                             start_ns=span.start_time_unix_nano,
                             end_ns=span.end_time_unix_nano,
                             attributes={a.key: _valeur(a.value) for a in span.attributes},
-                            events=[
-                                (e.name, {a.key: _valeur(a.value) for a in e.attributes})
-                                for e in span.events
-                            ],
+                            events=[(e.name, {a.key: _valeur(a.value) for a in e.attributes}) for e in span.events],
                         )
                     )
 
@@ -279,18 +271,10 @@ def deplacee(
     tenants = tuple(
         tenant.model_copy(
             update={
-                "storage": tenant.storage.model_copy(
-                    update={
-                        "events": tenant.storage.events.model_copy(
-                            update={"path": dossier / "events" / tenant.id}
-                        )
-                    }
-                )
+                "storage": tenant.storage.model_copy(update={"events": tenant.storage.events.model_copy(update={"path": dossier / "events" / tenant.id})})
                 if tenant.storage is not None
                 else None,
-                "telemetry": TenantTelemetry(
-                    capture=CaptureOverride.model_validate({"exports": captures[tenant.id]})
-                )
+                "telemetry": TenantTelemetry(capture=CaptureOverride.model_validate({"exports": captures[tenant.id]}))
                 if tenant.id in captures
                 else tenant.telemetry,
             }
@@ -301,23 +285,15 @@ def deplacee(
     if collecteurs:
         exporters.append(ExporterConfig(type="otel", endpoint_env=ICI, service_name="loom-exemple"))
     if externe:
-        exporters.append(
-            ExporterConfig(type="otel", endpoint_env=AILLEURS, service_name="loom-exemple")
-        )
+        exporters.append(ExporterConfig(type="otel", endpoint_env=AILLEURS, service_name="loom-exemple"))
     telemetry = TelemetryConfig(
         logging=config.telemetry.logging,
-        capture=CaptureConfig.model_validate(
-            {"exports": capture}
-            if bruts is None
-            else {"exports": capture, "raw_exchanges": True, "raw_max_bytes": bruts}
-        ),
+        capture=CaptureConfig.model_validate({"exports": capture} if bruts is None else {"exports": capture, "raw_exchanges": True, "raw_max_bytes": bruts}),
         exporters=tuple(exporters),
     )
     # ``model_copy`` et non une nouvelle validation : la config chargée a déjà
     # résolu ses prompts, et la revalider les lirait deux fois.
-    return config.model_copy(
-        update={"storage": storage, "tenants": tenants, "telemetry": telemetry}
-    )
+    return config.model_copy(update={"storage": storage, "tenants": tenants, "telemetry": telemetry})
 
 
 @dataclass
@@ -345,14 +321,9 @@ async def lancer(
             lances: list[tuple[TenantId, str, str, SessionId]] = []
             for tenant in clients:
                 session = SessionId(f"traces-{new_id()[-8:]}")
-                result = await loom.run(
-                    agent_de(args), demande(tenant), session_id=session, tenant=tenant, user=tenant
-                )
+                result = await loom.run(agent_de(args), demande(tenant), session_id=session, tenant=tenant, user=tenant)
                 lances.append((tenant, result.run_id, result.status, session))
-            journaux = {
-                run_id: [e for e in await loom.store.read(tenant, session) if e.run_id == run_id]
-                for tenant, run_id, _, session in lances
-            }
+            journaux = {run_id: [e for e in await loom.store.read(tenant, session) if e.run_id == run_id] for tenant, run_id, _, session in lances}
         # Ici, l'instance est fermée : ses envois sont partis.
         for _, run_id, statut, _ in lances:
             trace = run_id.replace("-", "")
@@ -364,9 +335,7 @@ async def lancer(
                     spans=[s for s in collecteur.spans if s.trace_id == trace],
                 )
             )
-        print(
-            f"  collecteur : {collecteur.envois} envoi(s) reçu(s), {len(collecteur.spans)} span(s)"
-        )
+        print(f"  collecteur : {collecteur.envois} envoi(s) reçu(s), {len(collecteur.spans)} span(s)")
     return tours
 
 
@@ -399,11 +368,7 @@ def texte_de(contenu: str) -> str:
     blocs = cast(dict[str, Any], message).get("blocks")
     if not isinstance(blocs, list):
         return contenu
-    textes = [
-        str(cast(dict[str, Any], bloc).get("text", ""))
-        for bloc in cast(list[Any], blocs)
-        if isinstance(bloc, dict)
-    ]
+    textes = [str(cast(dict[str, Any], bloc).get("text", "")) for bloc in cast(list[Any], blocs) if isinstance(bloc, dict)]
     return " ".join(t for t in textes if t) or contenu
 
 
@@ -429,34 +394,24 @@ async def otel(args: argparse.Namespace, controle: Controle) -> None:
     reponses = sum(1 for e in tour.events if e.type == "model.responded")
     chats = [s for s in tour.spans if s.name.startswith("chat ")]
     racines = [s for s in tour.spans if not s.parent_span_id]
-    print(
-        "\n  des spans sont arrivés, sous la trace du run : "
-        + controle.tient("aucun span reçu pour la trace du run", bool(tour.spans))
-    )
+    print("\n  des spans sont arrivés, sous la trace du run : " + controle.tient("aucun span reçu pour la trace du run", bool(tour.spans)))
     print(
         f"  chaque span du journal est arrivé ({len(attendus)} au journal, "
-        f"{len(recus & attendus)} reçus) : "
-        + controle.tient("un span du journal manque au collecteur", attendus <= recus)
+        f"{len(recus & attendus)} reçus) : " + controle.tient("un span du journal manque au collecteur", attendus <= recus)
     )
     print(
         f"  un span 'chat' par réponse de modèle ({reponses} au journal, {len(chats)} reçus) : "
-        + controle.tient(
-            "le nombre de spans 'chat' n'est pas celui des réponses", len(chats) == reponses > 0
-        )
+        + controle.tient("le nombre de spans 'chat' n'est pas celui des réponses", len(chats) == reponses > 0)
     )
     print(
         "  une seule racine, le run, et chaque autre span a son parent dans la trace : "
         + controle.tient(
             "l'arbre reçu n'a pas une racine unique ou un parent manque",
-            len(racines) == 1
-            and racines[0].name.startswith("invoke_agent")
-            and all(s.parent_span_id in recus for s in tour.spans if s not in racines),
+            len(racines) == 1 and racines[0].name.startswith("invoke_agent") and all(s.parent_span_id in recus for s in tour.spans if s not in racines),
         )
     )
     if args.collecteur:
-        controle.non_verifies.append(
-            f"les spans envoyés à {args.collecteur} — à regarder dans son interface"
-        )
+        controle.non_verifies.append(f"les spans envoyés à {args.collecteur} — à regarder dans son interface")
 
 
 # --- Cas 2 : masquage ----------------------------------------------------------
@@ -470,10 +425,7 @@ async def masquage(args: argparse.Namespace, controle: Controle) -> None:
         textes = "\n".join(s.textes() for s in tour.spans)
         contenus = [v for s in tour.spans for v in s.contenus().values()]
         print(f"  run {tour.run_id} : {tour.statut}, {len(tour.spans)} span(s) reçus")
-        print(
-            "  des spans sont arrivés : "
-            + controle.tient(f"{capture} : aucun span reçu", bool(tour.spans))
-        )
+        print("  des spans sont arrivés : " + controle.tient(f"{capture} : aucun span reçu", bool(tour.spans)))
         print(
             "  ni l'e-mail ni le téléphone de la demande ne sortent en clair : "
             + controle.tient(
@@ -482,22 +434,11 @@ async def masquage(args: argparse.Namespace, controle: Controle) -> None:
             )
         )
         if capture == "metadata":
-            print(
-                "  aucun attribut de contenu : "
-                + controle.tient("metadata : un contenu est sorti", not contenus)
-            )
-            print(
-                "  la demande n'apparaît nulle part : "
-                + controle.tient(
-                    "metadata : la demande est sortie", f"devis {DEVIS[DUPONT]}, sur" not in textes
-                )
-            )
+            print("  aucun attribut de contenu : " + controle.tient("metadata : un contenu est sorti", not contenus))
+            print("  la demande n'apparaît nulle part : " + controle.tient("metadata : la demande est sortie", f"devis {DEVIS[DUPONT]}, sur" not in textes))
         else:
             question = next((v for v in contenus if f"devis {DEVIS[DUPONT]}, sur un ton" in v), "")
-            print(
-                "  la demande sort, masquée : "
-                + controle.tient("content : la demande n'est pas sortie", bool(question))
-            )
+            print("  la demande sort, masquée : " + controle.tient("content : la demande n'est pas sortie", bool(question)))
             if question:
                 enonce("    ", texte_de(question))
             print(
@@ -522,10 +463,7 @@ async def clients(args: argparse.Namespace, controle: Controle) -> None:
     par_client = dict(zip((DUPONT, MARTIN), tours, strict=True))
     for tenant, tour in par_client.items():
         contenus = [v for s in tour.spans for v in s.contenus().values()]
-        print(
-            f"  {tenant} : run {tour.statut}, {len(tour.spans)} span(s), "
-            f"{len(contenus)} attribut(s) de contenu"
-        )
+        print(f"  {tenant} : run {tour.statut}, {len(tour.spans)} span(s), {len(contenus)} attribut(s) de contenu")
     dupont = [v for s in par_client[DUPONT].spans for v in s.contenus().values()]
     martin = [v for s in par_client[MARTIN].spans for v in s.contenus().values()]
     print(
@@ -580,9 +518,7 @@ async def bruts(args: argparse.Namespace, controle: Controle) -> None:
         requete = f"{brut.request_bytes} o" + (" coupée" if brut.request_truncated else "")
         reponse = f"{brut.response_bytes} o" + (" coupée" if brut.response_truncated else "")
         print(
-            f"  {event.seq:>4}  {event.role or '':<28}{brut.attempt:>6}"
-            f"{brut.status_code if brut.status_code is not None else '—':>8}"
-            f"{requete:>16}{reponse:>16}"
+            f"  {event.seq:>4}  {event.role or '':<28}{brut.attempt:>6}{brut.status_code if brut.status_code is not None else '—':>8}{requete:>16}{reponse:>16}"
         )
     print(
         f"\n  au moins un échange par réponse de modèle ({len(echanges)} échange(s), "
@@ -595,8 +531,7 @@ async def bruts(args: argparse.Namespace, controle: Controle) -> None:
     par_seq = {e.seq: e for e in tour.events}
     precedes = all(
         any(
-            isinstance(par_seq[s].payload, ModelExchanged)
-            and (par_seq[s].span_id, par_seq[s].role) == (r.span_id, r.role)
+            isinstance(par_seq[s].payload, ModelExchanged) and (par_seq[s].span_id, par_seq[s].role) == (r.span_id, r.role)
             for s in range(1, r.seq)
             if s in par_seq
         )
@@ -610,21 +545,14 @@ async def bruts(args: argparse.Namespace, controle: Controle) -> None:
     attendu = {not args.reel}
     print(
         f"  échanges {'réels (HTTP)' if args.reel else 'synthétiques (modèle simulé)'} : "
-        + controle.tient(
-            "bruts : la nature des échanges n'est pas celle du mode joué", synthetiques == attendu
-        )
+        + controle.tient("bruts : la nature des échanges n'est pas celle du mode joué", synthetiques == attendu)
     )
-    coupes = [
-        e.payload
-        for e in echanges
-        if isinstance(e.payload, ModelExchanged) and e.payload.request_truncated
-    ]
+    coupes = [e.payload for e in echanges if isinstance(e.payload, ModelExchanged) and e.payload.request_truncated]
     print(
         f"  une requête plus longue que la borne est coupée et le dit ({len(coupes)} coupée(s)) : "
         + controle.tient(
             "bruts : aucune requête coupée, ou une coupe qui ne tient pas sa borne",
-            bool(coupes)
-            and all(len(c.request_body.encode()) <= BORNE < c.request_bytes for c in coupes),
+            bool(coupes) and all(len(c.request_body.encode()) <= BORNE < c.request_bytes for c in coupes),
         )
     )
     cles = cles_d_api(config)
@@ -638,17 +566,9 @@ async def bruts(args: argparse.Namespace, controle: Controle) -> None:
             )
         )
     else:
-        controle.non_verifies.append(
-            "bruts : l'absence de clé d'API au journal — aucune clé lue ici"
-            + (" (modèles simulés)" if not args.reel else "")
-        )
+        controle.non_verifies.append("bruts : l'absence de clé d'API au journal — aucune clé lue ici" + (" (modèles simulés)" if not args.reel else ""))
     sortis = [
-        key
-        for span in tour.spans
-        for name, attributes in span.events
-        if name == "model.exchanged"
-        for key in attributes
-        if key.startswith("loom.content.")
+        key for span in tour.spans for name, attributes in span.events if name == "model.exchanged" for key in attributes if key.startswith("loom.content.")
     ]
     vus = sum(1 for span in tour.spans for name, _ in span.events if name == "model.exchanged")
     print(
@@ -658,9 +578,7 @@ async def bruts(args: argparse.Namespace, controle: Controle) -> None:
             vus == len(echanges) and not sortis,
         )
     )
-    dernier = next(
-        (e.payload for e in reversed(echanges) if isinstance(e.payload, ModelExchanged)), None
-    )
+    dernier = next((e.payload for e in reversed(echanges) if isinstance(e.payload, ModelExchanged)), None)
     if dernier is not None:
         # Les lignes se comptent sur ce que le journal garde, la taille est celle
         # du corps entier : les deux se disent séparément, sans se mélanger.
@@ -670,10 +588,7 @@ async def bruts(args: argparse.Namespace, controle: Controle) -> None:
             if dernier.response_truncated
             else f"entier, {dernier.response_bytes} octets"
         )
-        print(
-            f"\n  début de la dernière réponse brute — {min(len(lignes), 6)} ligne(s) sur "
-            f"les {len(lignes)} gardées au journal (corps {garde}) :"
-        )
+        print(f"\n  début de la dernière réponse brute — {min(len(lignes), 6)} ligne(s) sur les {len(lignes)} gardées au journal (corps {garde}) :")
         for ligne in lignes[:6]:
             enonce("    ", ligne or "(vide)")
 
@@ -707,12 +622,8 @@ async def logs(args: argparse.Namespace, controle: Controle) -> None:
             titre("Une ligne par appel de modèle et d'outil")
             session = SessionId(f"traces-{new_id()[-8:]}")
             async with Loom(config) as loom:
-                result = await loom.run(
-                    agent_de(args), demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
-                )
-                events = [
-                    e for e in await loom.store.read(DUPONT, session) if e.run_id == result.run_id
-                ]
+                result = await loom.run(agent_de(args), demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT)
+                events = [e for e in await loom.store.read(DUPONT, session) if e.run_id == result.run_id]
     finally:
         moteur.removeHandler(recueil)
         moteur.setLevel(niveau)
@@ -779,9 +690,7 @@ async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="Les traces d'un run dans un collecteur OpenTelemetry"
-    )
+    parser = argparse.ArgumentParser(description="Les traces d'un run dans un collecteur OpenTelemetry")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument(

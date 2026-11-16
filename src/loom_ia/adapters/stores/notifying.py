@@ -135,9 +135,7 @@ class NotifyingEventStore:
                 self._sinks.remove(entry)
 
     @asynccontextmanager
-    async def subscribe(
-        self, run_id: RunId | None = None, *, accept: EventFilter | None = None
-    ) -> AsyncGenerator[Subscription]:
+    async def subscribe(self, run_id: RunId | None = None, *, accept: EventFilter | None = None) -> AsyncGenerator[Subscription]:
         """Abonnement itérable, fermé à la sortie du bloc."""
         subscription = Subscription()
         with self.listen(subscription.offer, run_id, accept=accept):
@@ -146,9 +144,7 @@ class NotifyingEventStore:
             finally:
                 subscription.close()
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         events = await self._inner.append(drafts, expected_seq=expected_seq)
         for event in events:
             self._offer(event, own=True)
@@ -263,9 +259,7 @@ class NotifyingEventStore:
         for event in events:
             self._offer(event, own=False)
         # La position ne recule jamais : une écriture d'ici a pu l'avancer pendant la lecture.
-        self._cursors[key] = max(
-            self._cursors.get(key, 0), notice.last_seq, events[-1].seq if events else 0
-        )
+        self._cursors[key] = max(self._cursors.get(key, 0), notice.last_seq, events[-1].seq if events else 0)
 
     async def read(
         self,

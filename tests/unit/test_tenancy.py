@@ -150,9 +150,7 @@ async def test_two_tenants_of_one_agent_are_mounted_apart(demo: ConfigFactory) -
     async with Loom.from_config(mapped(demo)) as loom:
         assert loom.context("demo", DUPONT) is not loom.context("demo", MARTIN)
         # Le second modèle répond sans appeler d'outil : la réponse le montre.
-        assert (
-            await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
-        ).text == "Réponse du second modèle."
+        assert (await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)).text == "Réponse du second modèle."
         assert (await loom.run("demo", QUESTION, tenant=MARTIN, user=MARTIN)).text == ANSWER
 
 
@@ -200,10 +198,7 @@ async def test_an_imposed_approval_says_it_comes_from_the_tenant(demo: ConfigFac
     async with Loom.from_config(config) as loom:
         result = await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
     [asked] = result.pending_approvals
-    assert asked.reason == (
-        "la config impose une approbation pour chaque appel de cet outil, pour le client "
-        f"{DUPONT} (sans effet)"
-    )
+    assert asked.reason == (f"la config impose une approbation pour chaque appel de cet outil, pour le client {DUPONT} (sans effet)")
 
 
 async def test_an_imposed_approval_still_needs_a_durable_journal(demo: ConfigFactory) -> None:
@@ -332,9 +327,7 @@ REAL = {"id": "VRAI", "sdk": "anthropic", "model": "claude-haiku-5-5", "api_key_
 def mount(config: Path, tenant_id: TenantId, environ: dict[str, str]) -> None:
     loaded = load_config(config)
     tenant = Tenants(loaded, environ=environ).get(tenant_id)
-    build_agent(
-        tenant.config, "demo", InMemoryEventStore(), registry=load_registry(loaded), tenant=tenant
-    )
+    build_agent(tenant.config, "demo", InMemoryEventStore(), registry=load_registry(loaded), tenant=tenant)
 
 
 def test_a_missing_model_secret_names_the_variable_of_the_tenant(demo: ConfigFactory) -> None:
@@ -346,10 +339,7 @@ def test_a_missing_model_secret_names_the_variable_of_the_tenant(demo: ConfigFac
             {"id": MARTIN, "models": {"FAKE": "VRAI"}},
         ],
     )
-    said = (
-        f"Client '{DUPONT}' : la variable DUPONT_CLE (redirection de CLE) est absente ou vide"
-        " — modèle 'FAKE' (claude-haiku-5-5 pour ce client)"
-    )
+    said = f"Client '{DUPONT}' : la variable DUPONT_CLE (redirection de CLE) est absente ou vide — modèle 'FAKE' (claude-haiku-5-5 pour ce client)"
     with pytest.raises(ModelConfigError) as caught:
         mount(config, DUPONT, {"CLE": "commune"})
     assert str(caught.value) == said
@@ -368,10 +358,7 @@ def test_a_missing_mcp_secret_names_the_variable_of_the_tenant(demo: ConfigFacto
     )
     with pytest.raises(ConfigError) as caught:
         mount(config, DUPONT, {"JETON": "commun"})
-    assert str(caught.value) == (
-        f"Agent 'demo' : Client '{DUPONT}' : la variable DUPONT_JETON (redirection de JETON)"
-        " est absente ou vide — serveur MCP 'crm'"
-    )
+    assert str(caught.value) == (f"Agent 'demo' : Client '{DUPONT}' : la variable DUPONT_JETON (redirection de JETON) est absente ou vide — serveur MCP 'crm'")
     with pytest.raises(ConfigError, match="JETON est absente ou vide"):
         mount(config, MARTIN, {})
 
@@ -387,9 +374,7 @@ def mount_vaulted(config: Path, tenant_id: TenantId) -> None:
     loaded = load_config(config)
     tenant = Tenants(loaded, secrets=Coffre()).get(tenant_id)
     assert tenant.provided
-    build_agent(
-        tenant.config, "demo", InMemoryEventStore(), registry=load_registry(loaded), tenant=tenant
-    )
+    build_agent(tenant.config, "demo", InMemoryEventStore(), registry=load_registry(loaded), tenant=tenant)
 
 
 def test_a_secret_missing_from_a_manager_is_not_called_an_environment_variable(
@@ -404,10 +389,7 @@ def test_a_secret_missing_from_a_manager_is_not_called_an_environment_variable(
     )
     with pytest.raises(ModelConfigError) as caught:
         mount_vaulted(config, DUPONT)
-    assert str(caught.value) == (
-        f"Modèle 'VRAI' : le secret CLE est absent ou vide dans le gestionnaire de secrets "
-        f"(client '{DUPONT}')"
-    )
+    assert str(caught.value) == (f"Modèle 'VRAI' : le secret CLE est absent ou vide dans le gestionnaire de secrets (client '{DUPONT}')")
     mount_vaulted(config, MARTIN)
     assert not Tenants(load_config(config)).get(MARTIN).provided
 
@@ -424,10 +406,7 @@ def test_a_mcp_secret_missing_from_a_manager_is_not_called_an_environment_variab
     )
     with pytest.raises(ConfigError) as caught:
         mount_vaulted(config, DUPONT)
-    assert str(caught.value) == (
-        f"Agent 'demo' : le secret JETON est absent ou vide dans le gestionnaire de secrets "
-        f"(client '{DUPONT}') — serveur MCP 'crm'"
-    )
+    assert str(caught.value) == (f"Agent 'demo' : le secret JETON est absent ou vide dans le gestionnaire de secrets (client '{DUPONT}') — serveur MCP 'crm'")
 
 
 # --- Variables des prompts (§6) ------------------------------------------------
@@ -509,9 +488,7 @@ def test_a_key_no_longer_names_a_tenant(demo: ConfigFactory) -> None:
 def test_a_tenant_storage_cannot_carry_its_own_idempotency(demo: ConfigFactory) -> None:
     # Le port n'a le client que sur ``reserve`` : un magasin par client attend J5.3.
     with pytest.raises(ConfigError, match=r"J5\.3"):
-        load_config(
-            demo(tenants=[{"id": DUPONT, "storage": {"idempotency": {"backend": "memory"}}}])
-        )
+        load_config(demo(tenants=[{"id": DUPONT, "storage": {"idempotency": {"backend": "memory"}}}]))
 
 
 # --- Serveurs MCP de portée ``tenant`` (#19, #34) ------------------------------
@@ -626,12 +603,8 @@ async def test_a_tenant_with_its_own_storage_writes_elsewhere(demo: ConfigFactor
         chez_dupont = await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
         chez_martin = await loom.run("demo", QUESTION, tenant=MARTIN, user=MARTIN)
         # Chacun relit le sien, et seulement le sien.
-        assert [r.session_id for r in await loom.sessions(tenant_id=DUPONT)] == [
-            SessionId(chez_dupont.run_id)
-        ]
-        assert [r.session_id for r in await loom.sessions(tenant_id=MARTIN)] == [
-            SessionId(chez_martin.run_id)
-        ]
+        assert [r.session_id for r in await loom.sessions(tenant_id=DUPONT)] == [SessionId(chez_dupont.run_id)]
+        assert [r.session_id for r in await loom.sessions(tenant_id=MARTIN)] == [SessionId(chez_martin.run_id)]
         assert await loom.events(chez_dupont.run_id, tenant_id=MARTIN) == []
 
     base = path.parent
@@ -659,9 +632,7 @@ async def test_without_its_own_storage_a_tenant_shares_the_common_journal(
     [{"artifacts": {"backend": "local", "path": "fichiers"}}, {}],
     ids=["artifacts-only", "empty-block"],
 )
-def test_a_tenant_storage_without_events_is_refused(
-    demo: ConfigFactory, storage: dict[str, Any]
-) -> None:
+def test_a_tenant_storage_without_events_is_refused(demo: ConfigFactory, storage: dict[str, Any]) -> None:
     """Sans ``events``, le journal du client serait en mémoire sans que rien le dise."""
     with pytest.raises(ConfigError) as refused:
         load_config(demo(tenants=[{"id": DUPONT, "storage": storage}]))
@@ -686,9 +657,7 @@ def test_a_tenant_may_choose_a_memory_journal_by_saying_so(demo: ConfigFactory) 
 
 async def test_a_tenant_journal_in_memory_cannot_host_a_pause(atelier: Any) -> None:
     """La garde juge le journal du client, pas seulement celui de la racine (#28)."""
-    config = atelier(
-        tenants=[{"id": DUPONT, "storage": {"events": {"backend": "memory"}}}, {"id": MARTIN}]
-    )
+    config = atelier(tenants=[{"id": DUPONT, "storage": {"events": {"backend": "memory"}}}, {"id": MARTIN}])
     async with Loom.from_config(config) as loom:
         with pytest.raises(ConfigError, match=r"journal durable.*'memory', celui du client"):
             loom.context("demo", DUPONT)
@@ -717,15 +686,11 @@ def test_an_approval_imposed_on_an_mcp_tool_needs_a_durable_journal(demo: Config
     server = {"name": "crm", "transport": "stdio", "command": "true"}
     agent = demo_agent(tools=[{"python": "calculer"}, {"mcp": "crm"}])
     imposed = {"id": DUPONT, "approvals": {"crm__envoyer": "always"}}
-    config = load_config(
-        demo(agents=[agent], mcp_servers=[server], tenants=[imposed, {"id": MARTIN}])
-    )
+    config = load_config(demo(agents=[agent], mcp_servers=[server], tenants=[imposed, {"id": MARTIN}]))
     registry, tenants = load_registry(config), Tenants(config)
 
     def mount(tenant_id: TenantId) -> None:
-        build_agent(
-            config, "demo", InMemoryEventStore(), registry=registry, tenant=tenants.get(tenant_id)
-        )
+        build_agent(config, "demo", InMemoryEventStore(), registry=registry, tenant=tenants.get(tenant_id))
 
     # Le serveur ne dit pas si `envoyer` existe : le client l'a voulue, la garde le prend au mot.
     with pytest.raises(ConfigError, match=r"crm__envoyer.*journal durable"):
@@ -761,9 +726,7 @@ async def test_a_key_only_ever_reads_its_own_tenant(demo: ConfigFactory) -> None
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
             chez_dupont = {"Authorization": f"Bearer {cle_dupont}"}
             chez_martin = {"Authorization": f"Bearer {cle_martin}"}
-            lance = await http.post(
-                "/v1/agents/demo/runs", json={"message": QUESTION}, headers=chez_dupont
-            )
+            lance = await http.post("/v1/agents/demo/runs", json={"message": QUESTION}, headers=chez_dupont)
             assert lance.status_code == 201
             run_id = lance.json()["run_id"]
             session_id = lance.json()["session_id"]
@@ -773,10 +736,7 @@ async def test_a_key_only_ever_reads_its_own_tenant(demo: ConfigFactory) -> None
             mienne = await http.get(f"/v1/sessions/{session_id}", headers=chez_dupont)
             assert mienne.status_code == 200
             assert [r["agent"] for r in mienne.json()["runs"]] == ["demo"]
-            assert [
-                s["session_id"]
-                for s in (await http.get("/v1/sessions", headers=chez_dupont)).json()
-            ] == [session_id]
+            assert [s["session_id"] for s in (await http.get("/v1/sessions", headers=chez_dupont)).json()] == [session_id]
 
             # L'autre ne le trouve pas : il ne peut même pas savoir qu'il existe.
             assert (await http.get(f"/v1/runs/{run_id}", headers=chez_martin)).status_code == 404
@@ -819,12 +779,8 @@ async def test_an_agent_closed_to_a_tenant_is_refused_over_rest(demo: ConfigFact
             headers = {"Authorization": f"Bearer {cle}"}
             # L'agent existe et il est publié, mais pas pour ce client : le 404 est celui
             # d'un agent inconnu, et sa liste ne nomme que les agents de ce client.
-            refus = await http.post(
-                "/v1/agents/demo/runs", json={"message": QUESTION}, headers=headers
-            )
-            absent = await http.post(
-                "/v1/agents/absent/runs", json={"message": QUESTION}, headers=headers
-            )
+            refus = await http.post("/v1/agents/demo/runs", json={"message": QUESTION}, headers=headers)
+            absent = await http.post("/v1/agents/absent/runs", json={"message": QUESTION}, headers=headers)
             assert refus.status_code == absent.status_code == 404
             assert refus.json()["detail"] == "Agent 'demo' inconnu (agents : autre)"
             assert absent.json()["detail"] == "Agent 'absent' inconnu (agents : autre)"
@@ -835,9 +791,7 @@ async def test_an_agent_closed_to_a_tenant_is_refused_over_rest(demo: ConfigFact
 # --- Ligne de commande : --tenant, et ce que `loom validate` en dit ------------
 
 
-def test_validate_shows_each_tenant_and_what_it_overrides(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_each_tenant_and_what_it_overrides(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from loom_ia.access.cli import main
 
     config = demo(
@@ -865,9 +819,7 @@ def test_validate_shows_each_tenant_and_what_it_overrides(
     assert "✓ 2 agents montés" in out
 
 
-def test_run_acts_for_the_tenant_given_on_the_command_line(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_acts_for_the_tenant_given_on_the_command_line(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from loom_ia.access.cli import main
 
     config = demo(storage={"events": {"backend": "jsonl", "path": "data"}}, tenants=two())
@@ -877,9 +829,7 @@ def test_run_acts_for_the_tenant_given_on_the_command_line(
     assert not (config.parent / "data" / MARTIN).exists()
 
 
-def test_run_without_a_user_of_a_declared_tenant_is_refused(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_without_a_user_of_a_declared_tenant_is_refused(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Le client est celui de l'utilisateur : ``dev`` (LOOM_USER) n'est d'aucun client déclaré."""
     from loom_ia.access.cli import main
 
@@ -887,9 +837,7 @@ def test_run_without_a_user_of_a_declared_tenant_is_refused(
     assert f"Utilisateur {DEV!r} inconnu" in capsys.readouterr().err
 
 
-async def test_closing_the_router_reaches_every_tenant_store_even_when_one_fails(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_closing_the_router_reaches_every_tenant_store_even_when_one_fails(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un journal de client qui échoue à se fermer n'épargne ni les autres ni celui de la racine."""
     path = demo(
         storage={"events": {"backend": "jsonl", "path": "commun"}},

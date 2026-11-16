@@ -245,9 +245,7 @@ class JournalReplay:
         }
 
 
-type ContextFactory = Callable[
-    [EventStore, ReplayBook, JournalTools | VariantTools, str, TenantId], RunContext
-]
+type ContextFactory = Callable[[EventStore, ReplayBook, JournalTools | VariantTools, str, TenantId], RunContext]
 
 
 def read_journal(path: Path) -> list[Event]:
@@ -271,9 +269,7 @@ def read_journal(path: Path) -> list[Event]:
         except ValidationError as exc:
             first = exc.errors()[0]
             where = ".".join(str(part) for part in first["loc"]) or "ligne"
-            raise ReplayError(
-                f"Journal {path}, ligne {number} : pas un événement ({where} : {first['msg']})"
-            ) from exc
+            raise ReplayError(f"Journal {path}, ligne {number} : pas un événement ({where} : {first['msg']})") from exc
     if not events:
         raise ReplayError(f"Journal {path} : aucun événement")
     return events
@@ -296,9 +292,7 @@ def journal_runs(events: Sequence[Event]) -> list[JournalRun]:
             finished=event.run_id in ended,
         )
         for event in events
-        if isinstance(event.payload, RunStarted)
-        and event.payload.parent_run_id is None
-        and event.payload.kind == "normal"
+        if isinstance(event.payload, RunStarted) and event.payload.parent_run_id is None and event.payload.kind == "normal"
     ]
 
 
@@ -326,16 +320,13 @@ async def replay_run(
     first, started = own[0], own[0].payload
     if started.parent_run_id is not None:
         raise ReplayError(
-            f"Run {run_id} : c'est le sous-run de {started.parent_run_id} — rejouer le run "
-            "racine, qui sert le résultat de ce sous-agent depuis le journal"
+            f"Run {run_id} : c'est le sous-run de {started.parent_run_id} — rejouer le run racine, qui sert le résultat de ce sous-agent depuis le journal"
         )
     if started.kind != "normal":
         raise ReplayError(f"Run {run_id} : run système ({started.kind}), non rejouable")
     ending = next((e for e in reversed(own) if isinstance(e.payload, _TERMINAL)), None)
     if ending is None:
-        raise ReplayError(
-            f"Run {run_id} : inachevé (en cours ou en pause) — un rejeu compare un run fini"
-        )
+        raise ReplayError(f"Run {run_id} : inachevé (en cours ou en pause) — un rejeu compare un run fini")
     asked = next((e for e in own if isinstance(e.payload, UserMessage)), None)
     if asked is None:
         raise ReplayError(f"Run {run_id} : pas de demande au journal")
@@ -477,17 +468,8 @@ def _counted(calls: Sequence[tuple[str, ToolFate]]) -> dict[ToolFate, int]:
 
 def _tools_done(events: Sequence[Event]) -> list[Event]:
     """Appels d'outil conclus, rôles à part (leurs appels de modèle se comptent ailleurs)."""
-    kinds = {
-        (e.run_id, e.payload.call_id): e.payload.tool_kind
-        for e in events
-        if isinstance(e.payload, ToolCalled)
-    }
-    return [
-        e
-        for e in events
-        if isinstance(e.payload, ToolCompleted)
-        and kinds.get((e.run_id, e.payload.call_id)) != "role"
-    ]
+    kinds = {(e.run_id, e.payload.call_id): e.payload.tool_kind for e in events if isinstance(e.payload, ToolCalled)}
+    return [e for e in events if isinstance(e.payload, ToolCompleted) and kinds.get((e.run_id, e.payload.call_id)) != "role"]
 
 
 def _compare(
@@ -539,8 +521,7 @@ def _compare(
             Divergence(
                 kind="end",
                 where="le parcours du run diffère",
-                detail=f"{' → '.join(_path(original))} au journal ; "
-                f"{' → '.join(_path(replayed))} au rejeu",
+                detail=f"{' → '.join(_path(original))} au journal ; {' → '.join(_path(replayed))} au rejeu",
             )
         )
 

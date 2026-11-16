@@ -202,9 +202,7 @@ def lent(secondes):
 '''
 
 
-def forgeage(
-    nom: str, description: str, schema: dict[str, Any], code: str, exemples: list[Any]
-) -> dict[str, Any]:
+def forgeage(nom: str, description: str, schema: dict[str, Any], code: str, exemples: list[Any]) -> dict[str, Any]:
     return {
         "name": nom,
         "description": description,
@@ -216,8 +214,7 @@ def forgeage(
 
 FORGE_TOTAL = forgeage(
     "total_ttc",
-    "Total HT, TVA et TTC d'un devis à partir de ses lignes (quantité, prix HT, taux de TVA "
-    "en %), arrondis au centime.",
+    "Total HT, TVA et TTC d'un devis à partir de ses lignes (quantité, prix HT, taux de TVA en %), arrondis au centime.",
     {"type": "object", "properties": {"lignes": LIGNES}, "required": ["lignes"]},
     TOTAL_TTC,
     [
@@ -243,9 +240,7 @@ EXEMPLES_TVA = [
     }
 ]
 SCHEMA_LIGNES = {"type": "object", "properties": {"lignes": LIGNES}, "required": ["lignes"]}
-FORGE_TVA_JET = forgeage(
-    "tva_par_taux", "Montant de TVA par taux d'un devis.", SCHEMA_LIGNES, TVA_JET, EXEMPLES_TVA
-)
+FORGE_TVA_JET = forgeage("tva_par_taux", "Montant de TVA par taux d'un devis.", SCHEMA_LIGNES, TVA_JET, EXEMPLES_TVA)
 FORGE_TVA = {**FORGE_TVA_JET, "code": TVA_CORRIGE}
 FORGE_BAVARD = forgeage(
     "bavard",
@@ -271,9 +266,7 @@ DEMANDE_042 = (
     "partir de ses lignes (quantité, prix HT, taux de TVA en %), arrondis au centime, puis "
     "calcule le devis D-2026-042 : " + json.dumps(DEVIS_042, ensure_ascii=False)
 )
-DEMANDE_043 = "Avec ton outil total_ttc, calcule le devis D-2026-043 : " + json.dumps(
-    DEVIS_043, ensure_ascii=False
-)
+DEMANDE_043 = "Avec ton outil total_ttc, calcule le devis D-2026-043 : " + json.dumps(DEVIS_043, ensure_ascii=False)
 DEMANDE_TVA = (
     "Forge l'outil tva_par_taux à partir de ce premier jet, tel quel d'abord, avec cet exemple ; "
     "s'il est refusé, corrige-le et forge-le à nouveau. Puis donne la TVA par taux du devis "
@@ -309,9 +302,7 @@ SCRIPT: list[dict[str, Any]] = [
         "with_text": "D-2026-042 :",
         "without_text": "tva_par_taux",
         "text": "Je calcule le devis.",
-        "tool_calls": [
-            appel("forge__call", {"name": "total_ttc", "arguments": {"lignes": DEVIS_042}})
-        ],
+        "tool_calls": [appel("forge__call", {"name": "total_ttc", "arguments": {"lignes": DEVIS_042}})],
     },
     {
         "with_text": "D-2026-042 :",
@@ -340,9 +331,7 @@ SCRIPT: list[dict[str, Any]] = [
     {
         "with_text": "tva_par_taux",
         "text": "Je l'appelle.",
-        "tool_calls": [
-            appel("forge__call", {"name": "tva_par_taux", "arguments": {"lignes": DEVIS_042}})
-        ],
+        "tool_calls": [appel("forge__call", {"name": "tva_par_taux", "arguments": {"lignes": DEVIS_042}})],
     },
     {
         "with_text": "tva_par_taux",
@@ -410,11 +399,7 @@ class Controle:
 def enonce(quoi: str, texte: str, largeur: int = 96) -> None:
     """Imprime un message long sur plusieurs lignes, sans rien en couper."""
     marge = " " * len(quoi)
-    lignes = [
-        morceau
-        for bloc in texte.splitlines()
-        for morceau in textwrap.wrap(bloc, largeur - len(quoi), replace_whitespace=False) or [""]
-    ]
+    lignes = [morceau for bloc in texte.splitlines() for morceau in textwrap.wrap(bloc, largeur - len(quoi), replace_whitespace=False) or [""]]
     for numero, ligne in enumerate(lignes or [""]):
         print(f"{quoi if numero == 0 else marge}{ligne}")
 
@@ -467,9 +452,7 @@ def ecrit_config(dossier: Path, vm: Path, *, reel: bool, modele: str) -> tuple[P
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "WARNING"}, "capture": {"raw_exchanges": True}},
     }
-    (base / "loom.yaml").write_text(
-        yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    (base / "loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
     nom = "atelier_reel" if reel else "atelier"
     agent = {
         "name": nom,
@@ -478,9 +461,7 @@ def ecrit_config(dossier: Path, vm: Path, *, reel: bool, modele: str) -> tuple[P
         "max_iterations": 8,
         "tools": [{"source": "forge"}],
     }
-    (base / "agents" / f"{nom}.yaml").write_text(
-        yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    (base / "agents" / f"{nom}.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return base / "loom.yaml", choisi["model"]
 
 
@@ -497,11 +478,7 @@ def proposes(events: list[Event]) -> list[str]:
 def appels(events: list[Event]) -> list[tuple[ToolCalled, ToolCompleted | None]]:
     """Chaque appel d'outil du run et son résultat."""
     rendus = {e.payload.call_id: e.payload for e in events if isinstance(e.payload, ToolCompleted)}
-    return [
-        (e.payload, rendus.get(e.payload.call_id))
-        for e in events
-        if isinstance(e.payload, ToolCalled)
-    ]
+    return [(e.payload, rendus.get(e.payload.call_id)) for e in events if isinstance(e.payload, ToolCalled)]
 
 
 def raconte(result: RunResult, events: list[Event]) -> None:
@@ -520,10 +497,7 @@ def raconte(result: RunResult, events: list[Event]) -> None:
 
 def forge_reussi(events: list[Event], nom: str) -> bool:
     return any(
-        fait.tool_name == "forge__forge"
-        and fait.arguments.get("name") == nom
-        and rendu is not None
-        and not rendu.output.is_error
+        fait.tool_name == "forge__forge" and fait.arguments.get("name") == nom and rendu is not None and not rendu.output.is_error
         for fait, rendu in appels(events)
     )
 
@@ -541,9 +515,7 @@ class Atelier:
     def __init__(self, args: argparse.Namespace, dossier: Path, vm: Vm) -> None:
         self.args = args
         self.reel: bool = args.reel
-        self.fichier, self.modele = ecrit_config(
-            dossier, vm.directory, reel=self.reel, modele=args.modele
-        )
+        self.fichier, self.modele = ecrit_config(dossier, vm.directory, reel=self.reel, modele=args.modele)
         self.catalogue = self.fichier.parent / "catalogue" / "default"
         self.vm = vm
         self.agent = "atelier_reel" if self.reel else "atelier"
@@ -568,10 +540,7 @@ async def cas_forger(atelier: Atelier, controle: Controle) -> None:
         if not atelier.vm_avant:
             tourne = atelier.vm.is_running()
             if not appels(events):
-                print(
-                    "  aucun outil appelé, et la VM n'a pas eu à démarrer : "
-                    + controle.tient("forger : la VM a démarré sans appel d'outil", not tourne)
-                )
+                print("  aucun outil appelé, et la VM n'a pas eu à démarrer : " + controle.tient("forger : la VM a démarré sans appel d'outil", not tourne))
             elif not reel:
                 print(
                     "  la VM a été démarrée par la source, au premier appel exécuté dans la VM : "
@@ -596,23 +565,17 @@ async def cas_forger(atelier: Atelier, controle: Controle) -> None:
                 f"  total_ttc forgé, puis appelé par forge__call : {TOTAL_042} : "
                 + controle.tient(
                     "forger : le run 1 ne rend pas ce qui est annoncé",
-                    premier.status == RunStatus.COMPLETED
-                    and forge
-                    and [c.output.data for c in calcul] == [TOTAL_042],
+                    premier.status == RunStatus.COMPLETED and forge and [c.output.data for c in calcul] == [TOTAL_042],
                 )
             )
         if forge:
             await suite_forger(atelier, loom, controle)
         else:
             print("  total_ttc n'a pas été forgé : la suite du cas n'a rien à éprouver")
-            controle.saute(
-                "forger (total_ttc pas forgé au run 1 : la suite n'est pas exigée)", partie=True
-            )
+            controle.saute("forger (total_ttc pas forgé au run 1 : la suite n'est pas exigée)", partie=True)
     vm_arretee(atelier, controle, "forger")
     if reel and forge:
-        controle.saute(
-            "forger (en --reel, ce que rendent les outils est montré, pas exigé)", partie=True
-        )
+        controle.saute("forger (en --reel, ce que rendent les outils est montré, pas exigé)", partie=True)
 
 
 async def suite_forger(atelier: Atelier, loom: Loom, controle: Controle) -> None:
@@ -645,15 +608,12 @@ async def suite_forger(atelier: Atelier, loom: Loom, controle: Controle) -> None
             f"  appelé directement sur D-2026-043 : {TOTAL_043} : "
             + controle.tient(
                 "forger : le run 2 ne rend pas ce qui est annoncé",
-                second.status == RunStatus.COMPLETED
-                and [d.output.data for d in directs] == [TOTAL_043],
+                second.status == RunStatus.COMPLETED and [d.output.data for d in directs] == [TOTAL_043],
             )
         )
 
 
-def vm_arretee(
-    atelier: Atelier, controle: Controle, cas: str, *, avant: bool | None = None
-) -> None:
+def vm_arretee(atelier: Atelier, controle: Controle, cas: str, *, avant: bool | None = None) -> None:
     """Instance fermée : la VM, arrêtée avant le cas, l'est encore — c'est la source qui
     l'arrête si elle l'a démarrée. Rien à voir si elle tournait déjà avant."""
     tournait = atelier.vm_avant if avant is None else avant
@@ -661,9 +621,7 @@ def vm_arretee(
         return
     print(
         "  l'instance fermée, la VM est arrêtée (la source l'arrête si elle l'a démarrée) : "
-        + controle.tient(
-            f"{cas} : la VM tourne encore après l'instance", not atelier.vm.is_running()
-        )
+        + controle.tient(f"{cas} : la VM tourne encore après l'instance", not atelier.vm.is_running())
     )
 
 
@@ -671,11 +629,7 @@ async def cas_corriger(atelier: Atelier, controle: Controle) -> None:
     avant = atelier.vm.is_running()
     async with Loom(load_config(atelier.fichier)) as loom:
         result, events = await atelier.run(loom, "de correction", DEMANDE_TVA)
-    forges = [
-        (fait, rendu)
-        for fait, rendu in appels(events)
-        if fait.tool_name == "forge__forge" and fait.arguments.get("name") == "tva_par_taux"
-    ]
+    forges = [(fait, rendu) for fait, rendu in appels(events) if fait.tool_name == "forge__forge" and fait.arguments.get("name") == "tva_par_taux"]
     refuses = [r for _, r in forges if r is not None and r.output.is_error]
     acceptes = [r for _, r in forges if r is not None and not r.output.is_error]
     if not atelier.reel:
@@ -685,9 +639,7 @@ async def cas_corriger(atelier: Atelier, controle: Controle) -> None:
                 "  le premier jet est refusé, et le refus dit l'écart au modèle : "
                 + controle.tient(
                     "corriger : le refus ne dit pas l'écart",
-                    "Outil tva_par_taux refusé" in texte
-                    and "attendu" in texte
-                    and "obtenu" in texte,
+                    "Outil tva_par_taux refusé" in texte and "attendu" in texte and "obtenu" in texte,
                 )
             )
         code = atelier.catalogue / "tva_par_taux" / "tva_par_taux.py"
@@ -745,14 +697,9 @@ async def cas_rejeu(atelier: Atelier, controle: Controle) -> None:
         )
     )
     if tournait:
-        controle.saute(
-            "rejeu (la VM tournait avant : qu'il ne la démarre pas ne se voit pas)", partie=True
-        )
+        controle.saute("rejeu (la VM tournait avant : qu'il ne la démarre pas ne se voit pas)", partie=True)
     else:
-        print(
-            "  la VM n'a pas été démarrée : "
-            + controle.tient("rejeu : la VM a été démarrée par le rejeu", not pendant)
-        )
+        print("  la VM n'a pas été démarrée : " + controle.tient("rejeu : la VM a été démarrée par le rejeu", not pendant))
 
 
 async def cas_bornes(atelier: Atelier, controle: Controle) -> None:
@@ -762,11 +709,7 @@ async def cas_bornes(atelier: Atelier, controle: Controle) -> None:
     avant = atelier.vm.is_running()
     async with Loom(load_config(atelier.fichier)) as loom:
         result, events = await atelier.run(loom, "des bornes", DEMANDE_BORNES)
-    rendus = {
-        str(fait.arguments.get("name")): rendu
-        for fait, rendu in appels(events)
-        if fait.tool_name == "forge__call" and rendu is not None
-    }
+    rendus = {str(fait.arguments.get("name")): rendu for fait, rendu in appels(events) if fait.tool_name == "forge__call" and rendu is not None}
     bavard, lent = rendus.get("bavard"), rendus.get("lent")
     if bavard is not None:
         texte = bavard.output.as_text
@@ -785,9 +728,7 @@ async def cas_bornes(atelier: Atelier, controle: Controle) -> None:
             f"  lent(secondes=30) revient en timeout après {WALL_MS} ms, et le run continue : "
             + controle.tient(
                 "bornes : lent ne revient pas en timeout, ou le run s'arrête",
-                lent.output.is_error
-                and "timeout" in lent.output.as_text
-                and result.status == RunStatus.COMPLETED,
+                lent.output.is_error and "timeout" in lent.output.as_text and result.status == RunStatus.COMPLETED,
             )
         )
     else:
@@ -808,9 +749,7 @@ async def main(argv: list[str]) -> int:
         help=f"modèle de --reel ({MODELES[0]} par défaut ; haiku : Claude Haiku 5.5)",
     )
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
-    parser.add_argument(
-        "--garder", action="store_true", help="garder le dossier (config, catalogue, journal)"
-    )
+    parser.add_argument("--garder", action="store_true", help="garder le dossier (config, catalogue, journal)")
     args = parser.parse_args(argv)
     if args.modele is not None and not args.reel:
         print("--modele choisit le modèle de --reel : ajouter --reel.", file=sys.stderr)
@@ -818,8 +757,7 @@ async def main(argv: list[str]) -> int:
     args.modele = args.modele or MODELES[0]
     if args.vm is None:
         print(
-            "Il faut une VM : --vm <dossier>, celui que make_vm.sh a construit (vm.env, run.sh), "
-            "avec execd dans son image.",
+            "Il faut une VM : --vm <dossier>, celui que make_vm.sh a construit (vm.env, run.sh), avec execd dans son image.",
             file=sys.stderr,
         )
         return 2
@@ -835,17 +773,12 @@ async def main(argv: list[str]) -> int:
     cas = tuple(nom for nom in CAS if nom in cas)
     controle = Controle()
     gardien: contextlib.AbstractContextManager[str] = (
-        contextlib.nullcontext(tempfile.mkdtemp(prefix="loom-forge-"))
-        if args.garder
-        else tempfile.TemporaryDirectory(prefix="loom-forge-")
+        contextlib.nullcontext(tempfile.mkdtemp(prefix="loom-forge-")) if args.garder else tempfile.TemporaryDirectory(prefix="loom-forge-")
     )
     with gardien as dossier:
         try:
             atelier = Atelier(args, Path(dossier), vm)
-            print(
-                f"Agent : {atelier.agent}, modèle {atelier.modele} ; VM : {vm.directory} ; "
-                f"wall_ms {WALL_MS}"
-            )
+            print(f"Agent : {atelier.agent}, modèle {atelier.modele} ; VM : {vm.directory} ; wall_ms {WALL_MS}")
             for nom in cas:
                 print(f"\n{'─' * 78}\nCas {nom}\n{'─' * 78}")
                 if nom == "forger":

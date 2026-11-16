@@ -129,9 +129,7 @@ def _conditions(query: EventQuery) -> tuple[str, list[Any]]:
         # Après l'événement indiqué dans l'ordre d'écriture (rowid) ; un
         # événement inconnu de ce client retombe sur la comparaison des ids.
         known = "SELECT c.rowid FROM events AS c WHERE c.tenant_id = ? AND c.event_id = ?"
-        clauses.append(
-            f"CASE WHEN EXISTS ({known}) THEN events.rowid > ({known}) ELSE event_id > ? END"
-        )
+        clauses.append(f"CASE WHEN EXISTS ({known}) THEN events.rowid > ({known}) ELSE event_id > ? END")
         values.extend([query.tenant_id, query.after] * 2 + [query.after])
     return " AND ".join(clauses), values
 
@@ -167,9 +165,7 @@ class SqliteEventStore:
 
     # --- Écriture ---------------------------------------------------------
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         if not drafts:
             return []
         tenant_id, session_id = journal_key(drafts)
@@ -184,9 +180,7 @@ class SqliteEventStore:
                 if expected_seq is not None and expected_seq != last:
                     raise SequenceConflict(session_id, expected_seq, last)
                 events = [draft.to_event(last + i) for i, draft in enumerate(drafts, start=1)]
-                await connection.executemany(
-                    _INSERT, [_row(event, self._codec) for event in events]
-                )
+                await connection.executemany(_INSERT, [_row(event, self._codec) for event in events])
                 await connection.execute("COMMIT")
             except BaseException:
                 await self._abort(connection)
@@ -219,10 +213,7 @@ class SqliteEventStore:
         after_seq: int = 0,
         run_id: RunId | None = None,
     ) -> list[Event]:
-        sql = (
-            "SELECT event FROM events WHERE tenant_id = ? AND session_id = ? AND seq > ?"
-            f"{' AND run_id = ?' if run_id is not None else ''} ORDER BY seq"
-        )
+        sql = f"SELECT event FROM events WHERE tenant_id = ? AND session_id = ? AND seq > ?{' AND run_id = ?' if run_id is not None else ''} ORDER BY seq"
         values: list[Any] = [tenant_id, session_id, after_seq]
         if run_id is not None:
             values.append(run_id)
@@ -248,9 +239,7 @@ class SqliteEventStore:
             connection = await self._connect()
             return await self._last_seq(connection, tenant_id, session_id)
 
-    async def _last_seq(
-        self, connection: aiosqlite.Connection, tenant_id: TenantId, session_id: SessionId
-    ) -> int:
+    async def _last_seq(self, connection: aiosqlite.Connection, tenant_id: TenantId, session_id: SessionId) -> int:
         cursor = await connection.execute(
             "SELECT COALESCE(MAX(seq), 0) FROM events WHERE tenant_id = ? AND session_id = ?",
             (tenant_id, session_id),
@@ -267,8 +256,7 @@ class SqliteEventStore:
         async with self._lock:
             connection = await self._connect()
             cursor = await connection.execute(
-                "SELECT session_id, MAX(seq), MAX(ts) FROM events WHERE tenant_id = ?"
-                " GROUP BY session_id ORDER BY MAX(ts) DESC",
+                "SELECT session_id, MAX(seq), MAX(ts) FROM events WHERE tenant_id = ? GROUP BY session_id ORDER BY MAX(ts) DESC",
                 (tenant_id,),
             )
             try:

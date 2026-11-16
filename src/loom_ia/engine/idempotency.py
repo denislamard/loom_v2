@@ -82,14 +82,8 @@ class JournalIdempotency:
         décoré. Une clé seulement réservée n'est pas ici — elle est au
         ``tool.called``, que la reprise (#18) consulte de son côté.
         """
-        events = await self._writer.store.read(
-            self._writer.tenant_id, self._writer.session_id, run_id=self._run_id
-        )
-        recorded = [
-            payload
-            for event in events
-            if isinstance(payload := event.payload, IdempotencyRecorded) and payload.key == key
-        ]
+        events = await self._writer.store.read(self._writer.tenant_id, self._writer.session_id, run_id=self._run_id)
+        recorded = [payload for event in events if isinstance(payload := event.payload, IdempotencyRecorded) and payload.key == key]
         if not recorded:
             return None
         return IdempotencyRecord(
@@ -99,16 +93,12 @@ class JournalIdempotency:
             expires_at=datetime.now(UTC) + _FOREVER,
         )
 
-    async def reserve(
-        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
-    ) -> bool:
+    async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
         """Toujours vrai : le ``tool.called`` de l'appel tient lieu de réservation."""
         self._holder = holder
         return True
 
-    async def complete(
-        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
-    ) -> None:
+    async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
         """Écrit l'effet au journal du run, sous sa clé."""
         if holder is not None and self._holder is not None and holder != self._holder:
             return

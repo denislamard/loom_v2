@@ -159,9 +159,7 @@ class Analysis:
                     yield table, right
 
 
-def analyze(
-    sql: str, params: int, catalog: Catalog, *, write: bool, position: str = ""
-) -> Analysis:
+def analyze(sql: str, params: int, catalog: Catalog, *, write: bool, position: str = "") -> Analysis:
     """L'instruction jugée, ou ``ToolError`` qui dit au modèle quoi corriger.
 
     ``write`` : l'instruction vient d'``execute``. ``position`` (« instruction 2 : »)
@@ -200,10 +198,7 @@ def _analyze(sql: str, params: int, catalog: Catalog, *, write: bool) -> Analysi
             # La cible, déjà jugée ; ou une fonction-table (generate_series…).
             continue
         if table.args.get("db") is not None or table.args.get("catalog") is not None:
-            raise ToolError(
-                f"Nom qualifié « {table.sql(dialect=catalog.dialect)} » interdit : "
-                f"écrire « {table.name} »."
-            )
+            raise ToolError(f"Nom qualifié « {table.sql(dialect=catalog.dialect)} » interdit : écrire « {table.name} ».")
         name = _canonical(table.this, catalog)
         if name in ctes:
             continue
@@ -217,10 +212,7 @@ def _analyze(sql: str, params: int, catalog: Catalog, *, write: bool) -> Analysi
         missing = [r for r in ("select", "insert", "update", "delete") if r in rights]
         missing = [r for r in missing if r not in catalog.rights[table]]
         if missing:
-            raise ToolError(
-                f"{'/'.join(m.upper() for m in missing)} non autorisé sur « {table} » "
-                f"(droits : {catalog.granted(table)})."
-            )
+            raise ToolError(f"{'/'.join(m.upper() for m in missing)} non autorisé sur « {table} » (droits : {catalog.granted(table)}).")
     return Analysis(
         operation=operation,
         needs={table: frozenset(rights) for table, rights in needs.items()},
@@ -230,16 +222,10 @@ def _analyze(sql: str, params: int, catalog: Catalog, *, write: bool) -> Analysi
 
 
 def _operation(root: exp.Expr, *, write: bool) -> Operation:
-    nested = [
-        node
-        for node in root.find_all(exp.Insert, exp.Update, exp.Delete, exp.Merge)
-        if node is not root
-    ]
+    nested = [node for node in root.find_all(exp.Insert, exp.Update, exp.Delete, exp.Merge) if node is not root]
     if isinstance(root, exp.Query):
         if write:
-            raise ToolError(
-                "execute écrit : INSERT, UPDATE ou DELETE ; une lecture passe par query."
-            )
+            raise ToolError("execute écrit : INSERT, UPDATE ou DELETE ; une lecture passe par query.")
         if nested:
             raise ToolError("query ne fait que lire : une écriture passe par execute.")
         if root.find(exp.Into) is not None:
@@ -249,14 +235,9 @@ def _operation(root: exp.Expr, *, write: bool) -> Operation:
         return "select"
     if isinstance(root, exp.Insert | exp.Update | exp.Delete):
         if not write:
-            raise ToolError(
-                f"{root.key.upper()} écrit : passer par execute ; query ne fait que lire."
-            )
+            raise ToolError(f"{root.key.upper()} écrit : passer par execute ; query ne fait que lire.")
         if nested:
-            raise ToolError(
-                "Une instruction n'écrit que dans sa table cible (pas de WITH … "
-                "INSERT/UPDATE/DELETE) : en faire deux instructions d'execute."
-            )
+            raise ToolError("Une instruction n'écrit que dans sa table cible (pas de WITH … INSERT/UPDATE/DELETE) : en faire deux instructions d'execute.")
         if root.find(exp.Lock) is not None:
             raise ToolError("FOR UPDATE / FOR SHARE verrouille des lignes : interdit.")
         if isinstance(root, exp.Insert):
@@ -270,9 +251,7 @@ def _operation(root: exp.Expr, *, write: bool) -> Operation:
     raise ToolError(f"Instruction {said} interdite. Autorisé : {allowed}.")
 
 
-def _target(
-    root: exp.Expr, catalog: Catalog, operation: Operation
-) -> tuple[exp.Table | None, str | None]:
+def _target(root: exp.Expr, catalog: Catalog, operation: Operation) -> tuple[exp.Table | None, str | None]:
     if operation == "select":
         return None, None
     node = root.this
@@ -281,19 +260,13 @@ def _target(
     if not isinstance(node, exp.Table) or not isinstance(node.this, exp.Identifier):
         raise ToolError(f"{operation.upper()} : table cible illisible.")
     if node.args.get("db") is not None or node.args.get("catalog") is not None:
-        raise ToolError(
-            f"Nom qualifié « {node.sql(dialect=catalog.dialect)} » interdit : "
-            f"écrire « {node.name} »."
-        )
+        raise ToolError(f"Nom qualifié « {node.sql(dialect=catalog.dialect)} » interdit : écrire « {node.name} ».")
     declared = catalog.declared(node.name, quoted=bool(node.this.args.get("quoted")))
     if declared is None:
         raise ToolError(_unknown_table(node.name, catalog))
     if operation in ("update", "delete") and root.args.get("where") is None:
         if not catalog.allow_full_table:
-            raise ToolError(
-                f"{operation.upper()} sans WHERE refusé : il toucherait toute la table "
-                f"« {declared} » ; ajouter une condition."
-            )
+            raise ToolError(f"{operation.upper()} sans WHERE refusé : il toucherait toute la table « {declared} » ; ajouter une condition.")
     return node, declared
 
 
@@ -315,18 +288,14 @@ def _target_rights(root: exp.Expr, operation: Operation) -> set[SqlRight]:
 def _check_functions(root: exp.Expr, catalog: Catalog) -> None:
     for dot in root.find_all(exp.Dot):
         if isinstance(dot.expression, exp.Anonymous):
-            raise ToolError(
-                f"Fonction qualifiée « {dot.sql(dialect=catalog.dialect)} » interdite : "
-                "l'appeler sans schéma."
-            )
+            raise ToolError(f"Fonction qualifiée « {dot.sql(dialect=catalog.dialect)} » interdite : l'appeler sans schéma.")
     for function in root.find_all(exp.Anonymous):
         name = str(function.name).lower()
         if is_forbidden(name):
             raise ToolError(f"Fonction {name} interdite : elle agit hors de la requête.")
         if name not in catalog.functions:
             raise ToolError(
-                f"Fonction {name} non permise : inconnue de l'analyse. Si elle ne modifie "
-                "rien, la base peut la permettre (functions) ; sinon s'en passer."
+                f"Fonction {name} non permise : inconnue de l'analyse. Si elle ne modifie rien, la base peut la permettre (functions) ; sinon s'en passer."
             )
 
 

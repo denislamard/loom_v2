@@ -64,10 +64,7 @@ def render(
         if granted is None:
             blocks.append(f"-- « {name} » : table non autorisée ({', '.join(rights)}).")
             continue
-        said = ", ".join(
-            f"{right.upper()}{' (approbation humaine)' if approval == 'always' else ''}"
-            for right, approval in granted.items()
-        )
+        said = ", ".join(f"{right.upper()}{' (approbation humaine)' if approval == 'always' else ''}" for right, approval in granted.items())
         lines = [f"-- droits : {said}"]
         if name in describe:
             lines.append(f"-- {describe[name]}")

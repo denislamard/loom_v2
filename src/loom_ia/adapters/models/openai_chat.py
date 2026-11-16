@@ -204,9 +204,7 @@ class OpenAIChatModel:
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
         capabilities = self.spec.capabilities
-        messages = to_openai_messages(
-            request.system, request.messages, reasoning=capabilities.thinking
-        )
+        messages = to_openai_messages(request.system, request.messages, reasoning=capabilities.thinking)
         tools = to_openai_tools(request)
         tool_choice: ChatCompletionToolChoiceOptionParam | openai.Omit = openai.omit
         if tools:
@@ -262,9 +260,7 @@ class OpenAIChatModel:
 # --- Requête -------------------------------------------------------------------
 
 
-def to_openai_messages(
-    system: str, messages: Sequence[Message], *, reasoning: bool = False
-) -> list[ChatCompletionMessageParam]:
+def to_openai_messages(system: str, messages: Sequence[Message], *, reasoning: bool = False) -> list[ChatCompletionMessageParam]:
     """Messages neutres → messages de l'API.
 
     ``reasoning`` : le raisonnement des réponses de la boucle d'outils en
@@ -286,9 +282,7 @@ def to_openai_messages(
                         text = output_text(block.output)
                         if block.output.is_error:
                             text = ERROR_PREFIX + text
-                        result.append(
-                            {"role": "tool", "tool_call_id": block.call_id, "content": text}
-                        )
+                        result.append({"role": "tool", "tool_call_id": block.call_id, "content": text})
     return result
 
 
@@ -346,9 +340,7 @@ def _text(block: ContentBlock) -> str:
         case ArtifactRefBlock():
             raise unresolved(block)
         case InlineDataBlock():
-            raise ModelError(
-                "invalid_request", "Image hors d'un message utilisateur : non transmissible"
-            )
+            raise ModelError("invalid_request", "Image hors d'un message utilisateur : non transmissible")
         case _:
             return ""
 
@@ -416,11 +408,7 @@ class StreamParser:
             field, reasoning = _reasoning(delta)
             if reasoning:
                 start = not self._reasoning
-                chunks.append(
-                    ReasoningDelta(text=reasoning, start=start, provider_meta=_origin(field))
-                    if start
-                    else ReasoningDelta(text=reasoning)
-                )
+                chunks.append(ReasoningDelta(text=reasoning, start=start, provider_meta=_origin(field)) if start else ReasoningDelta(text=reasoning))
                 self._reasoning = True
             text = (delta.content or "") + (delta.refusal or "")
             if text:
@@ -484,13 +472,9 @@ class StreamParser:
         if self._finish is not None:
             return
         if not done:
-            raise ModelError(
-                "transient", "Flux interrompu : ni finish_reason ni [DONE] reçus du fournisseur"
-            )
+            raise ModelError("transient", "Flux interrompu : ni finish_reason ni [DONE] reçus du fournisseur")
         if not self._content:
-            raise ModelError(
-                "transient", "Réponse vide : [DONE] reçu sans finish_reason ni contenu"
-            )
+            raise ModelError("transient", "Réponse vide : [DONE] reçu sans finish_reason ni contenu")
 
     def finish(self) -> list[ModelChunk]:
         """Morceaux de fin : l'API ne signale ni la fin des appels ni l'arrêt séparément."""

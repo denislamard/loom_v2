@@ -71,15 +71,9 @@ def decode_key(value: str, *, what: str) -> bytes:
     try:
         key = b64decode(padded.replace("-", "+").replace("_", "/"), validate=True)
     except ValueError as exc:
-        raise SealError(
-            f"{what} : la clé n'est pas du base64 ({exc}) — en fabriquer une avec "
-            f"{how_to_make_one()}"
-        ) from exc
+        raise SealError(f"{what} : la clé n'est pas du base64 ({exc}) — en fabriquer une avec {how_to_make_one()}") from exc
     if len(key) != KEY_BYTES:
-        raise SealError(
-            f"{what} : la clé fait {len(key)} octets, il en faut {KEY_BYTES} (AES-256) — "
-            f"en fabriquer une avec {how_to_make_one()}"
-        )
+        raise SealError(f"{what} : la clé fait {len(key)} octets, il en faut {KEY_BYTES} (AES-256) — en fabriquer une avec {how_to_make_one()}")
     return key
 
 
@@ -106,10 +100,7 @@ class AesGcmCipher:
         try:
             return self._aead.decrypt(sealed[:NONCE_BYTES], sealed[NONCE_BYTES:], aad)
         except InvalidTag as exc:
-            raise SealBroken(
-                f"Sceau {self._key_id!r} : il ne s'ouvre pas avec cette clé — octets ou "
-                "enveloppe altérés"
-            ) from exc
+            raise SealBroken(f"Sceau {self._key_id!r} : il ne s'ouvre pas avec cette clé — octets ou enveloppe altérés") from exc
 
     def __repr__(self) -> str:
         return f"AesGcmCipher(key_id={self._key_id!r})"
@@ -161,10 +152,7 @@ class SecretKeyring:
                 f"illisible et ses runs sont refusés : remettre la variable de {head!r}, ou, si "
                 f"cette clé n'est plus voulue, retirer {head!r} de 'storage.encryption.keys'"
             )
-        return tuple(
-            AesGcmCipher(decode_key(value, what=f"Client {tenant_id!r}, secret {name!r}"))
-            for name, value in found
-        )
+        return tuple(AesGcmCipher(decode_key(value, what=f"Client {tenant_id!r}, secret {name!r}")) for name, value in found)
 
     def __repr__(self) -> str:
         return f"SecretKeyring(names={self._names!r})"

@@ -63,10 +63,7 @@ def cite_le_devis(subject: OnOutput) -> Decision:
     numero = devis_trouve(subject.state)
     if numero is None or numero in subject.output.text:
         return CONTINUE
-    return Retry(
-        f"la relance doit citer le numéro du devis {numero}. Rappelle rediger_relance "
-        "en le demandant dans consignes."
-    )
+    return Retry(f"la relance doit citer le numéro du devis {numero}. Rappelle rediger_relance en le demandant dans consignes.")
 
 
 def devis_trouve(state: RunState) -> str | None:

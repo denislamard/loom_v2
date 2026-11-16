@@ -117,9 +117,7 @@ def query(sql: str, *params: Any) -> dict[str, Any]:
 
 
 def execute(*statements: tuple[str, list[Any]] | str) -> dict[str, Any]:
-    units = [
-        {"sql": s} if isinstance(s, str) else {"sql": s[0], "params": s[1]} for s in statements
-    ]
+    units = [{"sql": s} if isinstance(s, str) else {"sql": s[0], "params": s[1]} for s in statements]
     return {"action": "execute", "database": "crm", "statements": units}
 
 
@@ -138,9 +136,7 @@ def database(**changes: Any) -> dict[str, Any]:
 
 
 def test_short_form_takes_the_default_approvals() -> None:
-    spec = DatabaseSpec.model_validate(
-        database(tables={"devis": ["select", "insert", "update", "delete"]})
-    )
+    spec = DatabaseSpec.model_validate(database(tables={"devis": ["select", "insert", "update", "delete"]}))
     assert spec.tables["devis"].rights == {
         "select": "never",
         "insert": "never",
@@ -207,18 +203,15 @@ def test_a_table_resolves_to_its_internal_rights(table: object, internal: dict[s
     [
         (
             {"rights": ["select"], "approval": {"update": "always"}},
-            "base 'crm', table 'devis' : approval 'update' porte sur un droit non accordé — "
-            "l'ajouter à 'rights', ou le retirer d'approval",
+            "base 'crm', table 'devis' : approval 'update' porte sur un droit non accordé — l'ajouter à 'rights', ou le retirer d'approval",
         ),
         (
             {"rights": ["select"], "approval": {"select": "ask"}},
-            "base 'crm', table 'devis' : approval 'select' vaut 'ask' — attendu : never (sans "
-            "approbation) ou always (approbation humaine)",
+            "base 'crm', table 'devis' : approval 'select' vaut 'ask' — attendu : never (sans approbation) ou always (approbation humaine)",
         ),
         (
             {"rights": ["select"], "approval": {"drop": "never"}},
-            "base 'crm', table 'devis' : approval 'drop' — droit inconnu (droits : select, "
-            "insert, update, delete)",
+            "base 'crm', table 'devis' : approval 'drop' — droit inconnu (droits : select, insert, update, delete)",
         ),
         ({"approval": {"select": "never"}}, "base 'crm', table 'devis' : 'rights' manquant"),
         ({}, "base 'crm', table 'devis' : aucun droit donné"),
@@ -270,9 +263,7 @@ def test_the_old_table_is_refused_when_the_config_loads(demo: ConfigFactory, bas
     databases = [crm(base, tables={"devis": {"select": "never", "update": "always"}})]
     with pytest.raises(ConfigError) as raised:
         load_config(demo(agents=[sql_agent(databases=databases)]))
-    assert ("base 'crm', table 'devis' : la table droit → approbation n'est plus acceptée") in str(
-        raised.value
-    )
+    assert ("base 'crm', table 'devis' : la table droit → approbation n'est plus acceptée") in str(raised.value)
     assert "écrire [select, update]" in str(raised.value)
 
 
@@ -320,9 +311,7 @@ def test_postgres_schema_and_secret_names() -> None:
 
 
 def test_the_sqlite_file_must_exist(tmp_path: Path) -> None:
-    with pytest.raises(
-        ValueError, match=r"n'existe pas ou n'est pas un fichier — loom\.sql n'en crée pas"
-    ):
+    with pytest.raises(ValueError, match=r"n'existe pas ou n'est pas un fichier — loom\.sql n'en crée pas"):
         make(tmp_path, database())
 
 
@@ -338,9 +327,7 @@ def test_loom_own_files_are_refused(tmp_path: Path, base: Path) -> None:
     journal = BuiltinContext(protected=(Protected(base, "le journal"),))
     with pytest.raises(ValueError, match="est le journal"):
         build(model, journal)
-    artefacts = BuiltinContext(
-        protected=(Protected(base.parent, "le dossier des artefacts", subtree=True),)
-    )
+    artefacts = BuiltinContext(protected=(Protected(base.parent, "le dossier des artefacts", subtree=True),))
     with pytest.raises(ValueError, match="est dans le dossier des artefacts"):
         build(model, artefacts)
 
@@ -398,10 +385,7 @@ def test_declarations_are_the_worst_case(tmp_path: Path, base: Path) -> None:
 
 def test_description_and_settings(tool: SqlTool) -> None:
     description = tool.spec.description
-    assert (
-        "- crm (sqlite ; 200 lignes lues, 100 modifiées au plus) : "
-        "devis (select, insert, update (approbation))" in description
-    )
+    assert "- crm (sqlite ; 200 lignes lues, 100 modifiées au plus) : devis (select, insert, update (approbation))" in description
     assert "relances (select, insert, delete)" in description
     assert "paramètres $1, $2…" in description
     assert "en heure de Europe/Paris" in description
@@ -472,8 +456,7 @@ PG: Final = Catalog.of(
             0,
         ),
         (
-            "WITH d AS (DELETE FROM devis WHERE id = 1 RETURNING id) "
-            "INSERT INTO relances (id) SELECT id FROM d",
+            "WITH d AS (DELETE FROM devis WHERE id = 1 RETURNING id) INSERT INTO relances (id) SELECT id FROM d",
             True,
             "n'écrit que dans sa table cible",
             0,
@@ -611,24 +594,20 @@ def test_a_forbidden_function_stays_refused_even_when_allowed() -> None:
             {"relances": {"insert"}},
         ),
         (
-            "UPDATE devis d SET statut = 'relance' FROM clients c "
-            "WHERE c.id = d.client_id AND c.nom = $1",
+            "UPDATE devis d SET statut = 'relance' FROM clients c WHERE c.id = d.client_id AND c.nom = $1",
             1,
             True,
             {"devis": {"update", "select"}, "clients": {"select"}},
         ),
         (
-            "DELETE FROM devis USING clients "
-            "WHERE clients.id = devis.client_id AND clients.nom = $1",
+            "DELETE FROM devis USING clients WHERE clients.id = devis.client_id AND clients.nom = $1",
             1,
             True,
             {"devis": {"delete", "select"}, "clients": {"select"}},
         ),
     ],
 )
-def test_analysis_finds_what_each_table_needs(
-    sql: str, params: int, write: bool, needs: dict[str, set[str]]
-) -> None:
+def test_analysis_finds_what_each_table_needs(sql: str, params: int, write: bool, needs: dict[str, set[str]]) -> None:
     found = analyze(sql, params, PG, write=write)
     assert {table: set(rights) for table, rights in found.needs.items()} == needs
 
@@ -654,9 +633,7 @@ def test_full_table_writes_can_be_allowed() -> None:
 
 
 async def test_query_returns_columns_and_rows(tool: SqlTool) -> None:
-    result = await call(
-        tool, **query("SELECT id, montant FROM devis WHERE statut = $1 ORDER BY id", "envoye")
-    )
+    result = await call(tool, **query("SELECT id, montant FROM devis WHERE statut = $1 ORDER BY id", "envoye"))
     assert result == {
         "database": "crm",
         "columns": ["id", "montant"],
@@ -792,9 +769,7 @@ async def test_execute_refusals(tool: SqlTool) -> None:
 
 
 async def test_parameters_are_bound_by_number(tool: SqlTool, base: Path) -> None:
-    await call(
-        tool, **execute(("INSERT INTO relances (devis_id, canal) VALUES ($2, $1)", ["sms", 2]))
-    )
+    await call(tool, **execute(("INSERT INTO relances (devis_id, canal) VALUES ($2, $1)", ["sms", 2])))
     await call(
         tool,
         **execute(("INSERT INTO relances (devis_id, canal) VALUES ($1, $2)", [True, {"a": 1}])),
@@ -812,9 +787,7 @@ def raw(base: Path, sql: str, *, write: bool, ctes: frozenset[str] = frozenset()
     """Exécute ``sql`` sous l'authorizer de l'outil, sans l'analyse devant."""
     conn = sqlite3.connect(base, autocommit=True)
     try:
-        listed = conn.execute(
-            "SELECT type, lower(name) FROM sqlite_schema WHERE type IN ('view', 'trigger')"
-        ).fetchall()
+        listed = conn.execute("SELECT type, lower(name) FROM sqlite_schema WHERE type IN ('view', 'trigger')").fetchall()
         objects = Objects(
             views=frozenset(n for k, n in listed if k == "view"),
             triggers=frozenset(n for k, n in listed if k == "trigger"),
@@ -950,11 +923,7 @@ def test_assess_follows_the_rights_exercised(tmp_path: Path, base: Path) -> None
         )
     )
     assert (update.side_effects, update.approval) == ("irreversible", "always")
-    assert (
-        update.reason
-        == "base crm : INSERT sur relances, UPDATE sur devis — la config exige une approbation "
-        "pour UPDATE sur devis"
-    )
+    assert update.reason == "base crm : INSERT sur relances, UPDATE sur devis — la config exige une approbation pour UPDATE sur devis"
     invalid = tool.assess_call(execute("DROP TABLE devis"))
     assert (invalid.side_effects, invalid.approval) == ("none", "never")
     assert tool.assess_call(query("SELECT * FROM devis WHERE id = $1")).side_effects == "none"
@@ -963,9 +932,7 @@ def test_assess_follows_the_rights_exercised(tmp_path: Path, base: Path) -> None
 # --- Schéma -------------------------------------------------------------------------------
 
 
-async def test_schema_shows_the_declared_tables_with_their_rights(
-    tmp_path: Path, base: Path
-) -> None:
+async def test_schema_shows_the_declared_tables_with_their_rights(tmp_path: Path, base: Path) -> None:
     tool = make(
         tmp_path,
         crm(
@@ -982,9 +949,7 @@ async def test_schema_shows_the_declared_tables_with_their_rights(
     )
     assert "nom TEXT NOT NULL -- raison sociale" in text
     assert "audit" not in text.replace("INSERT INTO audit", "")
-    one = await tool.invoke(
-        {"action": "schema", "database": "crm", "tables": ["clients", "audit"]}, CONTEXT
-    )
+    one = await tool.invoke({"action": "schema", "database": "crm", "tables": ["clients", "audit"]}, CONTEXT)
     said = one.as_text
     assert "CREATE TABLE clients" in said and "CREATE TABLE devis" not in said
     assert "-- « audit » : table non autorisée" in said
@@ -1038,23 +1003,17 @@ def test_mounted_from_the_config(demo: ConfigFactory, base: Path) -> None:
 
 def test_common_settings_it_refuses(demo: ConfigFactory, base: Path) -> None:
     path = demo(agents=[sql_agent(idempotent=True, databases=[crm(base)])], storage=JSONL)
-    with pytest.raises(
-        ConfigError, match="idempotent ne se règle pas sur cet outil — les droits de chaque table"
-    ):
+    with pytest.raises(ConfigError, match="idempotent ne se règle pas sur cet outil — les droits de chaque table"):
         load_config(path)
 
 
-def test_a_missing_extra_is_said_at_mount(
-    demo: ConfigFactory, base: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_missing_extra_is_said_at_mount(demo: ConfigFactory, base: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     package = "loom_ia.tools_builtin.sql"
     for name in [n for n in sys.modules if n == package or n.startswith(f"{package}.")]:
         monkeypatch.delitem(sys.modules, name)
     monkeypatch.setitem(sys.modules, "sqlglot", None)
     path = demo(agents=[sql_agent(databases=[crm(base)])], storage=JSONL)
-    with pytest.raises(
-        ConfigError, match=r"dépendance 'sqlglot' absente \(installer l'extra : loom-ia\[sql\]\)"
-    ):
+    with pytest.raises(ConfigError, match=r"dépendance 'sqlglot' absente \(installer l'extra : loom-ia\[sql\]\)"):
         build_agent(load_config(path), "demo", InMemoryEventStore())
 
 
@@ -1069,9 +1028,7 @@ def test_a_sqlite_only_agent_does_not_import_asyncpg(demo: ConfigFactory, base: 
         "builtin_tool('loom.sql', p, context=BuiltinContext())\n"
         "print('sqlglot' in sys.modules, 'asyncpg' in sys.modules)\n"
     )
-    done = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
-    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60)
     assert done.stdout.split() == ["True", "False"]
 
 
@@ -1091,9 +1048,7 @@ async def test_a_run_reads_and_writes(demo: ConfigFactory, base: Path) -> None:
             "tool_calls": [
                 {
                     "name": "sql",
-                    "arguments": execute(
-                        ("INSERT INTO relances (devis_id, canal) VALUES ($1, $2)", [1, "email"])
-                    ),
+                    "arguments": execute(("INSERT INTO relances (devis_id, canal) VALUES ($1, $2)", [1, "email"])),
                 }
             ],
         },
@@ -1119,9 +1074,7 @@ async def test_a_run_reads_and_writes(demo: ConfigFactory, base: Path) -> None:
     assert rows(base, "SELECT devis_id, canal FROM relances") == [(1, "email")]
 
 
-async def test_an_agent_closes_its_sql_tool(
-    demo: ConfigFactory, base: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_an_agent_closes_its_sql_tool(demo: ConfigFactory, base: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     closed: list[str] = []
 
     async def aclose(self: SqlTool) -> None:
@@ -1134,9 +1087,7 @@ async def test_an_agent_closes_its_sql_tool(
     assert closed == ["sql"]
 
 
-def test_validate_shows_the_databases(
-    demo: ConfigFactory, base: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_databases(demo: ConfigFactory, base: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(agents=[sql_agent(databases=[crm(base)])], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
@@ -1269,9 +1220,7 @@ def test_postgres_parameters_follow_the_declared_types() -> None:
         "_int4",
         "date",
     ]
-    types = [
-        typed(n, "enum" if n == "statut" else "array" if n == "_int4" else "scalar") for n in names
-    ]
+    types = [typed(n, "enum" if n == "statut" else "array" if n == "_int4" else "scalar") for n in names]
     assert convert(given, types, paris) == [
         42,
         3,

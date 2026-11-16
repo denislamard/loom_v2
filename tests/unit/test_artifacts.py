@@ -62,9 +62,7 @@ def test_types_come_from_the_signature() -> None:
         "bin",
     )
     # Constaté au test D8 du 18/10 : un CSV produit par un outil était rangé en `.bin`.
-    assert [
-        extension(t) for t in ("text/csv", "text/csv; charset=utf-8", "TEXT/Markdown", "text/html")
-    ] == ["csv", "csv", "md", "html"]
+    assert [extension(t) for t in ("text/csv", "text/csv; charset=utf-8", "TEXT/Markdown", "text/html")] == ["csv", "csv", "md", "html"]
 
 
 @pytest.mark.parametrize(
@@ -224,9 +222,7 @@ def pointing_at(directory: Path) -> Callable[[TenantId, SessionId], Path]:
     return session_path
 
 
-async def test_local_store_only_removes_a_directory_two_levels_under_its_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_local_store_only_removes_a_directory_two_levels_under_its_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Défense en profondeur : même si ``session_path`` se trompait, rien d'autre ne part."""
     root = tmp_path / "artefacts"
     store = LocalArtifactStore(root)
@@ -293,9 +289,7 @@ def test_file_bytes_never_reach_the_journal() -> None:
 def test_offloaded_facet_only_when_true() -> None:
     plain = ToolCompleted(call_id="c1", tool_name="t", output=ToolOutput.text("ok"))
     assert "offloaded" not in plain.facets()
-    offloaded = ToolCompleted(
-        call_id="c1", tool_name="t", output=ToolOutput(offloaded="artifact://d/s/x.txt")
-    )
+    offloaded = ToolCompleted(call_id="c1", tool_name="t", output=ToolOutput(offloaded="artifact://d/s/x.txt"))
     assert offloaded.facets()["offloaded"] is True
 
 
@@ -349,9 +343,7 @@ def write(tmp_path: Path, root: dict[str, Any]) -> Path:
 
 
 def test_artifact_store_follows_the_journal(tmp_path: Path) -> None:
-    journal = load_config(
-        write(tmp_path, {"storage": {"events": {"backend": "jsonl", "path": "data"}}})
-    )
+    journal = load_config(write(tmp_path, {"storage": {"events": {"backend": "jsonl", "path": "data"}}}))
     assert (journal.storage.artifacts_backend, journal.storage.artifacts_path) == (
         "local",
         tmp_path / "data" / ".artifacts",
@@ -363,9 +355,7 @@ def test_artifact_store_follows_the_journal(tmp_path: Path) -> None:
     assert memory.storage.artifacts_backend == "memory"
     assert isinstance(create_artifact_store(memory), InMemoryArtifactStore)
 
-    chosen = load_config(
-        write(tmp_path, {"storage": {"artifacts": {"backend": "local", "path": "fichiers"}}})
-    )
+    chosen = load_config(write(tmp_path, {"storage": {"artifacts": {"backend": "local", "path": "fichiers"}}}))
     assert chosen.storage.artifacts_path == tmp_path / "fichiers"
     forced = load_config(
         write(
@@ -390,9 +380,7 @@ def test_python_tools_return_images(tmp_path: Path) -> None:
     output = to_output(Image(PNG, name="graphe.png"))
     assert output.blocks == (InlineDataBlock(media_type="image/png", data=PNG, name="graphe.png"),)
     # La signature l'emporte ; le type annoncé ne sert qu'à défaut.
-    assert to_output(Image(JPEG, media_type="image/png")).blocks[0] == InlineDataBlock(
-        media_type="image/jpeg", data=JPEG
-    )
+    assert to_output(Image(JPEG, media_type="image/png")).blocks[0] == InlineDataBlock(media_type="image/jpeg", data=JPEG)
     raw = to_output(Image(b"\x00\x01", media_type="application/octet-stream"))
     assert raw.blocks == (InlineDataBlock(media_type="application/octet-stream", data=b"\x00\x01"),)
     with pytest.raises(ValueError, match="format non reconnu"):

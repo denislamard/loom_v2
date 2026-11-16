@@ -120,9 +120,7 @@ async def test_a_second_run_sh_is_refused_and_the_pid_stays(vm_dir: Path) -> Non
     await vm.start(wait=10)
     pid = vm.pid
     assert pid is not None
-    refused = await asyncio.create_subprocess_exec(
-        vm_dir / "run.sh", stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
-    )
+    refused = await asyncio.create_subprocess_exec(vm_dir / "run.sh", stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     _, said = await refused.communicate()
     assert refused.returncode == 1
     assert f"déjà lancée (pid {pid})" in said.decode()
@@ -142,9 +140,7 @@ async def test_an_old_run_sh_wipes_the_pid_and_stop_still_uses_the_console(
     vm_dir = wiping_vm_dir
     vm = Vm.load(vm_dir)
     await vm.start(wait=10)
-    refused = await asyncio.create_subprocess_exec(
-        vm_dir / "run.sh", stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
-    )
+    refused = await asyncio.create_subprocess_exec(vm_dir / "run.sh", stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     _, said = await refused.communicate()
     assert refused.returncode == 1
     assert "déjà lancée" in said.decode()
@@ -153,24 +149,18 @@ async def test_an_old_run_sh_wipes_the_pid_and_stop_still_uses_the_console(
     assert await vm.stop(grace=5, wait=5) == "console"
 
 
-async def test_a_wiped_pid_still_lets_the_signals_through(
-    wiping_vm_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_wiped_pid_still_lets_the_signals_through(wiping_vm_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAUX_IGNORE", "console,acpi")
     vm_dir = wiping_vm_dir
     vm = Vm.load(vm_dir)
     await vm.start(wait=10)
-    refused = await asyncio.create_subprocess_exec(
-        vm_dir / "run.sh", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
+    refused = await asyncio.create_subprocess_exec(vm_dir / "run.sh", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     assert await refused.wait() == 1
     assert vm.pid is None
     assert await vm.stop(grace=0.5, wait=5) == "sigterm"
 
 
-async def test_start_reports_a_crash_with_the_console(
-    vm_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_start_reports_a_crash_with_the_console(vm_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAUX_CRASH", "noyau introuvable")
     with pytest.raises(VmError, match=r"code 1[\s\S]*noyau introuvable"):
         await Vm.load(vm_dir).start(wait=10)
@@ -211,9 +201,7 @@ async def test_start_refuses_a_vmm_that_holds_no_lock(vm_dir: Path) -> None:
     ("ignored", "expected"),
     [("console", "acpi"), ("console,acpi", "sigterm"), ("console,acpi,sigterm", "sigkill")],
 )
-async def test_stop_escalates(
-    vm_dir: Path, monkeypatch: pytest.MonkeyPatch, ignored: str, expected: str
-) -> None:
+async def test_stop_escalates(vm_dir: Path, monkeypatch: pytest.MonkeyPatch, ignored: str, expected: str) -> None:
     monkeypatch.setenv("FAUX_IGNORE", ignored)
     vm = Vm.load(vm_dir)
     await vm.start(wait=10)
@@ -263,9 +251,7 @@ async def test_connect_is_refused_when_nothing_listens(vm_dir: Path) -> None:
         await vm.stop(grace=5, wait=5)
 
 
-async def test_connect_waits_for_the_guest_to_boot(
-    vm_dir: Path, execd: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_connect_waits_for_the_guest_to_boot(vm_dir: Path, execd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     monkeypatch.setenv("FAUX_BOOT", "1.0")
     vm = Vm.load(vm_dir)
@@ -282,9 +268,7 @@ async def test_connect_waits_for_the_guest_to_boot(
         await vm.stop(grace=5, wait=5)
 
 
-async def test_from_the_vm_folder_to_a_job(
-    vm_dir: Path, execd: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_from_the_vm_folder_to_a_job(vm_dir: Path, execd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     vm = Vm.load(vm_dir)
     assert await vm.ensure_started(wait=10) is True

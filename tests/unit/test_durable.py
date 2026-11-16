@@ -282,14 +282,10 @@ def test_recover_ignores_a_subrun(durable: ConfigFactory) -> None:
     assert asyncio.run(go()) == 0
 
 
-def test_recover_reads_a_busy_session_in_linear_time(
-    durable: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_recover_reads_a_busy_session_in_linear_time(durable: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     """4 000 runs dans une session : chacun était cherché dans tout le journal."""
     path = durable(storage={"events": {"backend": "memory"}})
-    reponse = ModelResponded(
-        model_id="fake-1", provider="fake", message=Message.assistant(ANSWER), request_hash="h"
-    )
+    reponse = ModelResponded(model_id="fake-1", provider="fake", message=Message.assistant(ANSWER), request_hash="h")
 
     async def go() -> tuple[tuple[RunId, ...], float]:
         drafts: list[EventDraft] = []
@@ -347,10 +343,7 @@ def test_the_result_of_a_run_with_many_subruns_reads_in_linear_time() -> None:
     """
     small = _reading(500)
     large = _reading(2_000)
-    assert large / small < 7, (
-        f"4 fois plus de sous-runs, {large / small:.1f} fois plus de temps "
-        f"({small:.3f} s, puis {large:.3f} s)"
-    )
+    assert large / small < 7, f"4 fois plus de sous-runs, {large / small:.1f} fois plus de temps ({small:.3f} s, puis {large:.3f} s)"
 
 
 def test_recover_reads_past_a_session_marker(durable: ConfigFactory) -> None:
@@ -398,17 +391,11 @@ def test_recover_can_be_scoped_to_one_session(durable: ConfigFactory) -> None:
 
 
 @pytest.mark.parametrize("backend", ["memory", "jsonl"])
-async def test_recover_skips_a_session_whose_journal_is_unreadable(
-    durable: ConfigFactory, caplog: pytest.LogCaptureFixture, backend: str
-) -> None:
+async def test_recover_skips_a_session_whose_journal_is_unreadable(durable: ConfigFactory, caplog: pytest.LogCaptureFixture, backend: str) -> None:
     """Un journal illisible ne prive pas les autres sessions de leur reprise : sauté, et nommé."""
     config = load_config(durable())
     sessions = {name: SessionId(name) for name in ("avant", "casse", "apres")}
-    store = (
-        InMemoryEventStore()
-        if backend == "memory"
-        else JsonlEventStore(Path(config.storage.events.path or ""))
-    )
+    store = InMemoryEventStore() if backend == "memory" else JsonlEventStore(Path(config.storage.events.path or ""))
     left: dict[str, RunId] = {}
     for name, session in sessions.items():
         journal = RunJournal(agent="demo", session_id=session)
@@ -724,9 +711,7 @@ async def test_cancelling_the_calling_task_still_raises_cancelled_error(
             assert not state.finished and "run.cancelled" not in types
 
 
-async def test_an_interrupted_pilot_keeps_the_interruption_when_cancel_could_not_close_the_run(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_an_interrupted_pilot_keeps_the_interruption_when_cancel_could_not_close_the_run(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Si l'arrêt n'a pas pu s'écrire, rien n'est clos : l'appelant l'apprend comme avant.
 
     Le run reste reprenable ; le pilote ne repart pas de lui-même, car on lui a
@@ -737,9 +722,7 @@ async def test_an_interrupted_pilot_keeps_the_interruption_when_cancel_could_not
         loom.register("calculer", _bloque(porte))
         write = loom.store.append
 
-        async def refusing(
-            drafts: Sequence[EventDraft], *, expected_seq: int | None
-        ) -> list[Event]:
+        async def refusing(drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
             if any(isinstance(d.payload, RunCancelled) for d in drafts):
                 raise OSError("disque plein")
             return await write(drafts, expected_seq=expected_seq)
@@ -763,9 +746,7 @@ async def test_an_interrupted_pilot_keeps_the_interruption_when_cancel_could_not
     assert resumed.status is RunStatus.COMPLETED
 
 
-async def test_cancel_keeps_the_run_until_it_is_closed(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_cancel_keeps_the_run_until_it_is_closed(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Le pilote interrompu, l'arrêt pas encore écrit : celui qui attend ne repart pas."""
     run_id = new_run_id()
     async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
@@ -777,9 +758,7 @@ async def test_cancel_keeps_the_run_until_it_is_closed(
         reading, go = asyncio.Event(), asyncio.Event()
         read = loom.state
 
-        async def slow_state(
-            run_id: RunId, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None
-        ) -> RunState:
+        async def slow_state(run_id: RunId, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None) -> RunState:
             reading.set()
             await go.wait()
             return await read(run_id, session_id=session_id, tenant_id=tenant_id)
@@ -806,12 +785,7 @@ async def test_two_clients_with_the_same_run_id_are_piloted_apart(demo: ConfigFa
     path = _bloquant(demo, tenants=[{"id": acme}, {"id": beta}])
     async with Loom.from_config(path) as loom, Porte() as porte:
         loom.register("calculer", _bloque(porte))
-        runs = {
-            tenant: asyncio.create_task(
-                loom.run("demo", QUESTION, run_id=run_id, tenant=tenant, user=tenant)
-            )
-            for tenant in (acme, beta)
-        }
+        runs = {tenant: asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id, tenant=tenant, user=tenant)) for tenant in (acme, beta)}
         async with asyncio.timeout(5):
             # Chacun a son outil en cours : aucun n'attend l'autre.
             await porte.entered.get()
@@ -846,9 +820,7 @@ class Glissant(JsonlEventStore):
         self.glisse = glisse
         self.glisse_fait = False
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         if not self.glisse_fait and any(isinstance(d.payload, self.quand) for d in drafts):
             self.glisse_fait = True
             await self.glisse(drafts[0].run_id)
@@ -928,9 +900,7 @@ def envoyer(destinataire: str) -> str:
 '''
 
 
-def test_an_approval_after_a_stop_elsewhere_decides_nothing(
-    durable: ConfigFactory, tmp_path: Path
-) -> None:
+def test_an_approval_after_a_stop_elsewhere_decides_nothing(durable: ConfigFactory, tmp_path: Path) -> None:
     """Le run en attente est arrêté ailleurs pendant qu'on l'approuve : rien n'est accordé."""
     script = [{"tool_calls": [{"name": "envoyer", "arguments": {"destinataire": "martin"}}]}]
     path = durable(imports=["outils_arret"])
@@ -951,9 +921,7 @@ def test_an_approval_after_a_stop_elsewhere_decides_nothing(
             async def arrete(run_id: RunId) -> None:
                 assert await ailleurs.cancel(run_id, session_id=SESSION, user=DEV)
 
-            approbateur = Loom(
-                load_config(path), store=Glissant(store_path, ApprovalGranted, arrete)
-            )
+            approbateur = Loom(load_config(path), store=Glissant(store_path, ApprovalGranted, arrete))
             async with approbateur:
                 accordes = await approbateur.approve(run.run_id, session_id=SESSION, user=DEV)
             return accordes, await ailleurs.export_session(SESSION)
@@ -991,9 +959,7 @@ async def _half_closed(store_path: Path, *, worker: str, seconds: float) -> RunJ
         *journal.take(),
         journal.scope.draft(RunClaimed(worker_id=worker, lease_until=until)),
     ]
-    journal.model_turn(Message.assistant(ANSWER)).transition(
-        RunStatus.COMPLETED, cause="model.responded"
-    )
+    journal.model_turn(Message.assistant(ANSWER)).transition(RunStatus.COMPLETED, cause="model.responded")
     store = JsonlEventStore(store_path)
     await store.append([*drafts, *journal.take()], expected_seq=0)
     await store.aclose()

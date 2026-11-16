@@ -86,9 +86,7 @@ async def test_the_marker_with_the_widest_reach_wins() -> None:
     scope = conversation(SESSION, "", "").scope
     early = SessionSnapshot(up_to_seq=1, messages=(Message.user("perdu"),))
 
-    await store.append(
-        [scope.draft(early), scope.draft(snapshot(events))], expected_seq=events[-1].seq
-    )
+    await store.append([scope.draft(early), scope.draft(snapshot(events))], expected_seq=events[-1].seq)
 
     assert history(await store.read(DEFAULT_TENANT, SESSION)) == history(events)
 
@@ -273,11 +271,7 @@ def test_a_snapshot_over_orphan_subruns_leaves_the_next_request_unchanged(
         async with Loom.from_config(path) as loom:
             result = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             events = await loom.export_session(SESSION)
-        hashes = [
-            e.payload.request_hash
-            for e in events
-            if e.run_id == result.run_id and isinstance(e.payload, ModelResponded)
-        ]
+        hashes = [e.payload.request_hash for e in events if e.run_id == result.run_id and isinstance(e.payload, ModelResponded)]
         snapshots = [e.payload for e in events if isinstance(e.payload, SessionSnapshot)]
         return hashes, snapshots, events
 
@@ -410,9 +404,7 @@ async def test_a_guard_sees_what_landed_since_the_callers_read() -> None:
         raise RuntimeError("décidé ailleurs")
 
     with pytest.raises(RuntimeError, match="décidé ailleurs"):
-        await writer.append(
-            RunJournal(session_id=SESSION).start("Troisième ?").take(), guard=guard, since=seen
-        )
+        await writer.append(RunJournal(session_id=SESSION).start("Troisième ?").take(), guard=guard, since=seen)
     assert landed == [["run.started", "message.user"]]
     # Rien n'a été écrit.
     assert await store.last_seq(DEFAULT_TENANT, SESSION) == writer.last_seq == seen + 2
@@ -497,9 +489,7 @@ async def test_a_stop_after_the_end_is_refused() -> None:
     await written(store, journal)
     with pytest.raises(RunMoved, match=r"run\.completed"):
         await arreteur.append(cancellation(state, by="ailleurs"))
-    assert fold(await store.read(DEFAULT_TENANT, SESSION), journal.run_id).status.value == (
-        "completed"
-    )
+    assert fold(await store.read(DEFAULT_TENANT, SESSION), journal.run_id).status.value == ("completed")
 
 
 async def test_the_registry_shares_one_writer_per_session() -> None:
@@ -713,9 +703,7 @@ def test_deleting_with_an_unusable_id_is_refused_before_touching_anything(
 # --- CLI ---------------------------------------------------------------------------
 
 
-def test_cli_lists_exports_and_deletes_a_session(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_lists_exports_and_deletes_a_session(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage={"events": {"backend": "jsonl", "path": "data"}})
     assert main(["--config", str(path), "run", "demo", QUESTION, "--session", "atelier"]) == 0
     capsys.readouterr()
@@ -736,17 +724,13 @@ def test_cli_lists_exports_and_deletes_a_session(
     assert "Aucune session." in capsys.readouterr().out
 
 
-def test_cli_refuses_to_delete_an_unknown_session(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_refuses_to_delete_an_unknown_session(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage={"events": {"backend": "jsonl", "path": "data"}})
     assert main(["--config", str(path), "sessions", "delete", "jamais-vue", "--yes"]) == 1
     assert "rien à supprimer" in capsys.readouterr().err
 
 
-def test_cli_exports_an_unknown_session_with_an_error(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_exports_an_unknown_session_with_an_error(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage={"events": {"backend": "jsonl", "path": "data"}})
     assert main(["--config", str(path), "sessions", "export", "jamais-vue"]) == 1
     assert "inconnue" in capsys.readouterr().err

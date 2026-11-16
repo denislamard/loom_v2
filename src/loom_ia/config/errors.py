@@ -63,11 +63,7 @@ def where(loc: Sequence[int | str], data: object = None) -> str:
                 fields = cast("dict[str, object]", current)
                 name = fields.get("id", fields.get("name"))
         else:
-            current = (
-                cast("dict[str, object]", current).get(str(part))
-                if isinstance(current, dict)
-                else None
-            )
+            current = cast("dict[str, object]", current).get(str(part)) if isinstance(current, dict) else None
         if isinstance(part, int):
             said += f"[{name}]" if isinstance(name, str) and name else f".{part}"
         else:

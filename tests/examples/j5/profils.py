@@ -146,10 +146,7 @@ def provenance(args: argparse.Namespace, controle: Controle) -> None:
         else:
             os.environ[PROFILE_ENV] = variable
         actif, source = chosen_profile(option, fichier)
-        print(
-            f"  {option or '—':<10}{variable or '—':<12}{fichier or '—':<10}"
-            f"→ {actif or 'aucun'} ({source})"
-        )
+        print(f"  {option or '—':<10}{variable or '—':<12}{fichier or '—':<10}→ {actif or 'aucun'} ({source})")
     os.environ.pop(PROFILE_ENV, None)
     print(
         "\n  l'option l'emporte, puis la variable, puis le fichier : "
@@ -162,10 +159,7 @@ def provenance(args: argparse.Namespace, controle: Controle) -> None:
     titre("Un profil inconnu est refusé, en nommant sa provenance")
     dit = refus(lambda: chosen_profile("recette"))
     print(f"  --profile recette → {dit}")
-    print(
-        "  la provenance est dite : "
-        + controle.tient("le refus ne nomme pas sa provenance", "(option)" in dit)
-    )
+    print("  la provenance est dite : " + controle.tient("le refus ne nomme pas sa provenance", "(option)" in dit))
 
     titre("Ce qu'une surcharge de profil fait, et ne fait pas")
     # Une vraie config, chargée deux fois : la fusion se montre par le
@@ -195,8 +189,7 @@ def provenance(args: argparse.Namespace, controle: Controle) -> None:
             "\n  les objets fusionnent en profondeur : "
             + controle.tient(
                 "la fusion a perdu ce que la surcharge ne dit pas",
-                en_prod.execution.tools.timeout == 90
-                and en_prod.execution.tools.offload_over == sans.execution.tools.offload_over,
+                en_prod.execution.tools.timeout == 90 and en_prod.execution.tools.offload_over == sans.execution.tools.offload_over,
             )
         )
         print(
@@ -260,23 +253,15 @@ async def durcit(args: argparse.Namespace, controle: Controle) -> None:
     async with Loom(correle) as loom:
         loom.context(agent, DUPONT)
         print("\n  sans profil → monte, avec l'avertissement dans les logs")
-    dit = await refus_async(
-        lambda: _monte_simple(correle.model_copy(update={"profile": "prod"}), agent)
-    )
+    dit = await refus_async(lambda: _monte_simple(correle.model_copy(update={"profile": "prod"}), agent))
     print(f"  --profile prod → {coupe(dit)}")
-    print(
-        "  la même config refuse de partir en production : "
-        + controle.tient("le juge corrélé n'est pas une erreur en prod", "juge corrélé" in dit)
-    )
+    print("  la même config refuse de partir en production : " + controle.tient("le juge corrélé n'est pas une erreur en prod", "juge corrélé" in dit))
 
     titre("Un service éparpillé dont les fichiers ne suivent pas — 5.3c")
     os.environ.setdefault("LOOM_RABBITMQ", "amqp://exemple.invalide")
     eparpille = _brouille(load_config(CONFIG))
     async with Loom(eparpille) as loom:
-        print(
-            f"  sans profil → monte ; file {loom.config.storage.queue.backend}, "
-            f"artefacts {loom.config.storage.artifacts_backend}"
-        )
+        print(f"  sans profil → monte ; file {loom.config.storage.queue.backend}, artefacts {loom.config.storage.artifacts_backend}")
     dit = refus(lambda: Loom(_brouille(load_config(CONFIG, profile="prod"))))
     print(f"  --profile prod → {coupe(dit)}")
     print(
@@ -290,10 +275,7 @@ async def durcit(args: argparse.Namespace, controle: Controle) -> None:
     print(f"  sans profil → monte sur {ouverte.server.http.host} (avertissement)")
     print(f"  --profile prod → {coupe(dit) or '(extra http absent : essai sauté)'}")
     if dit:
-        print(
-            "  une API ouverte sans clé ne part pas en production : "
-            + controle.tient("l'API sans clé n'est pas une erreur en prod", "sans clé" in dit)
-        )
+        print("  une API ouverte sans clé ne part pas en production : " + controle.tient("l'API sans clé n'est pas une erreur en prod", "sans clé" in dit))
 
     titre("Se passer des juges — judges='skip'")
     async with Loom(load_config(CONFIG)) as loom:
@@ -318,10 +300,7 @@ async def durcit(args: argparse.Namespace, controle: Controle) -> None:
             )
         )
         print(f"  --profile prod → {coupe(dit)}")
-    print(
-        "  retirer un contrôle n'est pas permis en production : "
-        + controle.tient("judges='skip' passe en prod", "judges='skip'" in dit)
-    )
+    print("  retirer un contrôle n'est pas permis en production : " + controle.tient("judges='skip' passe en prod", "judges='skip'" in dit))
 
 
 def _appli(config: LoomConfig) -> object:
@@ -332,9 +311,7 @@ def _appli(config: LoomConfig) -> object:
 
 def _brouille(config: LoomConfig) -> LoomConfig:
     """La file passe au courtier, les fichiers restent dans un dossier local."""
-    queue = config.storage.queue.model_copy(
-        update={"backend": "rabbitmq", "url_env": "LOOM_RABBITMQ"}
-    )
+    queue = config.storage.queue.model_copy(update={"backend": "rabbitmq", "url_env": "LOOM_RABBITMQ"})
     storage = config.storage.model_copy(update={"queue": queue})
     return config.model_copy(update={"storage": storage})
 
@@ -361,18 +338,12 @@ async def assouplit(args: argparse.Namespace, controle: Controle) -> None:
     volatile = _volatile(_approbation(load_config(CONFIG), agent))
     dit = await refus_async(lambda: _monte_simple(volatile, agent))
     print(f"\n  sans profil → {coupe(dit)}")
-    print(
-        "  c'est bien une erreur : "
-        + controle.tient("le journal volatile passe sans profil", "journal durable" in dit)
-    )
+    print("  c'est bien une erreur : " + controle.tient("le journal volatile passe sans profil", "journal durable" in dit))
     en_dev = volatile.model_copy(update={"profile": "dev"})
     async with Loom(en_dev) as loom:
         loom.context(agent, DUPONT)
         print("  --profile dev → monte, avec l'avertissement dans les logs")
-    print(
-        "  ce qu'on refuse en service, on le tolère sur une machine : "
-        + controle.tient("le profil dev n'assouplit rien", en_dev.lax)
-    )
+    print("  ce qu'on refuse en service, on le tolère sur une machine : " + controle.tient("le profil dev n'assouplit rien", en_dev.lax))
 
     titre("Un juge qui ne travaille qu'en prod — when.profiles")
     juge_prod = _juge_en(load_config(CONFIG), agent, "prod")
@@ -395,10 +366,7 @@ async def assouplit(args: argparse.Namespace, controle: Controle) -> None:
             motifs == ["other_profile"] and not ailleurs.verdicts,
         )
     )
-    print(
-        "  et dans son profil, il juge pour de bon : "
-        + controle.tient("le juge ne juge pas dans son profil", bool(chez_lui.verdicts))
-    )
+    print("  et dans son profil, il juge pour de bon : " + controle.tient("le juge ne juge pas dans son profil", bool(chez_lui.verdicts)))
 
 
 async def _monte_simple(config: LoomConfig, agent: str) -> None:
@@ -425,10 +393,7 @@ def _correle(config: LoomConfig, agent: str) -> LoomConfig:
     """Donne au juge du rôle le modèle du rôle : la corrélation, posée en code."""
     spec = next(a for a in config.agents if a.name == agent)
     roles = tuple(
-        role.model_copy(update={"judge": role.judge.model_copy(update={"model": role.model})})
-        if role.judge is not None
-        else role
-        for role in spec.roles
+        role.model_copy(update={"judge": role.judge.model_copy(update={"model": role.model})}) if role.judge is not None else role for role in spec.roles
     )
     corrige = spec.model_copy(update={"roles": roles})
     agents = tuple(corrige if a.name == agent else a for a in config.agents)
@@ -439,11 +404,7 @@ def _juge_en(config: LoomConfig, agent: str, profil: str) -> LoomConfig:
     """Borne le juge du rôle de l'agent à un seul profil."""
     spec = next(a for a in config.agents if a.name == agent)
     roles = tuple(
-        role.model_copy(
-            update={"judge": role.judge.model_copy(update={"when": _quand(role.judge, profil)})}
-        )
-        if role.judge is not None
-        else role
+        role.model_copy(update={"judge": role.judge.model_copy(update={"when": _quand(role.judge, profil)})}) if role.judge is not None else role
         for role in spec.roles
     )
     borne = spec.model_copy(update={"roles": roles})
@@ -469,9 +430,7 @@ async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="Profils dev et prod : ce qu'ils durcissent, ce qu'ils assouplissent"
-    )
+    parser = argparse.ArgumentParser(description="Profils dev et prod : ce qu'ils durcissent, ce qu'ils assouplissent")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     args = parser.parse_args(argv)

@@ -132,9 +132,7 @@ def test_the_file_is_read_at_load_relative_to_resources_dir(tmp_path: Path) -> N
         ("latin1.md", b"caf\xe9", "skill illisible"),
     ],
 )
-def test_a_bad_skill_file_stops_the_load(
-    tmp_path: Path, name: str, content: str | bytes | None, message: str
-) -> None:
+def test_a_bad_skill_file_stops_the_load(tmp_path: Path, name: str, content: str | bytes | None, message: str) -> None:
     path = write(tmp_path, [{**FILES, "skill_file": name}])
     if isinstance(content, str):
         (tmp_path / "prompts" / name).write_text(content, encoding="utf-8")
@@ -165,9 +163,7 @@ def test_a_server_skill_outside_the_resources_dir_is_refused(tmp_path: Path) -> 
     server = {"name": "time", "transport": "stdio", "command": "x"}
     server["tools"] = {"maintenant": {"skill_file": "../workspace/s.md"}}  # type: ignore[assignment]
     path = write(tmp_path, [{"mcp": "time"}], mcp_servers=[server])
-    with pytest.raises(
-        ConfigError, match=r"mcp_servers\[time\]\.tools\[maintenant\]\.skill_file — le fichier"
-    ):
+    with pytest.raises(ConfigError, match=r"mcp_servers\[time\]\.tools\[maintenant\]\.skill_file — le fichier"):
         load_config(path)
 
 
@@ -234,9 +230,7 @@ SQL: dict[str, Any] = {
 
 
 @pytest.mark.parametrize("declared", [FILES, {**FILES, "python": "loom.excel"}, SQL])
-def test_a_builtin_that_describes_its_params_refuses_description(
-    tmp_path: Path, declared: dict[str, Any]
-) -> None:
+def test_a_builtin_that_describes_its_params_refuses_description(tmp_path: Path, declared: dict[str, Any]) -> None:
     """Sa description dit les dossiers, droits ou tables : la remplacer les cacherait au modèle."""
     path = write(tmp_path, [{**declared, "description": "Fichiers."}])
     reference = declared["python"]
@@ -284,9 +278,7 @@ def test_an_unread_skill_file_on_a_python_tool_stops_the_mount(tmp_path: Path) -
     config = load_config(write(tmp_path, [FILES]))
     spec = config.agents[0]
     declared = spec.python_tools[0].model_copy(update={"skill_file": Path("outil.md")})
-    changed = config.model_copy(
-        update={"agents": (spec.model_copy(update={"tools": (declared,)}),)}
-    )
+    changed = config.model_copy(update={"agents": (spec.model_copy(update={"tools": (declared,)}),)})
     with pytest.raises(ConfigError, match=r"skill_file outil\.md non lu"):
         build_agent(changed, "agent", InMemoryEventStore())
 
@@ -342,9 +334,7 @@ async def test_an_mcp_tool_gets_the_skill_read_from_its_file(tmp_path: Path) -> 
     config = load_config(write(tmp_path, [{"mcp": "time"}], mcp_servers=[server]))
     assert config.mcp_servers[0].tools["maintenant"].skill == SKILL
     built = build_agent(config, "agent", InMemoryEventStore())
-    context = SourceContext(
-        tenant_id=TenantId("default"), session_id=SessionId("s"), run_id=RunId("r"), agent="agent"
-    )
+    context = SourceContext(tenant_id=TenantId("default"), session_id=SessionId("s"), run_id=RunId("r"), agent="agent")
     try:
         async with built.context.tools.sources[0].open(context) as tools:
             (found,) = tools
@@ -357,9 +347,7 @@ def test_an_unread_skill_file_on_an_mcp_reference_stops_the_mount(tmp_path: Path
     """Sans load_config, l'erreur ne viendrait qu'à l'ouverture du serveur, en plein run."""
     config = load_config(write(tmp_path, [{"mcp": "time"}], mcp_servers=[time_server(tmp_path)]))
     spec = config.agents[0]
-    ref = spec.mcp_tools[0].model_copy(
-        update={"tools": {"maintenant": ToolOverrides.model_construct(skill_file=Path("s.md"))}}
-    )
+    ref = spec.mcp_tools[0].model_copy(update={"tools": {"maintenant": ToolOverrides.model_construct(skill_file=Path("s.md"))}})
     changed = config.model_copy(update={"agents": (spec.model_copy(update={"tools": (ref,)}),)})
     with pytest.raises(ConfigError, match=r"skill_file non lu — outil time__maintenant \(s\.md\)"):
         build_agent(changed, "agent", InMemoryEventStore())
@@ -405,14 +393,10 @@ def test_a_packaged_source_tool_gets_its_skill() -> None:
 # --- Validate, avertissement, rejeu -------------------------------------------------
 
 
-def test_validate_shows_each_skill_and_its_size(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_each_skill_and_its_size(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     pytest.importorskip("mcp", reason="extra 'mcp' absent")
     server = time_server(tmp_path, tools={"maintenant": {"skill": "Heure de Paris."}})
-    path = write(
-        tmp_path, [{**FILES, "skill_file": "outil.md"}, {"mcp": "time"}], mcp_servers=[server]
-    )
+    path = write(tmp_path, [{**FILES, "skill_file": "outil.md"}, {"mcp": "time"}], mcp_servers=[server])
     assert main(["validate", "--config", str(path), "--no-env-file"]) == 0
     out = capsys.readouterr().out
     size = f"{len(SKILL)} caractères (environ {len(SKILL) // 4} tokens)"
@@ -421,9 +405,7 @@ def test_validate_shows_each_skill_and_its_size(
     assert "  ├ time__maintenant  skill, 15 caractères (environ 3 tokens)\n" in out
 
 
-def test_a_long_skill_warns_without_refusing_even_in_prod(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_long_skill_warns_without_refusing_even_in_prod(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     long = "x" * (SKILL_WARN_CHARS + 1)
     path = write(tmp_path, [{**FILES, "skill_file": "outil.md"}], skill=long, profile="prod")
     config = load_config(path)
@@ -437,9 +419,7 @@ def test_a_long_skill_warns_without_refusing_even_in_prod(
 def test_changing_the_skill_changes_only_the_tools_part_of_the_request() -> None:
     def request(skill: str) -> ModelRequest:
         spec = ToolSpec(name="t", description="Fait.", kind="python", skill=skill)
-        return ModelRequest(
-            model_id="m", system="s", messages=(Message.user("u"),), tools=(spec.definition(),)
-        )
+        return ModelRequest(model_id="m", system="s", messages=(Message.user("u"),), tools=(spec.definition(),))
 
     before, after = request("v1").request_parts(), request("v2").request_parts()
     assert [part for part in before if before[part] != after[part]] == ["tools"]

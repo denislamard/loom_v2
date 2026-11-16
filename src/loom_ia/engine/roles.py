@@ -161,11 +161,7 @@ class SessionState:
     described: tuple[tuple[str, str], ...] = ()
 
 
-type ContextItem = (
-    Literal["user_input", "caller_context", "attachments", "session_summary"]
-    | ToolResults
-    | LastTurns
-)
+type ContextItem = Literal["user_input", "caller_context", "attachments", "session_summary"] | ToolResults | LastTurns
 # Contexte d'un rôle : celui d'un juge, et le state de la session.
 type RoleContextItem = ContextItem | SessionState
 
@@ -265,9 +261,7 @@ class RoleTool(DelegatedTool):
                 case "attachments":
                     files += run.attachments
                     if not files:
-                        return (
-                            f"Le rôle {role.name} n'a aucune pièce jointe à regarder dans ce run."
-                        )
+                        return f"Le rôle {role.name} n'a aucune pièce jointe à regarder dans ce run."
                     listing = "\n".join(f"- {describe(block)}" for block in run.attachments)
                     values["attachments"] = listing
                     sections.append(tagged("attachments", listing))
@@ -297,10 +291,7 @@ class RoleTool(DelegatedTool):
                             index = ResultIndex(run.session, run.artifacts)
                             records = index.results_of(name)[-1:]
                         if not records:
-                            return (
-                                f"Le rôle {role.name} a besoin d'un résultat de {name} : "
-                                "appelle d'abord cet outil."
-                            )
+                            return f"Le rôle {role.name} a besoin d'un résultat de {name} : appelle d'abord cet outil."
                         try:
                             texts = [await index.text(record) for record in records]
                         except RefError as exc:
@@ -308,9 +299,7 @@ class RoleTool(DelegatedTool):
                         results[name] = "\n\n".join(texts)
                         own = index is run.results
                         sections += [
-                            tagged("tool_result", text, tool=name, ref=record.ref)
-                            if own
-                            else tagged("tool_result", text, tool=name)
+                            tagged("tool_result", text, tool=name, ref=record.ref) if own else tagged("tool_result", text, tool=name)
                             for record, text in zip(records, texts, strict=True)
                         ]
         if results:
@@ -338,9 +327,7 @@ class RoleTool(DelegatedTool):
             artifacts=run.artifacts,
         )
 
-    async def run(
-        self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
-    ) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
+    async def run(self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
         role = self.definition
         built = await self.message(arguments, run)
         if isinstance(built, str):
@@ -373,9 +360,7 @@ class RoleTool(DelegatedTool):
     ) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
         """Modèle qui a répondu, même conversation : sa réponse, puis le diagnostic (#20)."""
         diagnostic = Message.user(f"{REPAIR_PREFIX} ({policy}) : {feedback}")
-        request = exchange.request.model_copy(
-            update={"messages": (*exchange.request.messages, exchange.answer, diagnostic)}
-        )
+        request = exchange.request.model_copy(update={"messages": (*exchange.request.messages, exchange.answer, diagnostic)})
         if run.on_chunk is not None:
             # La sortie déjà diffusée est refusée : elle doit être effacée.
             await run.on_chunk(StreamReset(attempt=len(request.messages) // 2 + 1))
@@ -413,9 +398,7 @@ class RoleTool(DelegatedTool):
                 exc.message,
                 extra={"run_id": context.run_id},
             )
-            yield ToolOutput.error(
-                f"Le rôle {role.name} n'a pas pu répondre (model.{exc.kind}) : {exc.message}"
-            )
+            yield ToolOutput.error(f"Le rôle {role.name} n'a pas pu répondre (model.{exc.kind}) : {exc.message}")
             return
         if answered is None:
             raise RuntimeError(f"Rôle {role.name} : appel de modèle terminé sans réponse")
@@ -432,9 +415,7 @@ class RoleTool(DelegatedTool):
         )
         yield Exchange(request=answered.request, answer=message, model=answered.spec.id)
         if not message.text.strip():
-            yield ToolOutput.error(
-                f"Le rôle {role.name} n'a rien produit (arrêt : {response.stop_reason})."
-            )
+            yield ToolOutput.error(f"Le rôle {role.name} n'a rien produit (arrêt : {response.stop_reason}).")
             return
         yield ToolOutput.text(message.text)
 
@@ -473,9 +454,7 @@ def _with_state_hint(definition: RoleDefinition) -> str:
             lines = [ROLE_STATE_HINT]
             if item.described:
                 lines[0] += " Clés :"
-                lines += [
-                    f"- {key} : {text}" if text else f"- {key}" for key, text in item.described
-                ]
+                lines += [f"- {key} : {text}" if text else f"- {key}" for key, text in item.described]
             hint = "\n".join(lines)
             return f"{definition.system}\n\n{hint}" if definition.system else hint
     return definition.system
@@ -506,9 +485,7 @@ def tagged(tag: str, body: str, **attributes: str) -> str:
     change pas — ni la requête, ni son ``request_hash``. Les valeurs d'attributs
     (nom d'un outil, référence) sont échappées comme en HTML.
     """
-    attrs = "".join(
-        f' {name}="{html.escape(value, quote=True)}"' for name, value in attributes.items()
-    )
+    attrs = "".join(f' {name}="{html.escape(value, quote=True)}"' for name, value in attributes.items())
     return f"<{tag}{attrs}>\n{_OWN_TAG.sub('&lt;', body)}\n</{tag}>"
 
 

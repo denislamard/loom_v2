@@ -96,16 +96,10 @@ def test_a_resolved_value_knows_the_reference_it_came_from() -> None:
         "ton": "cordial",
     }
     assert ref_origin(written, ["devis"]) == RefOrigin("result:1", ("devis",), serialized=False)
-    assert ref_origin(written, ["consignes"]) == RefOrigin(
-        "result:1", ("consignes",), serialized=True
-    )
+    assert ref_origin(written, ["consignes"]) == RefOrigin("result:1", ("consignes",), serialized=True)
     # Une erreur dans un objet transmis vient de la référence qui l'a transmis.
-    assert ref_origin(written, ["devis", "montant"]) == RefOrigin(
-        "result:1", ("devis",), serialized=False
-    )
-    assert ref_origin(written, ["lignes", 0, "total"]) == RefOrigin(
-        "result:2", ("lignes", 0, "total"), serialized=False
-    )
+    assert ref_origin(written, ["devis", "montant"]) == RefOrigin("result:1", ("devis",), serialized=False)
+    assert ref_origin(written, ["lignes", 0, "total"]) == RefOrigin("result:2", ("lignes", 0, "total"), serialized=False)
     for path in (["ton"], ["lignes", 1], ["lignes", 5], ["absent", "x"], []):
         assert ref_origin(written, path) is None
     index = ResultIndex(MESSAGES)
@@ -121,16 +115,13 @@ def test_a_resolved_value_knows_the_reference_it_came_from() -> None:
     [
         (
             "result:9",
-            "Référence inconnue : result:9. Références disponibles : "
-            "result:1 (chercher), result:2 (calculer).",
+            "Référence inconnue : result:9. Références disponibles : result:1 (chercher), result:2 (calculer).",
         ),
         ("result:c1", "Référence invalide : 'result:c1'"),
         # ``isdigit`` les accepte, ``int`` les refuse : ce ne sont pas des numéros.
         ("result:²", "Référence invalide : 'result:²'"),
         ("result:٣", "Référence invalide : 'result:٣'"),
-        pytest.param(
-            "result:" + "9" * 5000, "Référence invalide : 'result:99", id="plus-de-4300-chiffres"
-        ),
+        pytest.param("result:" + "9" * 5000, "Référence invalide : 'result:99", id="plus-de-4300-chiffres"),
         ("result:3", "result:3 (lent) n'a pas encore de résultat"),
         ("result:4", "result:4 (casse) est une erreur"),
     ],

@@ -64,10 +64,7 @@ class EventQuery(DomainModel):
         # Un identifiant bien formé mais absent du journal reste permis : il
         # retombe sur la comparaison des identifiants (voir plus haut).
         if value is not None and not _EVENT_ID.fullmatch(value):
-            raise ValueError(
-                f"after : identifiant d'événement attendu (UUID en minuscules, avec ses "
-                f"tirets, tel que le journal l'écrit), reçu {value!r}"
-            )
+            raise ValueError(f"after : identifiant d'événement attendu (UUID en minuscules, avec ses tirets, tel que le journal l'écrit), reçu {value!r}")
         return value
 
     def matches(self, event: Event) -> bool:
@@ -87,9 +84,7 @@ class EventQuery(DomainModel):
         if not all(checks):
             return False
         wanted = self.wanted_facets()
-        return all(
-            name in event.facets and event.facets[name] == value for name, value in wanted.items()
-        )
+        return all(name in event.facets and event.facets[name] == value for name, value in wanted.items())
 
     def wanted_facets(self) -> dict[str, FacetValue]:
         """Facettes exigées : ``facets``, plus celles que nomment ``tool_name``, ``model_id``

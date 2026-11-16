@@ -80,19 +80,11 @@ def amendment_note(amendment: Amendment, tool: str | None = None) -> str:
             else:
                 done = f"une politique a remplacé les arguments de {call}"
             shown = "les arguments remplacés"
-            executed = (
-                EXECUTED.removesuffix(".")
-                + ", et un nouvel appel avec eux serait remplacé de même."
-            )
-    return (
-        f"[{PREFIX} : {done} avant exécution ({details}). "
-        f"L'appel affiché plus haut porte déjà {shown} : {executed}]"
-    )
+            executed = EXECUTED.removesuffix(".") + ", et un nouvel appel avec eux serait remplacé de même."
+    return f"[{PREFIX} : {done} avant exécution ({details}). L'appel affiché plus haut porte déjà {shown} : {executed}]"
 
 
-def note_amendments(
-    messages: Sequence[Message], amendments: Sequence[Amendment]
-) -> tuple[Message, ...]:
+def note_amendments(messages: Sequence[Message], amendments: Sequence[Amendment]) -> tuple[Message, ...]:
     """Messages d'une requête, avec la note de chaque appel modifié après les résultats de son tour.
 
     La note part dans un message ``user`` placé après le dernier message
@@ -101,12 +93,7 @@ def note_amendments(
     """
     if not amendments:
         return tuple(messages)
-    names = {
-        block.call_id: block.name
-        for message in messages
-        for block in message.blocks
-        if isinstance(block, ToolCallBlock)
-    }
+    names = {block.call_id: block.name for message in messages for block in message.blocks if isinstance(block, ToolCallBlock)}
     # Une approbation et une politique peuvent corriger le même appel : une note chacune.
     pending: dict[str, list[Amendment]] = {}
     for amendment in amendments:

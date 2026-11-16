@@ -213,9 +213,7 @@ class OpenAIResponsesModel:
 # --- Requête -------------------------------------------------------------------
 
 
-def to_input_items(
-    messages: Sequence[Message], *, thinking: bool = False
-) -> list[ResponseInputItemParam]:
+def to_input_items(messages: Sequence[Message], *, thinking: bool = False) -> list[ResponseInputItemParam]:
     """Messages neutres → éléments d'entrée de l'API, dans l'ordre."""
     items: list[_Item] = []
     echoed = reasoning_loop(messages) if thinking else set[int]()
@@ -396,10 +394,7 @@ class StreamParser:
                 return [ReasoningDelta(start=True)]
             case ResponseReasoningSummaryPartAddedEvent(summary_index=index) if index > 0:
                 return [ReasoningDelta(text="\n\n")]
-            case (
-                ResponseReasoningSummaryTextDeltaEvent(delta=delta)
-                | ResponseReasoningTextDeltaEvent(delta=delta)
-            ):
+            case ResponseReasoningSummaryTextDeltaEvent(delta=delta) | ResponseReasoningTextDeltaEvent(delta=delta):
                 return [ReasoningDelta(text=delta)]
             case ResponseTextDeltaEvent(delta=delta, output_index=index):
                 self._with_text.add(index)
@@ -413,10 +408,7 @@ class StreamParser:
                 return [ToolArgsDelta(index=index, json_fragment=delta)]
             case ResponseOutputItemDoneEvent(item=item, output_index=index):
                 return self.item_done(item, index)
-            case (
-                ResponseCompletedEvent(response=response)
-                | ResponseIncompleteEvent(response=response)
-            ):
+            case ResponseCompletedEvent(response=response) | ResponseIncompleteEvent(response=response):
                 self.finished(response)
             case ResponseFailedEvent(response=response):
                 raise _failed(response.error)

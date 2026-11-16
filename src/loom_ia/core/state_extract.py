@@ -76,8 +76,7 @@ class _Table:
             values = [record[i] for i in indexes]
             if any(value != values[0] for value in values[1:]):
                 raise ExtractError(
-                    f"colonne {column!r} présente {len(indexes)} fois, avec des valeurs "
-                    f"différentes (ligne {row}) : donner un alias dans la requête"
+                    f"colonne {column!r} présente {len(indexes)} fois, avec des valeurs différentes (ligne {row}) : donner un alias dans la requête"
                 )
             return values[0]
         assert isinstance(record, Mapping)
@@ -131,31 +130,18 @@ def extract(
         index = _matched(table, match) if match else _row(table, row)
         if rule.value is not None:
             return table.cell(index, rule.value)
-        result: dict[str, JsonValue] = {
-            name: table.cell(index, column) for name, column in rule.fields.items()
-        }
+        result: dict[str, JsonValue] = {name: table.cell(index, column) for name, column in rule.fields.items()}
     else:
         if row is not None or match:
-            raise ExtractError(
-                "cette clé prend toutes les lignes du résultat : retirer 'row' et 'match'"
-            )
+            raise ExtractError("cette clé prend toutes les lignes du résultat : retirer 'row' et 'match'")
         if table.truncated:
-            raise ExtractError(
-                "résultat tronqué (truncated) : la liste serait incomplète ; refaire la requête "
-                "pour qu'elle rende toutes les lignes"
-            )
+            raise ExtractError("résultat tronqué (truncated) : la liste serait incomplète ; refaire la requête pour qu'elle rende toutes les lignes")
         if not table.rows:
-            raise ExtractError(
-                "le résultat n'a aucune ligne : liste vide, rien à poser (pour effacer la "
-                "clé : clear)"
-            )
+            raise ExtractError("le résultat n'a aucune ligne : liste vide, rien à poser (pour effacer la clé : clear)")
         if table.tabular:
             for column in rule.columns.values():
                 table.indexes(column)
-        result = {
-            name: [table.cell(i, column) for i in range(len(table.rows))]
-            for name, column in rule.columns.items()
-        }
+        result = {name: [table.cell(i, column) for i in range(len(table.rows))] for name, column in rule.columns.items()}
     if rule.label is not None and label is not None:
         result[rule.label] = label
     return result
@@ -179,17 +165,13 @@ def _table(data: JsonValue) -> _Table:
         )
     if isinstance(data, list):
         if not all(isinstance(item, dict) for item in data):
-            raise ExtractError(
-                "résultat illisible : une liste dont les éléments ne sont pas des objets"
-            )
+            raise ExtractError("résultat illisible : une liste dont les éléments ne sont pas des objets")
         records = tuple(item for item in data if isinstance(item, dict))
         names = tuple(dict.fromkeys(key for record in records for key in record))
         return _Table(names, records, tabular=False, truncated=False)
     if isinstance(data, dict):
         return _Table(tuple(data), (data,), tabular=False, truncated=False)
-    raise ExtractError(
-        "ce résultat n'a pas de données structurées (texte, image) : rien à extraire"
-    )
+    raise ExtractError("ce résultat n'a pas de données structurées (texte, image) : rien à extraire")
 
 
 def _row(table: _Table, row: int | None) -> int:
@@ -200,8 +182,7 @@ def _row(table: _Table, row: int | None) -> int:
         if count == 0:
             raise ExtractError("le résultat n'a aucune ligne : rien à poser")
         raise ExtractError(
-            f"le résultat a {count} lignes : désigner la bonne avec 'match' (une colonne et "
-            f"sa valeur, par exemple 'code') ou 'row' (0 à {count - 1})"
+            f"le résultat a {count} lignes : désigner la bonne avec 'match' (une colonne et sa valeur, par exemple 'code') ou 'row' (0 à {count - 1})"
         )
     if not 0 <= row < count:
         raise ExtractError(f"ligne {row} hors du résultat ({count} ligne(s) : 0 à {count - 1})")
@@ -213,18 +194,12 @@ def _matched(table: _Table, match: Mapping[str, JsonValue]) -> int:
     if table.tabular:
         for column in match:
             table.indexes(column)
-    found = [
-        i
-        for i in range(len(table.rows))
-        if all(_same(table.cell(i, column), wanted) for column, wanted in match.items())
-    ]
+    found = [i for i in range(len(table.rows)) if all(_same(table.cell(i, column), wanted) for column, wanted in match.items())]
     said = ", ".join(f"{column} = {wanted!r}" for column, wanted in match.items())
     if not found:
         raise ExtractError(f"aucune ligne du résultat n'a {said}")
     if len(found) > 1:
-        raise ExtractError(
-            f"{len(found)} lignes du résultat ont {said} : ajouter une colonne à 'match'"
-        )
+        raise ExtractError(f"{len(found)} lignes du résultat ont {said} : ajouter une colonne à 'match'")
     return found[0]
 
 

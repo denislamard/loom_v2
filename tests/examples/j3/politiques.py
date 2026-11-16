@@ -61,10 +61,7 @@ def describe(event: Event) -> str | None:
         case PolicyDecided(policy=name, point=point, decision=decision, reason=reason):
             return f"  politique {name} ({point}) : {decision}{f' — {reason}' if reason else ''}"
         case ModelResponded(model_id=model, usage=usage, cost_usd=cost):
-            return (
-                f"  modèle    [{event.role}] {model} · {usage.input_tokens}/"
-                f"{usage.output_tokens} tokens · {cost:.5f} $"
-            )
+            return f"  modèle    [{event.role}] {model} · {usage.input_tokens}/{usage.output_tokens} tokens · {cost:.5f} $"
         case ToolCalled(tool_name=name, arguments=arguments):
             return f"  appel     {name} {arguments}"
         case ToolCompleted(tool_name=name, output=output):
@@ -90,10 +87,7 @@ def with_limit(config: LoomConfig, agent: str, maximum: int) -> LoomConfig:
     for spec in config.agents:
         if spec.name == agent:
             policies = tuple(
-                ref.model_copy(update={"params": {**ref.params, "max_appels": maximum}})
-                if ref.hook == "plafond_appels"
-                else ref
-                for ref in spec.policies
+                ref.model_copy(update={"params": {**ref.params, "max_appels": maximum}}) if ref.hook == "plafond_appels" else ref for ref in spec.policies
             )
             spec = spec.model_copy(update={"policies": policies})
         agents.append(spec)
@@ -131,10 +125,7 @@ async def main(argv: list[str]) -> int:
     for line in filter(None, map(describe, events)):
         print(line)
     decisions = sum(isinstance(e.payload, PolicyDecided) for e in events)
-    print(
-        f"\nStatut     : {result.status} · itérations : {result.iterations}"
-        f" · décisions journalisées : {decisions} · coût : {result.cost_usd:.5f} $"
-    )
+    print(f"\nStatut     : {result.status} · itérations : {result.iterations} · décisions journalisées : {decisions} · coût : {result.cost_usd:.5f} $")
     store = loom.store.inner
     if isinstance(store, JsonlEventStore):
         print(f"Journal    : {store.path(DEFAULT_TENANT, result.session_id)}")

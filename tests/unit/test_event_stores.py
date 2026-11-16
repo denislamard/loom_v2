@@ -75,9 +75,7 @@ async def store(make_store: StoreFactory) -> AsyncIterator[EventStore]:
     await instance.aclose()
 
 
-def run_drafts(
-    session: SessionId = SESSION, tenant: TenantId = DEFAULT_TENANT, tool: str = "calculer"
-) -> tuple[RunJournal, list[EventDraft]]:
+def run_drafts(session: SessionId = SESSION, tenant: TenantId = DEFAULT_TENANT, tool: str = "calculer") -> tuple[RunJournal, list[EventDraft]]:
     journal = RunJournal(session_id=session, tenant_id=tenant)
     journal.start("Combien font 2 + 2 ?")
     journal.model_turn(tool_call_message(("c1", tool, {"expr": "2+2"})))
@@ -173,15 +171,11 @@ async def test_query_filters_and_paginates(store: EventStore) -> None:
     assert [e.type for e in tool_events] == ["tool.called", "tool.completed"]
     assert {e.session_id for e in tool_events} == {"b"}
 
-    in_session = await store.query(
-        EventQuery(tenant_id=DEFAULT_TENANT, session_id=SessionId("a"), types=("run.completed",))
-    )
+    in_session = await store.query(EventQuery(tenant_id=DEFAULT_TENANT, session_id=SessionId("a"), types=("run.completed",)))
     assert len(in_session) == 1
 
     page = await store.query(EventQuery(tenant_id=DEFAULT_TENANT, limit=4))
-    rest = await store.query(
-        EventQuery(tenant_id=DEFAULT_TENANT, limit=1000, after=page[-1].event_id)
-    )
+    rest = await store.query(EventQuery(tenant_id=DEFAULT_TENANT, limit=1000, after=page[-1].event_id))
     assert len(page) + len(rest) == len(first) + len(second)
     assert [e.event_id for e in page + rest] == sorted(e.event_id for e in page + rest)
 
@@ -226,18 +220,12 @@ async def test_after_follows_the_order_of_writing_not_the_order_of_ids(store: Ev
     assert len(seen) == len(late)
 
     await store.append(early, expected_seq=0)  # écrit ensuite, identifiants plus petits
-    more = await store.query(
-        EventQuery(tenant_id=DEFAULT_TENANT, limit=1000, after=seen[-1].event_id)
-    )
+    more = await store.query(EventQuery(tenant_id=DEFAULT_TENANT, limit=1000, after=seen[-1].event_id))
     assert sorted(e.event_id for e in more) == sorted(d.event_id for d in early)
 
 
-@pytest.mark.parametrize(
-    "zone", [UTC, timezone(timedelta(hours=2)), timezone(timedelta(hours=-5))], ids=str
-)
-async def test_query_bounds_are_instants_whatever_their_offset(
-    store: EventStore, zone: tzinfo
-) -> None:
+@pytest.mark.parametrize("zone", [UTC, timezone(timedelta(hours=2)), timezone(timedelta(hours=-5))], ids=str)
+async def test_query_bounds_are_instants_whatever_their_offset(store: EventStore, zone: tzinfo) -> None:
     """``since`` / ``until`` se comparent comme des instants, dans le décalage qu'on veut.
 
     Un client REST français envoie ``+02:00``. Le SQLite d'avant comparait en texte
@@ -254,9 +242,7 @@ async def test_query_bounds_are_instants_whatever_their_offset(
         base + timedelta(hours=14),
     ]
     _, drafts = run_drafts()
-    stamped = [
-        draft.model_copy(update={"ts": at}) for draft, at in zip(drafts, moments, strict=False)
-    ]
+    stamped = [draft.model_copy(update={"ts": at}) for draft, at in zip(drafts, moments, strict=False)]
     await store.append(stamped, expected_seq=0)
     stored = await store.read(DEFAULT_TENANT, SESSION)
     assert len(stored) == len(moments)
@@ -269,13 +255,9 @@ async def test_query_bounds_are_instants_whatever_their_offset(
             found = [e.event_id for e in await store.query(query)]
             assert found == [e.event_id for e in query.select(stored)], (query, zone)
 
-    after_first = EventQuery(
-        tenant_id=DEFAULT_TENANT, since=(base + timedelta(microseconds=1)).astimezone(zone)
-    )
+    after_first = EventQuery(tenant_id=DEFAULT_TENANT, since=(base + timedelta(microseconds=1)).astimezone(zone))
     assert sorted(e.seq for e in await store.query(after_first)) == [2, 3, 4]
-    before_last = EventQuery(
-        tenant_id=DEFAULT_TENANT, until=(base + timedelta(hours=14)).astimezone(zone)
-    )
+    before_last = EventQuery(tenant_id=DEFAULT_TENANT, until=(base + timedelta(hours=14)).astimezone(zone))
     assert sorted(e.seq for e in await store.query(before_last)) == [1, 2, 3]
 
 
@@ -293,9 +275,7 @@ async def test_concurrent_checked_appends_let_only_one_through(store: EventStore
     repose sur ce contrat : c'est lui qui départage deux ouvertures simultanées.
     """
     _, drafts = run_drafts()
-    outcomes = await asyncio.gather(
-        *(store.append([draft], expected_seq=0) for draft in drafts[:2]), return_exceptions=True
-    )
+    outcomes = await asyncio.gather(*(store.append([draft], expected_seq=0) for draft in drafts[:2]), return_exceptions=True)
     written = [outcome for outcome in outcomes if isinstance(outcome, list)]
     refused = [outcome for outcome in outcomes if isinstance(outcome, SequenceConflict)]
     assert len(written) == 1 and len(refused) == 1
@@ -328,9 +308,7 @@ async def test_sessions_lists_journals_newest_first(store: EventStore) -> None:
 
     assert {record.session_id for record in records} == {"c-1", "c-2"}
     assert all(record.last_seq == written for record in records)
-    assert [record.updated_at for record in records] == sorted(
-        (record.updated_at for record in records), reverse=True
-    )
+    assert [record.updated_at for record in records] == sorted((record.updated_at for record in records), reverse=True)
 
 
 async def test_sessions_ignores_another_tenant(store: EventStore) -> None:
@@ -385,9 +363,7 @@ async def test_jsonl_rejects_unsafe_ids(jsonl: JsonlEventStore, bad: str) -> Non
         await jsonl.query(EventQuery(tenant_id=TenantId(bad)))
 
 
-async def test_jsonl_partial_last_line_is_ignored_then_quarantined(
-    jsonl: JsonlEventStore, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_jsonl_partial_last_line_is_ignored_then_quarantined(jsonl: JsonlEventStore, caplog: pytest.LogCaptureFixture) -> None:
     _, drafts = run_drafts()
     await jsonl.append(drafts[:2], expected_seq=0)
     path = jsonl.path(DEFAULT_TENANT, SESSION)
@@ -426,9 +402,7 @@ async def test_jsonl_last_line_without_newline_is_one_rule_everywhere(
 
     reopened = JsonlEventStore(path.parents[1])  # un autre process : pas de cache
     assert await reopened.last_seq(DEFAULT_TENANT, SESSION) == 2
-    assert [(r.session_id, r.last_seq) for r in await reopened.sessions(DEFAULT_TENANT)] == [
-        (SESSION, 2)
-    ]
+    assert [(r.session_id, r.last_seq) for r in await reopened.sessions(DEFAULT_TENANT)] == [(SESSION, 2)]
     assert [e.seq for e in await reopened.read(DEFAULT_TENANT, SESSION)] == [1, 2]
     query = EventQuery(tenant_id=DEFAULT_TENANT, session_id=SESSION)
     assert [e.seq for e in await reopened.query(query)] == [1, 2]
@@ -442,9 +416,7 @@ async def test_jsonl_last_line_without_newline_is_one_rule_everywhere(
 
 
 @pytest.mark.parametrize("failing", ["write", "fsync"])
-async def test_jsonl_a_failed_write_leaves_no_part_of_the_batch(
-    jsonl: JsonlEventStore, monkeypatch: pytest.MonkeyPatch, failing: str
-) -> None:
+async def test_jsonl_a_failed_write_leaves_no_part_of_the_batch(jsonl: JsonlEventStore, monkeypatch: pytest.MonkeyPatch, failing: str) -> None:
     """Un lot dont l'écriture échoue (disque plein, erreur d'E/S) n'en laisse aucune ligne.
 
     Avant : ses premières lignes restaient dans le journal alors que l'appelant
@@ -496,9 +468,7 @@ async def test_jsonl_corrupted_complete_line_raises(jsonl: JsonlEventStore) -> N
 
 
 @pytest.mark.parametrize("junk", [b"pas du json\n", b"x" * 70_000 + b"\n"], ids=["short", "huge"])
-async def test_jsonl_last_seq_refuses_an_unreadable_last_line_like_append(
-    jsonl: JsonlEventStore, junk: bytes
-) -> None:
+async def test_jsonl_last_seq_refuses_an_unreadable_last_line_like_append(jsonl: JsonlEventStore, junk: bytes) -> None:
     """``last_seq`` rendait l'ancien numéro alors qu'``append`` lève sur cette ligne (RES-1 c)."""
     _, drafts = run_drafts()
     await jsonl.append(drafts[:2], expected_seq=0)
@@ -512,9 +482,7 @@ async def test_jsonl_last_seq_refuses_an_unreadable_last_line_like_append(
     with pytest.raises(JournalCorrupted):
         await reopened.append(drafts[2:3], expected_seq=None)
     # Lister reste permis : un journal abîmé se voit et se supprime.
-    assert [(r.session_id, r.last_seq) for r in await reopened.sessions(DEFAULT_TENANT)] == [
-        (SESSION, 1)
-    ]
+    assert [(r.session_id, r.last_seq) for r in await reopened.sessions(DEFAULT_TENANT)] == [(SESSION, 1)]
     assert await reopened.delete(DEFAULT_TENANT, SESSION) >= 1
 
 
@@ -526,12 +494,7 @@ async def test_jsonl_two_instances_share_the_sequence(tmp_path: Path) -> None:
     await second.append(drafts[2:4], expected_seq=2)
     with pytest.raises(SequenceConflict):
         await first.append(drafts[4:5], expected_seq=2)
-    results = await asyncio.gather(
-        *(
-            (first if i % 2 else second).append([draft], expected_seq=None)
-            for i, draft in enumerate(drafts[4:])
-        )
-    )
+    results = await asyncio.gather(*((first if i % 2 else second).append([draft], expected_seq=None) for i, draft in enumerate(drafts[4:])))
     seqs = sorted(events[0].seq for events in results)
     assert seqs == list(range(5, len(drafts) + 1))
 
@@ -654,9 +617,7 @@ async def _in_flight(sent: asyncio.Event, call: Awaitable[Any]) -> Any:
 
 
 @_NEEDS_SQLITE
-async def test_sqlite_append_cancelled_while_waiting_for_the_write_lock(
-    sqlite_store: SqliteEventStore, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sqlite_append_cancelled_while_waiting_for_the_write_lock(sqlite_store: SqliteEventStore, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un ``append`` annulé pendant le ``BEGIN IMMEDIATE`` ne garde pas le verrou d'écriture.
 
     Un autre process tient l'écriture : le ``BEGIN`` du magasin attend dans le fil
@@ -738,9 +699,7 @@ async def test_sqlite_append_cancelled_midway_leaves_the_connection_usable(
 
 @_NEEDS_SQLITE
 @pytest.mark.parametrize("step", ["insert", "commit"])
-async def test_sqlite_append_failing_midway_leaves_no_transaction_open(
-    sqlite_store: SqliteEventStore, monkeypatch: pytest.MonkeyPatch, step: str
-) -> None:
+async def test_sqlite_append_failing_midway_leaves_no_transaction_open(sqlite_store: SqliteEventStore, monkeypatch: pytest.MonkeyPatch, step: str) -> None:
     """Une erreur pendant l'insertion ou au ``COMMIT`` défait la transaction.
 
     Le ``append`` suivant réussit, et rien du lot en échec n'est écrit.
@@ -900,9 +859,7 @@ async def test_sqlite_delete_purges_the_database_and_the_wal(tmp_path: Path, whe
 
 
 @_NEEDS_SQLITE
-async def test_sqlite_delete_still_succeeds_when_a_reader_keeps_the_wal(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_sqlite_delete_still_succeeds_when_a_reader_keeps_the_wal(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Un lecteur ouvert dans un autre process empêche le point de reprise d'aboutir.
 
     SQLite répond par un drapeau « occupé », pas par une erreur : la suppression

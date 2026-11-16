@@ -65,11 +65,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "status":
         logging.basicConfig(level=args.log_level, format=log_format(os.environ))
         return status(args.url, args.token_env)
-    options = {
-        key: value
-        for key, value in vars(args).items()
-        if key not in ("command", "config", "check", "env") and value is not None
-    }
+    options = {key: value for key, value in vars(args).items() if key not in ("command", "config", "check", "env") and value is not None}
     try:
         settings = load_settings(args.config, options, os.environ)
     except SettingsError as exc:
@@ -128,9 +124,7 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", help=f"{describe('host')} (défaut : {DEFAULT_HOST})")
     serve.add_argument("--port", type=int, help=f"{describe('port')} (défaut : {DEFAULT_PORT})")
     serve.add_argument("--device", help=f"{describe('device')} (défaut : cuda)")
-    serve.add_argument(
-        "--no-fp16", dest="fp16", action="store_const", const=False, help="float32 sur la carte"
-    )
+    serve.add_argument("--no-fp16", dest="fp16", action="store_const", const=False, help="float32 sur la carte")
     serve.add_argument(
         "--offline",
         action="store_const",
@@ -154,9 +148,7 @@ def _parser() -> argparse.ArgumentParser:
         help="comme --check, puis écrit les réglages en lignes Environment= (unité systemd)",
     )
     status_parser = commands.add_parser("status", help="dit si l'application est prête")
-    status_parser.add_argument(
-        "--url", default=f"http://{DEFAULT_HOST}:{DEFAULT_PORT}", help="adresse de l'application"
-    )
+    status_parser.add_argument("--url", default=f"http://{DEFAULT_HOST}:{DEFAULT_PORT}", help="adresse de l'application")
     status_parser.add_argument("--token-env", help="variable qui porte le jeton")
     status_parser.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)
     return parser

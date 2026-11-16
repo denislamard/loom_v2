@@ -128,10 +128,7 @@ def _component(value: str) -> str:
 def artifact_uri(tenant: str, session: str, data: bytes, media_type: str) -> str:
     """URI adressée par le contenu, dans l'espace du client et de la session."""
     digest = hashlib.sha256(data).hexdigest()
-    return (
-        f"{ARTIFACT_SCHEME}{_component(tenant)}/{_component(session)}/"
-        f"{digest}.{extension(media_type)}"
-    )
+    return f"{ARTIFACT_SCHEME}{_component(tenant)}/{_component(session)}/{digest}.{extension(media_type)}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,9 +160,7 @@ class ArtifactLocation:
         """
         for kind, value in (("client", self.tenant), ("session", self.session)):
             if not value:
-                raise ValueError(
-                    f"Identifiant de {kind} inutilisable dans un chemin d'artefact : {value!r}"
-                )
+                raise ValueError(f"Identifiant de {kind} inutilisable dans un chemin d'artefact : {value!r}")
         return Path(_component(self.tenant)) / _component(self.session) / self.name
 
 
@@ -195,25 +190,18 @@ class AttachmentPolicy(DomainModel):
     def _check_types(self) -> Self:
         unknown = [media for media in self.types if media not in IMAGE_TYPES]
         if unknown:
-            raise ValueError(
-                f"types : {', '.join(unknown)} non pris en charge "
-                f"(images reconnues : {', '.join(IMAGE_TYPES)})"
-            )
+            raise ValueError(f"types : {', '.join(unknown)} non pris en charge (images reconnues : {', '.join(IMAGE_TYPES)})")
         return self
 
     def check_count(self, count: int) -> None:
         """Lève ``AttachmentError`` au-delà de ``max_files`` pièces jointes."""
         if count > self.max_files:
-            raise AttachmentError(
-                f"{count} pièces jointes, au-delà de la limite de {self.max_files}"
-            )
+            raise AttachmentError(f"{count} pièces jointes, au-delà de la limite de {self.max_files}")
 
     def check_size(self, label: str, size: int) -> None:
         """Lève ``AttachmentError`` si ``size`` dépasse ``max_bytes``."""
         if size > self.max_bytes:
-            raise AttachmentError(
-                f"{label} : {size} octets, au-delà de la limite de {self.max_bytes}"
-            )
+            raise AttachmentError(f"{label} : {size} octets, au-delà de la limite de {self.max_bytes}")
 
 
 class AttachmentError(ValueError):
@@ -242,15 +230,9 @@ class Attachment:
         policy.check_size(label, len(self.data))
         detected = sniff(self.data)
         if detected is None:
-            raise AttachmentError(
-                f"{label} : format non reconnu (acceptés : {', '.join(policy.types)})"
-            )
+            raise AttachmentError(f"{label} : format non reconnu (acceptés : {', '.join(policy.types)})")
         if self.media_type is not None and self.media_type != detected:
-            raise AttachmentError(
-                f"{label} : annoncé {self.media_type}, mais le contenu est {detected}"
-            )
+            raise AttachmentError(f"{label} : annoncé {self.media_type}, mais le contenu est {detected}")
         if detected not in policy.types:
-            raise AttachmentError(
-                f"{label} : {detected} non accepté (acceptés : {', '.join(policy.types)})"
-            )
+            raise AttachmentError(f"{label} : {detected} non accepté (acceptés : {', '.join(policy.types)})")
         return detected

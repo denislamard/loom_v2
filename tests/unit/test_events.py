@@ -78,9 +78,7 @@ def test_model_responded_facets_include_tokens() -> None:
 
 
 def test_spans_default_to_run_root_span() -> None:
-    payload = RunTransitioned(
-        from_state=RunStatus.READY_FOR_MODEL, to_state=RunStatus.AWAITING_TOOLS
-    )
+    payload = RunTransitioned(from_state=RunStatus.READY_FOR_MODEL, to_state=RunStatus.AWAITING_TOOLS)
     root = SCOPE.draft(payload)
     assert root.span_id == SCOPE.span_id
     assert root.parent_span_id is None
@@ -167,9 +165,7 @@ def test_query_select_sorts_and_paginates() -> None:
 def test_json_schema_lists_every_durable_event_type() -> None:
     schema = event_json_schema()
     payload_types = {
-        definition["properties"]["type"]["const"]
-        for name, definition in schema["$defs"].items()
-        if name in {p.__name__ for p in DURABLE_PAYLOADS}
+        definition["properties"]["type"]["const"] for name, definition in schema["$defs"].items() if name in {p.__name__ for p in DURABLE_PAYLOADS}
     }
     expected = {p.model_fields["type"].default for p in DURABLE_PAYLOADS}
     assert payload_types == expected
@@ -205,9 +201,7 @@ def test_json_schema_is_open_to_fields_added_later() -> None:
 
 
 def test_policy_decisions_have_their_own_category_and_status() -> None:
-    denied = SCOPE.draft(
-        PolicyDecided(policy="plafond", point="before_tool", decision="deny", call_id="c1")
-    ).to_event(1)
+    denied = SCOPE.draft(PolicyDecided(policy="plafond", point="before_tool", decision="deny", call_id="c1")).to_event(1)
     assert (denied.category, denied.status) == ("policy", "ok")
     assert denied.facets == {"policy": "plafond", "point": "before_tool", "decision": "deny"}
     failed = PolicyDecided(policy="plafond", point="before_model", decision="fail", reason="x")
@@ -219,18 +213,14 @@ def test_policy_decisions_have_their_own_category_and_status() -> None:
             policy="p",
             point="on_output",
             decision="replace",
-            output=Message(
-                role="assistant", blocks=(InlineDataBlock(media_type="image/png", data=b"x"),)
-            ),
+            output=Message(role="assistant", blocks=(InlineDataBlock(media_type="image/png", data=b"x"),)),
         )
 
 
 def test_repair_messages_are_marked_and_old_requests_unchanged() -> None:
     request = SCOPE.draft(UserMessage(message=Message.user("?"))).to_event(1)
     assert request.facets == {}
-    repair = SCOPE.draft(
-        UserMessage(message=Message.user("refusé"), kind="repair", policy="p", tools=False)
-    ).to_event(2)
+    repair = SCOPE.draft(UserMessage(message=Message.user("refusé"), kind="repair", policy="p", tools=False)).to_event(2)
     assert repair.facets == {"kind": "repair"}
     # Un message.user écrit avant J3.1 se relit sans changement.
     old = json.loads(request.model_dump_json())

@@ -65,10 +65,7 @@ _RIGHTS_SCHEMA: Final = {
     "minItems": 1,
 }
 _APPROVAL_SCHEMA: Final = {
-    "description": (
-        "Approbation de chaque droit accordé : never (l'appel passe) ou always "
-        "(validation humaine) ; un droit absent garde son défaut."
-    ),
+    "description": ("Approbation de chaque droit accordé : never (l'appel passe) ou always (validation humaine) ; un droit absent garde son défaut."),
     "type": "object",
     "propertyNames": {"enum": list(RIGHTS)},
     "additionalProperties": {"enum": ["never", "always"]},
@@ -126,9 +123,7 @@ class FolderSpec(BaseModel):
         if not self.rights:
             raise ValueError(f"dossier {self.name!r} : 'rights' ne peut pas être vide")
         if "overwrite" in self.rights and "write" not in self.rights:
-            raise ValueError(
-                f"dossier {self.name!r} : 'overwrite' (remplacer un fichier) exige 'write'"
-            )
+            raise ValueError(f"dossier {self.name!r} : 'overwrite' (remplacer un fichier) exige 'write'")
         return self
 
     def approval(self, right: Right) -> RightApproval | None:

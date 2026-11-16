@@ -69,10 +69,7 @@ def _remove(root: Path, directory: Path) -> int:
     except ValueError:
         depth = 0
     if depth != 2:
-        raise ValueError(
-            f"Suppression refusée : {str(directory)!r} n'est pas un dossier "
-            f"<client>/<session> sous la racine {str(root)!r}"
-        )
+        raise ValueError(f"Suppression refusée : {str(directory)!r} n'est pas un dossier <client>/<session> sous la racine {str(root)!r}")
     if not directory.is_dir():
         return 0
     count = sum(1 for entry in directory.iterdir() if entry.is_file())

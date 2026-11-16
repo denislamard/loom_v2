@@ -50,11 +50,7 @@ class AgentRegistry:
 
     def exposed(self, access: Access) -> tuple[AgentSpec, ...]:
         """Agents publiés par un point d'accès."""
-        return tuple(
-            agent
-            for agent in self._agents.values()
-            if (agent.expose.rest if access == "rest" else agent.expose.mcp)
-        )
+        return tuple(agent for agent in self._agents.values() if (agent.expose.rest if access == "rest" else agent.expose.mcp))
 
     @property
     def names(self) -> tuple[str, ...]:

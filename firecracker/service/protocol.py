@@ -127,12 +127,7 @@ class Conn:
 
         # Un seul sendall : evite d'entrelacer deux reponses si un jour la
         # boucle devenait concurrente sur une meme connexion.
-        frame = (
-            len(header_bytes).to_bytes(4, "big")
-            + header_bytes
-            + len(body).to_bytes(4, "big")
-            + body
-        )
+        frame = len(header_bytes).to_bytes(4, "big") + header_bytes + len(body).to_bytes(4, "big") + body
         await self._loop.sock_sendall(self._sock, frame)
 
     def close(self) -> None:

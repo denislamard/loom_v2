@@ -133,9 +133,7 @@ class Controle:
 
 def en_file(config: LoomConfig) -> LoomConfig:
     """File chez le courtier, et bail court pour que la reprise se voie."""
-    storage = config.storage.model_copy(
-        update={"queue": QueueStorage(backend="rabbitmq", url_env=VARIABLE)}
-    )
+    storage = config.storage.model_copy(update={"queue": QueueStorage(backend="rabbitmq", url_env=VARIABLE)})
     execution = config.execution.model_copy(update={"lease": BAIL})
     return config.model_copy(update={"storage": storage, "execution": execution})
 
@@ -151,9 +149,7 @@ async def cas_file(config: LoomConfig, prefixe: str, agent: str, controle: Contr
         print(f"  soumettant: {facade.worker_id}")
         service = asyncio.create_task(worker.work())
         try:
-            run_id = await facade.submit(
-                agent, demande(), session_id=session, tenant=DUPONT, user=DUPONT
-            )
+            run_id = await facade.submit(agent, demande(), session_id=session, tenant=DUPONT, user=DUPONT)
             print(f"  run soumis : {run_id}")
             fini = await attendre(lambda: termine(facade, run_id, session), limite=30.0)
             print(f"  mené au bout : {controle.tient('run terminé', fini)}")
@@ -211,9 +207,7 @@ async def cas_differe(config: LoomConfig, controle: Controle) -> None:
     queue = RabbitMqTaskQueue(url, {"compaction": noter})
     try:
         print(f"  file d'attente : {DELAY_QUEUE} (durée de vie par message)")
-        await queue.submit(
-            Job(kind="compaction", tenant_id=DUPONT, session_id=SessionId("differe")), delay=1.0
-        )
+        await queue.submit(Job(kind="compaction", tenant_id=DUPONT, session_id=SessionId("differe")), delay=1.0)
         service = asyncio.create_task(queue.serve())
         try:
             tot = await attendre(lambda: vu(vus), limite=0.4)
@@ -279,9 +273,7 @@ async def run_en_plan(config: LoomConfig, session: SessionId, *, worker: str, ba
     journal.start(demande())
     drafts: list[EventDraft] = [
         *journal.take(),
-        journal.scope.draft(
-            RunClaimed(worker_id=worker, lease_until=datetime.now(UTC) + timedelta(seconds=bail))
-        ),
+        journal.scope.draft(RunClaimed(worker_id=worker, lease_until=datetime.now(UTC) + timedelta(seconds=bail))),
     ]
     # Dupont déclare son propre journal (5.1a) : c'est là qu'il faut écrire.
     declared = next((t.storage for t in config.tenants if t.id == DUPONT), None)
@@ -311,13 +303,9 @@ async def joignable(url: str) -> str | None:
 
 
 async def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="File RabbitMQ et workers : publier, mener, reprendre"
-    )
+    parser = argparse.ArgumentParser(description="File RabbitMQ et workers : publier, mener, reprendre")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
-    parser.add_argument(
-        "--url", default=URL_PAR_DEFAUT, help=f"URL du courtier (défaut : {URL_PAR_DEFAUT})"
-    )
+    parser.add_argument("--url", default=URL_PAR_DEFAUT, help=f"URL du courtier (défaut : {URL_PAR_DEFAUT})")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument("--session", default=None, help="préfixe des sessions")
     args = parser.parse_args(argv)

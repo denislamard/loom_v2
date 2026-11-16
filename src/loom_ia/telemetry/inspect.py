@@ -57,8 +57,7 @@ def render_trace(trace: Trace, *, full: bool = False) -> list[str]:
         f"Run        : {trace.run_id} (agent {trace.agent}, client {trace.tenant_id})",
         f"Session    : {trace.session_id}",
         f"Statut     : {_status(trace)}",
-        f"Usage      : {trace.usage.prompt_tokens} → {trace.usage.output_tokens} tokens, "
-        f"{trace.cost_usd:.6f} $, {_duration(trace.active_ms)} de pilotage",
+        f"Usage      : {trace.usage.prompt_tokens} → {trace.usage.output_tokens} tokens, {trace.cost_usd:.6f} $, {_duration(trace.active_ms)} de pilotage",
     ]
     if not trace.content:
         lines.append("Contenu    : absent de cette trace (métadonnées seulement)")
@@ -70,12 +69,7 @@ def render_trace(trace: Trace, *, full: bool = False) -> list[str]:
         children.setdefault(parent, []).append(span)
     # Les outils qui posent une question (wait_answer) : leur résultat est une
     # réponse de l'utilisateur, pas un appel refusé.
-    asked = frozenset(
-        str(event.data.get("tool_name"))
-        for span in trace.spans
-        for event in span.events
-        if event.name == "question.asked"
-    )
+    asked = frozenset(str(event.data.get("tool_name")) for span in trace.spans for event in span.events if event.name == "question.asked")
     for root in children.get(None, []):
         lines += _tree(root, children, 0, full, asked)
     lines.append("")
@@ -115,11 +109,7 @@ def _head(span: TraceSpan, asked: frozenset[str] = frozenset()) -> str:
     match span.kind:
         case "run":
             status = str(a.get("loom.run.status", "?"))
-            said = (
-                f"run {a.get('gen_ai.agent.name', '?')} — "
-                f"{'inachevé' if status == 'unfinished' else status}, "
-                f"{_duration(span.duration_ms)}"
-            )
+            said = f"run {a.get('gen_ai.agent.name', '?')} — {'inachevé' if status == 'unfinished' else status}, {_duration(span.duration_ms)}"
             if "loom.cost_usd" in a:
                 said += f", {_cost(a['loom.cost_usd'])}"
         case "step":
@@ -129,11 +119,7 @@ def _head(span: TraceSpan, asked: frozenset[str] = frozenset()) -> str:
             model = a.get("gen_ai.request.model", "?")
             if "loom.model.id" in a and a["loom.model.id"] != model:
                 model = f"{a['loom.model.id']} ({model})"
-            said = (
-                f"modèle {model} ({role}) — "
-                f"{_duration(span.duration_ms)}, {_tokens(a)}, "
-                f"{_cost(a.get('loom.cost_usd', 0))}"
-            )
+            said = f"modèle {model} ({role}) — {_duration(span.duration_ms)}, {_tokens(a)}, {_cost(a.get('loom.cost_usd', 0))}"
             if a.get("loom.attempts", 1) not in (0, 1):
                 said += f", {a['loom.attempts']} tentatives"
         case "tool":
@@ -212,11 +198,7 @@ def _said(span: TraceSpan, event: TraceEvent, full: bool) -> list[str]:
             # Le motif est du contenu : sans lui, on ne lit que l'outil. Dans le
             # span de l'approbation, l'en-tête nomme déjà l'outil (essai du 01/11).
             reason = content.get("reason") if content is not None else None
-            said = (
-                None
-                if span.kind == "other"
-                else f"approbation demandée pour {data.get('tool_name', '?')}"
-            )
+            said = None if span.kind == "other" else f"approbation demandée pour {data.get('tool_name', '?')}"
             if isinstance(reason, str) and reason:
                 return [_line("motif     : " if said is None else f"{said} : ", reason, full)]
             return [] if said is None else [said]
@@ -229,15 +211,9 @@ def _said(span: TraceSpan, event: TraceEvent, full: bool) -> list[str]:
                 line += f" → {data['resolution']}"
             return [line]
         case "policy.decided":
-            return [
-                f"politique {data.get('policy', '?')} ({data.get('point', '?')}) : "
-                f"{data.get('decision', '?')}"
-            ]
+            return [f"politique {data.get('policy', '?')} ({data.get('point', '?')}) : {data.get('decision', '?')}"]
         case "model.retried":
-            return [
-                f"tentative {data.get('attempt', '?')} ratée ({data.get('error_kind', '?')}), "
-                "nouvel essai"
-            ]
+            return [f"tentative {data.get('attempt', '?')} ratée ({data.get('error_kind', '?')}), nouvel essai"]
         case "model.fell_back":
             return [f"secours : {data.get('from_model', '?')} → {data.get('to_model', '?')}"]
         case "artifact.stored":
@@ -253,11 +229,7 @@ def _said(span: TraceSpan, event: TraceEvent, full: bool) -> list[str]:
 
 def _answered(span: TraceSpan, asked: frozenset[str]) -> bool:
     """Le résultat d'un outil qui pose une question : rendu sans exécution, et sans erreur."""
-    return (
-        str(span.attributes.get("gen_ai.tool.name")) in asked
-        and not _executed(span)
-        and not span.attributes.get("loom.tool.is_error")
-    )
+    return str(span.attributes.get("gen_ai.tool.name")) in asked and not _executed(span) and not span.attributes.get("loom.tool.is_error")
 
 
 def _executed(span: TraceSpan) -> bool:
@@ -269,9 +241,7 @@ def _other(span: TraceSpan) -> str:
     """Un span qui n'est ni run, ni étape, ni appel : une approbation, ou une question."""
     question = next((e for e in span.events if e.name == "question.asked"), None)
     if question is not None:
-        closed = next(
-            (e for e in span.events if e.name in ("question.answered", "question.expired")), None
-        )
+        closed = next((e for e in span.events if e.name in ("question.answered", "question.expired")), None)
         if closed is None:
             return "question à l'utilisateur — en attente"
         if closed.name == "question.expired":
@@ -281,9 +251,7 @@ def _other(span: TraceSpan) -> str:
     if requested is None:
         return span.name
     tool = requested.data.get("tool_name", "?")
-    decided = next(
-        (e for e in span.events if e.name.startswith("approval.") and e is not requested), None
-    )
+    decided = next((e for e in span.events if e.name.startswith("approval.") and e is not requested), None)
     if decided is None:
         return f"approbation pour {tool} — en attente"
     return f"approbation pour {tool} — {_approval(decided).removeprefix('approbation ')}"
@@ -311,9 +279,7 @@ def _approval(event: TraceEvent) -> str:
 
 def _questions(given: list[JsonValue]) -> str:
     """Les questions posées, en une ligne : le texte de chacune."""
-    return " ; ".join(
-        str(item.get("question", "?")) if isinstance(item, dict) else str(item) for item in given
-    )
+    return " ; ".join(str(item.get("question", "?")) if isinstance(item, dict) else str(item) for item in given)
 
 
 def _answer(content: Mapping[str, JsonValue] | None, full: bool) -> list[str]:
@@ -324,15 +290,9 @@ def _answer(content: Mapping[str, JsonValue] | None, full: bool) -> list[str]:
     blocks = message.get("blocks")
     if not isinstance(blocks, list):
         return []
-    text = " ".join(
-        str(block.get("text", ""))
-        for block in blocks
-        if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
-    )
+    text = " ".join(str(block.get("text", "")) for block in blocks if isinstance(block, dict) and block.get("type") == "text" and block.get("text"))
     calls = [
-        f"{block.get('name', '?')}({_compact(block.get('arguments', {}))})"
-        for block in blocks
-        if isinstance(block, dict) and block.get("type") == "tool_call"
+        f"{block.get('name', '?')}({_compact(block.get('arguments', {}))})" for block in blocks if isinstance(block, dict) and block.get("type") == "tool_call"
     ]
     lines = [_line("répond    : ", text, full)] if text else []
     lines += [_line("appelle   : ", call, full) for call in calls]
@@ -344,15 +304,7 @@ def _output(value: JsonValue) -> str:
     if not isinstance(value, dict):
         return _compact(value)
     blocks = value.get("blocks")
-    texts = (
-        [
-            str(block.get("text", ""))
-            for block in blocks
-            if isinstance(block, dict) and block.get("type") == "text"
-        ]
-        if isinstance(blocks, list)
-        else []
-    )
+    texts = [str(block.get("text", "")) for block in blocks if isinstance(block, dict) and block.get("type") == "text"] if isinstance(blocks, list) else []
     files = (
         [
             f"fichier {block.get('name') or block.get('uri', '?')} ({block.get('media_type', '?')})"
@@ -365,22 +317,14 @@ def _output(value: JsonValue) -> str:
     # Un outil qui ne rend qu'un fichier n'a ni texte ni données : au test K1 du
     # 21/10, l'étiquette d'un devis s'affichait « résultat : null ».
     data = value.get("data")
-    said = (
-        " ".join(t for t in texts if t)
-        or (_compact(data) if data is not None or not files else "")
-        or ", ".join(files)
-    )
+    said = " ".join(t for t in texts if t) or (_compact(data) if data is not None or not files else "") or ", ".join(files)
     return f"(erreur) {said}" if value.get("is_error") else said
 
 
 def _verdict(data: Mapping[str, JsonValue]) -> str:
     criteria = data.get("criteria")
     notes = (
-        ", ".join(
-            f"{item.get('name', '?')} {float(cast('float', item.get('score', 0))):.2f}"
-            for item in criteria
-            if isinstance(item, dict)
-        )
+        ", ".join(f"{item.get('name', '?')} {float(cast('float', item.get('score', 0))):.2f}" for item in criteria if isinstance(item, dict))
         if isinstance(criteria, list)
         else ""
     )

@@ -84,9 +84,7 @@ def by_rest(config: Path) -> RunId:
 
     port = free_port()
     loom = Loom.from_config(config)
-    settings = uvicorn.Config(
-        create_app(loom, own=True), host="127.0.0.1", port=port, log_level="warning"
-    )
+    settings = uvicorn.Config(create_app(loom, own=True), host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(settings)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()

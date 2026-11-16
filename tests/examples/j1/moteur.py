@@ -63,9 +63,7 @@ class WatchedStore(JsonlEventStore):
         super().__init__(root)
         self.first_result = asyncio.Event()
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         events = await super().append(drafts, expected_seq=expected_seq)
         if any(isinstance(e.payload, ToolCompleted) for e in events):
             self.first_result.set()

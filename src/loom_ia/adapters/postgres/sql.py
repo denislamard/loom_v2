@@ -88,10 +88,7 @@ def check_name(name: str) -> str:
     qui n'a pas besoin de l'être.
     """
     if _NAME.fullmatch(name) is None:
-        raise ValueError(
-            f"Rôle Postgres {name!r} : lettres minuscules, chiffres et '_' seulement, "
-            "63 caractères au plus"
-        )
+        raise ValueError(f"Rôle Postgres {name!r} : lettres minuscules, chiffres et '_' seulement, 63 caractères au plus")
     return name
 
 
@@ -172,8 +169,7 @@ IDEMPOTENCY_V2: Final = f"""\
 IDEMPOTENCY_UPGRADE: Final = "\n".join(
     [
         SCHEMA_DDL,
-        f"INSERT INTO {SCHEMA_TABLE} (component, version) VALUES ('idempotency', 1)"
-        " ON CONFLICT (component) DO NOTHING;",
+        f"INSERT INTO {SCHEMA_TABLE} (component, version) VALUES ('idempotency', 1) ON CONFLICT (component) DO NOTHING;",
         _migration("idempotency", IDEMPOTENCY_SCHEMA_VERSION, IDEMPOTENCY_V2),
     ]
 )
@@ -225,8 +221,7 @@ EVENTS_V3: Final = f"""\
 EVENTS_UPGRADE: Final = "\n".join(
     [
         SCHEMA_DDL,
-        f"INSERT INTO {SCHEMA_TABLE} (component, version) VALUES ('events', 1)"
-        " ON CONFLICT (component) DO NOTHING;",
+        f"INSERT INTO {SCHEMA_TABLE} (component, version) VALUES ('events', 1) ON CONFLICT (component) DO NOTHING;",
         _migration("events", 2, EVENTS_V2),
         _migration("events", EVENTS_SCHEMA_VERSION, EVENTS_V3),
     ]

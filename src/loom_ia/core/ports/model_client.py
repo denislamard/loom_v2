@@ -132,9 +132,7 @@ def require_end(accumulator: ResponseAccumulator) -> None:
     concernée.
     """
     if not accumulator.stopped:
-        raise ModelError(
-            "transient", "Flux interrompu : le fournisseur a fermé le flux sans signal de fin"
-        )
+        raise ModelError("transient", "Flux interrompu : le fournisseur a fermé le flux sans signal de fin")
 
 
 async def complete(

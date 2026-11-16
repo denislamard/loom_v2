@@ -145,9 +145,7 @@ def quatre(config: LoomConfig) -> tuple[LoomConfig, dict[str, str]]:
     )
     mcp = config.server.mcp.model_copy(update={"http": True, "allowed_origins": (ORIGINE,)})
     server = config.server.model_copy(update={"mcp": mcp})
-    return config.model_copy(
-        update={"security": config.security.model_copy(update={"api_keys": keys}), "server": server}
-    ), jetons
+    return config.model_copy(update={"security": config.security.model_copy(update={"api_keys": keys}), "server": server}), jetons
 
 
 # --- Un vrai serveur, et un vrai client MCP ----------------------------------
@@ -173,9 +171,7 @@ async def serveur(loom: Loom) -> AsyncGenerator[str]:
 
 
 @asynccontextmanager
-async def session_mcp(
-    base: str, jeton: str, *, origin: str | None = None
-) -> AsyncGenerator[ClientSession]:
+async def session_mcp(base: str, jeton: str, *, origin: str | None = None) -> AsyncGenerator[ClientSession]:
     """Une session MCP ouverte sur le serveur, avec sa clé."""
     headers = {"Authorization": f"Bearer {jeton}"}
     if origin:
@@ -237,9 +233,7 @@ async def clients(scene: Scene) -> None:
     for nom, tenant in (("dupont", DUPONT), ("martin", MARTIN)):
         session_id = SessionId(f"{prefixe}-{nom}")
         async with session_mcp(base, jetons[nom]) as session:
-            rendu = await session.call_tool(
-                agent, {"message": demande(tenant), "session_id": session_id}
-            )
+            rendu = await session.call_tool(agent, {"message": demande(tenant), "session_id": session_id})
         structure = rendu.structuredContent or {}
         print(f"  {tenant:<18} {structure.get('status')}  {structure.get('cost_usd', 0):.6f} $")
         events = await loom.export_session(session_id, tenant_id=tenant)
@@ -273,32 +267,24 @@ async def portees(scene: Scene) -> None:
 
     titre("Ce qu'une clé lance, elle le reçoit")
     async with session_mcp(base, jetons["supervision"]) as session:
-        lance = await session.call_tool(
-            agent, {"message": demande(DUPONT), "session_id": session_id}
-        )
+        lance = await session.call_tool(agent, {"message": demande(DUPONT), "session_id": session_id})
         structure = lance.structuredContent or {}
         run_id = str(structure.get("run_id"))
         print(f"  clé supervision (sans read_content) → {structure.get('status')}")
         print(f"  réponse reçue : « {str(structure.get('text', ''))[:64]}… »")
-        controle.tient(
-            "la réponse du lancement est masquée", DEVIS[DUPONT] in str(structure.get("text"))
-        )
+        controle.tient("la réponse du lancement est masquée", DEVIS[DUPONT] in str(structure.get("text")))
 
         titre("Mais la relecture, elle, est masquée")
         relu = await session.call_tool("run_status", {"run_id": run_id, "session_id": session_id})
         masque = relu.structuredContent or {}
     async with session_mcp(base, jetons["dupont"]) as session:
-        entier = (
-            await session.call_tool("run_status", {"run_id": run_id, "session_id": session_id})
-        ).structuredContent or {}
+        entier = (await session.call_tool("run_status", {"run_id": run_id, "session_id": session_id})).structuredContent or {}
     print(f"  {'champ':<12} {'clé dupont':<34} clé supervision")
     for champ in ("status", "iterations", "cost_usd"):
         print(f"  {champ:<12} {entier.get(champ)!s:<34} {masque.get(champ)}")
     print(f"  {'text':<12} {str(entier.get('text'))[:31]:<34} {masque.get('text')!r}")
     controle.tient("la relecture n'est pas masquée", masque.get("text") == "")
-    controle.tient(
-        "les coûts ont disparu du masquage", masque.get("cost_usd") == entier.get("cost_usd")
-    )
+    controle.tient("les coûts ont disparu du masquage", masque.get("cost_usd") == entier.get("cost_usd"))
 
 
 # --- Cas 3 : ce que la spec MCP impose au transport --------------------------

@@ -36,9 +36,7 @@ SECRET = "sk-SECRET-123"
         ),
     ],
 )
-def test_the_faulty_value_is_never_quoted(
-    schema: dict[str, JsonValue], value: JsonValue, said: str
-) -> None:
+def test_the_faulty_value_is_never_quoted(schema: dict[str, JsonValue], value: JsonValue, said: str) -> None:
     errors = list(bounded_validator(schema).iter_errors(value))
     assert errors
     problem = schema_problem(errors[0])

@@ -57,9 +57,7 @@ class IdempotencyStore(Protocol):
         """
         ...
 
-    async def reserve(
-        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
-    ) -> bool:
+    async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
         """Prend la clé pour ``ttl`` secondes ; faux si quelqu'un la tient déjà.
 
         Atomique : de deux appelants simultanés, un seul obtient vrai. Une
@@ -74,9 +72,7 @@ class IdempotencyStore(Protocol):
         """
         ...
 
-    async def complete(
-        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
-    ) -> None:
+    async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
         """Enregistre ce que l'effet a rendu : la clé cesse d'être une réservation.
 
         ``ttl`` : durée pendant laquelle le résultat reste consultable ;

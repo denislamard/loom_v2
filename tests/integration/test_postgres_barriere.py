@@ -82,10 +82,7 @@ def as_role(dsn: str, user: str, password: str) -> str:
 
 async def make_stranger(connection: asyncpg.Connection[asyncpg.Record]) -> None:
     try:
-        await connection.execute(
-            f"DO $$ BEGIN CREATE ROLE {ETRANGER} LOGIN PASSWORD '{MOT_DE_PASSE}';"
-            " EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
-        )
+        await connection.execute(f"DO $$ BEGIN CREATE ROLE {ETRANGER} LOGIN PASSWORD '{MOT_DE_PASSE}'; EXCEPTION WHEN duplicate_object THEN NULL; END $$;")
     except asyncpg.InsufficientPrivilegeError:
         pytest.skip("le rôle du DSN ne peut pas créer de rôle : essai non jouable")
 
@@ -188,9 +185,7 @@ async def test_a_role_that_cannot_take_the_app_role_says_so(postgres_dsn: str) -
     connection = await asyncpg.connect(postgres_dsn)
     try:
         await make_stranger(connection)
-        await connection.execute(
-            f"GRANT SELECT ON {EVENTS_TABLE} TO {ETRANGER}"
-        )  # de quoi lire, s'il pouvait
+        await connection.execute(f"GRANT SELECT ON {EVENTS_TABLE} TO {ETRANGER}")  # de quoi lire, s'il pouvait
     finally:
         await connection.close()
         await owner.aclose()
@@ -210,11 +205,7 @@ async def test_ten_writers_on_one_journal_do_not_interleave(postgres_dsn: str) -
     session = SessionId("s-concurrence")
     stores = [PostgresEventStore(postgres_dsn) for _ in range(4)]
     try:
-        lots = [
-            store.append(drafts(UN, session), expected_seq=None)
-            for store in stores
-            for _ in range(3)
-        ]
+        lots = [store.append(drafts(UN, session), expected_seq=None) for store in stores for _ in range(3)]
         written = await asyncio.gather(*lots)
         seqs = sorted(event.seq for events in written for event in events)
         assert seqs == list(range(1, len(seqs) + 1))
@@ -238,12 +229,8 @@ async def test_writers_of_one_client_queue_on_the_ingestion_lock(postgres_dsn: s
         # Prépare la base (schéma) avant de tenir le verrou.
         await store.append(drafts(AUTRE, SessionId("s-amorce")), expected_seq=0)
         async with holder.transaction():
-            await holder.execute(
-                "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", f"ingestion:{UN}"
-            )
-            waiting = asyncio.create_task(
-                store.append(drafts(UN, SessionId("s-attend")), expected_seq=0)
-            )
+            await holder.execute("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", f"ingestion:{UN}")
+            waiting = asyncio.create_task(store.append(drafts(UN, SessionId("s-attend")), expected_seq=0))
             await store.append(drafts(AUTRE, SessionId("s-passe")), expected_seq=0)
             await asyncio.sleep(0.3)
             assert not waiting.done()
@@ -286,9 +273,7 @@ async def test_after_follows_writing_order_across_sessions_of_one_client(
 # --- Délais, horloge et pool (DON-2) ----------------------------------------
 
 
-async def test_a_client_clock_ahead_cannot_steal_a_live_reservation(
-    postgres_dsn: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_client_clock_ahead_cannot_steal_a_live_reservation(postgres_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """La date qui décide de la reprise d'une clé est celle de la base, pas celle du client."""
     from datetime import UTC, datetime, timedelta
 
@@ -440,14 +425,8 @@ async def _state(dsn: str) -> tuple[int | None, bool]:
     connection = await asyncpg.connect(dsn)
     try:
         present = await connection.fetchval("SELECT to_regclass('loom_schema')")
-        version = (
-            await connection.fetchval("SELECT version FROM loom_schema WHERE component = 'events'")
-            if present
-            else None
-        )
-        definition = await connection.fetchval(
-            "SELECT indexdef FROM pg_indexes WHERE indexname = $1", f"{EVENTS_TABLE}_event_id"
-        )
+        version = await connection.fetchval("SELECT version FROM loom_schema WHERE component = 'events'") if present else None
+        definition = await connection.fetchval("SELECT indexdef FROM pg_indexes WHERE indexname = $1", f"{EVENTS_TABLE}_event_id")
         return version, "UNIQUE" in str(definition)
     finally:
         await connection.close()
@@ -507,9 +486,7 @@ async def test_an_event_id_already_written_is_not_mistaken_for_a_sequence_confli
         first = drafts(UN, SessionId("s-a"))
         await store.append(first, expected_seq=0)
         # Les mêmes événements, sous un autre client : l'unicité est par client.
-        await store.append(
-            [d.model_copy(update={"tenant_id": AUTRE}) for d in first], expected_seq=0
-        )
+        await store.append([d.model_copy(update={"tenant_id": AUTRE}) for d in first], expected_seq=0)
         # Le même identifiant dans une autre session du même client : refusé tel quel.
         clash = [d.model_copy(update={"session_id": SessionId("s-b")}) for d in first]
         with pytest.raises(asyncpg.UniqueViolationError):
@@ -536,16 +513,9 @@ async def _idempotency_state(dsn: str) -> tuple[int | None, bool, object]:
     connection = await asyncpg.connect(dsn)
     try:
         present = await connection.fetchval("SELECT to_regclass('loom_schema')")
-        row = (
-            await connection.fetchrow(
-                "SELECT version, applied_at FROM loom_schema WHERE component = 'idempotency'"
-            )
-            if present
-            else None
-        )
+        row = await connection.fetchrow("SELECT version, applied_at FROM loom_schema WHERE component = 'idempotency'") if present else None
         holder = await connection.fetchval(
-            "SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass($1)"
-            " AND attname = 'holder' AND NOT attisdropped",
+            "SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'holder' AND NOT attisdropped",
             IDEMPOTENCY_TABLE,
         )
         return (
@@ -570,10 +540,7 @@ async def test_an_old_idempotency_table_is_migrated_once_and_keeps_its_rows(
         await connection.execute(membership_ddl(DEFAULT_ROLE))
         await connection.execute(_OLD_IDEMPOTENCY)
         await connection.execute(grants_ddl(DEFAULT_ROLE, table=IDEMPOTENCY_TABLE, update=True))
-        await connection.execute(
-            f"INSERT INTO {IDEMPOTENCY_TABLE} VALUES"
-            " ('ancienne', 't', 's', 'completed', '\"ok\"', now() + interval '1 hour')"
-        )
+        await connection.execute(f"INSERT INTO {IDEMPOTENCY_TABLE} VALUES ('ancienne', 't', 's', 'completed', '\"ok\"', now() + interval '1 hour')")
     finally:
         await connection.close()
     assert (await _idempotency_state(postgres_dsn))[:2] == (None, False)

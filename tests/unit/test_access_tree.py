@@ -202,16 +202,8 @@ def test_progress_lines_of_policy_decisions() -> None:
 
 async def test_stream_shows_the_subruns(tree: ConfigFactory) -> None:
     async with Loom.from_config(tree()) as loom:
-        items = [
-            item
-            async for item in loom.stream("demo", TREE_QUESTION, user=DEV)
-            if isinstance(item, Event)
-        ]
-        alone = [
-            item
-            async for item in loom.stream("demo", TREE_QUESTION, subruns=False, user=DEV)
-            if isinstance(item, Event)
-        ]
+        items = [item async for item in loom.stream("demo", TREE_QUESTION, user=DEV) if isinstance(item, Event)]
+        alone = [item async for item in loom.stream("demo", TREE_QUESTION, subruns=False, user=DEV) if isinstance(item, Event)]
 
     assert [e.type for e in items] == TREE_TYPES
     assert [e.seq for e in items] == sorted(e.seq for e in items)
@@ -228,16 +220,9 @@ async def test_stream_keeps_the_whole_tree_of_each_client_sharing_a_run_id(
     run_id = new_run_id()
     acme, beta = TenantId("acme"), TenantId("beta")
     async with Loom.from_config(tree(tenants=[{"id": acme}, {"id": beta}])) as loom:
-        async with aclosing(
-            loom.stream("demo", TREE_QUESTION, run_id=run_id, tenant=acme, user=acme)
-        ) as one:
+        async with aclosing(loom.stream("demo", TREE_QUESTION, run_id=run_id, tenant=acme, user=acme)) as one:
             opening = await anext(one)
-            other = [
-                item
-                async for item in loom.stream(
-                    "demo", TREE_QUESTION, run_id=run_id, tenant=beta, user=beta
-                )
-            ]
+            other = [item async for item in loom.stream("demo", TREE_QUESTION, run_id=run_id, tenant=beta, user=beta)]
             rest = [item async for item in one]
 
     for tenant, items in ((acme, [opening, *rest]), (beta, other)):
@@ -355,9 +340,7 @@ async def test_sse_refuses_the_whole_tree_to_a_key_without_every_agent(tree: Con
     assert "event: run.completed" in alone.text
 
 
-async def test_sse_stops_when_a_forbidden_subagent_joins_a_stream_in_flight(
-    tree: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sse_stops_when_a_forbidden_subagent_joins_a_stream_in_flight(tree: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Le statut est parti : le refus est un dernier message `error`, puis le flux se ferme."""
     pytest.importorskip("fastapi", reason="extra 'http' absent")
     httpx2 = pytest.importorskip("httpx2", reason="client HTTP de test absent")
@@ -389,9 +372,7 @@ async def test_sse_stops_when_a_forbidden_subagent_joins_a_stream_in_flight(
         monkeypatch.setattr(loom, "follow", watched)
         transport = httpx2.ASGITransport(create_app(loom))
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
-            following = asyncio.create_task(
-                http.get("/v1/runs/r0/events?session_id=s1", headers=bearer(parent))
-            )
+            following = asyncio.create_task(http.get("/v1/runs/r0/events?session_id=s1", headers=bearer(parent)))
             async with asyncio.timeout(5):
                 await opened.wait()
                 started = RunStarted(parent_run_id=RunId("r0"), depth=1)
@@ -462,9 +443,7 @@ async def test_restricting_a_result_drops_the_runs_roles_and_verdicts_of_refused
     assert [run.agent for run in kept.report.runs] == ["demo"]
     assert [line.name for line in kept.report.roles] == ["demo · main"]
     assert kept.report.total == judged.report.total
-    assert [line.name for line in kept.report.models] == [
-        line.name for line in judged.report.models
-    ]
+    assert [line.name for line in kept.report.models] == [line.name for line in judged.report.models]
     assert (kept.usage, kept.cost_usd, kept.text) == (judged.usage, judged.cost_usd, judged.text)
     # Rien à retirer : le même objet, sans copie.
     assert judged.restricted(lambda agent: True) is judged
@@ -499,9 +478,7 @@ async def test_mcp_reports_progress_with_the_subruns(tree: ConfigFactory) -> Non
 
     async with mcp_client(tree()) as (loom, client):
         assert isinstance(client, ClientSession)
-        followed = await client.call_tool(
-            "demo", {"message": TREE_QUESTION}, progress_callback=on_progress
-        )
+        followed = await client.call_tool("demo", {"message": TREE_QUESTION}, progress_callback=on_progress)
         quiet = await client.call_tool("demo", {"message": TREE_QUESTION})
         assert followed.structuredContent is not None
         events = await loom.events(RunId(followed.structuredContent["run_id"]))
@@ -546,16 +523,12 @@ async def test_the_three_accesses_give_the_same_tree(tree: ConfigFactory) -> Non
 # --- CLI ---------------------------------------------------------------------------------
 
 
-def test_cli_stream_shows_the_subruns(
-    tree: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_stream_shows_the_subruns(tree: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(tree()), "run", "demo", TREE_QUESTION, "--stream"]) == 0
     captured = capsys.readouterr()
     assert captured.out.startswith("Je fais vérifier.\n")
     assert TREE_ANSWER in captured.out
-    assert [
-        line for line in captured.err.splitlines() if line.lstrip().startswith("· ")
-    ] == PROGRESS
+    assert [line for line in captured.err.splitlines() if line.lstrip().startswith("· ")] == PROGRESS
 
 
 def test_a_session_run_keeps_its_tree(tree: ConfigFactory) -> None:

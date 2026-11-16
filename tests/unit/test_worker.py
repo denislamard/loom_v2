@@ -29,9 +29,7 @@ RABBITMQ: dict[str, Any] = {"queue": {"backend": "rabbitmq", "url_env": VARIABLE
 
 sans_extra = pytest.mark.skipif(find_spec("aio_pika") is None, reason="extra 'rabbitmq' absent")
 # L'inverse : ce qui ne se voit que sans l'extra, dans la passe noyau seul.
-avec_extra = pytest.mark.skipif(
-    find_spec("aio_pika") is not None, reason="extra 'rabbitmq' présent"
-)
+avec_extra = pytest.mark.skipif(find_spec("aio_pika") is not None, reason="extra 'rabbitmq' présent")
 
 
 def queue_of(path: Any) -> TaskQueue:
@@ -102,18 +100,14 @@ def test_the_config_names_the_variable_never_the_url() -> None:
 
 
 @sans_extra
-def test_an_empty_variable_is_named_in_the_error(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_empty_variable_is_named_in_the_error(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(VARIABLE, raising=False)
     with pytest.raises(ConfigError, match=rf"{VARIABLE}.* est vide ou absente"):
         queue_of(demo(storage=RABBITMQ))
 
 
 @sans_extra
-def test_the_queue_is_built_from_the_variable(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_queue_is_built_from_the_variable(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(VARIABLE, URL)
     queue = queue_of(demo(storage=RABBITMQ))
     # Rien n'est ouvert avant la première mise en file : le courtier peut être absent.
@@ -123,9 +117,7 @@ def test_the_queue_is_built_from_the_variable(
 
 
 @sans_extra
-async def test_a_brokered_queue_answers_without_a_broker(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_brokered_queue_answers_without_a_broker(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """``state`` et ``cancel`` ne consultent rien : le journal fait foi, pas la file."""
     monkeypatch.setenv(VARIABLE, URL)
     queue = queue_of(demo(storage=RABBITMQ))
@@ -136,9 +128,7 @@ async def test_a_brokered_queue_answers_without_a_broker(
 
 
 @avec_extra
-def test_without_the_extra_the_refusal_names_it(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_without_the_extra_the_refusal_names_it(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Ce que voit qui déclare une file rabbitmq sans avoir installé l'extra."""
     monkeypatch.setenv(VARIABLE, URL)
     with pytest.raises(ConfigError, match=r"loom-ia\[rabbitmq\]"):
@@ -212,9 +202,7 @@ async def test_a_queue_that_runs_at_home_has_nothing_to_serve(demo: ConfigFactor
             await loom.stop_work()
 
 
-def test_the_worker_refuses_a_queue_that_is_not_served(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_worker_refuses_a_queue_that_is_not_served(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "worker"]) == 2
     captured = capsys.readouterr()
     assert "File     : asyncio" in captured.out
@@ -265,9 +253,7 @@ def test_the_worker_recovers_then_listens_when_the_queue_is_served(
     monkeypatch.setenv(VARIABLE, URL)
     calls: list[tuple[str, object]] = []
 
-    async def recover(
-        self: Loom, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None
-    ) -> tuple[RunId, ...]:
+    async def recover(self: Loom, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None) -> tuple[RunId, ...]:
         calls.append(("recover", tenant_id))
         return ()
 
@@ -286,17 +272,13 @@ def test_the_worker_recovers_then_listens_when_the_queue_is_served(
     assert "Worker arrêté" in out
 
 
-def test_the_worker_refuses_less_than_one_job(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_worker_refuses_less_than_one_job(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "worker", "--jobs", "0"]) == 2
     assert "--jobs : au moins 1" in capsys.readouterr().err
 
 
 @sans_extra
-def test_validate_shows_the_queue_and_says_a_worker_is_needed(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_queue_and_says_a_worker_is_needed(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setenv(VARIABLE, URL)
     assert main(["--config", str(demo(storage=RABBITMQ)), "validate"]) == 0
     out = capsys.readouterr().out
@@ -306,9 +288,7 @@ def test_validate_shows_the_queue_and_says_a_worker_is_needed(
     assert "secret" not in out
 
 
-def test_validate_says_when_the_variable_is_missing(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_when_the_variable_is_missing(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.delenv(VARIABLE, raising=False)
     # La file n'est ouverte qu'à la première mise en file : `validate` va au bout.
     assert main(["--config", str(demo(storage=RABBITMQ)), "validate"]) == 2
@@ -422,9 +402,7 @@ def _worker(monkeypatch: pytest.MonkeyPatch, courtier: _Courtier, handler: Any) 
 
 
 @sans_extra
-async def test_a_message_without_a_client_is_dropped_and_the_worker_goes_on(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_message_without_a_client_is_dropped_and_the_worker_goes_on(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Un ``KeyError`` hors du ``try`` abattait le worker, et le message bouclait."""
     seen: list[Job] = []
 
@@ -481,9 +459,7 @@ async def test_a_job_this_worker_cannot_run_is_set_aside_with_its_reason(
 
 
 @sans_extra
-async def test_a_failed_job_is_acknowledged_not_set_aside(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_failed_job_is_acknowledged_not_set_aside(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Le run a écrit son échec au journal : c'est là qu'il se lit, pas dans la file morte."""
 
     async def handler(job: Job) -> None:
@@ -500,9 +476,7 @@ async def test_a_failed_job_is_acknowledged_not_set_aside(
 
 
 @sans_extra
-async def test_a_job_that_cannot_be_set_aside_leaves_its_body_in_the_log(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_job_that_cannot_be_set_aside_leaves_its_body_in_the_log(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Courtier qui refuse la copie : le message est acquitté quand même, son corps est au log."""
     écarté = _Message(b"ceci n'est pas un travail")
     queue = _worker(monkeypatch, _Courtier([écarté], refuses_to_publish=True), None)
@@ -514,9 +488,7 @@ async def test_a_job_that_cannot_be_set_aside_leaves_its_body_in_the_log(
 
 
 @sans_extra
-async def test_a_refused_acknowledgement_does_not_stop_the_worker(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_refused_acknowledgement_does_not_stop_the_worker(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Un canal fermé fait échouer ``ack`` : le courtier redélivrera, le worker continue."""
     seen: list[Job] = []
 
@@ -537,9 +509,7 @@ async def test_a_refused_acknowledgement_does_not_stop_the_worker(
 
 
 @sans_extra
-async def test_a_refused_requeue_at_stop_does_not_stop_the_worker(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_refused_requeue_at_stop_does_not_stop_the_worker(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """À l'arrêt, le travail déjà livré retourne en file ; si le courtier refuse, on s'arrête."""
     stopped = asyncio.Event()
     late = _Message(GOOD, refuses=True)

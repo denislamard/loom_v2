@@ -50,8 +50,7 @@ TEMPLATES: Final[tuple[tuple[str, str, str], ...]] = (
     (
         f"{TRACES}/{{run_id}}{{?session_id}}",
         "trace du run",
-        "Trace d'un run et de ses sous-runs : ses spans, tirés du journal, et un en-tête "
-        "(statut, usage, coût, durée)",
+        "Trace d'un run et de ses sous-runs : ses spans, tirés du journal, et un en-tête (statut, usage, coût, durée)",
     ),
     (
         f"{SESSIONS}/{{session_id}}",

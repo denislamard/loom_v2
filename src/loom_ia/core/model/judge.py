@@ -35,9 +35,7 @@ from loom_ia.core.model.context import CallerContext
 # Juges d'un run, choisis par l'appelant : selon leur ``when``, tous, ou aucun.
 type JudgesMode = Literal["auto", "force", "skip"]
 # Motif d'un juge qui ne s'exécute pas.
-type SkipReason = Literal[
-    "filtered", "sampled_out", "condition_false", "caller_skip", "other_profile"
-]
+type SkipReason = Literal["filtered", "sampled_out", "condition_false", "caller_skip", "other_profile"]
 
 JUDGES_MODES: Final[tuple[JudgesMode, ...]] = ("auto", "force", "skip")
 CRITERION_NAME_PATTERN: Final = r"^[A-Za-z0-9_-]{1,64}$"

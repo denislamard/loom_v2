@@ -65,27 +65,16 @@ class _Arguments(BaseModel):
 
     action: Annotated[
         Action,
-        Field(
-            description="list : contenu d'un dossier ; read : lire un fichier ; write : écrire "
-            "un fichier ; delete : supprimer un fichier."
-        ),
+        Field(description="list : contenu d'un dossier ; read : lire un fichier ; write : écrire un fichier ; delete : supprimer un fichier."),
     ]
     path: Annotated[
         str,
-        Field(
-            description="« <dossier>/<chemin> », par exemple work/devis/D-042.txt ; "
-            "pour list, « <dossier> » seul est permis."
-        ),
+        Field(description="« <dossier>/<chemin> », par exemple work/devis/D-042.txt ; pour list, « <dossier> » seul est permis."),
     ]
-    content: Annotated[
-        str | None, Field(description="Texte à écrire, en UTF-8 ; pour write seulement.")
-    ] = None
+    content: Annotated[str | None, Field(description="Texte à écrire, en UTF-8 ; pour write seulement.")] = None
     file: Annotated[
         str | None,
-        Field(
-            description="Pour write, à la place de content : nom d'un fichier de la "
-            "conversation (joint, ou rendu par un outil), copié tel quel."
-        ),
+        Field(description="Pour write, à la place de content : nom d'un fichier de la conversation (joint, ou rendu par un outil), copié tel quel."),
     ] = None
     overwrite: Annotated[
         bool,
@@ -123,13 +112,7 @@ class LocalFilesTool:
         self.folders = folders
         self._space = Folders(folders)
         granted = {right for folder in folders for right in folder.rights}
-        effects: SideEffects = (
-            "irreversible"
-            if granted & {"overwrite", "delete"}
-            else "reversible"
-            if "write" in granted
-            else "none"
-        )
+        effects: SideEffects = "irreversible" if granted & {"overwrite", "delete"} else "reversible" if "write" in granted else "none"
         schema = _Arguments.model_json_schema()
         schema.pop("title", None)
         self._spec = ToolSpec(
@@ -172,11 +155,7 @@ class LocalFilesTool:
             idempotent=idempotent,
             reason=(
                 f"{_SAID[request.action]} {located.address}"
-                + (
-                    ", en remplaçant le fichier s'il existe"
-                    if request.action == "write" and request.overwrite
-                    else ""
-                )
+                + (", en remplaçant le fichier s'il existe" if request.action == "write" and request.overwrite else "")
                 + f" — {Folders.rule((located, right) for right in asking)}"
             ),
         )
@@ -201,10 +180,7 @@ class LocalFilesTool:
 
     def _check_rights(self, request: _Arguments, located: Located) -> None:
         if request.action == "write" and (request.content is None) == (request.file is None):
-            raise ToolError(
-                "write attend 'content', le texte à écrire, ou 'file', un fichier de la "
-                "conversation à copier — l'un des deux."
-            )
+            raise ToolError("write attend 'content', le texte à écrire, ou 'file', un fichier de la conversation à copier — l'un des deux.")
         if request.action != "write" and request.content is not None:
             raise ToolError("'content' ne sert qu'à write.")
         if request.action != "write" and request.file is not None:
@@ -253,10 +229,7 @@ class LocalFilesTool:
                 continue
             # Un lien qui mène hors du dossier n'est pas montré : on ne pourrait pas
             # l'ouvrir, et sa taille dirait quelque chose de ce qui est dehors.
-            if (
-                entry.is_symlink()
-                and self._space.outside(entry.resolve(), located.folder) is not None
-            ):
+            if entry.is_symlink() and self._space.outside(entry.resolve(), located.folder) is not None:
                 continue
             if len(entries) >= MAX_ENTRIES:
                 truncated = True
@@ -290,11 +263,7 @@ def _read(target: Path, located: Located) -> dict[str, JsonValue]:
     try:
         content = data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        hint = (
-            " ; un classeur se lit avec l'outil excel (action=read), s'il est accordé"
-            if located.address.lower().endswith((".xlsx", ".xlsm"))
-            else ""
-        )
+        hint = " ; un classeur se lit avec l'outil excel (action=read), s'il est accordé" if located.address.lower().endswith((".xlsx", ".xlsm")) else ""
         raise ToolError(f"{located.address} n'est pas un fichier texte UTF-8{hint}.") from exc
     return {"path": located.address, "content": content, "size": len(data)}
 
@@ -303,9 +272,7 @@ def _written(target: Path, located: Located, content: str, overwrite: bool) -> d
     try:
         data = content.encode("utf-8")
     except UnicodeEncodeError as exc:
-        raise ToolError(
-            "'content' contient des caractères qui ne s'écrivent pas en UTF-8."
-        ) from exc
+        raise ToolError("'content' contient des caractères qui ne s'écrivent pas en UTF-8.") from exc
     if len(data) > MAX_WRITE_BYTES:
         raise ToolError(f"Contenu de {len(data)} octets, au-delà de {MAX_WRITE_BYTES}.")
     return write_bytes(target, located, data, overwrite)
@@ -348,8 +315,7 @@ def _parse(arguments: Mapping[str, JsonValue]) -> _Arguments:
 
 def _description(space: Folders) -> str:
     lines = [
-        "Lit, liste, écrit et supprime des fichiers dans des dossiers permis. "
-        "Un fichier se désigne par « <dossier>/<chemin> », jamais par un chemin absolu.",
+        "Lit, liste, écrit et supprime des fichiers dans des dossiers permis. Un fichier se désigne par « <dossier>/<chemin> », jamais par un chemin absolu.",
         "Dossiers et droits :",
         *space.described(),
     ]

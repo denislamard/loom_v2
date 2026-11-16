@@ -96,9 +96,7 @@ class Image:
     def block(self) -> InlineDataBlock:
         media_type = sniff(self.data) or self.media_type
         if media_type is None:
-            raise ValueError(
-                f"Image {self.name or ''} : format non reconnu (JPEG, PNG, GIF ou WebP attendu)"
-            )
+            raise ValueError(f"Image {self.name or ''} : format non reconnu (JPEG, PNG, GIF ou WebP attendu)")
         return InlineDataBlock(media_type=media_type, data=self.data, name=self.name)
 
 
@@ -167,9 +165,7 @@ class FunctionTool[**P, R]:
             parsed = self._arguments.model_validate(arguments)
         except ValidationError as exc:
             raise ToolError(_describe(exc)) from exc
-        kwargs: dict[str, Any] = {
-            field: getattr(parsed, field) for field in type(parsed).model_fields
-        }
+        kwargs: dict[str, Any] = {field: getattr(parsed, field) for field in type(parsed).model_fields}
         if self._context_param is not None:
             kwargs[self._context_param] = context
         fn = cast(Callable[..., Any], self.fn)
@@ -262,10 +258,7 @@ def _arguments_model(fn: Callable[..., object], name: str) -> tuple[str | None, 
             context_param = param.name
             continue
         if param.kind not in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY):
-            raise TypeError(
-                f"Outil {name!r} : paramètre {param.name!r} non pris en charge "
-                "(seuls les paramètres nommés le sont)"
-            )
+            raise TypeError(f"Outil {name!r} : paramètre {param.name!r} non pris en charge (seuls les paramètres nommés le sont)")
         default = ... if param.default is param.empty else param.default
         fields[param.name] = (annotation, default)
     model = create_model(

@@ -61,41 +61,26 @@ class MemoryArguments(BaseModel):
             "remplacer le texte d'un document ; delete : supprimer un document."
         ),
     ]
-    query: Annotated[
-        str | None, Field(description="Pour search : la question, ou des mots-clés.")
-    ] = None
+    query: Annotated[str | None, Field(description="Pour search : la question, ou des mots-clés.")] = None
     k: Annotated[int, Field(ge=1, le=10, description="Pour search : nombre de résultats.")] = 5
     tags: Annotated[
         list[str] | None,
-        Field(
-            description="Pour search : ne garder que les documents qui portent tous ces tags ; "
-            "pour un ajout : les tags du document."
-        ),
+        Field(description="Pour search : ne garder que les documents qui portent tous ces tags ; pour un ajout : les tags du document."),
     ] = None
     project: Annotated[
         str | None,
-        Field(
-            description="Projet du document : obligatoire pour un ajout ; pour search et "
-            "list_docs, restreint au projet (absent : tous les projets)."
-        ),
+        Field(description="Projet du document : obligatoire pour un ajout ; pour search et list_docs, restreint au projet (absent : tous les projets)."),
     ] = None
-    doc_id: Annotated[
-        str | None, Field(description="Pour get, update, delete : l'identifiant du document.")
-    ] = None
+    doc_id: Annotated[str | None, Field(description="Pour get, update, delete : l'identifiant du document.")] = None
     text: Annotated[
         str | None,
         Field(description="Pour add_text : le texte à mémoriser ; pour update : le texte entier."),
     ] = None
-    title: Annotated[
-        str | None, Field(description="Pour add_text : un titre court et explicite.")
-    ] = None
+    title: Annotated[str | None, Field(description="Pour add_text : un titre court et explicite.")] = None
     url: Annotated[str | None, Field(description="Pour add_url : l'adresse http(s).")] = None
     file: Annotated[
         str | None,
-        Field(
-            description="Pour add_file : « <dossier>/<chemin> » d'un fichier texte, Word ou PDF "
-            "(les formats lus sont dans la description de l'outil)."
-        ),
+        Field(description="Pour add_file : « <dossier>/<chemin> » d'un fichier texte, Word ou PDF (les formats lus sont dans la description de l'outil)."),
     ] = None
     n: Annotated[int, Field(ge=1, le=50, description="Pour list_docs : nombre de documents.")] = 20
 
@@ -147,9 +132,7 @@ def parse(arguments: Mapping[str, JsonValue], params: MemoryParams) -> MemoryArg
         raise ToolError("\n".join(lines)) from None
     declared = params.declared()
     if request.action not in declared:
-        raise ToolError(
-            f"Action {request.action!r} non permise ; actions permises : {', '.join(declared)}."
-        )
+        raise ToolError(f"Action {request.action!r} non permise ; actions permises : {', '.join(declared)}.")
     required, optional = expected(request.action, params)
     given = {name for name in request.model_fields_set if name != "action"}
     missing = sorted(name for name in required if getattr(request, name) is None)
@@ -158,8 +141,6 @@ def parse(arguments: Mapping[str, JsonValue], params: MemoryParams) -> MemoryArg
     stray = sorted(given - required - optional)
     if stray:
         if "project" in stray and params.project is not None:
-            raise ToolError(
-                f"'project' n'est pas un argument : le projet est imposé ({params.project})."
-            )
+            raise ToolError(f"'project' n'est pas un argument : le projet est imposé ({params.project}).")
         raise ToolError(f"{', '.join(stray)} ne sert pas à {request.action}.")
     return request

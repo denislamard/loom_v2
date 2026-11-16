@@ -122,11 +122,7 @@ class MemoryTool:
         self.target = target
         # Les formats que ce process ne sait pas lire, et pourquoi (un extra manque).
         self.unreadable: Mapping[str, str] = dict(unreadable or {})
-        self.file_suffixes = tuple(
-            suffix
-            for suffix in (*TEXT_SUFFIXES, *WORD_SUFFIXES, *PDF_SUFFIXES)
-            if suffix not in self.unreadable
-        )
+        self.file_suffixes = tuple(suffix for suffix in (*TEXT_SUFFIXES, *WORD_SUFFIXES, *PDF_SUFFIXES) if suffix not in self.unreadable)
         models = shared_models(params.models, target)
         self.service = MemoryService(store, models, params.retrieval, params.chunking)
         declared = params.declared()
@@ -184,8 +180,7 @@ class MemoryTool:
             approval="always",
             side_effects=effects,
             idempotent=idempotent,
-            reason=f"{_SAID[request.action]}{self._what(request)} — la config exige une "
-            f"approbation pour {request.action}",
+            reason=f"{_SAID[request.action]}{self._what(request)} — la config exige une approbation pour {request.action}",
         )
 
     def _writes_nothing(self, request: MemoryArguments) -> bool:
@@ -300,9 +295,7 @@ class MemoryTool:
         service = self.service
         match request.action:
             case "search":
-                found = await service.search(
-                    cast(str, request.query), project=project, tags=tags, k=request.k
-                )
+                found = await service.search(cast(str, request.query), project=project, tags=tags, k=request.k)
                 return to_output(found)
             case "get":
                 return to_output(await service.get(cast(str, request.doc_id), project=project))
@@ -312,9 +305,7 @@ class MemoryTool:
                 return to_output(await service.projects())
             case "add_text":
                 extracted = Extracted(cast(str, request.title), cast(str, request.text))
-                done = await service.add(
-                    extracted, kind="text", source=None, project=project, tags=tags
-                )
+                done = await service.add(extracted, kind="text", source=None, project=project, tags=tags)
                 return to_output(done)
             case "add_url":
                 from loom_ia.tools_builtin.memory.web import fetch_markdown
@@ -325,14 +316,10 @@ class MemoryTool:
                 return to_output(done)
             case "add_file":
                 address, extracted = await self._read_file(cast(str, request.file))
-                done = await service.add(
-                    extracted, kind="file", source=address, project=project, tags=tags
-                )
+                done = await service.add(extracted, kind="file", source=address, project=project, tags=tags)
                 return to_output(done)
             case "update":
-                done = await service.update(
-                    cast(str, request.doc_id), cast(str, request.text), project=project
-                )
+                done = await service.update(cast(str, request.doc_id), cast(str, request.text), project=project)
                 return to_output(done)
             case "delete":
                 return to_output(await service.delete(cast(str, request.doc_id), project=project))
@@ -352,10 +339,7 @@ class MemoryTool:
         if missing is not None:
             raise ToolError(f"{located.address} : {missing}.")
         if suffix not in self.file_suffixes:
-            raise ToolError(
-                f"{located.address} : extension {target.suffix or 'absente'} refusée ; "
-                f"permises : {', '.join(self.file_suffixes)}."
-            )
+            raise ToolError(f"{located.address} : extension {target.suffix or 'absente'} refusée ; permises : {', '.join(self.file_suffixes)}.")
         return located, target
 
     async def _read_file(self, path: str) -> tuple[str, Extracted]:
@@ -371,25 +355,16 @@ class MemoryTool:
         if params.project is None:
             scope = "Chaque document appartient à un projet."
         else:
-            scope = (
-                f"Projet imposé : {params.project} ; tout ce qui est mémorisé y va, et seuls "
-                "ses documents sont visibles."
-            )
+            scope = f"Projet imposé : {params.project} ; tout ce qui est mémorisé y va, et seuls ses documents sont visibles."
         lines = [
-            "Mémoire long terme : des documents (textes, pages web, fichiers) retrouvés par "
-            "une recherche par le sens et par les mots. " + scope,
+            "Mémoire long terme : des documents (textes, pages web, fichiers) retrouvés par une recherche par le sens et par les mots. " + scope,
             "Actions permises :",
         ]
         for action in params.declared():
-            waits = (
-                " (attend une approbation humaine)" if params.approval(action) == "always" else ""
-            )
+            waits = " (attend une approbation humaine)" if params.approval(action) == "always" else ""
             lines.append(f"- {action} : {_SAID[action]}{waits}")
         if "search" in params.actions:
-            lines.append(
-                "search rend des extraits avec doc_id, titre et score ; un extrait marqué "
-                "truncated se lit en entier avec get."
-            )
+            lines.append("search rend des extraits avec doc_id, titre et score ; un extrait marqué truncated se lit en entier avec get.")
         if self.folders is not None:
             formats = ", ".join(self.file_suffixes)
             lines.append(f"add_file lit un fichier ({formats}) « <dossier>/<chemin> » :")
@@ -405,10 +380,7 @@ class MemoryTool:
     def settings(self) -> Settings:
         """La base, les actions et leur approbation, les modèles : pour ``loom validate``."""
         params = self.params
-        grants = tuple(
-            Grant(action, params.approval(action) == "always", action == "delete")
-            for action in params.declared()
-        )
+        grants = tuple(Grant(action, params.approval(action) == "always", action == "delete") for action in params.declared())
         base = Place(
             name="memory",
             kind="sqlite",
@@ -454,19 +426,13 @@ def build(params: BaseModel, context: BuiltinContext) -> MemoryTool:
 
         for module in WEB_MODULES:
             if importlib.util.find_spec(module) is None:
-                raise ValueError(
-                    f"add_url : dépendance {module!r} absente (installer l'extra : "
-                    f"loom-ia[{WEB_EXTRA}])"
-                )
+                raise ValueError(f"add_url : dépendance {module!r} absente (installer l'extra : loom-ia[{WEB_EXTRA}])")
     store = MemoryStore(_store_path(params, context))
     folders = None
     # Les formats qu'add_file ne pourra pas lire ici : refusés avant l'approbation.
     missing = unreadable() if "add_file" in params.actions else {}
     if params.folders:
-        specs = [
-            FolderSpec.model_validate({"name": f.name, "path": f.path, "rights": ["read"]})
-            for f in params.folders
-        ]
+        specs = [FolderSpec.model_validate({"name": f.name, "path": f.path, "rights": ["read"]}) for f in params.folders]
         folders = Folders(mount(specs, context))
     return MemoryTool(params, store, folders, missing, target)
 
@@ -530,9 +496,7 @@ def _store_path(params: MemoryParams, context: BuiltinContext) -> Path:
             raise ValueError(f"store : la variable {spec.path_env} (path_env) est absente ou vide")
         given = Path(value).expanduser()
         if not given.is_absolute():
-            raise ValueError(
-                f"store : {spec.path_env} vaut {value!r} — un chemin absolu est attendu"
-            )
+            raise ValueError(f"store : {spec.path_env} vaut {value!r} — un chemin absolu est attendu")
         where = f"{spec.path_env} ({given})"
     else:
         assert spec.path is not None
@@ -544,16 +508,10 @@ def _store_path(params: MemoryParams, context: BuiltinContext) -> Path:
     if path.exists() and not path.is_file():
         raise ValueError(f"store : {where} n'est pas un fichier")
     if not path.parent.is_dir():
-        raise ValueError(
-            f"store : le dossier {path.parent} n'existe pas — loom.memory crée la base, pas son "
-            "dossier"
-        )
+        raise ValueError(f"store : le dossier {path.parent} n'existe pas — loom.memory crée la base, pas son dossier")
     problem = _exposes(path, context.protected)
     if problem is not None:
-        raise ValueError(
-            f"store : {path} {problem} — la mémoire ne peut pas être un fichier de loom ; "
-            "donner un autre chemin"
-        )
+        raise ValueError(f"store : {path} {problem} — la mémoire ne peut pas être un fichier de loom ; donner un autre chemin")
     return path
 
 

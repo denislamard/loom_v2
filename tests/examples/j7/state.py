@@ -122,9 +122,7 @@ async def main(argv: list[str]) -> int:
         pose = {"signature": SIGNATURE}
         premier = await loom.run(AGENT, PREMIERE, session_id=session, state=pose, user="dev")
         apres_premier = await loom.session_state(session)
-        second = await loom.run(
-            AGENT, SECONDE, session_id=session, state={"ton": "ferme"}, user="dev"
-        )
+        second = await loom.run(AGENT, SECONDE, session_id=session, state={"ton": "ferme"}, user="dev")
         apres_second = await loom.session_state(session)
         events = await loom.export_session(session)
         rejeux = [await loom.replay(r.run_id, session_id=session) for r in (premier, second)]

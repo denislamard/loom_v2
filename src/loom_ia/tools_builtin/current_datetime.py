@@ -32,9 +32,7 @@ def current_datetime(
     try:
         zone = ZoneInfo(timezone.strip())
     except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise ToolError(
-            f"Fuseau horaire inconnu : {timezone!r}. Donner un nom IANA, comme Europe/Paris."
-        ) from exc
+        raise ToolError(f"Fuseau horaire inconnu : {timezone!r}. Donner un nom IANA, comme Europe/Paris.") from exc
     now = datetime.now(zone)
     result = {"timezone": zone.key, "utc_offset": now.isoformat()[-6:]}
     if part in ("date", "both"):

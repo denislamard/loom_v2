@@ -26,10 +26,7 @@ class DuplicateKey(yaml.YAMLError):
     """Une clé écrite deux fois dans le même objet."""
 
     def __init__(self, key: object, first: int, second: int) -> None:
-        super().__init__(
-            f"clé {key!r} donnée deux fois dans le même objet (lignes {first} et {second}) : "
-            "la seconde écraserait la première en silence"
-        )
+        super().__init__(f"clé {key!r} donnée deux fois dans le même objet (lignes {first} et {second}) : la seconde écraserait la première en silence")
         self.key = key
         self.first = first
         self.second = second

@@ -175,9 +175,7 @@ def _conversation(state: RunState) -> tuple[Message, ...]:
         message.model_copy(
             update={
                 "blocks": tuple(
-                    ToolResultBlock(call_id=call_id, output=marker)
-                    if isinstance(block, ToolResultBlock) and block.call_id == call_id
-                    else block
+                    ToolResultBlock(call_id=call_id, output=marker) if isinstance(block, ToolResultBlock) and block.call_id == call_id else block
                     for block in message.blocks
                 )
             }
@@ -193,9 +191,7 @@ def _without_text_of_last_turn(messages: tuple[Message, ...]) -> tuple[Message, 
     """Les messages, sans le texte de la dernière réponse de l'assistant (ses appels restent)."""
     position = max(i for i, m in enumerate(messages) if m.role == "assistant")
     turn = messages[position]
-    kept = turn.model_copy(
-        update={"blocks": tuple(b for b in turn.blocks if not isinstance(b, TextBlock))}
-    )
+    kept = turn.model_copy(update={"blocks": tuple(b for b in turn.blocks if not isinstance(b, TextBlock))})
     return (*messages[:position], kept, *messages[position + 1 :])
 
 

@@ -221,15 +221,11 @@ def test_wiring_errors(tmp_path: Path) -> None:
     with pytest.raises(UnknownAgent, match="agents : demo"):
         build_agent(config, "absent", store)
 
-    non_outil = load_config(
-        write(tmp_path, root={}, agent=demo_agent(tools=[{"python": "outils_wiring:valeur"}]))
-    )
+    non_outil = load_config(write(tmp_path, root={}, agent=demo_agent(tools=[{"python": "outils_wiring:valeur"}])))
     with pytest.raises(ConfigError, match="ni un outil ni une fonction"):
         build_agent(non_outil, "demo", store)
 
-    sans_docstring = load_config(
-        write(tmp_path, root={}, agent=demo_agent(tools=[{"python": "outils_wiring:sans_doc"}]))
-    )
+    sans_docstring = load_config(write(tmp_path, root={}, agent=demo_agent(tools=[{"python": "outils_wiring:sans_doc"}])))
     with pytest.raises(ConfigError, match="description manquante"):
         build_agent(sans_docstring, "demo", store)
 
@@ -323,9 +319,7 @@ async def test_closing_an_agent_closes_every_resource_even_if_one_fails(tmp_path
     closed: list[str] = []
     agent = replace(
         built,
-        clients=cast(
-            Any, (Resource(closed, "modèle 1", RuntimeError("1")), Resource(closed, "m 2"))
-        ),
+        clients=cast(Any, (Resource(closed, "modèle 1", RuntimeError("1")), Resource(closed, "m 2"))),
         owned=(Resource(closed, "pool"),),
     )
 

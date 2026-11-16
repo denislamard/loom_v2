@@ -140,17 +140,13 @@ async def refuse(conn: Conn, cfg: Config) -> None:
     """
     with contextlib.suppress(Exception):
         header, _ = await asyncio.wait_for(conn.read_frame(), timeout=10)
-        payload = ExecdError(
-            "busy", "trop de sessions simultanees", max_sessions=cfg.max_sessions
-        ).as_payload()
+        payload = ExecdError("busy", "trop de sessions simultanees", max_sessions=cfg.max_sessions).as_payload()
         if header.get("seq") is not None:
             payload["seq"] = header["seq"]
         await conn.write_frame(payload)
 
 
-async def handle(
-    sock: socket.socket, cfg: Config, exec_sem: asyncio.Semaphore, admitted: bool
-) -> None:
+async def handle(sock: socket.socket, cfg: Config, exec_sem: asyncio.Semaphore, admitted: bool) -> None:
     conn = Conn(sock)
     session: Session | None = None
     try:

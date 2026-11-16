@@ -56,9 +56,7 @@ class RedisBus:
         if self._closed:
             return
         if self._speaking is None:
-            self._speaking = redis.from_url(
-                self._url, socket_timeout=SOCKET_TIMEOUT, socket_connect_timeout=SOCKET_TIMEOUT
-            )
+            self._speaking = redis.from_url(self._url, socket_timeout=SOCKET_TIMEOUT, socket_connect_timeout=SOCKET_TIMEOUT)
         _ = await self._speaking.publish(CHANNEL, notice.model_dump_json())
 
     async def notices(self) -> AsyncIterator[Notice]:
@@ -69,9 +67,7 @@ class RedisBus:
         """
         if self._closed:
             return
-        self._hearing = redis.from_url(
-            self._url, socket_connect_timeout=SOCKET_TIMEOUT, health_check_interval=HEALTH_CHECK
-        )
+        self._hearing = redis.from_url(self._url, socket_connect_timeout=SOCKET_TIMEOUT, health_check_interval=HEALTH_CHECK)
         pubsub = self._hearing.pubsub()
         self._pubsub = pubsub
         try:

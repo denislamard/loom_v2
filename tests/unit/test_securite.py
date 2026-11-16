@@ -206,9 +206,7 @@ def test_every_criterion_loses_its_reason_and_keeps_its_score() -> None:
                 blocking=True,
                 reason="Montant repris du devis.",
             ),
-            CriterionScore(
-                name="ton", score=0.9, min_score=0.6, blocking=False, reason="Ton cordial."
-            ),
+            CriterionScore(name="ton", score=0.9, min_score=0.6, blocking=False, reason="Ton cordial."),
         ),
         passed=True,
         blocked=False,
@@ -256,11 +254,7 @@ def test_an_expired_key_does_not_stop_the_config_from_loading(demo: ConfigFactor
 
 
 def test_an_expiry_without_a_timezone_is_refused(demo: ConfigFactory) -> None:
-    security = {
-        "api_keys": [
-            {"id": "app", "user": DEV, "hash": empreinte(new_api_key()), "expires": "2027-01-01"}
-        ]
-    }
+    security = {"api_keys": [{"id": "app", "user": DEV, "hash": empreinte(new_api_key()), "expires": "2027-01-01"}]}
     with pytest.raises(ConfigError):
         load_config(demo(security=security))
 
@@ -310,10 +304,7 @@ def test_a_fingerprint_that_is_not_ascii_matches_nothing() -> None:
 def cles(**kinds: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """Déclare une clé par entrée et rend la config de sécurité et les jetons."""
     jetons = {name: new_api_key() for name in kinds}
-    keys = [
-        {"id": name, "user": DEV, "hash": empreinte(jetons[name]), **spec}
-        for name, spec in kinds.items()
-    ]
+    keys = [{"id": name, "user": DEV, "hash": empreinte(jetons[name]), **spec} for name, spec in kinds.items()]
     return {"api_keys": keys}, jetons
 
 
@@ -406,12 +397,8 @@ async def test_the_export_of_a_session_is_masked(demo: ConfigFactory) -> None:
                 json={"message": QUESTION, "session_id": session},
                 headers=porteur(jetons["complete"]),
             )
-            masque = await http.get(
-                f"/v1/sessions/{session}/events", headers=porteur(jetons["supervision"])
-            )
-            entier = await http.get(
-                f"/v1/sessions/{session}/events", headers=porteur(jetons["complete"])
-            )
+            masque = await http.get(f"/v1/sessions/{session}/events", headers=porteur(jetons["supervision"]))
+            entier = await http.get(f"/v1/sessions/{session}/events", headers=porteur(jetons["complete"]))
 
     assert masque.status_code == 200
     lignes = [json.loads(line) for line in masque.text.splitlines()]
@@ -596,9 +583,7 @@ def test_a_masked_result_keeps_its_scores_and_loses_its_prose() -> None:
 
 
 def test_an_empty_answer_is_not_said_redacted() -> None:
-    vide = RunResult(
-        run_id=RunId("r1"), session_id=SessionId("s1"), agent="demo", status=RunStatus.COMPLETED
-    )
+    vide = RunResult(run_id=RunId("r1"), session_id=SessionId("s1"), agent="demo", status=RunStatus.COMPLETED)
     assert vide.masked().redacted == ()
 
 
@@ -620,12 +605,8 @@ def test_a_masked_session_file_and_session_say_what_left() -> None:
     )
     assert fichier.masked().name is None
     assert fichier.masked().redacted == ("name",)
-    attente = PendingApproval(
-        call_id="c1", tool_name="envoyer", arguments={"a": "Mme Martin"}, reason="effets"
-    )
-    fiche = SessionInfo(
-        session_id=SessionId("s1"), updated_at=datetime.now(UTC), pending_approvals=(attente,)
-    )
+    attente = PendingApproval(call_id="c1", tool_name="envoyer", arguments={"a": "Mme Martin"}, reason="effets")
+    fiche = SessionInfo(session_id=SessionId("s1"), updated_at=datetime.now(UTC), pending_approvals=(attente,))
     assert fiche.masked().redacted == (
         "pending_approvals[].arguments",
         "pending_approvals[].reason",
@@ -675,16 +656,11 @@ def test_keys_create_accepts_a_date_and_refuses_the_rest(
 
 
 def test_keys_create_warns_when_approve_cannot_read(capsys: pytest.CaptureFixture[str]) -> None:
-    assert (
-        main(["keys", "create", "app", "--user", "dev", "--scope", "run", "--scope", "approve"])
-        == 0
-    )
+    assert main(["keys", "create", "app", "--user", "dev", "--scope", "run", "--scope", "approve"]) == 0
     assert "approuver sans pouvoir lire" in capsys.readouterr().err
 
 
-def test_validate_shows_each_key_and_flags_an_expired_one(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_each_key_and_flags_an_expired_one(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     bientot = datetime.now(UTC) + timedelta(days=3)
     security = {
         "api_keys": [
@@ -720,10 +696,7 @@ def test_validate_shows_each_key_and_flags_an_expired_one(
     assert main(["--config", str(config), "validate"]) == 0
     out = capsys.readouterr().out
     assert "  Clés d'API   app, vieille, courte, aveugle\n" in out
-    assert (
-        "app : utilisateur dupont-plomberie, client dupont-plomberie, "
-        "restreinte à run, read, read_content" in out
-    )
+    assert "app : utilisateur dupont-plomberie, client dupont-plomberie, restreinte à run, read, read_content" in out
     assert "agents demo" in out and "débit 60/min" in out
     assert "vieille : utilisateur default, client default, EXPIRÉE" in out
     assert "courte : utilisateur default, client default, expire dans 2 j" in out
@@ -838,14 +811,11 @@ async def test_a_refusal_of_the_sdk_is_written_to_the_audit_file(demo: ConfigFac
         "permission": "run",
         "agent": "demo",
         "tenant_id": "default",
-        "reason": "lea n'a pas la permission 'run' sur l'agent demo : "
-        "aucun de ses rôles (lecteur) ne la porte",
+        "reason": "lea n'a pas la permission 'run' sur l'agent demo : aucun de ses rôles (lecteur) ne la porte",
     }
 
 
-async def test_an_audit_file_that_cannot_be_written_leaves_the_refusal_as_it_is(
-    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_an_audit_file_that_cannot_be_written_leaves_the_refusal_as_it_is(demo: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     path = demo(security={**BUREAU, "audit": {"path": "dossier"}})
     (path.parent / "dossier").mkdir()
     async with Loom.from_config(path) as loom:
@@ -902,9 +872,7 @@ async def test_an_audit_file_that_cannot_be_written_leaves_the_refusal_as_it_is(
         ),
     ],
 )
-def test_what_the_security_block_cites_must_be_declared(
-    demo: ConfigFactory, security: dict[str, Any], message: str
-) -> None:
+def test_what_the_security_block_cites_must_be_declared(demo: ConfigFactory, security: dict[str, Any], message: str) -> None:
     with pytest.raises(ConfigError, match=re.escape(message)):
         load_config(demo(security=security))
 
@@ -926,18 +894,14 @@ def test_an_unknown_permission_is_refused(demo: ConfigFactory) -> None:
         ({"cancel": ["owner", "owner"]}, "access.cancel : rôle cité deux fois : owner"),
     ],
 )
-def test_the_access_of_an_agent_cites_roles_that_can(
-    demo: ConfigFactory, access: dict[str, Any], message: str
-) -> None:
+def test_the_access_of_an_agent_cites_roles_that_can(demo: ConfigFactory, access: dict[str, Any], message: str) -> None:
     """Une liste ``access`` restreint ceux qui ont déjà la permission (§ 5.2)."""
     roles = [
         OWNER,
         {"id": "lecteur", "permissions": ["read"]},
         {"id": "ailleurs", "permissions": ["run"], "agents": ["autre"]},
     ]
-    path = demo(
-        agents=[demo_agent(access=access), demo_agent(name="autre")], security={"roles": roles}
-    )
+    path = demo(agents=[demo_agent(access=access), demo_agent(name="autre")], security={"roles": roles})
     with pytest.raises(ConfigError, match=re.escape(message)) as refus:
         load_config(path)
     # Le refus pointe le fichier de l'agent, pas la racine.
@@ -980,9 +944,7 @@ def test_a_local_instance_without_keys_may_act_for_a_user(demo: ConfigFactory) -
         (
             {
                 "server": {"http": {"user": DEV}},
-                "security": {
-                    "api_keys": [{"id": "app", "user": DEV, "hash": "sha256:" + "0" * 64}]
-                },
+                "security": {"api_keys": [{"id": "app", "user": DEV, "hash": "sha256:" + "0" * 64}]},
             },
             "des clés sont déclarées",
         ),
@@ -995,9 +957,7 @@ def test_a_local_instance_without_keys_may_act_for_a_user(demo: ConfigFactory) -
         ),
     ],
 )
-def test_a_local_user_is_only_for_a_local_instance_without_keys(
-    demo: ConfigFactory, root: dict[str, Any], message: str
-) -> None:
+def test_a_local_user_is_only_for_a_local_instance_without_keys(demo: ConfigFactory, root: dict[str, Any], message: str) -> None:
     """D-1b : ailleurs, chacun présente sa clé."""
     with pytest.raises(ConfigError, match=re.escape(message)):
         load_config(demo(**root))
@@ -1020,9 +980,7 @@ def test_a_key_acts_with_the_permissions_of_its_user_restricted_by_its_scopes(
         {"id": "bornee", "user": DEV, "hash": "sha256:" + "1" * 64, "scopes": ["read"]},
         {"id": "marie", "user": "marie", "hash": "sha256:" + "2" * 64, "scopes": ["read", "run"]},
     ]
-    security = load_config(
-        demo(security={"roles": roles, "users": users, "api_keys": keys})
-    ).security
+    security = load_config(demo(security={"roles": roles, "users": users, "api_keys": keys})).security
     toute, bornee, marie = (Caller.identified(key, security) for key in security.api_keys)
     assert toute.granted == frozenset(EVERYTHING) and toute.may("approve")
     assert bornee.granted == {"read"} and not bornee.may("run")
@@ -1052,19 +1010,10 @@ def test_a_refusal_of_an_access_says_whether_the_role_or_the_key_lacks(
     path = demo(agents=agents, security={"roles": roles, "users": users, "api_keys": keys})
     security = load_config(path).security
     marie, lecture, bornee = (Caller.identified(key, security) for key in security.api_keys)
-    assert marie.lacking("approve") == (
-        "marie n'a pas la permission 'approve' : aucun de ses rôles (assistante) ne la porte"
-    )
-    assert marie.lacking("run", "demo") == (
-        "marie n'a pas la permission 'run' sur l'agent demo : "
-        "ses rôles qui la portent sont bornés à d'autres agents"
-    )
-    assert lecture.lacking("run") == (
-        "dev n'a pas la permission 'run' : la clé lecture retire 'run' (scopes)"
-    )
-    assert bornee.lacking("read", "secretariat") == (
-        "dev n'a pas la permission 'read' sur l'agent secretariat : la clé demo est bornée à demo"
-    )
+    assert marie.lacking("approve") == ("marie n'a pas la permission 'approve' : aucun de ses rôles (assistante) ne la porte")
+    assert marie.lacking("run", "demo") == ("marie n'a pas la permission 'run' sur l'agent demo : ses rôles qui la portent sont bornés à d'autres agents")
+    assert lecture.lacking("run") == ("dev n'a pas la permission 'run' : la clé lecture retire 'run' (scopes)")
+    assert bornee.lacking("read", "secretariat") == ("dev n'a pas la permission 'read' sur l'agent secretariat : la clé demo est bornée à demo")
 
 
 async def test_the_tenant_of_a_key_is_the_tenant_of_its_user(demo: ConfigFactory) -> None:
@@ -1076,9 +1025,7 @@ async def test_the_tenant_of_a_key_is_the_tenant_of_its_user(demo: ConfigFactory
     assert Caller.identified(security.api_keys[0], security).tenant == "martin"
 
 
-def test_validate_shows_the_roles_the_users_and_the_access_of_each_agent(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_roles_the_users_and_the_access_of_each_agent(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     roles = [
         OWNER,
         {"id": "approbateur", "permissions": ["approve", "read"]},
@@ -1106,9 +1053,7 @@ def test_validate_shows_the_roles_the_users_and_the_access_of_each_agent(
     assert "Agent demo access.approve.tools.envoyer : porté par aucun utilisateur" in said
 
 
-def test_validate_says_when_nobody_can_approve_a_tool_that_asks(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_when_nobody_can_approve_a_tool_that_asks(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     roles = [{"id": "owner", "permissions": ["run", "read", "read_content"]}]
     agent = demo_agent(tools=[{"python": "calculer", "approval": "always"}])
     path = demo(agents=[agent], security={"roles": roles}, storage=JOURNAL)
@@ -1117,9 +1062,7 @@ def test_validate_says_when_nobody_can_approve_a_tool_that_asks(
     assert "outil calculer : aucun utilisateur ne peut trancher ses demandes" in out
 
 
-def test_validate_says_when_the_only_approver_cannot_approve_his_own_runs(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_when_the_only_approver_cannot_approve_his_own_runs(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     agent = demo_agent(access={"self_approval": False})
     assert main(["--config", str(demo(agents=[agent])), "validate"]) == 0
     out = capsys.readouterr().out
@@ -1165,9 +1108,7 @@ MATRICE = SecurityConfig.model_validate(
 
 
 def agent_named(name: str, **access: Any) -> AgentSpec:
-    return AgentSpec.model_validate(
-        {"name": name, "main": {"model": "M", "system": "x"}, "access": access}
-    )
+    return AgentSpec.model_validate({"name": name, "main": {"model": "M", "system": "x"}, "access": access})
 
 
 SECRETARIAT = agent_named("secretariat")
@@ -1254,9 +1195,7 @@ def test_an_approver_decides_the_requests_of_others() -> None:
 
 def test_the_frozen_approvers_decide_who_may_decide() -> None:
     """Règle 6 : les approbateurs figés dans la demande, pas ceux de la config du moment."""
-    demande = Approvable(
-        agent="paiements", tool="virement", approvers=("gerant",), launcher="marie"
-    )
+    demande = Approvable(agent="paiements", tool="virement", approvers=("gerant",), launcher="marie")
     assert can_decide(acteur("denis"), demande)
     with pytest.raises(AccessDenied, match="n'est tranchable que par gerant"):
         require_decision(acteur("alice"), demande)
@@ -1282,9 +1221,7 @@ def test_an_agent_may_forbid_approving_ones_own_run() -> None:
 
 def test_one_and_the_same_role_must_fulfil_every_condition() -> None:
     """Approbateur figé par un rôle, ``self_approve`` par un autre : refusé (§ 4.4)."""
-    demande = Approvable(
-        agent="secretariat", tool="envoyer", approvers=("approbateur",), launcher="mixte"
-    )
+    demande = Approvable(agent="secretariat", tool="envoyer", approvers=("approbateur",), launcher="mixte")
     with pytest.raises(AccessDenied, match="il faut 'self_approve'"):
         require_decision(acteur("mixte"), demande)
     # Sans approbateurs figés, son rôle « solo » remplit tout à lui seul.
@@ -1346,9 +1283,7 @@ def test_the_key_of_the_gateway_still_restricts_the_endorsed_user() -> None:
 
 
 def test_the_approvers_of_a_tool_fall_back_on_those_of_the_agent() -> None:
-    access = agent_named(
-        "x", approve={"default": ["gerant"], "tools": {"envoyer": ["approbateur"]}}
-    ).access
+    access = agent_named("x", approve={"default": ["gerant"], "tools": {"envoyer": ["approbateur"]}}).access
     assert access.approvers().of("envoyer") == ("approbateur",)
     assert access.approvers().of("autre") == ("gerant",)
     assert SECRETARIAT.access.approvers().of("envoyer") is None
@@ -1527,9 +1462,7 @@ async def test_an_inline_answerer_answers_only_for_a_launcher_who_may(tmp_path: 
         return QuestionReply(answers=(("Dupont",),), by="formulaire")
 
     async with Loom.from_config(wait_answer_config(tmp_path)) as loom:
-        sans = await loom.run(
-            "demo", "Prépare un devis.", session_id=SessionId("a1"), user="luc", answerer=repondeur
-        )
+        sans = await loom.run("demo", "Prépare un devis.", session_id=SessionId("a1"), user="luc", answerer=repondeur)
         avec = await loom.run(
             "demo",
             "Prépare un devis.",
@@ -1570,12 +1503,8 @@ async def test_a_local_instance_acts_for_its_user(demo: ConfigFactory) -> None:
     async with Loom.from_config(path) as loom:
         transport = httpx2.ASGITransport(create_app(loom))
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
-            ran = await http.post(
-                "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "l1"}
-            )
-            endosse = await http.post(
-                "/v1/agents/demo/runs", json={"message": QUESTION, "as_user": "lea"}
-            )
+            ran = await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "l1"})
+            endosse = await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "as_user": "lea"})
         events = await loom.export_session(SessionId("l1"))
     assert ran.status_code == 201
     [started] = [e.payload for e in events if isinstance(e.payload, RunStarted)]
@@ -1600,9 +1529,7 @@ async def test_a_local_user_without_run_is_refused_over_rest(demo: ConfigFactory
     assert agents.status_code == 200
 
 
-def test_validate_names_the_audit_file_and_its_bound(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_names_the_audit_file_and_its_bound(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "validate", "--no-keys"]) == 0
     assert "  Refus        ./audit.jsonl · aucune rétention\n" in capsys.readouterr().out
     borne = demo(security={"audit": {"path": "data/audit.jsonl", "retention_days": 365}})

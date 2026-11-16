@@ -110,9 +110,7 @@ async def test_nothing_awaiting_adds_nothing() -> None:
     model = ScriptedModel(Message.assistant("Bonjour."), Message.assistant("Toujours là."))
     ctx = context(store, model)
     for prompt in ("Bonjour", "Encore"):
-        await drive(
-            ctx, (await begin_run(ctx, prompt, session_id=SESSION)).run_id, session_id=SESSION
-        )
+        await drive(ctx, (await begin_run(ctx, prompt, session_id=SESSION)).run_id, session_id=SESSION)
     assert all("Note du système" not in m.text for r in model.requests for m in r.messages)
     events = await store.read(DEFAULT_TENANT, SESSION)
     assert awaiting_in_session(events) == ()

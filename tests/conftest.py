@@ -120,9 +120,7 @@ def pytest_make_collect_report(
 
 
 @pytest.hookimpl(wrapper=True)
-def pytest_runtest_makereport(
-    item: pytest.Item, call: pytest.CallInfo[None]
-) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Generator[None, pytest.TestReport, pytest.TestReport]:
     report = yield
     _required(report, item.config)
     return report
@@ -185,9 +183,7 @@ async def _clean(dsn: str) -> None:
                 "niveau des lignes, et ces essais ne prouveraient rien. Utiliser un rôle "
                 "ordinaire, propriétaire de sa base."
             )
-        await connection.execute(
-            f"DROP TABLE IF EXISTS {EVENTS_TABLE}, {IDEMPOTENCY_TABLE}, {SCHEMA_TABLE}"
-        )
+        await connection.execute(f"DROP TABLE IF EXISTS {EVENTS_TABLE}, {IDEMPOTENCY_TABLE}, {SCHEMA_TABLE}")
     finally:
         await connection.close()
 

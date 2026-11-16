@@ -98,18 +98,15 @@ CLIENTS = ("dupont", "martin")
 NOTES = (
     (
         "Devis D-2026-042",
-        "Devis D-2026-042 pour Mme Martin : remplacement d'un chauffe-eau de 200 L, "
-        "1 840 € TTC, envoyé le 2 septembre, en attente de réponse.",
+        "Devis D-2026-042 pour Mme Martin : remplacement d'un chauffe-eau de 200 L, 1 840 € TTC, envoyé le 2 septembre, en attente de réponse.",
     ),
     (
         "Grossiste chauffe-eau",
-        "Les chauffe-eau se commandent chez le grossiste habituel, livrés en trois jours ; "
-        "le compte est au nom de Plomberie Dupont.",
+        "Les chauffe-eau se commandent chez le grossiste habituel, livrés en trois jours ; le compte est au nom de Plomberie Dupont.",
     ),
     (
         "Chantier de M. Bernard",
-        "Fuite sous l'évier de M. Bernard réparée le 15 septembre ; repasser changer le "
-        "siphon, la pièce est commandée.",
+        "Fuite sous l'évier de M. Bernard réparée le 15 septembre ; repasser changer le siphon, la pièce est commandée.",
     ),
 )
 RAPPEL = {
@@ -123,9 +120,7 @@ IMPREVU = {
     "title": "Samedis de Mme Martin",
 }
 
-DEMANDE_CARNET = "Mémorise ces trois notes de mon carnet :\n" + "\n".join(
-    f"- {titre_} : {texte}" for titre_, texte in NOTES
-)
+DEMANDE_CARNET = "Mémorise ces trois notes de mon carnet :\n" + "\n".join(f"- {titre_} : {texte}" for titre_, texte in NOTES)
 DEMANDE_DEVIS = "Où en est le devis du chauffe-eau de Mme Martin ?"
 DEMANDE_RAPPEL = "Mémorise que Mme Martin préfère être rappelée après 17 h."
 DEMANDE_QUAND = "Quand puis-je rappeler Mme Martin ?"
@@ -133,10 +128,7 @@ DEMANDE_LISTE = "Liste les documents de la mémoire."
 DEMANDE_EFFACE = "Efface la note sur les rappels de Mme Martin."
 
 # Ce que la config ajoute à la description de l'outil : à quoi sert cette mémoire.
-SKILL = (
-    "La mémoire de l'entreprise : notes, devis, clients, chantiers. Chercher (search) avant "
-    "de répondre sur un client, un devis ou une décision passée."
-)
+SKILL = "La mémoire de l'entreprise : notes, devis, clients, chantiers. Chercher (search) avant de répondre sur un client, un devis ou une décision passée."
 
 SYSTEME = (
     "Tu es l'assistant d'un artisan plombier. Sa mémoire (l'outil memory) garde ses notes : "
@@ -189,8 +181,7 @@ def script(efface: str | None = None) -> list[dict[str, Any]]:
         },
         {
             "with_text": "Où en est",
-            "text": "Le devis D-2026-042, 1 840 € TTC, attend la réponse de Mme Martin depuis "
-            "le 2 septembre.",
+            "text": "Le devis D-2026-042, 1 840 € TTC, attend la réponse de Mme Martin depuis le 2 septembre.",
         },
         {
             "with_text": "Mémorise que",
@@ -269,11 +260,7 @@ class Controle:
 def enonce(quoi: str, texte: str, largeur: int = 96) -> None:
     """Imprime un message long sur plusieurs lignes, sans rien en couper."""
     marge = " " * len(quoi)
-    lignes = [
-        morceau
-        for bloc in texte.splitlines()
-        for morceau in textwrap.wrap(bloc, largeur - len(quoi), replace_whitespace=False) or [""]
-    ]
+    lignes = [morceau for bloc in texte.splitlines() for morceau in textwrap.wrap(bloc, largeur - len(quoi), replace_whitespace=False) or [""]]
     for numero, ligne in enumerate(lignes or [""]):
         print(f"{quoi if numero == 0 else marge}{ligne}")
 
@@ -298,9 +285,7 @@ def memoire(args: argparse.Namespace, *, clients: bool) -> dict[str, Any]:
     return reference
 
 
-def ecrit_config(
-    base: Path, args: argparse.Namespace, *, efface: str | None = None, clients: bool = False
-) -> Path:
+def ecrit_config(base: Path, args: argparse.Namespace, *, efface: str | None = None, clients: bool = False) -> Path:
     """La config : le serveur, l'orchestrateur simulé, et en réel MiniMax-M3."""
     (base / "agents").mkdir(parents=True, exist_ok=True)
     reel = args.reel and not clients
@@ -332,17 +317,10 @@ def ecrit_config(
         },
     }
     if clients:
-        config["tenants"] = [
-            {"id": client, "secrets": {"MEMOIRE_BASE": f"{client.upper()}_MEMOIRE"}}
-            for client in CLIENTS
-        ]
+        config["tenants"] = [{"id": client, "secrets": {"MEMOIRE_BASE": f"{client.upper()}_MEMOIRE"}} for client in CLIENTS]
         # Un utilisateur par client : il n'y a plus de client `default`.
-        config["security"]["users"] = [
-            {"id": client, "roles": ["owner"], "tenant": client} for client in CLIENTS
-        ]
-    (base / "loom.yaml").write_text(
-        yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+        config["security"]["users"] = [{"id": client, "roles": ["owner"], "tenant": client} for client in CLIENTS]
+    (base / "loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
     for nom, modele in agents:
         agent = {
             "name": nom,
@@ -351,9 +329,7 @@ def ecrit_config(
             "max_iterations": 6,
             "tools": [outil],
         }
-        (base / "agents" / f"{nom}.yaml").write_text(
-            yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8"
-        )
+        (base / "agents" / f"{nom}.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return base / "loom.yaml"
 
 
@@ -372,11 +348,7 @@ def proposes(events: list[Event]) -> list[dict[str, Any]]:
 def appels(events: list[Event]) -> list[tuple[ToolCalled, ToolCompleted | None]]:
     """Chaque appel d'outil du run et son résultat."""
     rendus = {e.payload.call_id: e.payload for e in events if isinstance(e.payload, ToolCompleted)}
-    return [
-        (e.payload, rendus.get(e.payload.call_id))
-        for e in events
-        if isinstance(e.payload, ToolCalled)
-    ]
+    return [(e.payload, rendus.get(e.payload.call_id)) for e in events if isinstance(e.payload, ToolCalled)]
 
 
 def demandes(events: list[Event]) -> list[str]:
@@ -400,10 +372,7 @@ def resume(rendu: ToolCompleted) -> str:
     if trouves is not None:
         if not trouves:
             return "rien"
-        return " ; ".join(
-            f"{t.get('title')} ({t['score']:.2f})" if "score" in t else str(t.get("title"))
-            for t in trouves
-        )
+        return " ; ".join(f"{t.get('title')} ({t['score']:.2f})" if "score" in t else str(t.get("title")) for t in trouves)
     data = rendu.output.data
     if isinstance(data, dict) and "doc_id" in data:
         double = f", doublon de {data['duplicate_of']}" if data.get("duplicate_of") else ""
@@ -455,9 +424,7 @@ def titres(documents: list[dict[str, Any]]) -> list[str]:
 # --- Les runs ----------------------------------------------------------------------
 
 
-async def demande(
-    loom: Loom, agent: str, texte: str, *, tenant: TenantId | None = None
-) -> tuple[RunResult, list[Event]]:
+async def demande(loom: Loom, agent: str, texte: str, *, tenant: TenantId | None = None) -> tuple[RunResult, list[Event]]:
     """Un run neuf, dans sa propre session ; rend son résultat et son journal."""
     result = await loom.run(agent, texte, tenant=tenant, user=tenant or "dev")
     events = await loom.events(result.run_id, session_id=result.session_id, tenant_id=tenant)
@@ -475,9 +442,7 @@ async def decide(
     """L'artisan accepte ou refuse ce que le run attend ; le run va au bout."""
     deja = len(await loom.events(asked.run_id, session_id=asked.session_id, tenant_id=tenant))
     if accorde:
-        await loom.approve(
-            asked.run_id, user=tenant or "dev", session_id=asked.session_id, tenant_id=tenant
-        )
+        await loom.approve(asked.run_id, user=tenant or "dev", session_id=asked.session_id, tenant_id=tenant)
     else:
         await loom.reject(
             asked.run_id,
@@ -510,9 +475,7 @@ async def releve(loom: Loom, *, tenant: TenantId | None = None) -> list[dict[str
     rendus = rendus_de(events, "list_docs")
     trouves = liste(rendus[0]) if len(rendus) == 1 else None
     if result.status != RunStatus.COMPLETED or trouves is None:
-        raise ReleveImpossible(
-            f"run {result.status.value}" + (f" ({result.error})" if result.error else "")
-        )
+        raise ReleveImpossible(f"run {result.status.value}" + (f" ({result.error})" if result.error else ""))
     return trouves
 
 
@@ -583,22 +546,14 @@ async def cas_chercher(atelier: Atelier, controle: Controle) -> None:
     )
     lu = [action(f) for f, _ in appels(events) if f.tool_name == OUTIL and action(f) in LECTURES]
     if lu:
-        print(
-            "  la lecture n'a demandé aucune approbation : "
-            + controle.tient(
-                "chercher : une lecture a demandé une approbation", not demandes(events)
-            )
-        )
+        print("  la lecture n'a demandé aucune approbation : " + controle.tient("chercher : une lecture a demandé une approbation", not demandes(events)))
     if not atelier.reel:
         trouves = [liste(r) or [] for r in rendus_de(events, "search")]
         print(
             "  search est appelé, et la note du devis vient en tête : "
             + controle.tient(
                 "chercher : le run ne rend pas ce qui est annoncé",
-                result.status == RunStatus.COMPLETED
-                and len(trouves) == 1
-                and bool(trouves[0])
-                and trouves[0][0].get("title") == NOTES[0][0],
+                result.status == RunStatus.COMPLETED and len(trouves) == 1 and bool(trouves[0]) and trouves[0][0].get("title") == NOTES[0][0],
             )
         )
     else:
@@ -606,8 +561,7 @@ async def cas_chercher(atelier: Atelier, controle: Controle) -> None:
             pourquoi = sans_suite(result, "n'a rien lu dans la mémoire")
             print(f"  {pourquoi} : la lecture sans approbation n'est pas vue")
         controle.saute(
-            "chercher (en --reel, ce que MiniMax cherche, ce qu'il trouve et ce qu'il répond est "
-            "montré, pas exigé)",
+            "chercher (en --reel, ce que MiniMax cherche, ce qu'il trouve et ce qu'il répond est montré, pas exigé)",
             partie=True,
         )
 
@@ -619,9 +573,7 @@ async def cas_memoriser(atelier: Atelier, controle: Controle) -> None:
         titre(f"Run de {atelier.agent} : {DEMANDE_RAPPEL}")
         asked, events = await demande(loom, atelier.agent, DEMANDE_RAPPEL)
         deja = raconte(asked, events)
-        attente = [
-            a for a in asked.pending_approvals if a.tool_name == OUTIL and action(a) in ECRITURES
-        ]
+        attente = [a for a in asked.pending_approvals if a.tool_name == OUTIL and action(a) in ECRITURES]
         if asked.status == RunStatus.PAUSED and attente:
             await accorde_la_note(atelier, loom, controle, asked, attente[0], avant, deja)
             if atelier.reel:
@@ -632,9 +584,7 @@ async def cas_memoriser(atelier: Atelier, controle: Controle) -> None:
         elif atelier.reel:
             pourquoi = sans_suite(asked, "n'a demandé aucune écriture")
             print(f"  {pourquoi} : l'arrêt avant l'écriture n'est pas vu")
-            controle.saute(
-                f"memoriser ({pourquoi} : l'écriture accordée n'est pas éprouvée)", partie=True
-            )
+            controle.saute(f"memoriser ({pourquoi} : l'écriture accordée n'est pas éprouvée)", partie=True)
         else:
             controle.tient("memoriser : le run ne s'arrête pas avant l'écriture", False)
         await refuse_l_imprevu(atelier, loom, controle)
@@ -652,9 +602,7 @@ async def accorde_la_note(
     pendant = await releve(loom)
     print(
         "  tant que l'artisan n'a pas répondu, la mémoire n'a pas changé : "
-        + controle.tient(
-            "memoriser : la mémoire a changé avant l'accord", titres(pendant) == titres(avant)
-        )
+        + controle.tient("memoriser : la mémoire a changé avant l'accord", titres(pendant) == titres(avant))
     )
     titre(f"{ARTISAN.capitalize()} accepte")
     fini, events = await decide(loom, asked, accorde=True)
@@ -663,9 +611,7 @@ async def accorde_la_note(
     nouveaux = sorted(set(titres(apres)) - set(titres(avant)))
     print(f"  la mémoire : {', '.join(titres(apres))}")
     if action(attente) != "add_text":
-        print(
-            f"  l'écriture accordée est {action(attente)}, pas add_text : la note n'est pas suivie"
-        )
+        print(f"  l'écriture accordée est {action(attente)}, pas add_text : la note n'est pas suivie")
         controle.saute("memoriser (écriture accordée autre que add_text : non suivie)", partie=True)
         return
     voulu = str(attente.arguments.get("title", "")).strip()
@@ -676,9 +622,7 @@ async def accorde_la_note(
         f"  accordée, la note « {voulu} » est en mémoire, et elle seule : "
         + controle.tient(
             "memoriser : la note accordée n'est pas en mémoire",
-            fini.status == RunStatus.COMPLETED
-            and nouveaux == [voulu]
-            and isinstance(document, str),
+            fini.status == RunStatus.COMPLETED and nouveaux == [voulu] and isinstance(document, str),
         )
     )
     if isinstance(document, str):
@@ -704,8 +648,7 @@ async def refuse_l_imprevu(atelier: Atelier, loom: Loom, controle: Controle) -> 
         "  le prompt dit de ne pas écrire, le modèle écrit quand même, et le run s'arrête : "
         + controle.tient(
             "memoriser : le run ne s'arrête pas avant l'écriture imprévue",
-            asked.status == RunStatus.PAUSED
-            and [(a.tool_name, a.arguments) for a in asked.pending_approvals] == [(OUTIL, IMPREVU)],
+            asked.status == RunStatus.PAUSED and [(a.tool_name, a.arguments) for a in asked.pending_approvals] == [(OUTIL, IMPREVU)],
         )
     )
     titre(f"{ARTISAN.capitalize()} refuse")
@@ -764,10 +707,7 @@ async def cas_rejeu(atelier: Atelier, controle: Controle) -> None:
         "  rejoué à l'identique, l'écriture servie par le journal, la note ne revient pas : "
         + controle.tient(
             "rejeu : le rejeu n'est pas identique, ou la note est revenue",
-            rapport.identical
-            and servis == rejoues
-            and servis > 0
-            and document not in {d.get("doc_id") for d in apres},
+            rapport.identical and servis == rejoues and servis > 0 and document not in {d.get("doc_id") for d in apres},
         )
     )
 
@@ -850,9 +790,7 @@ async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="La mémoire long terme : l'outil loom.memory")
     parser.add_argument("--reel", action="store_true", help="vrais modèles (assistant_reel)")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
-    parser.add_argument(
-        "--device", default="cuda", help="périphérique des modèles de la mémoire en --reel"
-    )
+    parser.add_argument("--device", default="cuda", help="périphérique des modèles de la mémoire en --reel")
     args = parser.parse_args(argv)
     cas = tuple(args.cas) if args.cas else CAS
     if "rejeu" in cas and "memoriser" not in cas:

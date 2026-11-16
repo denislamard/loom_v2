@@ -156,9 +156,7 @@ def test_origin_filters_and_unknown_session(atelier: Path) -> None:
     assert names == ["photo.png"] and same
 
 
-def test_cli_lists_and_extracts_under_real_names(
-    atelier: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_lists_and_extracts_under_real_names(atelier: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     asyncio.run(produced(atelier))
     capsys.readouterr()
     assert main(["--config", str(atelier), "sessions", "files", SESSION]) == 0
@@ -242,12 +240,8 @@ async def test_rest_lists_masks_names_and_downloads_with_read_content(atelier: P
         url = f"/v1/sessions/{SESSION}/files/{devis['file']}"
         refused = await http.get(url, headers={"X-API-Key": LECTEUR})
         got = await http.get(url, headers={"X-API-Key": CONTENU})
-        absent = await http.get(
-            f"/v1/sessions/{SESSION}/files/absent.png", headers={"X-API-Key": CONTENU}
-        )
-        elsewhere = await http.get(
-            f"/v1/sessions/autre/files/{devis['file']}", headers={"X-API-Key": CONTENU}
-        )
+        absent = await http.get(f"/v1/sessions/{SESSION}/files/absent.png", headers={"X-API-Key": CONTENU})
+        elsewhere = await http.get(f"/v1/sessions/autre/files/{devis['file']}", headers={"X-API-Key": CONTENU})
 
     assert masked.status_code == 200
     assert [f["name"] for f in masked.json()] == [None, None, None]

@@ -106,9 +106,7 @@ def test_arguments_refused(arguments: dict[str, Any], said: str) -> None:
 
 
 def test_overwrite_false_on_a_read_is_not_a_fault() -> None:
-    assert isinstance(
-        parse(DocumentCall, {"action": "read", "path": "s/a", "overwrite": False}), ReadArguments
-    )
+    assert isinstance(parse(DocumentCall, {"action": "read", "path": "s/a", "overwrite": False}), ReadArguments)
 
 
 # --- Contenu -----------------------------------------------------------------------------
@@ -279,9 +277,7 @@ def test_a_page_break_is_no_longer_a_block() -> None:
 # --- Paramètres --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("model", "reference"), [(WordParams, "loom.word"), (PdfParams, "loom.pdf")]
-)
+@pytest.mark.parametrize(("model", "reference"), [(WordParams, "loom.word"), (PdfParams, "loom.pdf")])
 def test_params_refuse_delete_and_unknown_zones(model: type[WordParams], reference: str) -> None:
     folder = {"name": "s", "path": "/tmp", "rights": ["write", "delete"]}
     with pytest.raises(ValidationError, match=f"le droit 'delete' ne sert pas à {reference}"):
@@ -717,9 +713,7 @@ def test_a_template_is_its_sections() -> None:
         ("Travaux réalisés", 4, False, False),
         ("Conditions", 5, False, True),
     ]
-    assert found.outline() == (
-        "Contexte · Constat · Photos (optional) · Travaux réalisés · Conditions (fixed)"
-    )
+    assert found.outline() == ("Contexte · Constat · Photos (optional) · Travaux réalisés · Conditions (fixed)")
     assert found.text == RAPPORT and found.style is None
     assert found.section("2. CONSTAT") is not None and found.section("Annexe") is None
     assert fixed_paragraphs(found.sections[4].spec.text or "") == [
@@ -847,13 +841,11 @@ def test_prepare_says_what_the_sections_miss() -> None:
     assert str(caught.value).splitlines() == [
         "Document refusé :",
         "- modèle rapport : section inconnue « Annexe »",
-        "- modèle rapport : « Conditions » est une section au texte fixe, écrite par l'outil : "
-        "ne pas la remplir",
+        "- modèle rapport : « Conditions » est une section au texte fixe, écrite par l'outil : ne pas la remplir",
         "- modèle rapport : « Photos » est vide — la retirer (elle est facultative)",
         "- modèle rapport : section donnée deux fois : « Contexte » et « contexte »",
         "- modèle rapport : section(s) absente(s) : « Constat », « Travaux réalisés »",
-        "- modèle rapport, sections attendues : Contexte · Constat · Photos (optional) · "
-        "Travaux réalisés · Conditions (fixed)",
+        "- modèle rapport, sections attendues : Contexte · Constat · Photos (optional) · Travaux réalisés · Conditions (fixed)",
         "- section « Contexte », bloc 1 (heading) : le niveau 1 est le titre de la section, que "
         "l'outil écrit ; dans une section, les titres sont de niveau 2 ou 3",
     ]
@@ -884,9 +876,7 @@ def test_templates_add_an_action_and_two_fields() -> None:
     assert properties["sections"]["anyOf"][0]["type"] == "object"
     assert "required" not in schema
     blocks: list[Any] = [{"type": "paragraph", "text": "x"}]
-    assert parse(model, {"action": "template", "template": "devis"}) == TemplateArguments(
-        name="devis"
-    )
+    assert parse(model, {"action": "template", "template": "devis"}) == TemplateArguments(name="devis")
     free = parse(model, {"path": "s/a", "blocks": blocks, "template": "none"})
     assert isinstance(free, WriteArguments) and free.template == "none"
     following = parse(model, {"path": "s/a", "sections": {"A": blocks}, "template": "devis"})
@@ -1044,9 +1034,7 @@ def test_notes_are_bounded_per_document() -> None:
 
 
 def test_references_follow_the_sections_of_a_template() -> None:
-    template = parse_template(
-        "note", "sections:\n  À:\n    show_title: false\n  Message:\n  Suite:\n"
-    )
+    template = parse_template("note", "sections:\n  À:\n    show_title: false\n  Message:\n  Suite:\n")
     paragraph = [{"type": "paragraph", "text": "Voir §[Message] et §[Détail]."}]
     found = rich_prepared(
         template=template,
@@ -1207,9 +1195,7 @@ def test_a_computed_column() -> None:
 )  # fmt: skip
 def test_formula_faults(compute: str, said: str) -> None:
     columns = [*PRICES[:4], {"header": "Montant HT", "type": "amount_eur", "compute": compute}]
-    calculation_refused(
-        re.escape(said), {"type": "table", "columns": columns, "rows": [["a", 1, 180, 0.1]]}
-    )
+    calculation_refused(re.escape(said), {"type": "table", "columns": columns, "rows": [["a", 1, 180, 0.1]]})
 
 
 def test_a_computed_column_is_one_of_numbers_given_after_its_sources() -> None:
@@ -1349,8 +1335,7 @@ def test_invoice_totals_faults() -> None:
     )
     for part in (
         "bloc 1 (invoice_totals) : from_table, mais aucun tableau ne précède le récapitulatif",
-        "bloc 3 (invoice_totals) : from_table, colonne(s) inconnue(s) du tableau précédent : "
-        "Montant (colonnes : Désignation, Qté, PU HT, TVA, Montant HT)",
+        "bloc 3 (invoice_totals) : from_table, colonne(s) inconnue(s) du tableau précédent : Montant (colonnes : Désignation, Qté, PU HT, TVA, Montant HT)",
         "bloc 4 (invoice_totals) : ligne 1 du tableau, un montant sans taux de TVA",
         "bloc 4 (invoice_totals) : aucun montant dans « Montant HT »",
         "bloc 6 (invoice_totals) : « Qté » : des montants HT, amount_eur (ici integer)",

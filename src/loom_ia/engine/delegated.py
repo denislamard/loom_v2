@@ -96,9 +96,7 @@ class Exchange:
 
 
 # Ce qu'un outil délégué peut produire pendant son appel, avant son résultat.
-type DelegatedPayload = (
-    ModelExchanged | ModelRetried | ModelFellBack | CircuitOpened | ModelResponded
-)
+type DelegatedPayload = ModelExchanged | ModelRetried | ModelFellBack | CircuitOpened | ModelResponded
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,10 +163,7 @@ class RunView:
     @property
     def attachments(self) -> tuple[ArtifactRefBlock, ...]:
         """Pièces jointes de la demande, en références."""
-        return tuple(
-            ArtifactRefBlock(uri=a.uri, media_type=a.media_type, size=a.size, name=a.name)
-            for a in self.state.attachments
-        )
+        return tuple(ArtifactRefBlock(uri=a.uri, media_type=a.media_type, size=a.size, name=a.name) for a in self.state.attachments)
 
 
 class DelegatedTool(ABC):

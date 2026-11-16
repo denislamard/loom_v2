@@ -120,36 +120,28 @@ def test_a_memory_bus_is_no_bus_at_all(demo: ConfigFactory) -> None:
 
 
 @pytest.mark.parametrize("storage", DECLARES)
-def test_an_empty_variable_is_named_in_the_error(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, storage: dict[str, Any]
-) -> None:
+def test_an_empty_variable_is_named_in_the_error(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, storage: dict[str, Any]) -> None:
     monkeypatch.delenv(VARIABLE, raising=False)
     with pytest.raises(ConfigError, match=rf"{VARIABLE}.* est vide ou absente"):
         create_bus(load_config(demo(storage=storage)))
 
 
 @sans_redis
-def test_a_redis_bus_is_built_without_connecting(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_redis_bus_is_built_without_connecting(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(VARIABLE, "redis://127.0.0.1:6379/0")
     bus = create_bus(load_config(demo(storage=REDIS)))
     assert repr(bus) == "RedisBus('loom:events')"
 
 
 @sans_pg
-def test_a_postgres_bus_is_built_without_connecting(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_postgres_bus_is_built_without_connecting(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(VARIABLE, "postgresql://loom@127.0.0.1:5432/loom")
     bus = create_bus(load_config(demo(storage=POSTGRES)))
     assert repr(bus) == "PostgresBus('loom_events')"
 
 
 @pytest.mark.parametrize(("storage", "extra"), MANQUE)
-def test_without_the_extra_the_refusal_names_it(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, storage: dict[str, Any], extra: str
-) -> None:
+def test_without_the_extra_the_refusal_names_it(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, storage: dict[str, Any], extra: str) -> None:
     """Ce que voit qui déclare un bus sans avoir installé l'extra."""
     monkeypatch.setenv(VARIABLE, "peu importe")
     with pytest.raises(ConfigError, match=rf"loom-ia\[{extra}\]"):
@@ -160,9 +152,7 @@ def test_without_the_extra_the_refusal_names_it(
 
 
 def test_a_notice_travels_as_json() -> None:
-    notice = Notice(
-        tenant_id=DEFAULT_TENANT, session_id=SESSION, first_seq=3, last_seq=7, source="worker-1"
-    )
+    notice = Notice(tenant_id=DEFAULT_TENANT, session_id=SESSION, first_seq=3, last_seq=7, source="worker-1")
     back = Notice.model_validate_json(notice.model_dump_json())
     assert back == notice
     # De quoi tenir dans un NOTIFY de Postgres (8 000 octets).
@@ -279,9 +269,7 @@ async def test_a_bus_that_fails_does_not_fail_the_write() -> None:
     assert len(written) == len(asked)
 
 
-async def test_a_mute_bus_does_not_hold_the_write(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_mute_bus_does_not_hold_the_write(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Un bus qui ne répond plus ne suspend pas l'écriture : la nouvelle est abandonnée."""
 
     class Muet:
@@ -502,9 +490,7 @@ async def test_deleting_a_session_forgets_its_position() -> None:
     await bus.aclose()
 
 
-async def test_follow_resubscribes_after_a_bus_failure_and_catches_up(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_follow_resubscribes_after_a_bus_failure_and_catches_up(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Une panne du bus ne tue pas le suivi ; ce qu'elle a fait manquer se rattrape ensuite."""
     monkeypatch.setattr(notifying, "FOLLOW_BACKOFF", (0.01,))
     inner = InMemoryEventStore()
@@ -634,9 +620,7 @@ async def test_a_postgres_publication_that_fails_drops_its_connection(
 
     monkeypatch.setattr(postgres.asyncpg, "connect", connect)
     bus = postgres.PostgresBus("postgresql://loom@127.0.0.1:1/loom")
-    notice = Notice(
-        tenant_id=DEFAULT_TENANT, session_id=SESSION, first_seq=1, last_seq=2, source="ici"
-    )
+    notice = Notice(tenant_id=DEFAULT_TENANT, session_id=SESSION, first_seq=1, last_seq=2, source="ici")
     with pytest.raises(ConnectionResetError):
         await bus.publish(notice)
     assert opened[0].terminated
@@ -655,9 +639,7 @@ async def test_an_instance_without_a_bus_has_nothing_to_follow(demo: ConfigFacto
         assert loom.store.source == loom.worker_id
 
 
-def test_validate_shows_the_bus(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_bus(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.delenv(VARIABLE, raising=False)
     assert main(["--config", str(demo()), "validate"]) == 0
     out = capsys.readouterr().out
@@ -665,9 +647,7 @@ def test_validate_shows_the_bus(
     assert "Bus memory   les nouvelles ne sortent pas de ce process" in out
 
 
-def test_validate_says_when_the_bus_variable_is_missing(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_when_the_bus_variable_is_missing(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.delenv(VARIABLE, raising=False)
     assert main(["--config", str(demo(storage=POSTGRES)), "validate"]) == 2
     out = capsys.readouterr().out
@@ -686,9 +666,7 @@ def test_a_single_process_service_is_warned_of_nothing(demo: ConfigFactory) -> N
 
 
 @pytest.mark.parametrize("storage", [POSTGRES, REDIS])
-def test_a_shared_bus_with_local_files_says_they_must_be_shared_too(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, storage: dict[str, Any]
-) -> None:
+def test_a_shared_bus_with_local_files_says_they_must_be_shared_too(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, storage: dict[str, Any]) -> None:
     """Le trou des artefacts : le journal et les nouvelles traversent, pas les fichiers."""
     monkeypatch.setenv(VARIABLE, "peu importe")
     path = demo(storage={**storage, "events": {"backend": "jsonl", "path": "data"}})
@@ -697,9 +675,7 @@ def test_a_shared_bus_with_local_files_says_they_must_be_shared_too(
     assert "partager ce dossier" in warning
 
 
-def test_a_brokered_queue_with_files_in_memory_says_they_go_nowhere(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_brokered_queue_with_files_in_memory_says_they_go_nowhere(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(VARIABLE, "amqp://loom@127.0.0.1:5672/")
     path = demo(storage={"queue": {"backend": "rabbitmq", "url_env": VARIABLE}})
     (warning,) = storage_warnings(load_config(path))
@@ -708,9 +684,7 @@ def test_a_brokered_queue_with_files_in_memory_says_they_go_nowhere(
 
 
 @sans_rabbit
-def test_validate_says_it_too(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_it_too(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setenv(VARIABLE, "amqp://loom@127.0.0.1:5672/")
     path = demo(storage={"queue": {"backend": "rabbitmq", "url_env": VARIABLE}})
     assert main(["--config", str(path), "validate"]) == 0

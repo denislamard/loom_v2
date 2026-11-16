@@ -77,30 +77,18 @@ def source_factory(entry_point: str) -> ToolSourceFactory:
     points = [point for point in entry_points(group=GROUP) if point.name == entry_point]
     if not points:
         known = ", ".join(sorted({point.name for point in entry_points(group=GROUP)}))
-        raise ConfigError(
-            f"Point d'entrée {entry_point!r} absent du groupe {GROUP} : aucun paquet installé "
-            f"ne le déclare (installés : {known or 'aucun'})"
-        )
+        raise ConfigError(f"Point d'entrée {entry_point!r} absent du groupe {GROUP} : aucun paquet installé ne le déclare (installés : {known or 'aucun'})")
     if len(points) > 1:
         said = ", ".join(_said(_installed(point)) for point in points)
-        raise ConfigError(
-            f"Point d'entrée {entry_point!r} déclaré par plusieurs paquets : {said} — "
-            "en désinstaller un, loom ne choisit pas"
-        )
+        raise ConfigError(f"Point d'entrée {entry_point!r} déclaré par plusieurs paquets : {said} — en désinstaller un, loom ne choisit pas")
     [point] = points
     told = _said(_installed(point))
     try:
         found: object = point.load()
     except Exception as exc:
-        raise ConfigError(
-            f"Point d'entrée {entry_point!r} ({told}) : import impossible — "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
+        raise ConfigError(f"Point d'entrée {entry_point!r} ({told}) : import impossible — {type(exc).__name__}: {exc}") from exc
     if not callable(found):
-        raise ConfigError(
-            f"Point d'entrée {entry_point!r} ({told}) : {point.value} n'est pas une fabrique "
-            f"de source d'outils ({type(found).__name__})"
-        )
+        raise ConfigError(f"Point d'entrée {entry_point!r} ({told}) : {point.value} n'est pas une fabrique de source d'outils ({type(found).__name__})")
     # Appelable : c'est l'appel, au montage, qui dira s'il rend une source.
     return cast(ToolSourceFactory, found)
 
@@ -166,8 +154,7 @@ class PackagedSource:
             name = f"{self.prefix}{MCP_PREFIX_SEPARATOR}{short}"
             if re.fullmatch(TOOL_NAME_PATTERN, name) is None:
                 logger.warning(
-                    "Outil %r de la source %s écarté : nom %r hors du format des API "
-                    "(lettres, chiffres, _ et -, 64 caractères au plus)",
+                    "Outil %r de la source %s écarté : nom %r hors du format des API (lettres, chiffres, _ et -, 64 caractères au plus)",
                     short,
                     self.name,
                     name,
@@ -175,11 +162,7 @@ class PackagedSource:
                 continue
             # Un outil de paquet est du code Python : il n'emprunte ni le
             # chemin d'un rôle, ni celui d'un sous-agent, ni celui de MCP.
-            spec = (
-                tool.spec.model_copy(update={"name": name, "kind": "python"})
-                .overridden(self.declared.get(short))
-                .overridden(self.chosen.get(short))
-            )
+            spec = tool.spec.model_copy(update={"name": name, "kind": "python"}).overridden(self.declared.get(short)).overridden(self.chosen.get(short))
             # Ce que la config fixe l'emporte sur l'évaluation par appel de l'outil.
             fixed = frozenset(
                 field

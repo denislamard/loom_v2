@@ -102,21 +102,11 @@ class ResultIndex:
         self._artifacts = artifacts
         messages = tuple(messages)
         outputs = {
-            block.call_id: block.output
-            for message in messages
-            if message.role == "tool"
-            for block in message.blocks
-            if isinstance(block, ToolResultBlock)
+            block.call_id: block.output for message in messages if message.role == "tool" for block in message.blocks if isinstance(block, ToolResultBlock)
         }
-        calls = [
-            call
-            for message in messages
-            if message.role == "assistant"
-            for call in message.tool_calls
-        ]
+        calls = [call for message in messages if message.role == "assistant" for call in message.tool_calls]
         self.records: tuple[CallRecord, ...] = tuple(
-            CallRecord(number, call.call_id, call.name, outputs.get(call.call_id))
-            for number, call in enumerate(calls, start=1)
+            CallRecord(number, call.call_id, call.name, outputs.get(call.call_id)) for number, call in enumerate(calls, start=1)
         )
         self._by_call = {record.call_id: record for record in self.records}
 
@@ -136,9 +126,7 @@ class ResultIndex:
         """Résultats réussis d'un outil, dans l'ordre des appels."""
         return tuple(r for r in self.records if r.name == name and r.usable)
 
-    async def resolve(
-        self, arguments: dict[str, JsonValue]
-    ) -> tuple[dict[str, JsonValue], tuple[str, ...]]:
+    async def resolve(self, arguments: dict[str, JsonValue]) -> tuple[dict[str, JsonValue], tuple[str, ...]]:
         """Arguments aux références remplacées, et les références résolues.
 
         Lève ``RefError`` si une référence ne peut pas être résolue.
@@ -158,10 +146,7 @@ class ResultIndex:
         if uri is None:
             return output_value(record.output)
         if self._artifacts is None:
-            raise RefError(
-                f"{record.ref} ({record.name}) a été déporté, et aucun stockage d'artefacts "
-                "ne permet de le relire."
-            )
+            raise RefError(f"{record.ref} ({record.name}) a été déporté, et aucun stockage d'artefacts ne permet de le relire.")
         try:
             data = await self._artifacts.get(uri)
         except ArtifactNotFound as exc:
@@ -187,18 +172,13 @@ class ResultIndex:
     async def _value(self, ref: str, found: list[str]) -> JsonValue:
         number = _number(ref.removeprefix(REF_PREFIX))
         if number is None:
-            raise RefError(
-                f"Référence invalide : {ref!r}, attendu result:<numéro>. {self._known()}"
-            )
+            raise RefError(f"Référence invalide : {ref!r}, attendu result:<numéro>. {self._known()}")
         index = number - 1
         if not 0 <= index < len(self.records):
             raise RefError(f"Référence inconnue : {ref}. {self._known()}")
         record = self.records[index]
         if record.output is None:
-            raise RefError(
-                f"{ref} ({record.name}) n'a pas encore de résultat : un appel du même "
-                "tour ne peut pas être référencé."
-            )
+            raise RefError(f"{ref} ({record.name}) n'a pas encore de résultat : un appel du même tour ne peut pas être référencé.")
         if record.output.is_error:
             raise RefError(f"{ref} ({record.name}) est une erreur : il ne peut pas être transmis.")
         value = await self.content(record)
@@ -315,17 +295,13 @@ def in_call_order(messages: Sequence[Message]) -> tuple[Message, ...]:
 
 def mark_results(messages: Sequence[Message], index: ResultIndex) -> tuple[Message, ...]:
     """Messages d'une requête, chaque résultat réussi précédé de sa référence."""
-    return tuple(
-        _marked(message, index) if message.role == "tool" else message for message in messages
-    )
+    return tuple(_marked(message, index) if message.role == "tool" else message for message in messages)
 
 
 def _marked(message: Message, index: ResultIndex) -> Message:
     blocks = tuple(
         _with_ref(block, ref)
-        if isinstance(block, ToolResultBlock)
-        and not block.output.is_error
-        and (ref := index.ref_of(block.call_id)) is not None
+        if isinstance(block, ToolResultBlock) and not block.output.is_error and (ref := index.ref_of(block.call_id)) is not None
         else block
         for block in message.blocks
     )

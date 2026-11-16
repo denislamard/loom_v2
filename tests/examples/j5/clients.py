@@ -89,10 +89,7 @@ def titre(texte: str) -> None:
 
 def ligne(result: RunResult) -> str:
     objet = result.data.get("objet", "") if isinstance(result.data, dict) else ""
-    return (
-        f"{result.status.value:<10} {result.iterations} itération(s)  "
-        f"{result.cost_usd:.6f} $  {objet or result.text[:48]}"
-    )
+    return f"{result.status.value:<10} {result.iterations} itération(s)  {result.cost_usd:.6f} $  {objet or result.text[:48]}"
 
 
 def agent_de(args: argparse.Namespace) -> str:
@@ -113,9 +110,7 @@ async def isolation(config: LoomConfig, agent: str, prefixe: str) -> None:
     async with Loom(config) as loom:
         for tenant in (DUPONT, MARTIN):
             session = SessionId(f"{prefixe}-{tenant}")
-            result = await loom.run(
-                agent, demande(tenant), session_id=session, tenant=tenant, user=tenant
-            )
+            result = await loom.run(agent, demande(tenant), session_id=session, tenant=tenant, user=tenant)
             print(f"  {tenant:<18} {ligne(result)}")
 
         titre("Le devis de l'autre n'existe pas")
@@ -165,9 +160,7 @@ def cloisonne(config: LoomConfig, agent: str) -> tuple[LoomConfig, str]:
     spec = next(a for a in config.agents if a.name == agent)
     # Référence à l'outil, telle que l'écrirait la config ; l'objet lui-même
     # est donné à l'instance par ``register`` (plus bas).
-    envoi = spec.tools[0].model_copy(
-        update={"python": ENVOI, "side_effects": "irreversible", "idempotent": None}
-    )
+    envoi = spec.tools[0].model_copy(update={"python": ENVOI, "side_effects": "irreversible", "idempotent": None})
     outille = spec.model_copy(update={"tools": (*spec.tools, envoi)})
     tenants = tuple(
         tenant.model_copy(
@@ -179,9 +172,7 @@ def cloisonne(config: LoomConfig, agent: str) -> tuple[LoomConfig, str]:
         for tenant in config.tenants
     )
     agents = tuple(outille if a.name == agent else a for a in config.agents)
-    return LoomConfig.model_validate(
-        {**config.model_dump(), "agents": agents, "tenants": tenants}
-    ), agent
+    return LoomConfig.model_validate({**config.model_dump(), "agents": agents, "tenants": tenants}), agent
 
 
 async def surcharges(config: LoomConfig, agent: str, _prefixe: str) -> None:
@@ -227,9 +218,7 @@ def avec_crm(config: LoomConfig, agent: str) -> tuple[LoomConfig, str]:
     spec = next(a for a in config.agents if a.name == agent)
     outille = spec.model_copy(update={"tools": (*spec.tools, McpTools(mcp="crm"))})
     agents = tuple(outille if a.name == agent else a for a in config.agents)
-    return LoomConfig.model_validate(
-        {**config.model_dump(), "agents": agents, "mcp_servers": (serveur,)}
-    ), agent
+    return LoomConfig.model_validate({**config.model_dump(), "agents": agents, "mcp_servers": (serveur,)}), agent
 
 
 async def par_mcp(config: LoomConfig, agent: str, _prefixe: str) -> None:
@@ -299,9 +288,7 @@ def avec_cles(config: LoomConfig) -> tuple[LoomConfig, dict[TenantId, str]]:
         )
         for tenant, cle in cles.items()
     )
-    return config.model_copy(
-        update={"security": config.security.model_copy(update={"api_keys": keys})}
-    ), cles
+    return config.model_copy(update={"security": config.security.model_copy(update={"api_keys": keys})}), cles
 
 
 @asynccontextmanager
@@ -350,9 +337,7 @@ async def acces(config: LoomConfig, agent: str, prefixe: str) -> None:
 
     titre("Python : le client s'écrit tenant=")
     async with Loom(config) as loom:
-        result = await loom.run(
-            agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
-        )
+        result = await loom.run(agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT)
         print(f"  {DUPONT:<18} {ligne(result)}")
 
         titre("REST : c'est la clé qui porte le client")
@@ -368,9 +353,7 @@ async def acces(config: LoomConfig, agent: str, prefixe: str) -> None:
             for tenant, cle in cles.items():
                 code, _ = await appel(f"{base}/sessions/{chez_martin}", key=cle)
                 verdict = "sa session" if code == 200 else "introuvable"
-                print(
-                    f"  GET  …/sessions/<session de {MARTIN}> (clé de {tenant}) → {code} {verdict}"
-                )
+                print(f"  GET  …/sessions/<session de {MARTIN}> (clé de {tenant}) → {code} {verdict}")
             code, liste = await appel(f"{base}/sessions", key=cles[DUPONT])
             noms = ", ".join(sorted(record["session_id"] for record in liste))
             print(f"  GET  …/sessions (clé de {DUPONT}) → {code} : {noms}")
@@ -388,9 +371,7 @@ async def acces(config: LoomConfig, agent: str, prefixe: str) -> None:
         for tenant in (DUPONT, MARTIN):
             par_mcp_session = SessionId(f"{prefixe}-mcp-{tenant}")
             async with connected(create_server(loom, user=tenant), client_info=client) as mcp:
-                rendu = await mcp.call_tool(
-                    agent, {"message": demande(tenant), "session_id": par_mcp_session}
-                )
+                rendu = await mcp.call_tool(agent, {"message": demande(tenant), "session_id": par_mcp_session})
             structure = rendu.structuredContent or {}
             events = await loom.export_session(par_mcp_session, tenant_id=tenant)
             clients = {event.tenant_id for event in events}

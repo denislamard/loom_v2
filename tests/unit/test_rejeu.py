@@ -156,11 +156,7 @@ async def envoyer(destinataire: str) -> str:
 
 MAIN_SCRIPT: list[dict[str, Any]] = [
     {"tool_calls": [{"name": "calculer", "arguments": {"expr": "12*7+3"}}]},
-    {
-        "tool_calls": [
-            {"name": "rediger", "arguments": {"ton": "poli", "calcul": {"$ref": "result:1"}}}
-        ]
-    },
+    {"tool_calls": [{"name": "rediger", "arguments": {"ton": "poli", "calcul": {"$ref": "result:1"}}}]},
 ]
 VERDICT: dict[str, Any] = {
     "tool_calls": [
@@ -360,9 +356,7 @@ async def test_a_subagent_is_read_not_relaunched(tree: ConfigFactory) -> None:
 
 
 @pytest.mark.parametrize("vision", [False, True], ids=["mention", "octets"])
-async def test_a_run_with_an_attachment_replays_identically(
-    demo: ConfigFactory, vision: bool
-) -> None:
+async def test_a_run_with_an_attachment_replays_identically(demo: ConfigFactory, vision: bool) -> None:
     """Le journal porte la requête avec ses références de fichiers, pas leurs octets : le rejeu,
     à l'identique comme en variante, retrouve la réponse sous cette empreinte (modèle aveugle ou
     non : mention textuelle ou image)."""
@@ -390,9 +384,7 @@ async def test_a_run_with_an_attachment_replays_identically(
     ],
     ids=["prompt", "outils"],
 )
-async def test_a_changed_config_diverges_at_the_first_call_and_names_the_part(
-    atelier: ConfigFactory, change: dict[str, Any], part: str
-) -> None:
+async def test_a_changed_config_diverges_at_the_first_call_and_names_the_part(atelier: ConfigFactory, change: dict[str, Any], part: str) -> None:
     path = atelier()
     [run_id, _] = await deux_runs(path)
     changed = atelier(**change)
@@ -412,9 +404,7 @@ async def test_a_changed_config_diverges_at_the_first_call_and_names_the_part(
 async def test_a_changed_role_template_diverges_at_the_role(atelier: ConfigFactory) -> None:
     path = atelier()
     [run_id, _] = await deux_runs(path)
-    changed = atelier(
-        template="Ton : {{ args.ton }}\nRésultat : {{ context.tool_results.calculer }}"
-    )
+    changed = atelier(template="Ton : {{ args.ton }}\nRésultat : {{ context.tool_results.calculer }}")
     async with Loom.from_config(changed) as loom:
         report = await loom.replay(run_id, session_id=SESSION)
     divergence = report.divergence
@@ -494,9 +484,7 @@ def _failing(*script: dict[str, Any]) -> dict[str, Any]:
         ([SCRIPT[0], {"error": "auth"}], 1),
     ],
 )
-async def test_a_run_that_failed_on_a_model_call_replays_identically(
-    demo: ConfigFactory, script: list[dict[str, Any]], served: int
-) -> None:
+async def test_a_run_that_failed_on_a_model_call_replays_identically(demo: ConfigFactory, script: list[dict[str, Any]], served: int) -> None:
     """Test O3 du 23/10 : la panne d'un modèle se resert comme une réponse.
 
     Le livre ne connaissait que les réponses : l'appel tombé en panne passait
@@ -504,9 +492,7 @@ async def test_a_run_that_failed_on_a_model_call_replays_identically(
     run échoué de cette façon ne se rejouait jamais à l'identique — un cas
     d'éval ``status: failed`` donnait un journal que la non-régression refusait.
     """
-    path = demo(
-        storage={"events": {"backend": "jsonl", "path": "data"}}, models=[_failing(*script)]
-    )
+    path = demo(storage={"events": {"backend": "jsonl", "path": "data"}}, models=[_failing(*script)])
     async with Loom.from_config(path) as loom:
         result = await loom.run("demo", QUESTION, user=DEV)
         report = await loom.replay(result.run_id)
@@ -518,9 +504,7 @@ async def test_a_run_that_failed_on_a_model_call_replays_identically(
     assert report.model_calls == (served, served)
 
 
-async def test_a_completed_run_does_not_get_a_failure_to_serve(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_a_completed_run_does_not_get_a_failure_to_serve(demo: ConfigFactory, tmp_path: Path) -> None:
     """Seul un run fini sur une panne de modèle se la voit resservir : un appel en
     trop dans un run réussi reste une divergence."""
     jsonl = {"events": {"backend": "jsonl", "path": "data"}}
@@ -593,9 +577,7 @@ async def test_a_call_approved_twice_replays_with_its_first_decision() -> None:
         journal_.scope.draft(ApprovalRejected(call_id="c1", tool_name="envoyer", by="marie")),
     ]
     book = ReplayBook.of([d.to_event(i + 1) for i, d in enumerate(drafts)])
-    decision = await book.approve(
-        drafts[0].run_id, PendingApproval(call_id="c1", tool_name="envoyer")
-    )
+    decision = await book.approve(drafts[0].run_id, PendingApproval(call_id="c1", tool_name="envoyer"))
     assert decision == Approved(by="denis")
     assert book.divergence is None
 
@@ -607,18 +589,14 @@ async def test_the_replayed_answer_keeps_what_chunks_would_lose() -> None:
         role="assistant",
         blocks=(
             TextBlock.model_validate({"text": "Oui.", "provider_meta": meta}),
-            ToolCallBlock.model_validate(
-                {"call_id": "c1", "name": "t", "arguments": {}, "provider_meta": meta}
-            ),
+            ToolCallBlock.model_validate({"call_id": "c1", "name": "t", "arguments": {}, "provider_meta": meta}),
         ),
     )
     request = ModelRequest(model_id="m", messages=(Message.user("?"),))
     journal_ = RunJournal()
     journal_.start("?")
     drafts = journal_.take()
-    responded = ModelResponded(
-        model_id="m", provider="fake", message=message, request_hash=request.request_hash()
-    )
+    responded = ModelResponded(model_id="m", provider="fake", message=message, request_hash=request.request_hash())
     events = [d.to_event(i + 1) for i, d in enumerate(drafts)]
     events.append(journal_.scope.draft(responded).to_event(len(events) + 1))
     book = ReplayBook.of(events)
@@ -662,9 +640,7 @@ class Live:
     provider = "fake"
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
-        for chunk in message_to_chunks(
-            TRUNCATED.message, usage=TRUNCATED.usage, stop_reason=TRUNCATED.stop_reason
-        ):
+        for chunk in message_to_chunks(TRUNCATED.message, usage=TRUNCATED.usage, stop_reason=TRUNCATED.stop_reason):
             yield chunk
 
     async def aclose(self) -> None:
@@ -719,18 +695,13 @@ def test_request_parts_change_one_by_one() -> None:
         now = changed.request_parts()
         assert [p for p in parts if parts[p] != now[p]] == [name], name
     # L'empreinte d'ensemble ne bouge pas : les journaux d'avant gardent la leur.
-    assert (
-        base.request_hash()
-        == ModelRequest(model_id="m", system="s", messages=(Message.user("a"),)).request_hash()
-    )
+    assert base.request_hash() == ModelRequest(model_id="m", system="s", messages=(Message.user("a"),)).request_hash()
 
 
 # --- Ce qui ne se rejoue pas --------------------------------------------------------
 
 
-async def test_what_cannot_be_replayed_is_refused(
-    atelier: ConfigFactory, tree: ConfigFactory
-) -> None:
+async def test_what_cannot_be_replayed_is_refused(atelier: ConfigFactory, tree: ConfigFactory) -> None:
     path = atelier()
     async with Loom.from_config(path) as loom:
         with pytest.raises(ReplayError, match="introuvable"):
@@ -738,11 +709,7 @@ async def test_what_cannot_be_replayed_is_refused(
     async with Loom(load_config(tree())) as loom:
         result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
         events = await loom.events(result.run_id)
-        enfant = next(
-            e.run_id
-            for e in events
-            if isinstance(e.payload, RunStarted) and e.payload.parent_run_id is not None
-        )
+        enfant = next(e.run_id for e in events if isinstance(e.payload, RunStarted) and e.payload.parent_run_id is not None)
         with pytest.raises(ReplayError, match="sous-run"):
             await loom.replay(enfant, session_id=result.session_id)
 
@@ -774,9 +741,7 @@ async def test_an_unfinished_run_is_refused(tmp_path: Path) -> None:
 # --- La commande -------------------------------------------------------------------
 
 
-async def test_the_command_says_identical_divergent_or_impossible(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+async def test_the_command_says_identical_divergent_or_impossible(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier()
     [run_id, _] = await deux_runs(path)
     base = ["--config", str(path), "replay", run_id, "--session", SESSION]
@@ -790,9 +755,7 @@ async def test_the_command_says_identical_divergent_or_impossible(
     assert "Rejeu impossible" in capsys.readouterr().err
 
 
-async def test_the_command_says_the_divergence_once(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+async def test_the_command_says_the_divergence_once(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Test K6 du 21/10 : la divergence se lisait deux fois, en log WARNING et au rapport."""
     path = atelier()
     [run_id, _] = await deux_runs(path)
@@ -835,9 +798,7 @@ async def exporte(path: Path, tmp_path: Path) -> tuple[Path, list[RunId]]:
     return fichier, run_ids
 
 
-async def test_an_exported_journal_replays_each_finished_run(
-    atelier: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_an_exported_journal_replays_each_finished_run(atelier: ConfigFactory, tmp_path: Path) -> None:
     path = atelier()
     fichier, run_ids = await exporte(path, tmp_path)
     async with Loom.from_config(path) as loom:
@@ -852,16 +813,12 @@ async def test_an_exported_journal_replays_each_finished_run(
         assert seul.run_id == run_ids[1] and seul.identical
         # En variante aussi : rien n'a changé, tout est servi, et les runs se comparent.
         variante = await loom.replay_journal(fichier, mode="variant")
-        assert all(
-            r.comparison is not None and r.comparison.real_models == 0 for r in variante.reports
-        )
+        assert all(r.comparison is not None and r.comparison.real_models == 0 for r in variante.reports)
         # Le journal de l'instance n'a rien reçu : le fichier seul a servi.
         assert await loom.sessions() == []
 
 
-async def test_a_journal_diverges_with_todays_config(
-    atelier: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_a_journal_diverges_with_todays_config(atelier: ConfigFactory, tmp_path: Path) -> None:
     path = atelier()
     fichier, _ = await exporte(path, tmp_path)
     atelier(system="Autre prompt.")
@@ -880,14 +837,10 @@ async def test_a_journal_gives_its_root_runs_only(tree: ConfigFactory, tmp_path:
     async with Loom(load_config(path)) as loom:
         result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
         events = await loom.export_session(result.session_id)
-    assert any(
-        isinstance(e.payload, RunStarted) and e.payload.parent_run_id is not None for e in events
-    )
+    assert any(isinstance(e.payload, RunStarted) and e.payload.parent_run_id is not None for e in events)
     resume = RunJournal(agent="demo", session_id=SessionId("resume")).start("Résume.").complete()
     systeme = [
-        e.model_copy(update={"payload": e.payload.model_copy(update={"kind": "compaction"})})
-        if isinstance(e.payload, RunStarted)
-        else e
+        e.model_copy(update={"payload": e.payload.model_copy(update={"kind": "compaction"})}) if isinstance(e.payload, RunStarted) else e
         for e in await InMemoryEventStore().append(resume.take(), expected_seq=0)
     ]
     assert [r.run_id for r in journal_runs([*events, *systeme])] == [result.run_id]
@@ -897,9 +850,7 @@ async def test_a_journal_gives_its_root_runs_only(tree: ConfigFactory, tmp_path:
     assert report.run_id == result.run_id and report.identical
 
 
-async def test_an_unfinished_run_is_named_not_replayed(
-    atelier: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_an_unfinished_run_is_named_not_replayed(atelier: ConfigFactory, tmp_path: Path) -> None:
     path = atelier()
     run_ids = await deux_runs(path)
     pause = await en_pause()
@@ -925,9 +876,7 @@ async def test_an_unfinished_run_is_named_not_replayed(
         ('\n{"type": "run.started"}\n', "ligne 2 : pas un événement"),
     ],
 )
-def test_a_journal_that_does_not_read_is_refused(
-    tmp_path: Path, contenu: str | None, message: str
-) -> None:
+def test_a_journal_that_does_not_read_is_refused(tmp_path: Path, contenu: str | None, message: str) -> None:
     fichier = tmp_path / "journal.jsonl"
     if contenu is not None:
         fichier.write_text(contenu, encoding="utf-8")
@@ -943,9 +892,7 @@ async def test_a_journal_line_is_cut_on_newlines_only(tmp_path: Path, caractere:
     ``str.splitlines`` y voit une fin de ligne : le journal exporté devenait illisible.
     """
     store = InMemoryEventStore()
-    started = RunJournal(agent="demo", session_id=SessionId("separateurs")).start(
-        f"Avant{caractere}après"
-    )
+    started = RunJournal(agent="demo", session_id=SessionId("separateurs")).start(f"Avant{caractere}après")
     events = await store.append(started.take(), expected_seq=0)
     fichier = ecrit(tmp_path / "separateurs.jsonl", events)
     assert read_journal(fichier) == events
@@ -955,14 +902,10 @@ async def test_a_journal_line_is_cut_on_newlines_only(tmp_path: Path, caractere:
     assert read_journal(crlf) == events
 
 
-async def test_what_a_journal_cannot_replay_is_refused(
-    atelier: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_what_a_journal_cannot_replay_is_refused(atelier: ConfigFactory, tmp_path: Path) -> None:
     path = atelier()
     fichier, _ = await exporte(path, tmp_path)
-    ailleurs = [
-        event.model_copy(update={"tenant_id": "inconnu"}) for event in read_journal(fichier)
-    ]
+    ailleurs = [event.model_copy(update={"tenant_id": "inconnu"}) for event in read_journal(fichier)]
     async with Loom.from_config(path) as loom:
         with pytest.raises(ReplayError, match="introuvable dans le journal"):
             await loom.replay_journal(fichier, run_id=RunId("absent"))
@@ -1028,9 +971,7 @@ async def test_the_kit_lends_registered_objects(atelier: ConfigFactory, tmp_path
         await assert_replays(path, fichier)
 
 
-async def test_the_command_replays_a_journal_file(
-    atelier: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+async def test_the_command_replays_a_journal_file(atelier: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier()
     fichier, run_ids = await exporte(path, tmp_path)
     base = ["--config", str(path), "replay", "--journal", str(fichier)]
@@ -1088,9 +1029,7 @@ def doublure(destinataire: str) -> str:
 '''
 
 
-def script(
-    destinataire: JsonValue, *, expr: str = "12*7+3", fin: str = "Fait."
-) -> list[dict[str, Any]]:
+def script(destinataire: JsonValue, *, expr: str = "12*7+3", fin: str = "Fait.") -> list[dict[str, Any]]:
     """Calcule, fait rédiger, envoie, conclut."""
     return [
         {"tool_calls": [{"name": "calculer", "arguments": {"expr": expr}}]},
@@ -1222,9 +1161,7 @@ async def test_another_model_runs_for_real_and_never_sends_again(variante: Path)
     le calcul se lit au journal ; l'envoi ailleurs n'est jamais exécuté."""
     run_id = await enregistre(variante)
     async with Loom.from_config(variante) as loom:
-        report = await loom.replay(
-            run_id, session_id=SESSION, mode="variant", models={"main": "AUTRE"}
-        )
+        report = await loom.replay(run_id, session_id=SESSION, mode="variant", models={"main": "AUTRE"})
     assert not report.identical
     divergence = report.divergence
     assert divergence is not None and divergence.kind == "model"
@@ -1236,21 +1173,13 @@ async def test_another_model_runs_for_real_and_never_sends_again(variante: Path)
     assert (comparison.real_models, comparison.served_models) == (4, 1)
     assert dict(comparison.tools) == {"journal": 1, "refused": 1}
     assert comparison.calls == (("calculer", "journal"), ("envoyer", "refused"))
-    refus = [
-        e.payload.output.as_text
-        for e in report.events
-        if isinstance(e.payload, ToolCompleted) and e.payload.output.is_error
-    ]
+    refus = [e.payload.output.as_text for e in report.events if isinstance(e.payload, ToolCompleted) and e.payload.output.is_error]
     assert len(refus) == 1 and "jamais réexécuté" in refus[0] and "irreversible" in refus[0]
     accord = next(e.payload for e in report.events if isinstance(e.payload, ApprovalGranted))
     assert accord.by == "rejeu"
     assert envois(variante) == ["martin"]
     # La dépense est celle des vrais appels, et d'eux seuls.
-    reels = [
-        e.payload.cost_usd
-        for e in report.events
-        if isinstance(e.payload, ModelResponded) and e.payload.model_id == "main-2"
-    ]
+    reels = [e.payload.cost_usd for e in report.events if isinstance(e.payload, ModelResponded) and e.payload.model_id == "main-2"]
     assert len(reels) == 4 and sum(reels) > 0
     assert comparison.spent_usd == pytest.approx(sum(reels))
     assert comparison.variant.text == "Fait autrement." != comparison.original.text
@@ -1320,9 +1249,7 @@ async def test_a_side_effect_call_found_in_the_journal_is_read_with_its_decision
 ) -> None:
     run_id = await enregistre(variante)
     async with Loom.from_config(variante) as loom:
-        report = await loom.replay(
-            run_id, session_id=SESSION, mode="variant", models={"main": "MEME"}
-        )
+        report = await loom.replay(run_id, session_id=SESSION, mode="variant", models={"main": "MEME"})
     comparison = report.comparison
     assert comparison is not None
     assert dict(comparison.tools) == {"journal": 2}
@@ -1350,9 +1277,7 @@ async def test_a_double_answers_in_place_of_an_unknown_side_effect_call(variante
     comparison = report.comparison
     assert comparison is not None and dict(comparison.tools) == {"journal": 1, "double": 1}
     assert vus == ["dupont"]
-    sorties = [
-        e.payload.output.as_text for e in report.events if isinstance(e.payload, ToolCompleted)
-    ]
+    sorties = [e.payload.output.as_text for e in report.events if isinstance(e.payload, ToolCompleted)]
     assert "(doublure) envoi à dupont" in sorties
     assert envois(variante) == ["martin"]
 
@@ -1383,16 +1308,12 @@ async def test_a_double_receives_what_the_tool_would_have_received(variante: Pat
 async def test_a_tool_without_side_effects_runs_for_real(variante: Path) -> None:
     run_id = await enregistre(variante)
     async with Loom.from_config(variante) as loom:
-        report = await loom.replay(
-            run_id, session_id=SESSION, mode="variant", models={"main": "AILLEURS"}
-        )
+        report = await loom.replay(run_id, session_id=SESSION, mode="variant", models={"main": "AILLEURS"})
     comparison = report.comparison
     assert comparison is not None
     # Le calcul (autre expression) s'exécute ; l'envoi, identique, est lu au journal.
     assert dict(comparison.tools) == {"run": 1, "journal": 1}
-    sorties = [
-        e.payload.output.as_text for e in report.events if isinstance(e.payload, ToolCompleted)
-    ]
+    sorties = [e.payload.output.as_text for e in report.events if isinstance(e.payload, ToolCompleted)]
     assert "88" in sorties
     assert envois(variante) == ["martin"]
 
@@ -1427,9 +1348,7 @@ async def test_a_subagent_is_relaunched_when_its_call_changes(tree: ConfigFactor
         {"id": "AUTRE", "sdk": "fake", "model": "main-2", "params": {"script": autre}},
         {"id": "MEME", "sdk": "fake", "model": "main-3", "params": {"script": meme}},
     ]
-    path = tree(
-        models=[*(m.model_dump(mode="json", exclude_defaults=True) for m in base.models), *extra]
-    )
+    path = tree(models=[*(m.model_dump(mode="json", exclude_defaults=True) for m in base.models), *extra])
     async with Loom(load_config(path)) as loom:
         result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
         relance = await loom.replay(result.run_id, mode="variant", models={"main": "AUTRE"})
@@ -1440,11 +1359,7 @@ async def test_a_subagent_is_relaunched_when_its_call_changes(tree: ConfigFactor
     # L'enfant est relancé : deux runs ; son calcul, identique, est lu au journal.
     assert len({e.run_id for e in relance.events}) == 2
     assert comparison.tools.get("journal") == 1
-    enfant = next(
-        e.payload
-        for e in relance.events
-        if isinstance(e.payload, ToolCalled) and e.payload.tool_name == "verifier"
-    )
+    enfant = next(e.payload for e in relance.events if isinstance(e.payload, ToolCalled) and e.payload.tool_name == "verifier")
     assert enfant.child_run_id is not None
     # Même message : l'appel est lu, l'enfant ne tourne pas, et ses appels n'ont pas à l'être.
     assert lu.comparison is not None and dict(lu.comparison.tools) == {"journal": 1}
@@ -1465,9 +1380,7 @@ async def test_a_role_alone_can_change_model(variante: Path) -> None:
     """L'orchestrateur est servi jusqu'au rôle ; le rôle part, avec son autre modèle."""
     run_id = await enregistre(variante)
     async with Loom.from_config(variante) as loom:
-        report = await loom.replay(
-            run_id, session_id=SESSION, mode="variant", models={"rediger": "AUTRE"}
-        )
+        report = await loom.replay(run_id, session_id=SESSION, mode="variant", models={"rediger": "AUTRE"})
     divergence = report.divergence
     assert divergence is not None and "(rediger au journal)" in divergence.where
     assert "model" in divergence.parts
@@ -1491,23 +1404,15 @@ async def test_a_variant_is_said_precisely_or_refused(variante: Path) -> None:
     run_id = await enregistre(variante)
     async with Loom.from_config(variante) as loom:
         with pytest.raises(ReplayError, match=r"étape.*inconnue.*orchestre.*main, rediger"):
-            await loom.replay(
-                run_id, session_id=SESSION, mode="variant", models={"orchestre": "AUTRE"}
-            )
+            await loom.replay(run_id, session_id=SESSION, mode="variant", models={"orchestre": "AUTRE"})
         with pytest.raises(ReplayError, match=r"non déclaré.*INCONNU"):
-            await loom.replay(
-                run_id, session_id=SESSION, mode="variant", models={"main": "INCONNU"}
-            )
+            await loom.replay(run_id, session_id=SESSION, mode="variant", models={"main": "INCONNU"})
         with pytest.raises(ReplayError, match="ne servent qu'en variante"):
             await loom.replay(run_id, session_id=SESSION, models={"main": "AUTRE"})
         with pytest.raises(ReplayError, match=r"outil inconnu.*expedier"):
-            await loom.replay(
-                run_id, session_id=SESSION, mode="variant", doubles={"expedier": print}
-            )
+            await loom.replay(run_id, session_id=SESSION, mode="variant", doubles={"expedier": print})
         with pytest.raises(ReplayError, match=r"rediger.*rôle"):
-            await loom.replay(
-                run_id, session_id=SESSION, mode="variant", doubles={"rediger": print}
-            )
+            await loom.replay(run_id, session_id=SESSION, mode="variant", doubles={"rediger": print})
 
 
 async def test_a_model_that_cannot_be_called_fails_the_variant_clearly() -> None:
@@ -1523,9 +1428,7 @@ async def test_a_model_that_cannot_be_called_fails_the_variant_clearly() -> None
     assert raised.value.kind == "auth"
 
 
-async def test_the_replay_says_its_divergence_once_and_the_engine_does_not_cry(
-    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_the_replay_says_its_divergence_once_and_the_engine_does_not_cry(atelier: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     path = atelier()
     [run_id, _] = await deux_runs(path)
     changed = atelier(rediger="Tu rédiges, en français soutenu.")
@@ -1542,9 +1445,7 @@ async def test_the_replay_says_its_divergence_once_and_the_engine_does_not_cry(
     assert any("Échec de l'appel au modèle" in note for note in notes)
 
 
-async def test_a_variant_says_where_it_leaves_the_original_as_information(
-    variante: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_variant_says_where_it_leaves_the_original_as_information(variante: Path, caplog: pytest.LogCaptureFixture) -> None:
     run_id = await enregistre(variante)
     with caplog.at_level(logging.INFO, logger="loom_ia.replay"):
         async with Loom.from_config(variante) as loom:
@@ -1553,14 +1454,10 @@ async def test_a_variant_says_where_it_leaves_the_original_as_information(
     assert dit.levelno == logging.INFO and "quitte le run d'origine" in dit.getMessage()
 
 
-async def test_the_variant_command_compares_and_says_if_it_went_through(
-    variante: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+async def test_the_variant_command_compares_and_says_if_it_went_through(variante: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run_id = await enregistre(variante)
     base = ["--config", str(variante), "replay", run_id, "--session", SESSION, "--mode", "variant"]
-    code = await _cli(
-        [*base, "--model", "main=AUTRE", "--double", "envoyer=outils_variante:doublure"]
-    )
+    code = await _cli([*base, "--model", "main=AUTRE", "--double", "envoyer=outils_variante:doublure"])
     sortie = capsys.readouterr().out
     assert code == 0, sortie
     assert "Écart      : appel de modèle n°1" in sortie
@@ -1579,9 +1476,7 @@ async def test_the_variant_command_compares_and_says_if_it_went_through(
     assert envois(variante) == ["martin"]
 
 
-def test_the_variant_command_shows_both_answers_without_obeying_them(
-    variante: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_variant_command_shows_both_answers_without_obeying_them(variante: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Les deux réponses se lisent côte à côte ; leurs caractères de contrôle n'agissent pas.
 
     Essai synchrone : la commande lance sa propre boucle, le run d'origine aussi.
@@ -1683,9 +1578,7 @@ def etat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             "sdk": "fake",
             "model": "role-1",
             # Il ne répond que s'il reçoit le ton et le devis du state.
-            "params": {
-                "script": [{"with_text": "Ton : ferme\nDevis : D-1", "text": "Relance courte."}]
-            },
+            "params": {"script": [{"with_text": "Ton : ferme\nDevis : D-1", "text": "Relance courte."}]},
         },
     ]
     config = {
@@ -1713,11 +1606,7 @@ def etat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 "system": "Tu rédiges.",
                 "input_schema": {"type": "object", "properties": {"consigne": {"type": "string"}}},
                 "context": [{"session_state": ["ton", "devis"]}],
-                "input_template": (
-                    "Consigne : {{ args.consigne }}\n"
-                    "Ton : {{ context.session_state.ton }}\n"
-                    "Devis : {{ context.session_state.devis }}"
-                ),
+                "input_template": ("Consigne : {{ args.consigne }}\nTon : {{ context.session_state.ton }}\nDevis : {{ context.session_state.devis }}"),
             }
         ],
         "state": {
@@ -1734,9 +1623,7 @@ def etat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             "note": {"schema": {"type": "string"}, "from": [{"tool": "noter", "path": "/id"}]},
         },
     }
-    (tmp_path / "agents" / "demo.yaml").write_text(
-        yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8"
-    )
+    (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8")
     return tmp_path / "loom.yaml"
 
 
@@ -1751,9 +1638,7 @@ ETAT_FINAL: dict[str, JsonValue] = {
 async def relances(path: Path) -> list[RunId]:
     """Deux runs dans la session : le premier pose le ton, le second hérite du state."""
     async with Loom.from_config(path) as loom:
-        first = await loom.run(
-            "demo", "Relance D-1.", session_id=SESSION, state={"ton": "ferme"}, user=DEV
-        )
+        first = await loom.run("demo", "Relance D-1.", session_id=SESSION, state={"ton": "ferme"}, user=DEV)
         second = await loom.run("demo", "Encore.", session_id=SESSION, user=DEV)
     assert first.ok and second.ok
     return [first.run_id, second.run_id]
@@ -1781,30 +1666,20 @@ async def test_a_run_with_state_replays_identically_and_ends_with_the_same_state
             report = await loom.replay(run_id, session_id=SESSION)
             assert report.identical, report.divergence
             assert report.model_calls[0] == report.model_calls[1] > 0
-            jusque = [
-                e for e in original if e.seq <= max(x.seq for x in original if x.run_id == run_id)
-            ]
-            assert session_state([*avant(original, run_id), *report.events]) == session_state(
-                jusque
-            )
+            jusque = [e for e in original if e.seq <= max(x.seq for x in original if x.run_id == run_id)]
+            assert session_state([*avant(original, run_id), *report.events]) == session_state(jusque)
     # Le second run n'a rien posé : il a vu le state du premier, son rôle aussi (ROLE ne
     # répond qu'avec le ton et le devis ; sinon son script s'épuise, en erreur).
     assert [e.payload.state for e in original if isinstance(e.payload, RunStarted)] == [
         {"ton": "ferme"},
         {},
     ]
-    [redige] = [
-        e.payload.output
-        for e in original
-        if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "rediger"
-    ]
+    [redige] = [e.payload.output for e in original if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "rediger"]
     assert not redige.is_error and redige.as_text == "Relance courte."
     assert notes(etat) == ["relancé"]
 
 
-async def test_a_different_state_in_the_journal_makes_the_replay_diverge(
-    etat: Path, tmp_path: Path
-) -> None:
+async def test_a_different_state_in_the_journal_makes_the_replay_diverge(etat: Path, tmp_path: Path) -> None:
     """Le state posé à l'ouverture du premier run change : chaque run diverge, sur les messages."""
     [premier, _] = await relances(etat)
     retouche = [
@@ -1832,9 +1707,7 @@ def sans_state(event: Event, outil: str) -> Event:
     return event.model_copy(update={"payload": payload.model_copy(update={"output": output})})
 
 
-async def test_a_result_read_from_the_journal_poses_the_recorded_state(
-    etat: Path, tmp_path: Path
-) -> None:
+async def test_a_result_read_from_the_journal_poses_the_recorded_state(etat: Path, tmp_path: Path) -> None:
     """Le rejeu sert le state que le journal a retenu, sans le recalculer par ``from``.
 
     Le résultat de ``chercher`` perd ses écritures au journal : rejoué, il n'en
@@ -1842,9 +1715,7 @@ async def test_a_result_read_from_the_journal_poses_the_recorded_state(
     appel. En variante aussi, un résultat lu au journal garde son state.
     """
     [premier, _] = await relances(etat)
-    fichier = ecrit(
-        tmp_path / "sans-state.jsonl", [sans_state(e, "chercher") for e in await journal(etat)]
-    )
+    fichier = ecrit(tmp_path / "sans-state.jsonl", [sans_state(e, "chercher") for e in await journal(etat)])
     async with Loom.from_config(etat) as loom:
         [exact] = (await loom.replay_journal(fichier, run_id=premier)).reports
         [variante] = (await loom.replay_journal(fichier, run_id=premier, mode="variant")).reports
@@ -1891,11 +1762,7 @@ async def test_the_call_order_decides_the_state_live_and_in_replay(etat: Path) -
     """D9 : ``lent`` est appelé le premier et finit le dernier ; ``vite`` l'emporte partout."""
     [premier, _] = await relances(etat)
     original = await journal(etat)
-    finis = [
-        e.payload.tool_name
-        for e in original
-        if isinstance(e.payload, ToolCompleted) and e.payload.tool_name in ("lent", "vite")
-    ]
+    finis = [e.payload.tool_name for e in original if isinstance(e.payload, ToolCompleted) and e.payload.tool_name in ("lent", "vite")]
     assert finis == ["vite", "lent"]
     assert session_state(e for e in original if e.run_id == premier)["dernier"] == "vite"
     async with Loom.from_config(etat) as loom:
@@ -1922,9 +1789,7 @@ async def test_a_variant_keeps_the_journal_state_and_poses_what_runs_anew(etat: 
             models={"main": "AUTRE"},
             doubles={"noter": doublure},
         )
-        refusee = await loom.replay(
-            premier, session_id=SESSION, mode="variant", models={"main": "AUTRE"}
-        )
+        refusee = await loom.replay(premier, session_id=SESSION, mode="variant", models={"main": "AUTRE"})
     assert meme.identical and meme.comparison is not None and meme.comparison.real_models == 0
     assert session_state(meme.events) == session_state(original)
     assert doublee.comparison is not None

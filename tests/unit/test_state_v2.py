@@ -77,9 +77,7 @@ def awaiting(*names: str) -> RunState:
     journal.start("?", context=CallerContext(tenant_id=TenantId("default"), user_id="u1"))
     events = [draft.to_event(seq) for seq, draft in enumerate(journal.take(), start=1)]
     calls = tuple(PendingCall(call_id=f"c{i}", name=n, arguments={}) for i, n in enumerate(names))
-    return fold(events, journal.run_id).model_copy(
-        update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls}
-    )
+    return fold(events, journal.run_id).model_copy(update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls})
 
 
 async def outputs(executor: ToolExecutor, state: RunState) -> list[ToolOutput]:
@@ -96,9 +94,7 @@ TEXT = {"type": "string"}
 async def test_by_default_any_tool_still_writes_a_declared_key() -> None:
     """Défaut ``[app, tools]`` : le comportement d'avant writers, sans ``from`` (B3)."""
     rules = StateRules({"note": StateKeyRule(schema=TEXT)})
-    [output] = await outputs(
-        ToolExecutor([writes("fiche", {"note": "x"})], state_rules=rules), awaiting("fiche")
-    )
+    [output] = await outputs(ToolExecutor([writes("fiche", {"note": "x"})], state_rules=rules), awaiting("fiche"))
     assert (output.state, output.state_refused) == ({"note": "x"}, ())
 
 
@@ -129,9 +125,7 @@ async def test_the_model_tool_writes_only_keys_open_to_the_model() -> None:
     )
     by_model, by_tool = await outputs(executor, awaiting("state", "fiche"))
     assert by_model.state == {"client": "C-1"}
-    assert by_model.state_refused == (
-        "ville non posé : le modèle ne l'écrit pas (writers : app, tools)",
-    )
+    assert by_model.state_refused == ("ville non posé : le modèle ne l'écrit pas (writers : app, tools)",)
     assert by_tool.state == {}
     assert by_tool.state_refused == ("client non posé : un outil ne l'écrit pas (writers : model)",)
 
@@ -144,9 +138,7 @@ async def test_no_tool_erases_a_required_key() -> None:
         awaiting("efface"),
     )
     assert output.state == {}
-    assert output.state_refused == (
-        "signature non posé : clé obligatoire : seule l'application la remplace, rien ne l'efface",
-    )
+    assert output.state_refused == ("signature non posé : clé obligatoire : seule l'application la remplace, rien ne l'efface",)
     # La remplacer reste permis.
     [output] = await outputs(
         ToolExecutor([writes("pose", {"signature": "Lamard"})], state_rules=rules),
@@ -157,23 +149,17 @@ async def test_no_tool_erases_a_required_key() -> None:
 
 def test_the_application_cannot_write_a_key_kept_for_the_model() -> None:
     rules = StateRules({"client": StateKeyRule(schema=TEXT, writers=frozenset({"model"}))})
-    assert rules.opening({"client": "C-1"}, {}) == [
-        "client : l'application ne l'écrit pas (writers : model)"
-    ]
+    assert rules.opening({"client": "C-1"}, {}) == ["client : l'application ne l'écrit pas (writers : model)"]
 
 
 def test_a_source_needs_tools_among_the_writers() -> None:
     with pytest.raises(ValidationError, match="'tools' doit être dans writers"):
-        StateKey.model_validate(
-            {"schema": TEXT, "writers": ["app"], "from": [{"tool": "fiche", "path": "/code"}]}
-        )
+        StateKey.model_validate({"schema": TEXT, "writers": ["app"], "from": [{"tool": "fiche", "path": "/code"}]})
 
 
 def test_a_source_cannot_erase_a_required_key() -> None:
     with pytest.raises(ValidationError, match="effacerait une clé obligatoire"):
-        StateKey.model_validate(
-            {"schema": TEXT, "required": True, "from": [{"tool": "fiche", "value": None}]}
-        )
+        StateKey.model_validate({"schema": TEXT, "required": True, "from": [{"tool": "fiche", "value": None}]})
 
 
 def test_writers_are_named_once_and_never_empty() -> None:
@@ -221,10 +207,7 @@ def crm(tmp_path: Path) -> Path:
     (tmp_path / "outils_sql.py").write_text(OUTILS_SQL, encoding="utf-8")
     path = tmp_path / "crm.db"
     with sqlite3.connect(path) as conn:
-        conn.executescript(
-            "CREATE TABLE clients (id INTEGER PRIMARY KEY, code TEXT);"
-            "INSERT INTO clients VALUES (261, 'C-261'), (2, 'C-002');"
-        )
+        conn.executescript("CREATE TABLE clients (id INTEGER PRIMARY KEY, code TEXT);INSERT INTO clients VALUES (261, 'C-261'), (2, 'C-002');")
     conn.close()
     return path
 
@@ -232,15 +215,11 @@ def crm(tmp_path: Path) -> Path:
 def sql_tool(base: Path) -> dict[str, Any]:
     return {
         "python": "loom.sql",
-        "databases": [
-            {"name": "crm", "sqlite": {"path": str(base)}, "tables": {"clients": ["select"]}}
-        ],
+        "databases": [{"name": "crm", "sqlite": {"path": str(base)}, "tables": {"clients": ["select"]}}],
     }
 
 
-async def test_a_path_in_a_sql_result_is_warned_at_mount(
-    demo: ConfigFactory, crm: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_path_in_a_sql_result_is_warned_at_mount(demo: ConfigFactory, crm: Path, caplog: pytest.LogCaptureFixture) -> None:
     pytest.importorskip("sqlglot", reason="extra 'sql' absent")
     state = {
         "client": {
@@ -275,9 +254,7 @@ def test_fields_take_one_row_of_a_table() -> None:
 
 
 def test_several_rows_need_a_row_and_none_is_refused() -> None:
-    with pytest.raises(
-        ExtractError, match=r"2 lignes : désigner la bonne avec 'match'.* ou 'row' \(0 à 1\)"
-    ):
+    with pytest.raises(ExtractError, match=r"2 lignes : désigner la bonne avec 'match'.* ou 'row' \(0 à 1\)"):
         extract(SQL, CLIENT)
     with pytest.raises(ExtractError, match="aucune ligne"):
         extract({**SQL, "rows": []}, CLIENT)
@@ -306,9 +283,7 @@ def test_missing_or_doubled_columns_are_named() -> None:
     with pytest.raises(ExtractError, match="colonne 'id' absente du résultat \\(colonnes : code"):
         extract({**SQL, "columns": ["code", "nom", "x"]}, CLIENT, row=0)
     # ``SELECT d.id, c.id`` : deux colonnes du même nom, aux valeurs différentes.
-    with pytest.raises(
-        ExtractError, match="présente 2 fois, avec des valeurs différentes \\(ligne 0\\)"
-    ):
+    with pytest.raises(ExtractError, match="présente 2 fois, avec des valeurs différentes \\(ligne 0\\)"):
         extract({**SQL, "columns": ["id", "code", "id"]}, CLIENT, row=0)
     with pytest.raises(ExtractError, match="présente 2 fois, avec des valeurs différentes"):
         extract({**SQL, "columns": ["id", "code", "id"]}, SELECTION)
@@ -483,9 +458,7 @@ async def test_the_model_poses_and_clears_from_results(demo: ConfigFactory, crm:
     session = SessionId("s1")
     path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(SCRIPT))
     async with Loom.from_config(path) as loom:
-        first = await loom.run(
-            "demo", "Fiche", session_id=session, state={"signature": "L"}, user=DEV
-        )
+        first = await loom.run("demo", "Fiche", session_id=session, state={"signature": "L"}, user=DEV)
         after_first = await loom.session_state(session)
         second = await loom.run("demo", "Liste", session_id=session, user=DEV)
         after_second = await loom.session_state(session)
@@ -493,11 +466,7 @@ async def test_the_model_poses_and_clears_from_results(demo: ConfigFactory, crm:
         after_third = await loom.session_state(session)
         events = await loom.export_session(session)
         # Rejeu identique (state servi du journal) et variante (loom.state relancé).
-        reports = [
-            await loom.replay(run.run_id, session_id=session, mode=mode)
-            for run in (first, second, third)
-            for mode in ("exact", "variant")
-        ]
+        reports = [await loom.replay(run.run_id, session_id=session, mode=mode) for run in (first, second, third) for mode in ("exact", "variant")]
 
     for report in reports:
         assert report.identical, (report.mode, report.divergence)
@@ -508,11 +477,7 @@ async def test_the_model_poses_and_clears_from_results(demo: ConfigFactory, crm:
         "selection": {"ids": [2, 261], "libelle": "tous les clients"},
     }
     assert after_third == after_second
-    invented = [
-        e.payload.output
-        for e in events
-        if isinstance(e.payload, ToolCompleted) and e.run_id == third.run_id
-    ]
+    invented = [e.payload.output for e in events if isinstance(e.payload, ToolCompleted) and e.run_id == third.run_id]
     assert invented[0].is_error and "Référence inconnue : result:7" in invented[0].as_text
 
 
@@ -523,14 +488,10 @@ async def test_the_application_cannot_pose_a_model_key(demo: ConfigFactory, crm:
     path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(SCRIPT))
     async with Loom.from_config(path) as loom:
         with pytest.raises(ValueError, match="client : l'application ne l'écrit pas"):
-            await loom.run(
-                "demo", "Fiche", session_id=SessionId("s2"), state={"client": {"id": 1}}, user=DEV
-            )
+            await loom.run("demo", "Fiche", session_id=SessionId("s2"), state={"client": {"id": 1}}, user=DEV)
 
 
-async def test_the_system_prompt_asks_the_model_to_keep_its_keys(
-    demo: ConfigFactory, crm: Path
-) -> None:
+async def test_the_system_prompt_asks_the_model_to_keep_its_keys(demo: ConfigFactory, crm: Path) -> None:
     agent = build_agent(
         load_config(demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(SCRIPT))),
         "demo",
@@ -546,12 +507,8 @@ async def test_the_system_prompt_asks_the_model_to_keep_its_keys(
         "efface-la."
     )
     (state_spec,) = [s for s in agent.context.tools.specs if s.name == "state"]
-    assert "- client : Client dont parle la conversation. (une ligne, colonnes code, id)" in (
-        state_spec.description
-    )
-    assert "toutes les lignes, ids ← id ; libellé dans libelle ('label')" in (
-        state_spec.description
-    )
+    assert "- client : Client dont parle la conversation. (une ligne, colonnes code, id)" in (state_spec.description)
+    assert "toutes les lignes, ids ← id ; libellé dans libelle ('label')" in (state_spec.description)
     assert (state_spec.side_effects, state_spec.approval) == ("none", "never")
     # Essai t5 du 28/10 : Haiku proposait d'enregistrer la sélection au lieu de la poser.
     assert "sans demander l'accord de l'utilisateur, et sans en parler" in state_spec.description
@@ -562,9 +519,7 @@ def test_an_agent_without_model_keys_keeps_its_hint() -> None:
     """B2 : la consigne d'avant ne change pas d'un octet."""
     rules = StateRules({"client": StateKeyRule(schema=TEXT, description="Client.")})
     assert rules.hint(()).endswith("Clés :\n- client : Client.")
-    with_tool = StateRules(
-        {"client": StateKeyRule(schema=TEXT, description="Client.")}, model_tool="state"
-    )
+    with_tool = StateRules({"client": StateKeyRule(schema=TEXT, description="Client.")}, model_tool="state")
     assert with_tool.hint(()) == rules.hint(())
 
 
@@ -608,15 +563,11 @@ async def test_references_are_shown_with_loom_state(demo: ConfigFactory, crm: Pa
         ),
     ],
 )
-def test_model_keys_need_the_tool_and_must_be_shown(
-    demo: ConfigFactory, crm: Path, changes: dict[str, Any], said: str
-) -> None:
+def test_model_keys_need_the_tool_and_must_be_shown(demo: ConfigFactory, crm: Path, changes: dict[str, Any], said: str) -> None:
     from loom_ia.config import ConfigError
 
     with pytest.raises(ConfigError, match=said):
-        load_config(
-            demo(imports=IMPORTS, agents=[state_agent(crm, **changes)], models=model(SCRIPT))
-        )
+        load_config(demo(imports=IMPORTS, agents=[state_agent(crm, **changes)], models=model(SCRIPT)))
 
 
 def test_loom_state_without_model_keys_is_refused(demo: ConfigFactory, crm: Path) -> None:
@@ -736,9 +687,7 @@ async def test_the_tool_sets_and_clears() -> None:
         ({"clear": "client", "row": 0}, "ne prend rien d'autre"),
     ],
 )
-async def test_the_tool_refuses_with_what_to_fix(
-    arguments: dict[str, JsonValue], said: str
-) -> None:
+async def test_the_tool_refuses_with_what_to_fix(arguments: dict[str, JsonValue], said: str) -> None:
     with pytest.raises(ToolError, match=said):
         await state_tool().invoke(arguments, context())
 
@@ -779,9 +728,7 @@ def test_match_designates_the_row_by_its_values() -> None:
 
 def test_a_missing_column_says_to_query_it_without_alias() -> None:
     aliased: dict[str, JsonValue] = {**SQL, "columns": ["id", "code_client", "nom"]}
-    with pytest.raises(
-        ExtractError, match="refaire la requête avec la colonne 'code', sous ce nom"
-    ):
+    with pytest.raises(ExtractError, match="refaire la requête avec la colonne 'code', sous ce nom"):
         extract(aliased, CLIENT, row=0)
 
 
@@ -790,13 +737,9 @@ def test_an_empty_list_is_not_a_selection() -> None:
         extract({**SQL, "rows": []}, SELECTION)
 
 
-@pytest.mark.parametrize(
-    "written", ["result:1", "1", 1, " result: 1", {"$ref": "result:1"}, '{"$ref": "result:1"}']
-)
+@pytest.mark.parametrize("written", ["result:1", "1", 1, " result: 1", {"$ref": "result:1"}, '{"$ref": "result:1"}'])
 async def test_the_reference_may_be_written_in_any_usual_form(written: JsonValue) -> None:
-    got = await state_tool().invoke(
-        {"set": "client", "result": written, "match": {"code": "C-261"}}, context()
-    )
+    got = await state_tool().invoke({"set": "client", "result": written, "match": {"code": "C-261"}}, context())
     assert got.state == {"client": {"id": 261, "code": "C-261"}}
     assert got.data == {"set": "client", "value": {"id": 261, "code": "C-261"}, "from": "result:1"}
 
@@ -805,10 +748,7 @@ async def test_a_result_of_the_same_turn_says_to_wait_for_it() -> None:
     @dataclass
     class Pending:
         async def read(self, ref: str) -> JsonValue:
-            raise ToolError(
-                f"{ref} (sql) n'a pas encore de résultat : un appel du même tour ne peut pas "
-                "être référencé."
-            )
+            raise ToolError(f"{ref} (sql) n'a pas encore de résultat : un appel du même tour ne peut pas être référencé.")
 
     early = ToolContext(
         tenant_id=TenantId("default"),
@@ -833,9 +773,7 @@ async def test_setting_a_key_clears_its_clears() -> None:
                 extraction=SELECTION,
                 clears=("client",),
             ),
-            ModelKey(
-                name="client", description="Client.", schema={"type": "object"}, extraction=CLIENT
-            ),
+            ModelKey(name="client", description="Client.", schema={"type": "object"}, extraction=CLIENT),
         ),
         1024,
     )
@@ -868,9 +806,7 @@ async def test_setting_a_key_clears_its_clears() -> None:
         (["ville"], "'model' doit être dans ses writers"),
     ],
 )
-def test_clears_names_keys_the_model_may_erase(
-    demo: ConfigFactory, crm: Path, clears: list[str], said: str
-) -> None:
+def test_clears_names_keys_the_model_may_erase(demo: ConfigFactory, crm: Path, clears: list[str], said: str) -> None:
     from loom_ia.config import ConfigError
 
     state = {
@@ -880,9 +816,7 @@ def test_clears_names_keys_the_model_may_erase(
         "ville": {"schema": TEXT},
     }
     with pytest.raises(ConfigError, match=said):
-        load_config(
-            demo(imports=IMPORTS, agents=[state_agent(crm, state=state)], models=model(SCRIPT))
-        )
+        load_config(demo(imports=IMPORTS, agents=[state_agent(crm, state=state)], models=model(SCRIPT)))
 
 
 def test_clears_goes_with_extract() -> None:
@@ -890,9 +824,7 @@ def test_clears_goes_with_extract() -> None:
         StateKey.model_validate({"schema": TEXT, "clears": ["client"]})
 
 
-async def test_the_engine_hands_a_ref_to_loom_state_untouched(
-    demo: ConfigFactory, crm: Path
-) -> None:
+async def test_the_engine_hands_a_ref_to_loom_state_untouched(demo: ConfigFactory, crm: Path) -> None:
     """``{"$ref": "result:1"}`` n'est pas remplacé par les données pour ``loom.state`` (B1)."""
     from loom_ia.access.api import Loom
     from loom_ia.core.model import SessionId as Sid
@@ -920,9 +852,7 @@ async def test_the_engine_hands_a_ref_to_loom_state_untouched(
     assert called[-1].refs == ()
 
 
-async def test_an_answer_written_with_state_ends_the_run_and_replays(
-    demo: ConfigFactory, crm: Path
-) -> None:
+async def test_an_answer_written_with_state_ends_the_run_and_replays(demo: ConfigFactory, crm: Path) -> None:
     """M1 de bout en bout : la réponse écrite avec ``state`` est la sortie ; rejeu et variante."""
     from loom_ia.access.api import Loom
     from loom_ia.core.model import SessionId as Sid
@@ -939,10 +869,7 @@ async def test_an_answer_written_with_state_ends_the_run_and_replays(
     async with Loom.from_config(path) as loom:
         result = await loom.run("demo", "Réponds", session_id=Sid("m1"), user=DEV)
         state = await loom.session_state(Sid("m1"))
-        reports = [
-            await loom.replay(result.run_id, session_id=Sid("m1"), mode=mode)
-            for mode in ("exact", "variant")
-        ]
+        reports = [await loom.replay(result.run_id, session_id=Sid("m1"), mode=mode) for mode in ("exact", "variant")]
     assert result.ok and result.text == "Le client est C-261."
     assert state == {"client": {"id": 261, "code": "C-261"}}
     for report in reports:

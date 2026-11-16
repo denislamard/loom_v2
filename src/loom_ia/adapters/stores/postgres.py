@@ -49,14 +49,8 @@ from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
 from loom_ia.core.ports import SequenceConflict, SessionRecord, journal_key
 
-_COLUMNS: Final = (
-    "tenant_id, session_id, seq, event_id, ts, run_id, root_run_id,"
-    " type, category, status, agent, role, facets, event"
-)
-_INSERT: Final = (
-    f"INSERT INTO {EVENTS_TABLE} ({_COLUMNS})"
-    " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)"
-)
+_COLUMNS: Final = "tenant_id, session_id, seq, event_id, ts, run_id, root_run_id, type, category, status, agent, role, facets, event"
+_INSERT: Final = f"INSERT INTO {EVENTS_TABLE} ({_COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)"
 # Un verrou par journal, tenu jusqu'à la fin de la transaction. ``hashtext``
 # peut faire se rencontrer deux journaux : ils s'attendent, c'est tout.
 _LOCK: Final = "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)"
@@ -67,9 +61,7 @@ _LOCK: Final = "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)"
 # valeurs égal à celui de la visibilité. Pris après le verrou du journal,
 # toujours dans cet ordre : pas d'interblocage.
 _INGEST_LOCK: Final = "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)"
-_LAST_SEQ: Final = (
-    f"SELECT COALESCE(MAX(seq), 0) FROM {EVENTS_TABLE} WHERE tenant_id = $1 AND session_id = $2"
-)
+_LAST_SEQ: Final = f"SELECT COALESCE(MAX(seq), 0) FROM {EVENTS_TABLE} WHERE tenant_id = $1 AND session_id = $2"
 
 
 def _row(event: Event, codec: JournalCodec) -> tuple[Any, ...]:
@@ -138,10 +130,7 @@ def _conditions(query: EventQuery) -> _Conditions:
         # Après l'événement indiqué dans l'ordre d'écriture (``ingested``) ; un
         # événement inconnu de ce client retombe sur la comparaison des ids.
         # ``$1`` est le client : la première condition posée plus haut.
-        known = (
-            f"SELECT c.ingested FROM {EVENTS_TABLE} AS c"
-            " WHERE c.tenant_id = $1 AND c.event_id = ${n}"
-        )
+        known = f"SELECT c.ingested FROM {EVENTS_TABLE} AS c WHERE c.tenant_id = $1 AND c.event_id = ${{n}}"
         found.add(
             f"CASE WHEN EXISTS ({known}) THEN ingested > ({known}) ELSE event_id > ${{n}} END",
             query.after,
@@ -176,9 +165,7 @@ class PostgresEventStore:
 
     # --- Écriture ---------------------------------------------------------
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         if not drafts:
             return []
         tenant_id, session_id = journal_key(drafts)
@@ -190,9 +177,7 @@ class PostgresEventStore:
             events = [draft.to_event(last + i) for i, draft in enumerate(drafts, start=1)]
             await connection.execute(_INGEST_LOCK, f"ingestion:{tenant_id}")
             try:
-                await connection.executemany(
-                    _INSERT, [_row(event, self._codec) for event in events]
-                )
+                await connection.executemany(_INSERT, [_row(event, self._codec) for event in events])
             except asyncpg.UniqueViolationError as exc:
                 if exc.constraint_name not in (None, f"{EVENTS_TABLE}_pkey"):
                     # Un identifiant d'événement déjà écrit : rejouer le même lot
@@ -225,10 +210,7 @@ class PostgresEventStore:
 
     async def query(self, query: EventQuery) -> list[Event]:
         found = _conditions(query)
-        sql = (
-            f"SELECT event FROM {EVENTS_TABLE} WHERE {found.where}"
-            f" ORDER BY ingested LIMIT ${len(found.values) + 1}"
-        )
+        sql = f"SELECT event FROM {EVENTS_TABLE} WHERE {found.where} ORDER BY ingested LIMIT ${len(found.values) + 1}"
         events = await self._events(query.tenant_id, sql, [*found.values, query.limit])
         return query.refine(events)
 

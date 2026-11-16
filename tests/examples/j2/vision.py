@@ -50,8 +50,7 @@ from loom_ia.runtime import apply_logging
 
 CONFIG = Path(__file__).parent / "assistant" / "loom.yaml"
 QUESTION = (
-    "Que montre la photo jointe ? Et au passage : quelle heure est-il à Paris, et "
-    "combien d'heures y a-t-il entre le 1er septembre et le 31 décembre 2026 ?"
+    "Que montre la photo jointe ? Et au passage : quelle heure est-il à Paris, et combien d'heures y a-t-il entre le 1er septembre et le 31 décembre 2026 ?"
 )
 
 
@@ -71,12 +70,7 @@ def carre_bleu(taille: int = 200, cote: int = 100) -> bytes:
         return struct.pack(">I", len(donnees)) + nature + donnees + struct.pack(">I", crc)
 
     entete = struct.pack(">IIBBBBB", taille, taille, 8, 2, 0, 0, 0)  # 8 bits, RVB
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + bloc(b"IHDR", entete)
-        + bloc(b"IDAT", zlib.compress(bytes(lignes)))
-        + bloc(b"IEND", b"")
-    )
+    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", zlib.compress(bytes(lignes))) + bloc(b"IEND", b"")
 
 
 def describe(event: Event) -> str | None:
@@ -85,10 +79,7 @@ def describe(event: Event) -> str | None:
         case ArtifactStored(origin=origin, name=name, media_type=media, size=size):
             return f"  fichier  {origin} {name or ''} ({media}, {size} octets)"
         case ModelResponded(model_id=model, usage=usage, cost_usd=cost):
-            return (
-                f"  modèle   [{event.role}] {model} · {usage.input_tokens}/"
-                f"{usage.output_tokens} tokens · {cost:.5f} $"
-            )
+            return f"  modèle   [{event.role}] {model} · {usage.input_tokens}/{usage.output_tokens} tokens · {cost:.5f} $"
         case ToolSourceUnavailable(source=source, error=error, required=required):
             return f"  serveur  {source} indisponible{' (requis)' if required else ''} : {error}"
         case ToolCalled(tool_name=name, tool_kind=kind, arguments=arguments):
@@ -109,11 +100,7 @@ async def main(argv: list[str]) -> int:
     agent = "assistant_reel" if args.reel else "assistant"
 
     try:
-        image = (
-            Attachment.from_path(args.image)
-            if args.image
-            else Attachment(data=carre_bleu(), name="carre_bleu.png")
-        )
+        image = Attachment.from_path(args.image) if args.image else Attachment(data=carre_bleu(), name="carre_bleu.png")
     except OSError as error:
         print(f"Image illisible : {error}", file=sys.stderr)
         return 2
@@ -143,10 +130,7 @@ async def main(argv: list[str]) -> int:
         if (line := describe(event)) is not None:
             # Les lignes du sous-agent vérificateur sont décalées.
             print(line if event.run_id == result.run_id else f"  {line}")
-    print(
-        f"\nStatut     : {result.status} · itérations : {result.iterations}"
-        f" · coût total : {result.cost_usd:.5f} $"
-    )
+    print(f"\nStatut     : {result.status} · itérations : {result.iterations} · coût total : {result.cost_usd:.5f} $")
     for record in result.artifacts:
         print(f"Artefact   : {record.uri}")
     store = loom.store.inner

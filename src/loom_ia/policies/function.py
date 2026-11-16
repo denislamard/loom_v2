@@ -57,20 +57,13 @@ class FunctionPolicy:
         if not re.fullmatch(POLICY_NAME_PATTERN, policy_name):
             raise ValueError(f"Politique {policy_name!r} : nom invalide ({POLICY_NAME_PATTERN})")
         if policy_name.startswith(RESERVED_PREFIX) != builtin:
-            raise ValueError(
-                f"Politique {policy_name!r} : le préfixe {RESERVED_PREFIX!r} est réservé "
-                "aux politiques fournies par loom-ia"
-            )
+            raise ValueError(f"Politique {policy_name!r} : le préfixe {RESERVED_PREFIX!r} est réservé aux politiques fournies par loom-ia")
         self._name = policy_name
-        self._points = cast(
-            frozenset[HookPoint], _checked(points, HOOK_POINTS, "point d'accroche", policy_name)
-        )
+        self._points = cast(frozenset[HookPoint], _checked(points, HOOK_POINTS, "point d'accroche", policy_name))
         if not self._points:
             raise ValueError(f"Politique {policy_name!r} : aucun point d'accroche déclaré")
         kinds = _checked(decisions, DECISION_KINDS, "décision", policy_name)
-        self._decisions = cast(
-            frozenset[DecisionKind], frozenset(kind for kind in kinds if kind != "continue")
-        )
+        self._decisions = cast(frozenset[DecisionKind], frozenset(kind for kind in kinds if kind != "continue"))
         self._with_context = _arity(fn, policy_name) == 2
 
     @property
@@ -112,29 +105,19 @@ def policy(
     return wrap
 
 
-def _checked[T: str](
-    values: Iterable[T], known: tuple[T, ...], label: str, name: str
-) -> frozenset[T]:
+def _checked[T: str](values: Iterable[T], known: tuple[T, ...], label: str, name: str) -> frozenset[T]:
     found = frozenset(values)
     unknown = sorted(str(value) for value in found if value not in known)
     if unknown:
-        raise ValueError(
-            f"Politique {name!r} : {label} inconnu(e) : {', '.join(unknown)} "
-            f"(connus : {', '.join(known)})"
-        )
+        raise ValueError(f"Politique {name!r} : {label} inconnu(e) : {', '.join(unknown)} (connus : {', '.join(known)})")
     return found
 
 
 def _arity(fn: PolicyFunction, name: str) -> int:
     """Nombre de paramètres positionnels : le sujet, et éventuellement le contexte."""
-    params = [
-        p
-        for p in inspect.signature(fn).parameters.values()
-        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is p.empty
-    ]
+    params = [p for p in inspect.signature(fn).parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is p.empty]
     if len(params) not in (1, 2):
         raise TypeError(
-            f"Politique {name!r} : la fonction reçoit le sujet, et éventuellement le "
-            f"contexte ({len(params)} paramètre(s) obligatoire(s) trouvé(s))"
+            f"Politique {name!r} : la fonction reçoit le sujet, et éventuellement le contexte ({len(params)} paramètre(s) obligatoire(s) trouvé(s))"
         )
     return len(params)

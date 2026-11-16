@@ -88,9 +88,7 @@ class McpTool:
         except ConnectionLost as exc:
             raise ToolError(LOST) from exc
         except McpError as exc:
-            raise ToolError(
-                f"Erreur du serveur MCP {self.server.name} : {exc.error.message}"
-            ) from exc
+            raise ToolError(f"Erreur du serveur MCP {self.server.name} : {exc.error.message}") from exc
         return to_output(result)
 
 
@@ -142,11 +140,7 @@ class McpSource:
     @asynccontextmanager
     async def open(self, context: SourceContext) -> AsyncGenerator[Sequence[Tool]]:
         pooled = self._pool is not None and self.spec.scope in POOLED
-        server = (
-            self._pool.server(self.spec, self.pool_key, self._factory)
-            if self._pool is not None and pooled
-            else McpServer(self.spec, self._factory)
-        )
+        server = self._pool.server(self.spec, self.pool_key, self._factory) if self._pool is not None and pooled else McpServer(self.spec, self._factory)
         try:
             listed = await server.tools()
             yield self.select(server, listed)
@@ -204,16 +198,13 @@ class McpSource:
             )
         except ValidationError:
             logger.warning(
-                "Outil MCP %r du serveur %s écarté : nom %r hors du format des API "
-                "(lettres, chiffres, _ et -, 64 caractères au plus)",
+                "Outil MCP %r du serveur %s écarté : nom %r hors du format des API (lettres, chiffres, _ et -, 64 caractères au plus)",
                 tool.name,
                 self.spec.name,
                 name,
             )
             return None
-        return spec.overridden(self.spec.tools.get(tool.name)).overridden(
-            self.selection.tools.get(tool.name)
-        )
+        return spec.overridden(self.spec.tools.get(tool.name)).overridden(self.selection.tools.get(tool.name))
 
     def _warn_unknown(self, names: set[str]) -> None:
         chosen = self.selection

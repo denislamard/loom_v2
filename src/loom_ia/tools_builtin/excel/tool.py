@@ -67,11 +67,7 @@ class ExcelTool:
         # Le pire de ses appels ; un outil qui ne fait que lire n'en a aucun, et se
         # rejoue donc en variante (une lecture sans effet s'y exécute).
         effects: SideEffects = (
-            "irreversible"
-            if any("overwrite" in f.rights for f in folders)
-            else "reversible"
-            if any("write" in f.rights for f in folders)
-            else "none"
+            "irreversible" if any("overwrite" in f.rights for f in folders) else "reversible" if any("write" in f.rights for f in folders) else "none"
         )
         self._spec = ToolSpec(
             name=NAME,
@@ -93,13 +89,7 @@ class ExcelTool:
         recalc = "non"
         if self._recalc:
             recalc = f"{self._recalc.soffice} (au plus {self._recalc.timeout:g} s)"
-        reading = (
-            f"non ({self._unsafe})"
-            if self._unsafe
-            else "oui"
-            if any("read" in folder.rights for folder in self._space.folders)
-            else "aucun dossier read"
-        )
+        reading = f"non ({self._unsafe})" if self._unsafe else "oui" if any("read" in folder.rights for folder in self._space.folders) else "aucun dossier read"
         return Settings(
             places=self._space.places(),
             options=(
@@ -125,9 +115,7 @@ class ExcelTool:
         if request.overwrite:
             needed.append((located, "overwrite"))
         needed.extend((source, "read") for source in sources)
-        asking: list[tuple[Located, Right]] = [
-            (where, right) for where, right in needed if Folders.asked(where, (right,))
-        ]
+        asking: list[tuple[Located, Right]] = [(where, right) for where, right in needed if Folders.asked(where, (right,))]
         effects: SideEffects = "irreversible" if request.overwrite else "reversible"
         if not asking:
             return CallAssessment(side_effects=effects, idempotent=True)
@@ -198,9 +186,7 @@ class ExcelTool:
 
     # --- Exécution ----------------------------------------------------------------------
 
-    def _perform(
-        self, request: ExcelArguments, located: Located, sources: Mapping[str, Located]
-    ) -> dict[str, JsonValue]:
+    def _perform(self, request: ExcelArguments, located: Located, sources: Mapping[str, Located]) -> dict[str, JsonValue]:
         try:
             loaded = {
                 data.path: read_rows(
@@ -250,9 +236,7 @@ class ExcelTool:
         data = self._read(source)
         if request.sheet is None:
             return {"path": source.address, **overview(data, source.address)}
-        found, state = read_range(
-            data, source.address, request.sheet, request.range, request.max_rows
-        )
+        found, state = read_range(data, source.address, request.sheet, request.range, request.max_rows)
         column = get_column_letter(found.first_column)
         truncated = found.next_row is not None
         result: dict[str, JsonValue] = {
@@ -272,24 +256,13 @@ class ExcelTool:
         notes: list[JsonValue] = []
         if found.without_value:
             notes.append(
-                f"{found.without_value} formule(s) sans valeur calculée : le classeur n'a pas été "
-                "recalculé depuis son écriture (Excel le fera à l'ouverture)."
+                f"{found.without_value} formule(s) sans valeur calculée : le classeur n'a pas été recalculé depuis son écriture (Excel le fera à l'ouverture)."
             )
         if truncated:
-            why = (
-                f"la taille du résultat ({READ_CHARS} caractères)"
-                if found.budget_hit
-                else f"{request.max_rows} lignes"
-            )
-            notes.append(
-                f"Lecture coupée par {why} : la suite commence en {column}{found.next_row} "
-                f"(range, max_rows jusqu'à {MAX_READ_ROWS})."
-            )
+            why = f"la taille du résultat ({READ_CHARS} caractères)" if found.budget_hit else f"{request.max_rows} lignes"
+            notes.append(f"Lecture coupée par {why} : la suite commence en {column}{found.next_row} (range, max_rows jusqu'à {MAX_READ_ROWS}).")
         if found.columns_cut_after:
-            notes.append(
-                f"Colonnes coupées après {found.columns_cut_after} ({MAX_COLUMNS} au plus) : "
-                "demander les suivantes avec range."
-            )
+            notes.append(f"Colonnes coupées après {found.columns_cut_after} ({MAX_COLUMNS} au plus) : demander les suivantes avec range.")
         if found.cut_cells:
             notes.append(f"{found.cut_cells} texte(s) coupé(s) à 1 000 caractères.")
         if notes:
@@ -312,9 +285,7 @@ def _with_data(request: ExcelArguments) -> Iterable[tuple[SheetSpec, DataSource]
     return ((sheet, sheet.data) for sheet in request.sheets if sheet.data is not None)
 
 
-def _description(
-    space: Folders, zone: ZoneInfo, recalc: bool, unsafe: str | None, *, charts: bool = False
-) -> str:
+def _description(space: Folders, zone: ZoneInfo, recalc: bool, unsafe: str | None, *, charts: bool = False) -> str:
     writes = [folder.name for folder in space.folders if "write" in folder.rights]
     reads = [folder.name for folder in space.folders if "read" in folder.rights]
     lines = [
@@ -332,8 +303,7 @@ def _description(
         # Le mode d'emploi de l'écriture ne part qu'à qui peut écrire : environ
         # 1 500 caractères envoyés à chaque appel de modèle.
         lines += [
-            f"Le classeur s'écrit dans : {', '.join(writes)} ; un classeur existant n'est "
-            "remplacé qu'avec overwrite=true (droit overwrite).",
+            f"Le classeur s'écrit dans : {', '.join(writes)} ; un classeur existant n'est remplacé qu'avec overwrite=true (droit overwrite).",
             "Onglet : 'name' (31 caractères, sans [ ] : * ? / \\), 'columns' ({header, type}), "
             f"puis 'rows' pour un petit tableau (au plus {MAX_INLINE_ROWS} lignes) ou 'data' "
             "pour un fichier .csv, .json ou .xlsx (droit read ; 'sheet' pour l'onglet d'un "
@@ -354,8 +324,7 @@ def _description(
             "plutôt qu'un nombre dans la formule. Pas de XLOOKUP, FILTER, SORT, UNIQUE : "
             "préparer les données avant.",
             *(CHART_HELP if charts else ()),
-            "Résultat : le chemin écrit, les onglets et leurs nombres de lignes et de formules, "
-            "les avertissements ; jamais le contenu.",
+            "Résultat : le chemin écrit, les onglets et leurs nombres de lignes et de formules, les avertissements ; jamais le contenu.",
         ]
     else:
         lines.append("Aucun dossier n'a le droit write : l'outil ne fait que lire (action=read).")
@@ -373,8 +342,7 @@ def _description(
         lines.append("Lecture (action=read) : aucun dossier n'a le droit read.")
     if recalc:
         lines.append(
-            "Les formules sont recalculées avant l'écriture : une formule en erreur (#DIV/0!, "
-            "#NAME?…) fait échouer l'appel, avec les cellules en cause."
+            "Les formules sont recalculées avant l'écriture : une formule en erreur (#DIV/0!, #NAME?…) fait échouer l'appel, avec les cellules en cause."
         )
     return "\n".join(lines)
 
@@ -403,10 +371,7 @@ def build(params: BaseModel, context: BuiltinContext) -> ExcelTool:
             given = context.base_dir / given
         found = shutil.which(given)
         if found is None:
-            raise ValueError(
-                f"recalc: true, mais LibreOffice est introuvable ({given}) — l'installer, "
-                "donner son chemin dans 'soffice', ou retirer recalc"
-            )
+            raise ValueError(f"recalc: true, mais LibreOffice est introuvable ({given}) — l'installer, donner son chemin dans 'soffice', ou retirer recalc")
         recalc = Recalc(soffice=Path(found), timeout=params.recalc_timeout)
     unsafe: str | None = None
     if any("read" in folder.rights for folder in space.folders):

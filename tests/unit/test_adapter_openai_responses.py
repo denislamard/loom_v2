@@ -94,9 +94,7 @@ def response(
     }
 
 
-def usage(
-    input_tokens: int, output_tokens: int, cached: int = 0, reasoning: int = 0
-) -> dict[str, Any]:
+def usage(input_tokens: int, output_tokens: int, cached: int = 0, reasoning: int = 0) -> dict[str, Any]:
     return {
         "input_tokens": input_tokens,
         "input_tokens_details": {"cached_tokens": cached, "cache_write_tokens": 0},
@@ -135,9 +133,7 @@ class Server:
 
 
 def request(*messages: Message, **options: Any) -> ModelRequest:
-    return ModelRequest.model_validate(
-        {"model_id": "gpt-test", "messages": messages or (Message.user("?"),), **options}
-    )
+    return ModelRequest.model_validate({"model_id": "gpt-test", "messages": messages or (Message.user("?"),), **options})
 
 
 def encrypted(item_id: str, content: str) -> dict[str, ProviderMeta]:
@@ -268,9 +264,7 @@ async def test_stream_is_read_in_order() -> None:
     assert answer.stop_reason == "tool_use"
     assert answer.model_id == "gpt-test-2026"
     # Les tokens en cache sont retirés des tokens d'entrée.
-    assert answer.usage == Usage(
-        input_tokens=476, output_tokens=120, cache_read_tokens=1024, reasoning_tokens=64
-    )
+    assert answer.usage == Usage(input_tokens=476, output_tokens=120, cache_read_tokens=1024, reasoning_tokens=64)
 
 
 async def test_items_without_deltas_are_read_when_done() -> None:
@@ -399,9 +393,7 @@ async def test_raw_reasoning_of_an_open_model() -> None:
 
 
 def without_streaming(spec: ModelSpec) -> ModelSpec:
-    return spec.model_copy(
-        update={"capabilities": spec.capabilities.model_copy(update={"streaming": False})}
-    )
+    return spec.model_copy(update={"capabilities": spec.capabilities.model_copy(update={"streaming": False})})
 
 
 async def test_an_unreadable_event_or_answer_is_a_transient_model_error() -> None:
@@ -410,9 +402,7 @@ async def test_an_unreadable_event_or_answer_is_a_transient_model_error() -> Non
     text = f"event: {created['type']}\ndata: {json.dumps(created)}\n\n"
     text += "event: response.output_text.delta\ndata: {pas du json\n\n"
     stream = httpx2.Response(200, text=text, headers={"content-type": "text/event-stream"})
-    answer = httpx2.Response(
-        200, text='{"id": "resp_1", "object"', headers={"content-type": "application/json"}
-    )
+    answer = httpx2.Response(200, text='{"id": "resp_1", "object"', headers={"content-type": "application/json"})
     for body, spec in ((stream, SPEC), (answer, without_streaming(SPEC))):
         with pytest.raises(ModelError, match="JSON invalide") as caught:
             await complete(Server(body).model(spec), request())
@@ -440,9 +430,7 @@ async def test_non_streaming_models() -> None:
         usage=usage(10, 5),
     )
     server = Server(httpx2.Response(200, json=body))
-    spec = SPEC.model_copy(
-        update={"capabilities": SPEC.capabilities.model_copy(update={"streaming": False})}
-    )
+    spec = SPEC.model_copy(update={"capabilities": SPEC.capabilities.model_copy(update={"streaming": False})})
     answer = await complete(server.model(spec), request(tools=(TOOL,)))
     assert "stream" not in server.body
     assert answer.message.blocks == (
@@ -468,14 +456,10 @@ async def test_non_streaming_models() -> None:
         ("cancelled", None, "annulée"),
     ],
 )
-async def test_a_failed_or_cancelled_answer_without_streaming_is_a_transient_error(
-    status: str, error: dict[str, Any] | None, said: str
-) -> None:
+async def test_a_failed_or_cancelled_answer_without_streaming_is_a_transient_error(status: str, error: dict[str, Any] | None, said: str) -> None:
     """Hors streaming, un ``status`` d'échec n'est pas une réponse vide « réussie » (MOD-1)."""
     server = Server(httpx2.Response(200, json=response(status, error=error)))
-    spec = SPEC.model_copy(
-        update={"capabilities": SPEC.capabilities.model_copy(update={"streaming": False})}
-    )
+    spec = SPEC.model_copy(update={"capabilities": SPEC.capabilities.model_copy(update={"streaming": False})})
     with pytest.raises(ModelError) as caught:
         await complete(server.model(spec), request())
     assert caught.value.kind == "transient"
@@ -492,18 +476,14 @@ async def test_request_is_stateless_and_sends_encrypted_reasoning_back() -> None
         Message(
             role="assistant",
             blocks=(
-                ReasoningBlock(
-                    text="Je pose le calcul.", provider_meta=encrypted("rs_0", "chiffré-0")
-                ),
+                ReasoningBlock(text="Je pose le calcul.", provider_meta=encrypted("rs_0", "chiffré-0")),
                 TextBlock(text="Je calcule."),
                 ToolCallBlock(call_id="call_0", name="calculer", arguments={"expr": "12*7+3"}),
             ),
         ),
         Message(
             role="tool",
-            blocks=(
-                ToolResultBlock(call_id="call_0", output=ToolOutput(blocks=(JsonBlock(data=87),))),
-            ),
+            blocks=(ToolResultBlock(call_id="call_0", output=ToolOutput(blocks=(JsonBlock(data=87),))),),
         ),
     )
     await complete(
@@ -612,9 +592,7 @@ async def test_images_errors_and_other_models_reasoning() -> None:
 
 
 async def test_clear_reasoning_goes_back_to_a_thinking_model_in_the_open_loop() -> None:
-    spec = SPEC.model_copy(
-        update={"capabilities": SPEC.capabilities.model_copy(update={"thinking": True})}
-    )
+    spec = SPEC.model_copy(update={"capabilities": SPEC.capabilities.model_copy(update={"thinking": True})})
     server = Server(tool_turn())
     history = (
         Message.user("Premier calcul"),
@@ -642,14 +620,10 @@ async def test_output_schema_goes_to_text_format_with_native_json() -> None:
     server = Server(tool_turn(), tool_turn())
     await complete(server.model(), request(output_schema=SCHEMA))
     assert "text" not in server.body
-    native = SPEC.model_copy(
-        update={"capabilities": SPEC.capabilities.model_copy(update={"native_json": True})}
-    )
+    native = SPEC.model_copy(update={"capabilities": SPEC.capabilities.model_copy(update={"native_json": True})})
     await complete(server.model(native), request(output_schema=SCHEMA))
     # minLength : hors du mode strict ; le contrat de sortie le vérifie.
-    assert server.body["text"] == {
-        "format": {"type": "json_schema", "name": "output", "schema": SCHEMA, "strict": False}
-    }
+    assert server.body["text"] == {"format": {"type": "json_schema", "name": "output", "schema": SCHEMA, "strict": False}}
 
 
 # --- Erreurs -------------------------------------------------------------------------------
@@ -715,12 +689,8 @@ def test_strict_schemas() -> None:
     assert not is_strict({**strict, "required": ["liste"]})
     assert not is_strict({**strict, "additionalProperties": True})
     assert not is_strict({**strict, "$defs": {"item": {**item, "additionalProperties": True}}})
-    assert not is_strict(
-        {**strict, "properties": {**strict["properties"], "x": {"type": "string", "minLength": 1}}}
-    )
-    assert not is_strict(
-        {"type": "object", "properties": {}, "required": "n", "additionalProperties": False}
-    )
+    assert not is_strict({**strict, "properties": {**strict["properties"], "x": {"type": "string", "minLength": 1}}})
+    assert not is_strict({"type": "object", "properties": {}, "required": "n", "additionalProperties": False})
 
 
 async def test_failure_without_details_and_an_image_in_an_error_result() -> None:
@@ -739,11 +709,7 @@ async def test_failure_without_details_and_an_image_in_an_error_result() -> None
             Message(role="tool", blocks=(ToolResultBlock(call_id="c1", output=failed),)),
         ),
     )
-    [output] = [
-        item["output"]
-        for item in server.body["input"]
-        if item.get("type") == "function_call_output"
-    ]
+    [output] = [item["output"] for item in server.body["input"] if item.get("type") == "function_call_output"]
     assert output[0] == {"type": "input_text", "text": "[erreur]"}
 
 
@@ -763,6 +729,4 @@ def refused_result() -> list[Message]:
 
 def test_refused_state_writes_follow_the_tool_result() -> None:
     """Le modèle lit, à la suite du résultat, les écritures du state qui n'ont pas été posées."""
-    assert to_input_items(refused_result()) == [
-        {"type": "function_call_output", "call_id": "t1", "output": NOTED}
-    ]
+    assert to_input_items(refused_result()) == [{"type": "function_call_output", "call_id": "t1", "output": NOTED}]

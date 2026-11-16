@@ -63,9 +63,7 @@ class Embedder(Protocol):
         """Charge les poids s'ils ne le sont pas : ce que fait le préchargement."""
         ...
 
-    def embed_documents(
-        self, texts: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[Embedding]: ...
+    def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]: ...
 
     def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding: ...
 
@@ -79,9 +77,7 @@ class Reranker(Protocol):
 
     def load(self) -> None: ...
 
-    def score(
-        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[float]:
+    def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
         """Un score par passage, entre 0 et 1."""
         ...
 
@@ -203,15 +199,10 @@ def unsupported_gpu(torch: Any, index: int = 0) -> str | None:
             ptx.append(target)
     if not binaries and not ptx:
         return None
-    if any(m == major and n <= minor for m, n in binaries) or any(
-        (m, n) <= (major, minor) for m, n in ptx
-    ):
+    if any(m == major and n <= minor for m, n in binaries) or any((m, n) <= (major, minor) for m, n in ptx):
         return None
     known = ", ".join(f"sm_{m}{n}" for m, n in sorted(binaries)) or "aucune"
-    return (
-        f"GPU {name} (sm_{major}{minor}) non pris en charge par ce torch "
-        f"({torch.__version__}, architectures : {known})"
-    )
+    return f"GPU {name} (sm_{major}{minor}) non pris en charge par ce torch ({torch.__version__}, architectures : {known})"
 
 
 def first_line(exc: BaseException) -> str:
@@ -279,10 +270,7 @@ class LazyModel[T]:
             except ModelCancelled:
                 raise
             except Exception as exc:
-                raise ModelRunError(
-                    f"Calcul du modèle {self._name} impossible : {first_line(exc)}. "
-                    "Réessayer ; si l'erreur persiste, relancer loom."
-                ) from exc
+                raise ModelRunError(f"Calcul du modèle {self._name} impossible : {first_line(exc)}. Réessayer ; si l'erreur persiste, relancer loom.") from exc
         finally:
             self._lock.release()
 
@@ -302,14 +290,10 @@ class LazyModel[T]:
             self._check(model)
         except ImportError as exc:
             missing = exc.name or first_line(exc)
-            raise ModelLoadError(
-                f"Modèle {self._name} : dépendance {missing!r} absente "
-                f"(installer l'extra : loom-ia[{MODELS_EXTRA}])"
-            ) from exc
+            raise ModelLoadError(f"Modèle {self._name} : dépendance {missing!r} absente (installer l'extra : loom-ia[{MODELS_EXTRA}])") from exc
         except UnsupportedDevice as exc:
             raise ModelLoadError(
-                f"Modèle {self._name} : {exc}. Mettre models.device à auto (qui se replie "
-                "sur cpu quand la carte ne convient pas) ou à cpu"
+                f"Modèle {self._name} : {exc}. Mettre models.device à auto (qui se replie sur cpu quand la carte ne convient pas) ou à cpu"
             ) from exc
         except ModelNotCached as exc:
             raise ModelLoadError(

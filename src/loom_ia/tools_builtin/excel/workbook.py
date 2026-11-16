@@ -122,9 +122,7 @@ class Prepared:
     charts: tuple[tuple[charts.Plotted, ...], ...] = ()
 
 
-def prepare(
-    arguments: ExcelArguments, sources: Mapping[str, list[RowSpec]], zone: ZoneInfo
-) -> Prepared:
+def prepare(arguments: ExcelArguments, sources: Mapping[str, list[RowSpec]], zone: ZoneInfo) -> Prepared:
     """Valide la description entière ; ``ToolError`` qui liste toutes les fautes trouvées.
 
     ``sources`` : les lignes lues des fichiers, par chemin donné.
@@ -155,16 +153,13 @@ def prepare(
     )
 
 
-def _sheet_rows(
-    sheet: SheetSpec, sources: Mapping[str, list[RowSpec]], problems: Problems
-) -> list[RowSpec]:
+def _sheet_rows(sheet: SheetSpec, sources: Mapping[str, list[RowSpec]], problems: Problems) -> list[RowSpec]:
     if sheet.data is not None:
         return sources.get(sheet.data.path, [])
     rows = sheet.rows or []
     if len(rows) > MAX_INLINE_ROWS:
         problems.error(
-            f"{sheet.name} : {len(rows)} lignes données en ligne, au-delà de {MAX_INLINE_ROWS} "
-            "— les écrire dans un fichier CSV ou JSON et le citer dans 'data'"
+            f"{sheet.name} : {len(rows)} lignes données en ligne, au-delà de {MAX_INLINE_ROWS} — les écrire dans un fichier CSV ou JSON et le citer dans 'data'"
         )
     return rows
 
@@ -180,18 +175,9 @@ def _check_sheet(sheet: SheetSpec, rows: list[RowSpec], problems: Problems) -> N
         problems.error(f"{sheet.name} : {len(rows)} lignes, au-delà de {MAX_DATA_ROWS}")
     for number, row in enumerate(rows, start=2):
         if len(row.cells) > len(headers):
-            problems.error(
-                f"{sheet.name}!{number} : {len(row.cells)} valeurs pour {len(headers)} colonnes"
-            )
-        if (
-            row.role == "assumption"
-            and not row.note
-            and not any(isinstance(cell, CellSpec) and cell.note for cell in row.cells)
-        ):
-            problems.error(
-                f"{sheet.name}!{number} : une ligne assumption porte sa source en 'note' "
-                "(« Source : … »)"
-            )
+            problems.error(f"{sheet.name}!{number} : {len(row.cells)} valeurs pour {len(headers)} colonnes")
+        if row.role == "assumption" and not row.note and not any(isinstance(cell, CellSpec) and cell.note for cell in row.cells):
+            problems.error(f"{sheet.name}!{number} : une ligne assumption porte sa source en 'note' (« Source : … »)")
     for header in sheet.totals or {}:
         if header not in headers:
             problems.error(f"{sheet.name} : total sur une colonne inconnue {header!r}")
@@ -305,11 +291,7 @@ def _total_label(sheet: SheetSpec) -> int | None:
     si toutes les colonnes ont leur agrégat.
     """
     totals = sheet.totals or {}
-    free = [
-        (index, column)
-        for index, column in enumerate(sheet.columns, start=1)
-        if column.header not in totals
-    ]
+    free = [(index, column) for index, column in enumerate(sheet.columns, start=1) if column.header not in totals]
     texts = [index for index, column in free if column.type == "text"]
     if texts:
         return texts[0]
@@ -332,9 +314,7 @@ def _finish(
     for index, (width, column) in enumerate(zip(widths, sheet.columns, strict=True), start=1):
         # Une marge, et le retrait d'un texte (d'un caractère) en plus.
         margin = 3 if column.type == "text" else 2
-        ws.column_dimensions[get_column_letter(index)].width = min(
-            MAX_WIDTH, max(MIN_WIDTH, width + margin)
-        )
+        ws.column_dimensions[get_column_letter(index)].width = min(MAX_WIDTH, max(MIN_WIDTH, width + margin))
     legend: list[str] = []
     if has_input:
         legend.append("Bleu sur fond jaune pâle : cellule à saisir.")
@@ -393,9 +373,7 @@ def _style(cell: Cell, role: str | None, kind: ColumnType) -> None:
     elif kind == "text":
         # Un retrait : un texte ne colle pas au nombre aligné à droite de la colonne voisine.
         wrap = isinstance(cell.value, str) and len(cell.value) > MAX_WIDTH
-        cell.alignment = Alignment(
-            horizontal="left", indent=1, wrap_text=wrap, vertical="top" if wrap else None
-        )
+        cell.alignment = Alignment(horizontal="left", indent=1, wrap_text=wrap, vertical="top" if wrap else None)
 
 
 def _shown(value: object) -> str:

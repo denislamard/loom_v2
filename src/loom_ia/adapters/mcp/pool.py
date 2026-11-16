@@ -22,9 +22,7 @@ class McpPool:
         self._factory = factory
         self._servers: dict[str, McpServer] = {}
 
-    def server(
-        self, spec: McpServerSpec, key: str | None = None, factory: SessionFactory | None = None
-    ) -> McpServer:
+    def server(self, spec: McpServerSpec, key: str | None = None, factory: SessionFactory | None = None) -> McpServer:
         """Le serveur partagé de ``spec`` sous cette clé ; créé au premier appel.
 
         ``factory`` est celle de l'appelant : en portée ``tenant``, elle porte

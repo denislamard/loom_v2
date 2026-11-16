@@ -114,9 +114,7 @@ async def test_the_bound_is_read_on_the_last_write(demo: ConfigFactory, tmp_path
     assert [session.events for session in dans_quarante.swept] == [longueur, longueur]
 
 
-async def test_a_dry_run_says_what_would_go_and_touches_nothing(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_a_dry_run_says_what_would_go_and_touches_nothing(demo: ConfigFactory, tmp_path: Path) -> None:
     config = load_config(demo(storage={**journal(tmp_path), "retention": {"events_days": 1}}))
     store = JsonlEventStore(tmp_path / "events")
     longueur = await ecrit(store, VIEILLE)
@@ -133,9 +131,7 @@ async def test_a_dry_run_says_what_would_go_and_touches_nothing(
     assert (tmp_path / "events" / DEFAULT_TENANT / f"{VIEILLE}.jsonl").exists()
 
 
-async def test_a_real_sweep_removes_the_journal_and_counts_what_went(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_a_real_sweep_removes_the_journal_and_counts_what_went(demo: ConfigFactory, tmp_path: Path) -> None:
     config = load_config(demo(storage={**journal(tmp_path), "retention": {"events_days": 1}}))
     store = JsonlEventStore(tmp_path / "events")
     longueur = await ecrit(store, VIEILLE)
@@ -172,9 +168,7 @@ async def test_a_swept_session_takes_its_files_with_it(demo: ConfigFactory, tmp_
     assert not [path for path in (tmp_path / "files").rglob("*") if path.is_file()]
 
 
-async def test_a_session_with_an_empty_id_never_takes_the_client_folder_with_it(
-    demo: ConfigFactory, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_session_with_an_empty_id_never_takes_the_client_folder_with_it(demo: ConfigFactory, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Un journal mémoire ou SQL peut lister une session au nom vide : pas « tout le client »."""
     config = load_config(demo(storage={**journal(tmp_path), "retention": {"events_days": 1}}))
     store = InMemoryEventStore()
@@ -196,9 +190,7 @@ async def test_a_session_with_an_empty_id_never_takes_the_client_folder_with_it(
     assert len(await store.read(DEFAULT_TENANT, SessionId(""))) == len(vides)
 
 
-async def test_an_unfinished_session_goes_like_the_others(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_an_unfinished_session_goes_like_the_others(demo: ConfigFactory, tmp_path: Path) -> None:
     config = load_config(demo(storage={**journal(tmp_path), "retention": {"events_days": 1}}))
     store = JsonlEventStore(tmp_path / "events")
     await ecrit(store, VIEILLE, inachevee=True)
@@ -275,9 +267,7 @@ async def test_one_client_can_be_swept_alone(demo: ConfigFactory, tmp_path: Path
 # --- Ce que le sceau change, et ne change pas (5.5b) ---------------------------
 
 
-async def test_a_sealed_journal_is_swept_without_its_key(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_a_sealed_journal_is_swept_without_its_key(demo: ConfigFactory, tmp_path: Path) -> None:
     pytest.importorskip("cryptography", reason="extra 'crypto' absent")
     config = load_config(
         demo(
@@ -289,9 +279,7 @@ async def test_a_sealed_journal_is_swept_without_its_key(
         )
     )
     async with Loom(config, environ={CLE_ENV: CLE}) as loom:
-        assert (
-            await loom.run("demo", QUESTION, session_id=VIEILLE, user=DEV)
-        ).status == "completed"
+        assert (await loom.run("demo", QUESTION, session_id=VIEILLE, user=DEV)).status == "completed"
     # La clé effacée, le contenu est perdu — mais la place, non : c'est tout
     # l'intérêt d'une borne qui se lit sur la marque et jamais sur le contenu.
     async with Loom(config, environ={}) as efface:
@@ -332,9 +320,7 @@ def test_the_bound_of_a_client_is_read_by_the_config(demo: ConfigFactory, tmp_pa
 # --- La commande ---------------------------------------------------------------
 
 
-def test_the_command_touches_nothing_without_yes(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_command_touches_nothing_without_yes(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage={**journal(tmp_path), "retention": {"events_days": 1}})
     _vieillie(tmp_path, VIEILLE)
     assert main(["--config", str(path), "retention"]) == 0
@@ -344,9 +330,7 @@ def test_the_command_touches_nothing_without_yes(
     assert (tmp_path / "events" / DEFAULT_TENANT / f"{VIEILLE}.jsonl").exists()
 
 
-def test_the_command_sweeps_with_yes(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_command_sweeps_with_yes(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage={**journal(tmp_path), "retention": {"events_days": 1}})
     _vieillie(tmp_path, VIEILLE)
     assert main(["--config", str(path), "retention", "--yes"]) == 0
@@ -355,9 +339,7 @@ def test_the_command_sweeps_with_yes(
     assert not (tmp_path / "events" / DEFAULT_TENANT / f"{VIEILLE}.jsonl").exists()
 
 
-def test_the_command_can_print_its_report_in_json(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_command_can_print_its_report_in_json(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage={**journal(tmp_path), "retention": {"events_days": 1}})
     _vieillie(tmp_path, VIEILLE)
     assert main(["--config", str(path), "retention", "--json"]) == 0
@@ -367,9 +349,7 @@ def test_the_command_can_print_its_report_in_json(
     assert [session["session_id"] for session in report["swept"]] == [VIEILLE]
 
 
-def test_validate_prints_the_active_rule(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_prints_the_active_rule(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     sans = demo(storage=journal(tmp_path))
     assert main(["--config", str(sans), "validate"]) == 0
     out = capsys.readouterr().out
@@ -398,10 +378,7 @@ def _vieillie(tmp_path: Path, session: SessionId, *, tenant: TenantId = DEFAULT_
     scribe.start("Combien font 2 + 2 ?")
     scribe.complete()
     vieux = datetime.now(UTC) - timedelta(days=90)
-    lignes = [
-        draft.to_event(seq).model_copy(update={"ts": vieux}).model_dump_json()
-        for seq, draft in enumerate(scribe.take(), start=1)
-    ]
+    lignes = [draft.to_event(seq).model_copy(update={"ts": vieux}).model_dump_json() for seq, draft in enumerate(scribe.take(), start=1)]
     (root / f"{session}.jsonl").write_text("\n".join(lignes) + "\n", encoding="utf-8")
 
 
@@ -419,9 +396,7 @@ def audit(days: int | None = 30) -> dict[str, Any]:
     return {"audit": {"path": "audit.jsonl", "retention_days": days}}
 
 
-async def test_the_audit_file_keeps_what_is_younger_than_its_bound(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_the_audit_file_keeps_what_is_younger_than_its_bound(demo: ConfigFactory, tmp_path: Path) -> None:
     config = load_config(demo(storage=journal(tmp_path), security=audit()))
     lignes = [refus(90, "vieux"), "pas du json", refus(1, "recent")]
     (tmp_path / "audit.jsonl").write_text("\n".join(lignes) + "\n", encoding="utf-8")
@@ -436,9 +411,7 @@ async def test_the_audit_file_keeps_what_is_younger_than_its_bound(
     assert (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines() == lignes[1:]
 
 
-async def test_without_a_bound_the_audit_file_is_not_read(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_without_a_bound_the_audit_file_is_not_read(demo: ConfigFactory, tmp_path: Path) -> None:
     config = load_config(demo(storage=journal(tmp_path), security=audit(days=None)))
     (tmp_path / "audit.jsonl").write_text(refus(900) + "\n", encoding="utf-8")
     async with Loom(config) as loom:
@@ -447,9 +420,7 @@ async def test_without_a_bound_the_audit_file_is_not_read(
     assert len((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()) == 1
 
 
-async def test_a_sweep_of_one_client_leaves_the_audit_file(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_a_sweep_of_one_client_leaves_the_audit_file(demo: ConfigFactory, tmp_path: Path) -> None:
     """Le fichier mêle tous les clients : balayer l'un d'eux n'y touche pas."""
     config = load_config(demo(storage=journal(tmp_path), security=audit(), tenants=deux_clients()))
     (tmp_path / "audit.jsonl").write_text(refus(90) + "\n", encoding="utf-8")
@@ -467,9 +438,7 @@ async def test_a_missing_audit_file_is_swept_as_empty(demo: ConfigFactory, tmp_p
     assert not (tmp_path / "audit.jsonl").exists()
 
 
-def test_the_command_says_what_goes_from_the_audit_file(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_command_says_what_goes_from_the_audit_file(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage=journal(tmp_path), security=audit())
     (tmp_path / "audit.jsonl").write_text(refus(90) + "\n" + refus(1) + "\n", encoding="utf-8")
     assert main(["--config", str(path), "retention"]) == 0
@@ -479,8 +448,6 @@ def test_the_command_says_what_goes_from_the_audit_file(
     assert len((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()) == 1
 
 
-def test_a_bound_of_zero_days_for_the_audit_file_is_refused(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+def test_a_bound_of_zero_days_for_the_audit_file_is_refused(demo: ConfigFactory, tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match=r"security\.audit\.retention_days"):
         load_config(demo(security=audit(days=0)))

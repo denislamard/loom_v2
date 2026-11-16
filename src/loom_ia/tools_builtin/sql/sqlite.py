@@ -58,9 +58,7 @@ _WRITES: Final[Mapping[int, SqlRight]] = {
     sqlite3.SQLITE_UPDATE: "update",
     sqlite3.SQLITE_DELETE: "delete",
 }
-_ALWAYS: Final = frozenset(
-    {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_RECURSIVE}
-)
+_ALWAYS: Final = frozenset({sqlite3.SQLITE_SELECT, sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_RECURSIVE})
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +86,7 @@ def authorizer(
     read_by: dict[str, set[str]] = {}
     after: str | None = None  # la vue du ``SELECT`` qui précède, s'il en est une
 
-    def decide(
-        action: int, arg1: str | None, arg2: str | None, db: str | None, origin: str | None
-    ) -> int:
+    def decide(action: int, arg1: str | None, arg2: str | None, db: str | None, origin: str | None) -> int:
         nonlocal after
         source = (origin or "").lower()
         view, after = after, None
@@ -106,13 +102,7 @@ def authorizer(
             if source in objects.views and allowed(source, "select"):
                 read_by.setdefault(source, set()).add((arg1 or "").lower())
                 return sqlite3.SQLITE_OK
-            if (
-                view is not None
-                and origin is None
-                and db in ("main", None)
-                and arg2 == ""
-                and (arg1 or "").lower() in read_by[view]
-            ):
+            if view is not None and origin is None and db in ("main", None) and arg2 == "" and (arg1 or "").lower() in read_by[view]:
                 return sqlite3.SQLITE_OK
             if db is None and (arg1 or "").lower() in ctes:
                 return sqlite3.SQLITE_OK
@@ -180,9 +170,7 @@ class SqliteDatabase:
                     result: dict[str, JsonValue] = {"affected_rows": count}
                     if returned is not None and cursor.description:
                         result["columns"] = [d[0] for d in cursor.description]
-                        result["returning"] = [
-                            row(r, self.zone) for r in returned[: self.spec.max_rows]
-                        ]
+                        result["returning"] = [row(r, self.zone) for r in returned[: self.spec.max_rows]]
                         if len(returned) > self.spec.max_rows:
                             result["truncated"] = True
                     results.append(result)
@@ -208,18 +196,14 @@ class SqliteDatabase:
                 found: list[TableInfo] = []
                 declared = {t.lower(): t for t in self.catalog.rights}
                 rows = conn.execute(
-                    "SELECT type, name, sql FROM sqlite_schema "
-                    "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                    "SELECT type, name, sql FROM sqlite_schema WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name"
                 ).fetchall()
                 for kind, name, ddl in rows:
                     key = declared.get(str(name).lower())
                     if key is None:
                         continue
                     info = conn.execute(f"PRAGMA table_info({_quoted(str(name))})").fetchall()
-                    columns = tuple(
-                        Column(name=str(c[1]), type=str(c[2] or ""), not_null=bool(c[3]))
-                        for c in info
-                    )
+                    columns = tuple(Column(name=str(c[1]), type=str(c[2] or ""), not_null=bool(c[3])) for c in info)
                     found.append(
                         TableInfo(
                             name=key,
@@ -251,9 +235,7 @@ class SqliteDatabase:
         try:
             conn.execute("PRAGMA trusted_schema = OFF")
             conn.setlimit(sqlite3.SQLITE_LIMIT_ATTACHED, 0)
-            listed = conn.execute(
-                "SELECT type, lower(name) FROM sqlite_schema WHERE type IN ('view', 'trigger')"
-            ).fetchall()
+            listed = conn.execute("SELECT type, lower(name) FROM sqlite_schema WHERE type IN ('view', 'trigger')").fetchall()
             objects = Objects(
                 views=frozenset(name for kind, name in listed if kind == "view"),
                 triggers=frozenset(name for kind, name in listed if kind == "trigger"),
@@ -266,9 +248,7 @@ class SqliteDatabase:
             raise
         return conn
 
-    async def _run[T](
-        self, work: Callable[[sqlite3.Connection], T], ctes: frozenset[str], *, write: bool
-    ) -> T:
+    async def _run[T](self, work: Callable[[sqlite3.Connection], T], ctes: frozenset[str], *, write: bool) -> T:
         holder: list[sqlite3.Connection] = []
 
         def run() -> T:
@@ -289,10 +269,7 @@ class SqliteDatabase:
                 holder[0].interrupt()
             raise
         except _Failed as exc:
-            raise ToolError(
-                f"Instruction {exc.position} : {_said(exc.error, self.spec.statement_timeout)} "
-                "Rien n'est enregistré."
-            ) from exc
+            raise ToolError(f"Instruction {exc.position} : {_said(exc.error, self.spec.statement_timeout)} Rien n'est enregistré.") from exc
         except _TooMany as exc:
             raise ToolError(str(exc)) from exc
         except sqlite3.Error as exc:
@@ -313,8 +290,7 @@ class _TooMany(Exception):
 def _check_affected(affected: int, limit: int) -> None:
     if affected > limit:
         raise _TooMany(
-            f"{affected} lignes modifiées, au-delà de {limit} : rien n'est enregistré "
-            "(transaction annulée). Restreindre le WHERE, ou procéder par lots."
+            f"{affected} lignes modifiées, au-delà de {limit} : rien n'est enregistré (transaction annulée). Restreindre le WHERE, ou procéder par lots."
         )
 
 

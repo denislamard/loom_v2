@@ -81,9 +81,7 @@ async def test_a_judged_answer_by_the_python_access(demo: ConfigFactory) -> None
     ]
 
 
-def test_the_cli_lists_skips_and_forces_the_judges(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_lists_skips_and_forces_the_judges(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = judged(demo, judge={"when": {"sample": 0.0}, "criteria": CRITERIA[1:]})
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
@@ -93,18 +91,11 @@ def test_the_cli_lists_skips_and_forces_the_judges(
     assert main(["--config", str(path), "run", "demo", QUESTION, "--stream"]) == 0
     err = capsys.readouterr().err
     assert "· contrôle judge output : ignoré — hors échantillon (when.sample)" in err
-    assert (
-        "Juge       : output (réponse finale) — non jugée : hors échantillon (when.sample)" in err
-    )
-    assert (
-        main(["--config", str(path), "run", "demo", QUESTION, "--stream", "--judges", "skip"]) == 0
-    )
+    assert "Juge       : output (réponse finale) — non jugée : hors échantillon (when.sample)" in err
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--stream", "--judges", "skip"]) == 0
     err = capsys.readouterr().err
     assert "ignoré — sauté à la demande de l'appelant (judges: skip)" in err
-    assert (
-        "Juge       : output (réponse finale) — non jugée : "
-        "sauté à la demande de l'appelant (judges: skip)" in err
-    )
+    assert "Juge       : output (réponse finale) — non jugée : sauté à la demande de l'appelant (judges: skip)" in err
 
 
 async def test_a_role_judge_with_a_condition(demo: ConfigFactory, tmp_path: Path) -> None:
@@ -149,13 +140,8 @@ def test_judge_warnings_at_startup(demo: ConfigFactory, caplog: pytest.LogCaptur
     with caplog.at_level(logging.WARNING, logger="loom_ia.runtime.wiring"):
         Loom.from_config(path).context("demo")
     messages = [r.getMessage() for r in caplog.records]
-    assert (
-        "Agent 'demo', juge 'output' : même modèle que la sortie qu'il évalue (FAKE)"
-        in (messages[0])
-    )
-    assert messages[1] == (
-        "Agent 'demo', juge 'output' : bloquant, mais ne juge qu'une partie des runs (sample 0.5)"
-    )
+    assert "Agent 'demo', juge 'output' : même modèle que la sortie qu'il évalue (FAKE)" in (messages[0])
+    assert messages[1] == ("Agent 'demo', juge 'output' : bloquant, mais ne juge qu'une partie des runs (sample 0.5)")
 
 
 @pytest.mark.parametrize(
@@ -208,9 +194,7 @@ JUDGE = {"model": "JUDGE", "criteria": CRITERIA}
         ),
     ],
 )
-def test_a_judge_on_a_tool_is_refused_with_its_reason(
-    demo: ConfigFactory, agent: dict[str, Any], where: str, what: str
-) -> None:
+def test_a_judge_on_a_tool_is_refused_with_its_reason(demo: ConfigFactory, agent: dict[str, Any], where: str, what: str) -> None:
     # Test E5 du 19/10 : « tools.1.python.judge — Extra inputs are not permitted ».
     path = demo(models=[MODEL, JUDGE_MODEL], agents=[agent])
     with pytest.raises(ConfigError) as caught:
@@ -220,9 +204,7 @@ def test_a_judge_on_a_tool_is_refused_with_its_reason(
     assert "(roles[].judge)" in message and "Extra inputs" not in message
 
 
-def test_a_judge_correlated_for_one_client_names_it(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_judge_correlated_for_one_client_names_it(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     # Test E6 du 19/10 : « (OPUS et HAIKU) », sans le client, pour un client chez
     # qui OPUS devient HAIKU.
     path = judged(
@@ -232,14 +214,8 @@ def test_a_judge_correlated_for_one_client_names_it(
     )
     assert main(["--config", str(path), "validate"]) == 0
     err = capsys.readouterr().err
-    assert (
-        "Client 'dupont', agent 'demo', juge 'output' : même modèle que la sortie qu'il évalue "
-        "(juge JUDGE → FAKE, sortie FAKE) : juge corrélé" in err
-    )
-    assert (
-        "Client 'default', agent 'demo', juge 'output' : bloquant, mais ne juge qu'une partie "
-        "des runs (sample 0.5)" in err
-    )
+    assert "Client 'dupont', agent 'demo', juge 'output' : même modèle que la sortie qu'il évalue (juge JUDGE → FAKE, sortie FAKE) : juge corrélé" in err
+    assert "Client 'default', agent 'demo', juge 'output' : bloquant, mais ne juge qu'une partie des runs (sample 0.5)" in err
     assert "Client 'default', agent 'demo', juge 'output' : même modèle" not in err
     # En prod, l'erreur nomme le client.
     assert main(["--config", str(path), "--profile", "prod", "validate"]) == 2

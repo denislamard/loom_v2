@@ -132,9 +132,7 @@ def atelier(tmp_path: Path) -> ConfigFactory:
         config: dict[str, Any] = {
             "version": 1,
             "imports": ["outils_appro", "politiques_appro"],
-            "models": [
-                {"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": SCRIPT}}
-            ],
+            "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": SCRIPT}}],
             "storage": {"events": events},
             "telemetry": {"logging": {"level": "CRITICAL"}},
             **root,
@@ -168,9 +166,7 @@ PATRON: list[dict[str, Any]] = [
 SECRETAIRE: list[dict[str, Any]] = [
     {
         "text": "J'envoie.",
-        "tool_calls": [
-            {"name": "envoyer_email", "arguments": {"destinataire": "mme.martin@example.com"}}
-        ],
+        "tool_calls": [{"name": "envoyer_email", "arguments": {"destinataire": "mme.martin@example.com"}}],
     },
     {"text": "Relance envoyée."},
 ]
@@ -196,9 +192,7 @@ def delegue(atelier: ConfigFactory, tmp_path: Path) -> ConfigFactory:
             "main": {"model": "FAKE_ENFANT", "system": "Tu envoies."},
             "expose": {"rest": False, "mcp": False},
         }
-        (tmp_path / "agents" / "secretaire.yaml").write_text(
-            yaml.safe_dump(secretaire), encoding="utf-8"
-        )
+        (tmp_path / "agents" / "secretaire.yaml").write_text(yaml.safe_dump(secretaire), encoding="utf-8")
         patron = {
             "name": "demo",
             "description": "Délègue.",
@@ -308,11 +302,7 @@ def test_a_deferred_approval_sends_what_the_approver_saw(atelier: ConfigFactory)
             assert await loom.approve(run.run_id, user=DEV, session_id=SESSION)
             await loom.drain()
             events = await loom.export_session(SESSION)
-        fini = next(
-            e
-            for e in events
-            if e.type == "tool.completed" and e.facets.get("tool_name") == "envoyer_email"
-        )
+        fini = next(e for e in events if e.type == "tool.completed" and e.facets.get("tool_name") == "envoyer_email")
         return dict(demande.arguments), _text(fini)
 
     vu, resultat = asyncio.run(go())
@@ -452,16 +442,10 @@ def test_a_rejected_call_never_runs_and_its_reason_goes_to_the_model(
     async def go() -> tuple[list[str], str]:
         async with Loom.from_config(atelier()) as loom:
             run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
-            await loom.reject(
-                run.run_id, user=DEV, reason="destinataire non vérifié", session_id=SESSION
-            )
+            await loom.reject(run.run_id, user=DEV, reason="destinataire non vérifié", session_id=SESSION)
             await loom.drain()
             events = await loom.export_session(SESSION)
-        refus = next(
-            e
-            for e in events
-            if e.type == "tool.completed" and e.facets["tool_name"] == "envoyer_email"
-        )
+        refus = next(e for e in events if e.type == "tool.completed" and e.facets["tool_name"] == "envoyer_email")
         return [e.type for e in events], _text(refus)
 
     types, texte = asyncio.run(go())
@@ -511,10 +495,7 @@ def test_a_cancelled_paused_run_awaits_nothing(atelier: ConfigFactory) -> None:
             assert (await loom.session(SESSION)).pending_approvals == ()
             for decide in (loom.approve, loom.reject):
                 assert await decide(run.run_id, user=DEV, session_id=SESSION) == ()
-                assert (
-                    await decide(run.run_id, call_id=asked.call_id, session_id=SESSION, user=DEV)
-                    == ()
-                )
+                assert await decide(run.run_id, call_id=asked.call_id, session_id=SESSION, user=DEV) == ()
             await loom.drain()
             # Le run se relit encore : rien n'a été écrit après son annulation.
             await loom.result(run.run_id, session_id=SESSION)
@@ -625,9 +606,7 @@ def test_a_queue_failure_after_the_pause_leaves_the_run_and_its_result(
     assert record.exc_info is not None and isinstance(record.exc_info[1], ConnectionError)
 
 
-def test_a_queue_failure_after_a_decision_keeps_the_decision(
-    atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_queue_failure_after_a_decision_keeps_the_decision(atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """La décision est au journal : le même appel ne la réécrirait pas, il ne doit pas échouer.
 
     ``approve`` rend ce qu'il a accordé, dit en ERROR que la reprise n'est pas
@@ -656,9 +635,7 @@ def test_a_queue_failure_after_a_decision_keeps_the_decision(
     assert len(repris) == 1 and status is RunStatus.COMPLETED
 
 
-def test_a_failure_before_the_decision_is_written_still_raises(
-    atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_failure_before_the_decision_is_written_still_raises(atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Rien n'est absorbé avant l'écriture : un journal en panne fait échouer ``approve``."""
 
     async def go() -> list[str]:
@@ -666,18 +643,14 @@ def test_a_failure_before_the_decision_is_written_still_raises(
             run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             write = loom.store.append
 
-            async def refusing(
-                drafts: Sequence[EventDraft], *, expected_seq: int | None
-            ) -> list[Event]:
+            async def refusing(drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
                 raise OSError("journal en panne")
 
             monkeypatch.setattr(loom.store, "append", refusing)
             with pytest.raises(OSError, match="journal en panne"):
                 await loom.approve(run.run_id, session_id=SESSION, user=DEV)
             monkeypatch.setattr(loom.store, "append", write)
-            return [
-                a.tool_name for a in (await loom.state(run.run_id, session_id=SESSION)).awaiting
-            ]
+            return [a.tool_name for a in (await loom.state(run.run_id, session_id=SESSION)).awaiting]
 
     assert asyncio.run(go()) == ["envoyer_email"]
 
@@ -838,17 +811,11 @@ def test_a_stale_request_can_no_longer_be_decided(atelier: ConfigFactory) -> Non
     assert status is RunStatus.COMPLETED
 
 
-def test_the_cli_refuses_a_stale_approval(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_refuses_a_stale_approval(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = str(atelier(settings={"expires_in": 0.3}))
     assert main(["--config", path, "run", "demo", DEMANDE, "--session", SESSION]) == 1
     printed = capsys.readouterr()
-    run_id = next(
-        line.split(":", 1)[1].strip()
-        for line in (printed.out + printed.err).splitlines()
-        if line.startswith("Run ")
-    )
+    run_id = next(line.split(":", 1)[1].strip() for line in (printed.out + printed.err).splitlines() if line.startswith("Run "))
     time.sleep(0.6)
 
     assert main(["--config", path, "approve", run_id, "--session", SESSION]) == 2
@@ -865,9 +832,7 @@ def test_the_stream_gives_an_approval_deadline_in_local_time(
     time.tzset()
     try:
         path = str(atelier())
-        assert (
-            main(["--config", path, "run", "demo", DEMANDE, "--session", SESSION, "--stream"]) == 1
-        )
+        assert main(["--config", path, "run", "demo", DEMANDE, "--session", SESSION, "--stream"]) == 1
         printed = capsys.readouterr()
         events = asyncio.run(_exported(path))
     finally:
@@ -881,9 +846,7 @@ def test_the_stream_gives_an_approval_deadline_in_local_time(
     assert "Statut     : paused" in printed.err
 
 
-def test_a_paused_run_prints_nothing_and_resume_says_a_finished_run_is_done(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_paused_run_prints_nothing_and_resume_says_a_finished_run_is_done(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Test A6 du 17/10 : un run clos réaffichait son résultat, en code 1 s'il avait échoué."""
     path = str(atelier())
     assert main(["--config", path, "run", "demo", DEMANDE, "--session", SESSION]) == 1
@@ -918,9 +881,7 @@ def test_an_inline_approver_decides_without_pausing(atelier: ConfigFactory) -> N
 
     async def go() -> tuple[list[str], int, str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run(
-                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=DEV
-            )
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur, user=DEV)
             events = await loom.export_session(SESSION)
         return [e.type for e in events], len(_paused(events)), str(run.status)
 
@@ -937,9 +898,7 @@ def test_an_inline_approver_can_refuse(atelier: ConfigFactory) -> None:
 
     async def go() -> tuple[list[str], str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run(
-                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=DEV
-            )
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur, user=DEV)
             events = await loom.export_session(SESSION)
         return [e.type for e in events], str(run.status)
 
@@ -1039,11 +998,7 @@ def test_the_waiting_transition_says_what_caused_it(delegue: ConfigFactory) -> N
         async with Loom.from_config(delegue()) as loom:
             result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             events = await loom.export_session(SESSION)
-        transition = next(
-            e.payload
-            for e in events
-            if e.run_id == result.run_id and e.facets.get("to_state") == "waiting_child"
-        )
+        transition = next(e.payload for e in events if e.run_id == result.run_id and e.facets.get("to_state") == "waiting_child")
         assert isinstance(transition, RunTransitioned)
         return transition.cause_type, transition.cause_event_id
 
@@ -1077,11 +1032,7 @@ def test_approving_on_the_root_resumes_the_whole_tree(delegue: ConfigFactory) ->
             await loom.drain()
             fin = await loom.result(result.run_id, session_id=SESSION)
             events = await loom.export_session(SESSION)
-        appels = [
-            (str(e.facets["tool_name"]), bool(getattr(e.payload, "resumed", False)))
-            for e in events
-            if e.type == "tool.called"
-        ]
+        appels = [(str(e.facets["tool_name"]), bool(getattr(e.payload, "resumed", False))) for e in events if e.type == "tool.called"]
         enfants = len([e for e in events if e.type == "run.started"])
         return str(fin.status), appels, enfants
 
@@ -1128,9 +1079,7 @@ def test_a_paused_subrun_counts_for_the_next_turn(delegue: ConfigFactory) -> Non
     assert asyncio.run(go()) == (("envoyer_email",), ())
 
 
-def test_sessions_show_lists_runs_and_what_awaits(
-    delegue: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_sessions_show_lists_runs_and_what_awaits(delegue: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """La commande à lancer vise la racine : c'est elle qui repart."""
     path = delegue()
 
@@ -1158,9 +1107,7 @@ def test_sessions_show_lists_runs_and_what_awaits(
     assert fiche["pending_approvals"][0]["run_id"] != racine
 
 
-def test_sessions_show_without_anything_to_decide(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_sessions_show_without_anything_to_decide(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier(approval=None)
 
     async def go() -> None:
@@ -1174,9 +1121,7 @@ def test_sessions_show_without_anything_to_decide(
     assert "completed" in out and out.rstrip().endswith("En attente : rien")
 
 
-def test_sessions_show_an_unknown_session(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_sessions_show_an_unknown_session(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(atelier()), "sessions", "show", "inconnue"]) == 1
     assert "inconnue" in capsys.readouterr().err
 
@@ -1219,17 +1164,11 @@ def test_a_refused_child_call_lets_the_tree_finish(delegue: ConfigFactory) -> No
     async def go() -> tuple[str, int]:
         async with Loom.from_config(delegue()) as loom:
             result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
-            await loom.reject(
-                result.run_id, user=DEV, reason="pas ce destinataire", session_id=SESSION
-            )
+            await loom.reject(result.run_id, user=DEV, reason="pas ce destinataire", session_id=SESSION)
             await loom.drain()
             fin = await loom.result(result.run_id, session_id=SESSION)
             events = await loom.export_session(SESSION)
-        envois = [
-            e
-            for e in events
-            if e.type == "tool.called" and e.facets["tool_name"] == "envoyer_email"
-        ]
+        envois = [e for e in events if e.type == "tool.called" and e.facets["tool_name"] == "envoyer_email"]
         return str(fin.status), len(envois)
 
     status, envois = asyncio.run(go())
@@ -1244,11 +1183,7 @@ def test_a_waiting_parent_hands_its_lease_back(delegue: ConfigFactory) -> None:
         async with Loom.from_config(delegue()) as loom:
             result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             events = await loom.export_session(SESSION)
-        return [
-            (str(e.facets["worker_id"]), _handed(e))
-            for e in events
-            if e.type == "run.claimed" and e.run_id == result.run_id
-        ]
+        return [(str(e.facets["worker_id"]), _handed(e)) for e in events if e.type == "run.claimed" and e.run_id == result.run_id]
 
     claims = asyncio.run(go())
     assert [rendue for _, rendue in claims] == [False, True]
@@ -1331,9 +1266,7 @@ def _paused(events: list[Event]) -> list[Event]:
     return [e for e in events if e.facets.get("to_state") == "paused"]
 
 
-def test_inspect_says_why_an_approval_is_asked(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_inspect_says_why_an_approval_is_asked(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """``loom inspect`` donne le motif de la demande, pas seulement l'outil (essai du 01/11)."""
     path = str(atelier())
     assert main(["--config", path, "run", "demo", DEMANDE, "--session", SESSION, "--json"]) == 1
@@ -1341,9 +1274,7 @@ def test_inspect_says_why_an_approval_is_asked(
     assert main(["--config", path, "inspect", run_id, "--session", SESSION]) == 0
     out = capsys.readouterr().out
     assert "approbation pour envoyer_email — en attente" in out
-    assert (
-        "motif     : la config exige une approbation pour chaque appel de cet outil (irréversible)"
-    ) in out
+    assert ("motif     : la config exige une approbation pour chaque appel de cet outil (irréversible)") in out
 
 
 # --- Qui peut trancher, figé dans la demande ; l'audit de la décision (§ 5.3, § 7, lot 2) --
@@ -1417,11 +1348,7 @@ def test_without_access_lists_a_request_freezes_nothing_and_no_scope(
     [attente] = run.pending_approvals
     assert attente.approvers is None and attente.self_approval
     ecrit = (path.parent / "data" / "default" / f"{SESSION}.jsonl").read_text(encoding="utf-8")
-    demande = next(
-        json.loads(ligne)["payload"]
-        for ligne in ecrit.splitlines()
-        if '"approval.requested"' in ligne
-    )
+    demande = next(json.loads(ligne)["payload"] for ligne in ecrit.splitlines() if '"approval.requested"' in ligne)
     assert not {"scope", "approvers", "self_approval"} & set(demande)
 
 
@@ -1461,9 +1388,7 @@ def test_a_decision_records_its_gateway_its_roles_and_self_approval(
 
     async def go() -> tuple[list[Event], RunResult]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run(
-                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=UNCHECKED
-            )
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur, user=UNCHECKED)
             return await loom.export_session(SESSION), run
 
     events, _ = asyncio.run(go())
@@ -1494,9 +1419,7 @@ def test_the_progress_and_the_trace_say_who_decided_and_through_what(
 
     async def go() -> tuple[list[Event], Trace]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run(
-                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=UNCHECKED
-            )
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur, user=UNCHECKED)
             trace = await loom.trace(run.run_id, session_id=SESSION)
             return await loom.export_session(SESSION), trace
 
@@ -1515,9 +1438,7 @@ def test_a_refusal_records_the_same_audit(atelier: ConfigFactory) -> None:
 
     async def go() -> list[Event]:
         async with Loom.from_config(atelier()) as loom:
-            await loom.run(
-                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=UNCHECKED
-            )
+            await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur, user=UNCHECKED)
             return await loom.export_session(SESSION)
 
     [refus] = [e.payload for e in asyncio.run(go()) if isinstance(e.payload, ApprovalRejected)]
@@ -1537,9 +1458,7 @@ def test_a_replay_serves_the_decision_with_its_audit() -> None:
         self_approved=True,
     )
     book = ReplayBook.of([journal.scope.draft(accord).to_event(1)])
-    assert book.recorded_decision(journal.run_id, "c1") == Approved(
-        by="marie", via="app-crm", roles=("approbateur",), self_approved=True
-    )
+    assert book.recorded_decision(journal.run_id, "c1") == Approved(by="marie", via="app-crm", roles=("approbateur",), self_approved=True)
 
 
 # --- Qui tranche, par le SDK (user=, § 4.4, § 6.3, lot 3) -------------------------------
@@ -1630,9 +1549,7 @@ def test_an_agent_that_forbids_self_approval_needs_someone_else(atelier: ConfigF
 
 
 def test_only_the_frozen_approvers_decide(atelier: ConfigFactory) -> None:
-    path = avec_acces(
-        atelier(security=EQUIPE), {"approve": {"tools": {"envoyer_email": ["gerant"]}}}
-    )
+    path = avec_acces(atelier(security=EQUIPE), {"approve": {"tools": {"envoyer_email": ["gerant"]}}})
 
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
@@ -1712,15 +1629,9 @@ def test_can_says_who_may_decide_without_writing(atelier: ConfigFactory) -> None
             vu = {
                 "marie": await loom.can("marie", "approve", run_id=run.run_id, session_id=SESSION),
                 "alice": await loom.can("alice", "approve", run_id=run.run_id, session_id=SESSION),
-                "alice_amend": await loom.can(
-                    "alice", "amend", run_id=run.run_id, session_id=SESSION
-                ),
-                "denis_amend": await loom.can(
-                    "denis", "amend", run_id=run.run_id, session_id=SESSION
-                ),
-                "inconnu": await loom.can(
-                    "fantome", "approve", run_id=run.run_id, session_id=SESSION
-                ),
+                "alice_amend": await loom.can("alice", "amend", run_id=run.run_id, session_id=SESSION),
+                "denis_amend": await loom.can("denis", "amend", run_id=run.run_id, session_id=SESSION),
+                "inconnu": await loom.can("fantome", "approve", run_id=run.run_id, session_id=SESSION),
                 "lancer": await loom.can("alice", "run", agent="demo"),
             }
             with pytest.raises(ValueError, match="se déduit du lanceur"):
@@ -1739,9 +1650,7 @@ def test_can_says_who_may_decide_without_writing(atelier: ConfigFactory) -> None
     assert avant == apres
 
 
-def test_a_subagent_request_follows_the_subagent_access_and_the_root_launcher(
-    delegue: ConfigFactory, tmp_path: Path
-) -> None:
+def test_a_subagent_request_follows_the_subagent_access_and_the_root_launcher(delegue: ConfigFactory, tmp_path: Path) -> None:
     """La demande du secrétaire suit son ``access`` ; le lanceur est celui de la racine (§ 5.2)."""
     path = delegue(security=EQUIPE)
     fichier = tmp_path / "agents" / "secretaire.yaml"
@@ -1766,9 +1675,7 @@ def test_a_subagent_request_follows_the_subagent_access_and_the_root_launcher(
 # --- L'approbateur en ligne agit pour le lanceur (§ 6.2, lot 4) ---------------------------
 
 
-def test_an_inline_approver_takes_only_what_its_launcher_may_decide(
-    atelier: ConfigFactory, tmp_path: Path
-) -> None:
+def test_an_inline_approver_takes_only_what_its_launcher_may_decide(atelier: ConfigFactory, tmp_path: Path) -> None:
     """Lot mixte : la recherche se tranche en ligne, l'envoi attend un approbateur figé."""
     path = atelier(security=EQUIPE)
     fichier = tmp_path / "agents" / "demo.yaml"
@@ -1787,9 +1694,7 @@ def test_an_inline_approver_takes_only_what_its_launcher_may_decide(
 
     async def go() -> tuple[RunResult, list[Event]]:
         async with Loom.from_config(path) as loom:
-            run = await loom.run(
-                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user="denis"
-            )
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur, user="denis")
             return run, await loom.export_session(SESSION)
 
     run, events = asyncio.run(go())
@@ -1822,9 +1727,7 @@ def test_an_inline_correction_without_amend_authorizes_nothing(atelier: ConfigFa
     [refus] = _decisions(events)
     assert isinstance(refus, ApprovalRejected)
     assert refus.by == "paul" and "il faut 'amend'" in refus.reason
-    assert "tool.called" not in [
-        e.type for e in events if e.facets.get("tool_name") == "envoyer_email"
-    ]
+    assert "tool.called" not in [e.type for e in events if e.facets.get("tool_name") == "envoyer_email"]
 
 
 # --- Journal d'audit des refus (D-9) ---------------------------------------------------
@@ -1832,16 +1735,10 @@ def test_an_inline_correction_without_amend_authorizes_nothing(atelier: ConfigFa
 
 def _refusals(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
     """Le détail de chaque refus écrit au journal d'audit, dans l'ordre."""
-    return [
-        getattr(record, AUDIT)
-        for record in caplog.records
-        if record.name == AUDIT_LOGGER and record.levelno == logging.WARNING
-    ]
+    return [getattr(record, AUDIT) for record in caplog.records if record.name == AUDIT_LOGGER and record.levelno == logging.WARNING]
 
 
-def test_a_refused_decision_is_written_once_with_who_and_what(
-    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_refused_decision_is_written_once_with_who_and_what(atelier: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     """Rien au journal de session, une ligne au journal d'audit : qui, quoi, pourquoi."""
 
     async def go() -> RunResult:
@@ -1867,9 +1764,7 @@ def test_a_refused_decision_is_written_once_with_who_and_what(
     assert "aucun de ses rôles (assistante) n'a 'approve'" in refus["reason"]
 
 
-def test_asking_whether_one_may_writes_nothing(
-    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_asking_whether_one_may_writes_nothing(atelier: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     """``can`` répond sans agir : ce n'est pas une tentative."""
 
     async def go() -> bool:
@@ -1882,9 +1777,7 @@ def test_asking_whether_one_may_writes_nothing(
     assert _refusals(caplog) == []
 
 
-def test_a_decision_on_the_whole_run_writes_what_it_left_aside(
-    atelier: ConfigFactory, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_decision_on_the_whole_run_writes_what_it_left_aside(atelier: ConfigFactory, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Sans ``call_id``, l'appel réussit pour ce qu'Alice peut trancher : le reste est un refus."""
     path = atelier(security=EQUIPE)
     fichier = tmp_path / "agents" / "demo.yaml"
@@ -1893,9 +1786,7 @@ def test_a_decision_on_the_whole_run_writes_what_it_left_aside(
         {"python": "chercher", "approval": "always"},
         *(tool for tool in agent["tools"] if tool.get("python") != "chercher"),
     ]
-    agent["access"] = {
-        "approve": {"tools": {"chercher": ["gerant"], "envoyer_email": ["approbateur"]}}
-    }
+    agent["access"] = {"approve": {"tools": {"chercher": ["gerant"], "envoyer_email": ["approbateur"]}}}
     fichier.write_text(yaml.safe_dump(agent), encoding="utf-8")
 
     async def go() -> tuple[tuple[str, ...], dict[str, str]]:
@@ -1947,9 +1838,7 @@ def test_a_decision_without_gateway_writes_neither_via_nor_its_defaults(
     assert "via" not in started["payload"]["context"]
 
 
-def test_what_restricts_a_request_is_written_with_it(
-    atelier: ConfigFactory, tmp_path: Path
-) -> None:
+def test_what_restricts_a_request_is_written_with_it(atelier: ConfigFactory, tmp_path: Path) -> None:
     """Approbateurs listés, auto-approbation interdite : figés dans la demande, donc écrits."""
     path = atelier(security=EQUIPE)
     fichier = tmp_path / "agents" / "demo.yaml"

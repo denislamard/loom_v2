@@ -66,10 +66,7 @@ from loom_ia.engine.loop import ParentRun, RunContext, begin_run, drive
 from loom_ia.engine.writer import SessionWriter
 
 # Mention ajoutée à la description d'un sous-agent.
-AGENT_HINT: Final = (
-    "Sous-agent : il ne reçoit que `message`, sans la conversation ni les résultats "
-    "précédents ; mets-y tout ce dont il a besoin."
-)
+AGENT_HINT: Final = "Sous-agent : il ne reçoit que `message`, sans la conversation ni les résultats précédents ; mets-y tout ce dont il a besoin."
 
 MESSAGE_SCHEMA: Final[dict[str, JsonValue]] = {
     "type": "object",
@@ -169,9 +166,7 @@ class AgentTool(DelegatedTool):
         if not await ctx.store.read(tenant, session, run_id=child_id):
             exhausted, budget = self._budget(parent)
             if exhausted:
-                yield ToolOutput.error(
-                    f"Budget du run atteint : le sous-agent {name} n'est pas lancé."
-                )
+                yield ToolOutput.error(f"Budget du run atteint : le sous-agent {name} n'est pas lancé.")
                 return
             await begin_run(
                 ctx,
@@ -211,24 +206,16 @@ def _output(name: str, final: RunState) -> ToolOutput:
             # sans eux, le parent n'apprendrait leur existence que si l'enfant les
             # nommait, et ne pourrait ni les voir ni les livrer.
             shown = {b.uri for b in kept if isinstance(b, ArtifactRefBlock)}
-            files = tuple(
-                ArtifactRefBlock(uri=a.uri, media_type=a.media_type, size=a.size, name=a.name)
-                for a in produced
-                if a.uri not in shown
-            )
+            files = tuple(ArtifactRefBlock(uri=a.uri, media_type=a.media_type, size=a.size, name=a.name) for a in produced if a.uri not in shown)
             output = ToolOutput(
                 blocks=(*kept, *files),
                 artifacts=tuple(a.uri for a in produced),
             )
-            if not output.as_text.strip() and not any(
-                isinstance(b, ArtifactRefBlock) for b in output.blocks
-            ):
+            if not output.as_text.strip() and not any(isinstance(b, ArtifactRefBlock) for b in output.blocks):
                 return ToolOutput.error(f"Le sous-agent {name} n'a rien répondu.")
             return output
         case RunStatus.FAILED:
-            return ToolOutput.error(
-                f"Le sous-agent {name} a échoué ({final.error_type}) : {final.error}"
-            )
+            return ToolOutput.error(f"Le sous-agent {name} a échoué ({final.error_type}) : {final.error}")
         case status:
             return ToolOutput.error(f"Le sous-agent {name} s'est arrêté dans l'état {status}.")
 

@@ -88,9 +88,7 @@ _AIM: ContextVar[Aim] = ContextVar("loom_audit_aim", default=_NOWHERE)
 
 
 @contextmanager
-def through(
-    access: Access, config: LoomConfig | None = None, aim: Aim | None = None
-) -> Generator[None]:
+def through(access: Access, config: LoomConfig | None = None, aim: Aim | None = None) -> Generator[None]:
     """Tout refus écrit dans ce bloc dit qu'il est arrivé par ``access``, et ce qu'il visait.
 
     Avec ``config``, il va aussi à son fichier d'audit.
@@ -258,9 +256,7 @@ class _Where(NamedTuple):
         )
 
 
-def _where(
-    signature: inspect.Signature, args: tuple[object, ...], kwargs: dict[str, object]
-) -> _Where:
+def _where(signature: inspect.Signature, args: tuple[object, ...], kwargs: dict[str, object]) -> _Where:
     """Ce que l'appel refusé visait, lu sur ses arguments."""
     try:
         given = signature.bind_partial(*args, **kwargs).arguments

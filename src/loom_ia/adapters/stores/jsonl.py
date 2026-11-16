@@ -131,9 +131,7 @@ class _FullReadNeeded(Exception):
     """La fin du fichier ne suffit pas à lire la dernière ligne : relire tout le fichier."""
 
 
-def _strict_mark(
-    path: Path, content: bytes, codec: JournalCodec, *, partial_start: bool
-) -> EventMark | None:
+def _strict_mark(path: Path, content: bytes, codec: JournalCodec, *, partial_start: bool) -> EventMark | None:
     """Repères de la dernière ligne complète ; lève si elle est illisible.
 
     ``partial_start`` : ``content`` est la fin d'un fichier, sa première ligne peut être
@@ -202,16 +200,12 @@ class JsonlEventStore:
 
     # --- Écriture ---------------------------------------------------------
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         if not drafts:
             return []
         tenant_id, session_id = journal_key(drafts)
         path = self.path(tenant_id, session_id)
-        return await asyncio.to_thread(
-            self._append_sync, path, session_id, list(drafts), expected_seq
-        )
+        return await asyncio.to_thread(self._append_sync, path, session_id, list(drafts), expected_seq)
 
     def _append_sync(
         self,
@@ -311,9 +305,7 @@ class JsonlEventStore:
         for path in sorted(tenant_dir.glob(f"*{SUFFIX}")):
             last = self._last_mark_of(path)
             if last is not None:
-                records.append(
-                    SessionRecord(session_id=last.session_id, last_seq=last.seq, updated_at=last.ts)
-                )
+                records.append(SessionRecord(session_id=last.session_id, last_seq=last.seq, updated_at=last.ts))
         records.sort(key=lambda record: record.updated_at, reverse=True)
         return records
 

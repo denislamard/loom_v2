@@ -83,9 +83,7 @@ class Actor:
             declared = security.user(user)
         except KeyError:
             known = ", ".join(sorted(u.id for u in security.users))
-            raise AccessDenied(
-                f"Utilisateur {user!r} inconnu (utilisateurs : {known})", user=user
-            ) from None
+            raise AccessDenied(f"Utilisateur {user!r} inconnu (utilisateurs : {known})", user=user) from None
         if key is not None and key.user != declared.id:
             raise AccessDenied(f"La clé {key.id!r} identifie {key.user!r}, pas {user!r}", user=user)
         return cls(
@@ -135,9 +133,7 @@ class Actor:
                 actor=self,
                 permission="act_as",
             )
-        return Actor(
-            user=target.user, tenant=target.tenant, roles=roles, via=self.user, key=self.key
-        )
+        return Actor(user=target.user, tenant=target.tenant, roles=roles, via=self.user, key=self.key)
 
     @property
     def signature(self) -> str:
@@ -206,9 +202,7 @@ def require(
     return tuple(holding)
 
 
-def require_decision(
-    actor: Actor, asked: Approvable, *, tenant: TenantId | None = None, amend: bool = False
-) -> tuple[AccessRole, ...]:
+def require_decision(actor: Actor, asked: Approvable, *, tenant: TenantId | None = None, amend: bool = False) -> tuple[AccessRole, ...]:
     """Les rôles par lesquels l'acteur peut trancher cette demande ; ``AccessDenied`` sinon.
 
     Règles 5 à 8 du § 4.4, remplies par **un même rôle** : ``approve`` sur
@@ -218,20 +212,12 @@ def require_decision(
     aussi trancher.
     """
     _same_tenant(actor, tenant, "approve", asked.agent)
-    refused = (
-        f"{actor.signature} ne peut pas trancher la demande {asked.tool} de l'agent {asked.agent}"
-    )
+    refused = f"{actor.signature} ne peut pas trancher la demande {asked.tool} de l'agent {asked.agent}"
 
-    def denied(
-        reason: str, permission: Permission = "approve", *, joined: str = " : "
-    ) -> AccessDenied:
-        return AccessDenied(
-            f"{refused}{joined}{reason}", actor=actor, permission=permission, agent=asked.agent
-        )
+    def denied(reason: str, permission: Permission = "approve", *, joined: str = " : ") -> AccessDenied:
+        return AccessDenied(f"{refused}{joined}{reason}", actor=actor, permission=permission, agent=asked.agent)
 
-    candidates = [
-        role for role in actor.roles if "approve" in role.permissions and _covers(role, asked.agent)
-    ]
+    candidates = [role for role in actor.roles if "approve" in role.permissions and _covers(role, asked.agent)]
     if not candidates:
         raise denied(f"aucun de ses rôles ({_roles(actor)}) n'a 'approve' sur cet agent")
     if asked.approvers is not None:
@@ -242,9 +228,7 @@ def require_decision(
     own = asked.launcher is not None and asked.launcher == actor.user
     if own:
         if not asked.self_approval:
-            raise denied(
-                "c'est son propre run, et l'agent interdit l'auto-approbation", "self_approve"
-            )
+            raise denied("c'est son propre run, et l'agent interdit l'auto-approbation", "self_approve")
         candidates = [role for role in candidates if "self_approve" in role.permissions]
         if not candidates:
             raise denied(
@@ -280,9 +264,7 @@ def can(
     return True
 
 
-def can_decide(
-    actor: Actor, asked: Approvable, *, tenant: TenantId | None = None, amend: bool = False
-) -> bool:
+def can_decide(actor: Actor, asked: Approvable, *, tenant: TenantId | None = None, amend: bool = False) -> bool:
     """``require_decision``, sans lever : le bouton « Approuver » pour qui peut s'en servir."""
     try:
         require_decision(actor, asked, tenant=tenant, amend=amend)
@@ -291,9 +273,7 @@ def can_decide(
     return True
 
 
-def _same_tenant(
-    actor: Actor, tenant: TenantId | None, permission: Permission, agent: str | None
-) -> None:
+def _same_tenant(actor: Actor, tenant: TenantId | None, permission: Permission, agent: str | None) -> None:
     """Règle 1 : l'acteur n'agit que chez son client."""
     if tenant is not None and tenant != actor.tenant:
         raise AccessDenied(

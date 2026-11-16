@@ -267,9 +267,7 @@ class _Handler(BaseHTTPRequestHandler):
                 raise _Reply(HTTPStatus.NOT_FOUND, f"{self._path()} : point d'accès inconnu")
             health = self.models.host.health()
             status = HTTPStatus.OK if health.state == "ready" else HTTPStatus.SERVICE_UNAVAILABLE
-            self._respond(
-                status, health, started, retry=health.state == "loading", exclude_none=True
-            )
+            self._respond(status, health, started, retry=health.state == "loading", exclude_none=True)
         except _Reply as reply:
             self._refuse(reply, started)
 
@@ -287,9 +285,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._ready()
             body = self._body()
             if not self.models.slots.acquire(blocking=False):
-                raise _Reply(
-                    HTTPStatus.SERVICE_UNAVAILABLE, "file d'attente pleine : réessayer", retry=True
-                )
+                raise _Reply(HTTPStatus.SERVICE_UNAVAILABLE, "file d'attente pleine : réessayer", retry=True)
             try:
                 payload, count = route(body)
             finally:
@@ -328,9 +324,7 @@ class _Handler(BaseHTTPRequestHandler):
         given = self.headers.get("Authorization", "")
         scheme, _, value = given.partition(" ")
         # Comparaison en temps constant : la durée ne dit rien du jeton.
-        if scheme.lower() != "bearer" or not hmac.compare_digest(
-            value.strip().encode(), expected.encode()
-        ):
+        if scheme.lower() != "bearer" or not hmac.compare_digest(value.strip().encode(), expected.encode()):
             raise _Reply(HTTPStatus.UNAUTHORIZED, "jeton absent ou refusé")
 
     def _ready(self) -> None:
@@ -407,10 +401,7 @@ def _parse[M: BaseModel](model: type[M], body: bytes) -> M:
 
 
 def _invalid(exc: ValidationError) -> str:
-    said = [
-        f"{'.'.join(str(p) for p in error['loc']) or 'corps'} : {error['msg']}"
-        for error in exc.errors()[:5]
-    ]
+    said = [f"{'.'.join(str(p) for p in error['loc']) or 'corps'} : {error['msg']}" for error in exc.errors()[:5]]
     return "champs invalides — " + " ; ".join(said)
 
 
@@ -421,9 +412,7 @@ def _compute[R](fn: Callable[[], R]) -> R:
         raise _Reply(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc)) from None
     except Exception as exc:
         log.exception("calcul impossible")
-        raise _Reply(
-            HTTPStatus.INTERNAL_SERVER_ERROR, f"calcul impossible : {first_line(exc)}"
-        ) from None
+        raise _Reply(HTTPStatus.INTERNAL_SERVER_ERROR, f"calcul impossible : {first_line(exc)}") from None
 
 
 # --- Le service ----------------------------------------------------------------------
@@ -514,9 +503,7 @@ def preflight(settings: ServiceSettings) -> str | None:
         return str(exc)
     missing = missing_modules()
     if missing:
-        return (
-            f"dépendance(s) absente(s) : {', '.join(missing)} — installer l'extra : loom-ia[memory]"
-        )
+        return f"dépendance(s) absente(s) : {', '.join(missing)} — installer l'extra : loom-ia[memory]"
     return None
 
 
@@ -533,9 +520,7 @@ def run(settings: ServiceSettings) -> int:
         log.error("%s : une autre instance tourne peut-être ; rien n'est chargé", exc)
         return EXIT_PORT
     host, port = service.address
-    log.info(
-        "loom-mem-gpu %s à l'écoute sur %s:%d, chargement des modèles…", __version__, host, port
-    )
+    log.info("loom-mem-gpu %s à l'écoute sur %s:%d, chargement des modèles…", __version__, host, port)
 
     def on_signal(number: int, _frame: FrameType | None) -> None:
         log.info("signal %s : arrêt après les requêtes en cours", signal.Signals(number).name)

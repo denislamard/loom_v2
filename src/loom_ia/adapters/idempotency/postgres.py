@@ -64,11 +64,7 @@ ON CONFLICT (key) DO UPDATE SET
 WHERE {IDEMPOTENCY_TABLE}.expires_at < now()
 """
 
-_COMPLETE: Final = (
-    f"UPDATE {IDEMPOTENCY_TABLE} SET status = 'completed', result = $1,"
-    " expires_at = now() + make_interval(secs => $2::float8)"
-    " WHERE key = $3"
-)
+_COMPLETE: Final = f"UPDATE {IDEMPOTENCY_TABLE} SET status = 'completed', result = $1, expires_at = now() + make_interval(secs => $2::float8) WHERE key = $3"
 
 # Avec un jeton de détenteur : la même instruction, bornée à la ligne encore à lui.
 _COMPLETE_HELD: Final = _COMPLETE + " AND holder = $4"
@@ -78,10 +74,7 @@ _RELEASE_HELD: Final = _RELEASE + " AND holder = $2"
 
 _EXISTS: Final = f"SELECT 1 FROM {IDEMPOTENCY_TABLE} WHERE key = $1"
 
-_GET: Final = (
-    f"SELECT status, result, expires_at FROM {IDEMPOTENCY_TABLE}"
-    " WHERE key = $1 AND (status = 'in_progress' OR expires_at > now())"
-)
+_GET: Final = f"SELECT status, result, expires_at FROM {IDEMPOTENCY_TABLE} WHERE key = $1 AND (status = 'in_progress' OR expires_at > now())"
 
 _SWEEP: Final = f"DELETE FROM {IDEMPOTENCY_TABLE} WHERE status = 'completed' AND expires_at < now()"
 
@@ -131,18 +124,12 @@ class PostgresIdempotency:
             expires_at=row["expires_at"],
         )
 
-    async def reserve(
-        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
-    ) -> bool:
+    async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
         async with self._pg.transaction() as connection:
-            status = await connection.execute(
-                _RESERVE, key, scope.tenant_id, scope.session_id, float(ttl), holder
-            )
+            status = await connection.execute(_RESERVE, key, scope.tenant_id, scope.session_id, float(ttl), holder)
         return rows_touched(status) == 1
 
-    async def complete(
-        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
-    ) -> None:
+    async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
         seconds = float(self.retention if ttl is None else ttl)
         payload = json.dumps(recordable(result), ensure_ascii=False)
         async with self._pg.transaction() as connection:
@@ -155,9 +142,7 @@ class PostgresIdempotency:
                 status = await connection.execute(_COMPLETE_HELD, payload, seconds, key, holder)
             # Un jeton qui ne répond pas laisse la ligne telle quelle : elle est à
             # un autre. Seule une clé absente est une erreur.
-            absent = rows_touched(status) == 0 and (
-                holder is None or await connection.fetchval(_EXISTS, key) is None
-            )
+            absent = rows_touched(status) == 0 and (holder is None or await connection.fetchval(_EXISTS, key) is None)
         if absent:
             raise KeyError(f"Clé {key!r} non réservée : rien à enregistrer")
 

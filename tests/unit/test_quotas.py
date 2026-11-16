@@ -334,9 +334,7 @@ async def test_a_run_recorded_during_the_warm_up_is_not_counted_twice(
     assert (await counter.consumed(DUPONT, key)).tokens == 200
 
 
-async def test_a_run_spread_over_two_warm_up_pages_keeps_all_its_calls(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_run_spread_over_two_warm_up_pages_keeps_all_its_calls(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(usage_module, "PAGE", 2)
     store = InMemoryEventStore()
     await written(store, spending(DUPONT, 5))
@@ -714,9 +712,7 @@ async def test_rest_answers_429_when_the_day_is_exhausted(demo: ConfigFactory) -
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
             headers = {"Authorization": f"Bearer {cle}"}
             body = {"message": QUESTION}
-            assert (
-                await http.post("/v1/agents/demo/runs", json=body, headers=headers)
-            ).status_code == 201
+            assert (await http.post("/v1/agents/demo/runs", json=body, headers=headers)).status_code == 201
             refus = await http.post("/v1/agents/demo/runs", json=body, headers=headers)
     assert refus.status_code == 429
     assert "budget du client atteint" in refus.json()["detail"]
@@ -743,9 +739,7 @@ async def test_rest_answers_429_when_the_tenant_quota_is_reached(demo: ConfigFac
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
             headers = {"Authorization": f"Bearer {cle}"}
             body = {"message": QUESTION}
-            assert (
-                await http.post("/v1/agents/demo/runs", json=body, headers=headers)
-            ).status_code == 201
+            assert (await http.post("/v1/agents/demo/runs", json=body, headers=headers)).status_code == 201
             refus = await http.post("/v1/agents/demo/runs", json=body, headers=headers)
     assert refus.status_code == 429
     assert 1 <= int(refus.headers["Retry-After"]) <= 60
@@ -785,10 +779,7 @@ async def test_a_key_rate_limit_protects_the_server_even_on_a_read(demo: ConfigF
             assert refus.status_code == 429
             assert 1 <= int(refus.headers["Retry-After"]) <= 60
             # Test L3 du 22/10 : l'attente n'était que dans l'en-tête.
-            assert refus.json()["detail"] == (
-                "Clé 'bridee' : 2 requêtes par minute dépassées, "
-                f"réessayer dans {refus.headers['Retry-After']} s"
-            )
+            assert refus.json()["detail"] == (f"Clé 'bridee' : 2 requêtes par minute dépassées, réessayer dans {refus.headers['Retry-After']} s")
             # Une clé sans limite de débit n'est pas comptée.
             chez_libre = {"Authorization": f"Bearer {libre}"}
             for _ in range(5):
@@ -798,9 +789,7 @@ async def test_a_key_rate_limit_protects_the_server_even_on_a_read(demo: ConfigF
 # --- Ligne de commande : `report --period`, et ce que `validate` en dit --------
 
 
-def test_report_period_prints_what_a_tenant_spent_and_what_is_left(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_report_period_prints_what_a_tenant_spent_and_what_is_left(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from loom_ia.access.cli import main
 
     config = demo(
@@ -830,9 +819,7 @@ def test_report_period_prints_what_a_tenant_spent_and_what_is_left(
     assert found["limits"] == {}
 
 
-def test_report_without_a_target_says_what_it_expects(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_report_without_a_target_says_what_it_expects(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from loom_ia.access.cli import main
 
     assert main(["--config", str(demo()), "report"]) == 2
@@ -842,9 +829,7 @@ def test_report_without_a_target_says_what_it_expects(
     assert "invalid choice: 'semaine'" in capsys.readouterr().err
 
 
-def test_validate_shows_the_budget_and_the_quota_of_a_tenant(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_budget_and_the_quota_of_a_tenant(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from loom_ia.access.cli import main
 
     budgets = {"tenant": {"max_cost_per_day": 5.0, "max_tokens_per_month": 200_000}}
@@ -856,9 +841,7 @@ def test_validate_shows_the_budget_and_the_quota_of_a_tenant(
     assert "    quota : 3 run(s) par minute" in out
 
 
-def test_the_cli_refuses_an_exhausted_budget_and_writes_nothing(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_refuses_an_exhausted_budget_and_writes_nothing(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from loom_ia.access.cli import main
 
     config = str(demo(storage=JOURNAL, tenants=clients(budgets=AFTER_ONE)))
@@ -911,9 +894,7 @@ def test_the_cli_says_when_the_budget_comes_back(
     assert capsys.readouterr().err.strip().endswith(f"— réessayer dans {said}")
 
 
-def test_the_cli_refuses_a_quota_with_the_wait_it_carries(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_cli_refuses_a_quota_with_the_wait_it_carries(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     """Un process de la CLI ne lance qu'un run : le contrôle est forcé pour l'atteindre."""
     from loom_ia.access.cli import main
 
@@ -927,9 +908,7 @@ def test_the_cli_refuses_a_quota_with_the_wait_it_carries(
     assert err == f"Client {DUPONT!r} : 1 par minute dépassé, réessayer dans 42.0 s\n"
 
 
-def test_sessions_list_can_name_the_tenant_it_asks_for(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_sessions_list_can_name_the_tenant_it_asks_for(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     # Le `--tenant` manquait à `sessions` et à `report` en 5.1a.
     from loom_ia.access.cli import main
 

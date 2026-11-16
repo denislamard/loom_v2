@@ -79,9 +79,7 @@ class RecordingTool:
     result: ToolOutput = field(default_factory=lambda: ToolOutput.text("ok"))
     error: Exception | None = None
     delay: float = 0.0
-    calls: list[tuple[dict[str, JsonValue], ToolContext]] = field(
-        default_factory=list[tuple[dict[str, JsonValue], ToolContext]]
-    )
+    calls: list[tuple[dict[str, JsonValue], ToolContext]] = field(default_factory=list[tuple[dict[str, JsonValue], ToolContext]])
     cancelled: bool = False
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
@@ -102,18 +100,14 @@ def spec(name: str, **options: object) -> ToolSpec:
         "properties": {"x": {"type": "integer"}},
         "additionalProperties": False,
     }
-    return ToolSpec.model_validate(
-        {"name": name, "description": name, "kind": "python", "input_schema": schema, **options}
-    )
+    return ToolSpec.model_validate({"name": name, "description": name, "kind": "python", "input_schema": schema, **options})
 
 
 def awaiting(*calls: PendingCall, tenant: str = "default") -> RunState:
     journal = RunJournal(agent="demo", tenant_id=TenantId(tenant))
     journal.start("?", context=CallerContext(tenant_id=TenantId(tenant), user_id="u1"))
     events = [draft.to_event(seq) for seq, draft in enumerate(journal.take(), start=1)]
-    return fold(events, journal.run_id).model_copy(
-        update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls}
-    )
+    return fold(events, journal.run_id).model_copy(update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls})
 
 
 def call(call_id: str, name: str, *, started: bool = False, **arguments: JsonValue) -> PendingCall:
@@ -133,9 +127,7 @@ def journaled(call_id: str, name: str, *payloads: DurablePayload, x: int = 3) ->
     return fold(events, journal.run_id)
 
 
-def asked(
-    call_id: str, name: str, reason: str = "outil à approbation obligatoire"
-) -> DurablePayload:
+def asked(call_id: str, name: str, reason: str = "outil à approbation obligatoire") -> DurablePayload:
     return ApprovalRequested(call_id=call_id, tool_name=name, arguments={"x": 3}, reason=reason)
 
 
@@ -144,9 +136,7 @@ def granted(call_id: str, name: str) -> DurablePayload:
 
 
 def launched(call_id: str, name: str, *, resumed: bool = False) -> DurablePayload:
-    return ToolCalled(
-        call_id=call_id, tool_name=name, tool_kind="python", arguments={"x": 3}, resumed=resumed
-    )
+    return ToolCalled(call_id=call_id, tool_name=name, tool_kind="python", arguments={"x": 3}, resumed=resumed)
 
 
 async def collect(executor: ToolExecutor, state: RunState) -> list[ToolEvent]:
@@ -182,9 +172,7 @@ async def test_batch_runs_in_parallel_and_reports_as_soon_as_possible() -> None:
 
     executor = ToolExecutor([lent, rapide])
     async with asyncio.timeout(2):
-        events = await collect(
-            executor, awaiting(call("c1", "lent", x=1), call("c2", "rapide", x=2))
-        )
+        events = await collect(executor, awaiting(call("c1", "lent", x=1), call("c2", "rapide", x=2)))
 
     assert [(type(e).__name__, e.call_id) for e in events] == [
         ("ToolCalled", "c1"),
@@ -224,9 +212,7 @@ async def test_rejected_calls_are_not_started() -> None:
     assert outputs["c1"].as_text == "Outil inconnu : 'inconnu'. Outils disponibles : cible."
     assert outputs["c2"].as_text.startswith("Arguments illisibles")
     assert outputs["c3"].as_text == (
-        "Arguments non conformes au schéma de l'outil :\n"
-        "- (racine) : propriété non prévue par le schéma : y\n"
-        "- x : doit être un entier (reçu : du texte)"
+        "Arguments non conformes au schéma de l'outil :\n- (racine) : propriété non prévue par le schéma : y\n- x : doit être un entier (reçu : du texte)"
     )
     assert all(isinstance(e, ToolCompleted) and e.latency_ms == 0 for e in events)
 
@@ -234,14 +220,9 @@ async def test_rejected_calls_are_not_started() -> None:
 async def test_two_missing_arguments_are_said_in_one_line() -> None:
     """``required`` : une erreur par absente, qui les nomme toutes (test E4 du 19/10)."""
     schema: dict[str, JsonValue] = {"type": "object", "required": ["a", "b"]}
-    deux = ToolSpec.model_validate(
-        {"name": "deux", "description": "deux", "kind": "python", "input_schema": schema}
-    )
+    deux = ToolSpec.model_validate({"name": "deux", "description": "deux", "kind": "python", "input_schema": schema})
     events = await collect(ToolExecutor([RecordingTool(deux)]), awaiting(call("c1", "deux")))
-    assert completed(events)["c1"].as_text == (
-        "Arguments non conformes au schéma de l'outil :\n"
-        "- (racine) : propriété requise absente : a, b"
-    )
+    assert completed(events)["c1"].as_text == ("Arguments non conformes au schéma de l'outil :\n- (racine) : propriété requise absente : a, b")
 
 
 async def test_a_schema_pattern_that_does_not_finish_refuses_the_call(
@@ -257,14 +238,10 @@ async def test_a_schema_pattern_that_does_not_finish_refuses_the_call(
         "properties": {"s": {"type": "string", "pattern": "^(a|aa)+$"}},
         "required": ["s"],
     }
-    lent = ToolSpec.model_validate(
-        {"name": "lent", "description": "lent", "kind": "python", "input_schema": schema}
-    )
+    lent = ToolSpec.model_validate({"name": "lent", "description": "lent", "kind": "python", "input_schema": schema})
     target = RecordingTool(lent)
     executor = ToolExecutor([target])
-    events = await collect(
-        executor, awaiting(call("c1", "lent", s="a" * 64 + "!"), call("c2", "lent", s="aaa"))
-    )
+    events = await collect(executor, awaiting(call("c1", "lent", s="a" * 64 + "!"), call("c2", "lent", s="aaa")))
     outputs = completed(events)
     assert outputs["c1"].is_error
     assert outputs["c1"].as_text.startswith("Arguments non conformes au schéma de l'outil :")
@@ -290,11 +267,7 @@ async def test_a_value_from_a_reference_is_refused_saying_so() -> None:
             "ton": {"type": "string"},
         },
     }
-    target = RecordingTool(
-        ToolSpec.model_validate(
-            {"name": "rediger", "description": "Rédige.", "kind": "python", "input_schema": schema}
-        )
-    )
+    target = RecordingTool(ToolSpec.model_validate({"name": "rediger", "description": "Rédige.", "kind": "python", "input_schema": schema}))
     arguments: dict[str, JsonValue] = {
         "consignes": '{"$ref": "result:1"}',
         "devis": {"$ref": "result:1"},
@@ -331,9 +304,7 @@ async def test_a_refused_argument_does_not_quote_its_value() -> None:
 
 async def test_validation_can_be_disabled() -> None:
     target = RecordingTool(spec("cible"))
-    events = await collect(
-        ToolExecutor([target], validate_arguments=False), awaiting(call("c1", "cible", x="a"))
-    )
+    events = await collect(ToolExecutor([target], validate_arguments=False), awaiting(call("c1", "cible", x="a")))
     assert target.calls[0][0] == {"x": "a"}
     assert not completed(events)["c1"].is_error
 
@@ -381,9 +352,7 @@ async def test_arguments_corrected_by_a_human_are_validated_on_resume() -> None:
     executor = ToolExecutor([virement])
 
     def corrected(arguments: dict[str, JsonValue]) -> RunState:
-        accord = ApprovalGranted(
-            call_id="c1", tool_name="virement", by="denis", arguments=arguments
-        )
+        accord = ApprovalGranted(call_id="c1", tool_name="virement", by="denis", arguments=arguments)
         return journaled("c1", "virement", asked("c1", "virement"), accord)
 
     events = await collect(executor, corrected(BAD_ARGUMENTS))
@@ -419,9 +388,7 @@ async def test_unknown_tool_without_any_tool() -> None:
         (TimeoutError("api lente"), "Erreur de l'outil cible : TimeoutError: api lente"),
     ],
 )
-async def test_failures_become_error_results(
-    error: Exception, expected: str, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_failures_become_error_results(error: Exception, expected: str, caplog: pytest.LogCaptureFixture) -> None:
     target = RecordingTool(spec("cible"), error=error)
     with caplog.at_level(logging.WARNING, logger="loom_ia.engine.executor"):
         outputs = completed(await collect(ToolExecutor([target]), awaiting(call("c1", "cible"))))
@@ -452,9 +419,7 @@ async def test_a_schema_that_cannot_be_resolved_fails_its_own_calls_only(
         "type": "object",
         "properties": {"x": {"$ref": "#/$defs/absent"}},
     }
-    casse = RecordingTool(
-        ToolSpec(name="mcp_casse", description="d", kind="mcp", input_schema=schema)
-    )
+    casse = RecordingTool(ToolSpec(name="mcp_casse", description="d", kind="mcp", input_schema=schema))
     sain = RecordingTool(spec("sain"))
     with caplog.at_level(logging.ERROR, logger="loom_ia.engine.executor"):
         events = await collect(
@@ -484,21 +449,15 @@ async def test_a_failing_artifact_store_fails_the_call_that_reads_it(
     cible = RecordingTool(spec("cible"))
     journal = RunJournal(agent="demo")
     journal.start("?").model_turn(tool_call_message(("c1", "gros", {})))
-    journal.tool_results(
-        {"c1": ToolOutput(blocks=(TextBlock(text="aperçu"),), offloaded="artifact://t/s/a.txt")}
-    )
-    journal.model_turn(
-        tool_call_message(("c2", "cible", {"x": {"$ref": "result:1"}}), ("c3", "cible", {"x": 2}))
-    )
+    journal.tool_results({"c1": ToolOutput(blocks=(TextBlock(text="aperçu"),), offloaded="artifact://t/s/a.txt")})
+    journal.model_turn(tool_call_message(("c2", "cible", {"x": {"$ref": "result:1"}}), ("c3", "cible", {"x": 2})))
     drafts = journal.take()
     state = fold([d.to_event(seq) for seq, d in enumerate(drafts, start=1)], journal.run_id)
 
     with caplog.at_level(logging.ERROR, logger="loom_ia.engine.executor"):
         events = await collect(ToolExecutor([cible], artifacts=Broken()), state)
     outputs = completed(events)
-    assert outputs["c2"] == ToolOutput.error(
-        "Appel à cible impossible à préparer : PermissionError: disque illisible"
-    )
+    assert outputs["c2"] == ToolOutput.error("Appel à cible impossible à préparer : PermissionError: disque illisible")
     assert not outputs["c3"].is_error
     assert [arguments for arguments, _ in cible.calls] == [{"x": 2}]
     assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 1
@@ -509,9 +468,7 @@ async def test_timeouts() -> None:
     default = RecordingTool(spec("defaut"), delay=1)
     unlimited = RecordingTool(spec("libre"), delay=0.03)
     executor = ToolExecutor([own, default, unlimited], default_timeout=0.02)
-    outputs = completed(
-        await collect(executor, awaiting(call("c1", "propre"), call("c2", "defaut")))
-    )
+    outputs = completed(await collect(executor, awaiting(call("c1", "propre"), call("c2", "defaut"))))
     assert outputs["c1"] == ToolOutput.error("Délai dépassé : pas de réponse en 0.01 s.")
     assert outputs["c2"] == ToolOutput.error("Délai dépassé : pas de réponse en 0.02 s.")
     assert own.cancelled and default.cancelled
@@ -557,9 +514,7 @@ async def test_an_approval_given_before_the_first_launch_lets_the_tool_run_once(
 async def test_an_approved_call_that_was_launched_is_not_relaunched() -> None:
     """Accord, lancement, plantage : l'accord a servi, l'effet est d'état inconnu (#18)."""
     virer = RecordingTool(spec("virer", side_effects="irreversible", approval="always"))
-    state = journaled(
-        "c1", "virer", asked("c1", "virer"), granted("c1", "virer"), launched("c1", "virer")
-    )
+    state = journaled("c1", "virer", asked("c1", "virer"), granted("c1", "virer"), launched("c1", "virer"))
     events = await collect(ToolExecutor([virer]), state)
     assert completed(events)["c1"] == ToolOutput.error(UNKNOWN_STATE)
     assert not [e for e in events if isinstance(e, ToolCalled)]
@@ -568,12 +523,8 @@ async def test_an_approved_call_that_was_launched_is_not_relaunched() -> None:
 
 async def test_an_approved_call_that_was_launched_can_ask_a_human_again() -> None:
     """``on_unknown: pause`` : le premier accord ne répond pas à l'état inconnu, on redemande."""
-    virer = RecordingTool(
-        spec("virer", side_effects="irreversible", approval="always", on_unknown="pause")
-    )
-    state = journaled(
-        "c1", "virer", asked("c1", "virer"), granted("c1", "virer"), launched("c1", "virer")
-    )
+    virer = RecordingTool(spec("virer", side_effects="irreversible", approval="always", on_unknown="pause"))
+    state = journaled("c1", "virer", asked("c1", "virer"), granted("c1", "virer"), launched("c1", "virer"))
     events = await collect(ToolExecutor([virer]), state)
     [demande] = [e for e in events if isinstance(e, ApprovalRequested)]
     assert demande.reason == UNKNOWN_STATE
@@ -618,9 +569,7 @@ def asked_for(call_id: str, name: str, x: int, reason: str = "à approuver") -> 
 
 async def test_a_deferred_approval_runs_the_arguments_a_policy_replaced() -> None:
     virer = RecordingTool(spec("virer", side_effects="irreversible", approval="always"))
-    state = journaled(
-        "c1", "virer", replaced("c1", 5), asked_for("c1", "virer", 5), granted("c1", "virer")
-    )
+    state = journaled("c1", "virer", replaced("c1", 5), asked_for("c1", "virer", 5), granted("c1", "virer"))
     events = await collect(ToolExecutor([virer]), state)
     assert not completed(events)["c1"].is_error
     assert [arguments for arguments, _ in virer.calls] == [{"x": 5}]
@@ -635,9 +584,7 @@ async def test_a_deferred_correction_wins_over_the_policy() -> None:
 
 
 async def test_a_second_approval_after_an_unknown_effect_relaunches_what_was_launched() -> None:
-    virer = RecordingTool(
-        spec("virer", side_effects="irreversible", approval="always", on_unknown="pause")
-    )
+    virer = RecordingTool(spec("virer", side_effects="irreversible", approval="always", on_unknown="pause"))
     state = journaled(
         "c1",
         "virer",
@@ -668,18 +615,14 @@ async def test_an_online_approval_runs_the_arguments_a_policy_replaced() -> None
         return Approved(by="humain")
 
     batch = awaiting(call("c1", "virer", x=3))
-    events = [
-        e async for e in ToolExecutor([virer]).run_batch(batch, policies=bound, approver=approver)
-    ]
+    events = [e async for e in ToolExecutor([virer]).run_batch(batch, policies=bound, approver=approver)]
     assert not completed(events)["c1"].is_error
     assert [arguments for arguments, _ in virer.calls] == [{"x": 5}]
 
 
 async def test_an_approval_asked_after_the_launch_is_spent_by_the_next_one() -> None:
     """Plantage après le lancement accordé en état inconnu : ce second accord a servi aussi."""
-    virer = RecordingTool(
-        spec("virer", side_effects="irreversible", on_unknown="pause", approval="never")
-    )
+    virer = RecordingTool(spec("virer", side_effects="irreversible", on_unknown="pause", approval="never"))
     state = journaled(
         "c1",
         "virer",
@@ -697,9 +640,7 @@ async def test_an_approval_asked_after_the_launch_is_spent_by_the_next_one() -> 
 async def test_a_call_safe_to_retry_resumes_after_its_approval(options: dict[str, object]) -> None:
     """Lecture ou outil idempotent : l'accord déjà donné vaut encore, sans nouvelle demande."""
     lire = RecordingTool(spec("lire", approval="always", on_unknown="pause", **options))
-    state = journaled(
-        "c1", "lire", asked("c1", "lire"), granted("c1", "lire"), launched("c1", "lire")
-    )
+    state = journaled("c1", "lire", asked("c1", "lire"), granted("c1", "lire"), launched("c1", "lire"))
     events = await collect(ToolExecutor([lire]), state)
     assert not [e for e in events if isinstance(e, ApprovalRequested)]
     assert not completed(events)["c1"].is_error
@@ -727,9 +668,7 @@ async def test_closing_the_batch_cancels_running_tools() -> None:
     slow = RecordingTool(spec("lent"), delay=5)
     executor = ToolExecutor([fast, slow])
     seen: list[ToolEvent] = []
-    async with aclosing(
-        executor.run_batch(awaiting(call("c1", "rapide"), call("c2", "lent")))
-    ) as events:
+    async with aclosing(executor.run_batch(awaiting(call("c1", "rapide"), call("c2", "lent")))) as events:
         async for event in events:
             seen.append(event)
             if isinstance(event, ToolCompleted):
@@ -762,9 +701,7 @@ class SelfCancellingTool:
 
 
 @pytest.mark.parametrize("how", ["raises", "inner_task", "own_task"])
-async def test_a_tool_cancelled_from_inside_fails_without_blocking_the_batch(
-    how: str, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_tool_cancelled_from_inside_fails_without_blocking_the_batch(how: str, caplog: pytest.LogCaptureFixture) -> None:
     """Annulé de l'intérieur, un outil n'arrête pas le run : c'est son échec, dit au modèle.
 
     Sans résultat pour cet appel, le lot l'attendait indéfiniment.
@@ -772,14 +709,9 @@ async def test_a_tool_cancelled_from_inside_fails_without_blocking_the_batch(
     annule, sain = SelfCancellingTool(spec("annule"), how), RecordingTool(spec("sain"))
     with caplog.at_level(logging.WARNING, logger="loom_ia.engine.executor"):
         async with asyncio.timeout(2):
-            events = await collect(
-                ToolExecutor([annule, sain]), awaiting(call("c1", "annule"), call("c2", "sain"))
-            )
+            events = await collect(ToolExecutor([annule, sain]), awaiting(call("c1", "annule"), call("c2", "sain")))
     outputs = completed(events)
-    assert outputs["c1"] == ToolOutput.error(
-        "Erreur de l'outil annule : l'outil s'est annulé de lui-même (CancelledError), "
-        "sans que le run ait été arrêté."
-    )
+    assert outputs["c1"] == ToolOutput.error("Erreur de l'outil annule : l'outil s'est annulé de lui-même (CancelledError), sans que le run ait été arrêté.")
     assert outputs["c2"] == ToolOutput.text("ok")
     logged = [r.getMessage() for r in caplog.records if r.name == "loom_ia.engine.executor"]
     assert logged == ["Outil annule annulé de l'intérieur"]
@@ -850,9 +782,7 @@ CLIENT = StateKeyRule(
     schema={"type": "string", "pattern": "^C-[0-9]+$"},
     sources={"fiche": StateSourceRule(path="/code"), "clore": StateSourceRule(value=None)},
 )
-VILLE = StateKeyRule(
-    schema={"type": "string"}, sources={"fiche": StateSourceRule(path="/adresse/ville")}
-)
+VILLE = StateKeyRule(schema={"type": "string"}, sources={"fiche": StateSourceRule(path="/adresse/ville")})
 ETIQUETTE = StateKeyRule(schema={"enum": ["vip"]}, sources={"fiche": StateSourceRule(value="vip")})
 LANGUE = StateKeyRule(schema={"enum": ["fr", "en"]}, default="fr")
 FICHE: JsonValue = {"code": "C-002", "adresse": {"ville": "Dijon"}}
@@ -910,9 +840,7 @@ async def test_a_source_that_ignores_a_missing_path_says_nothing(
         schema={"type": "string", "pattern": "^C-[0-9]+$"},
         sources={"sql": StateSourceRule(path="/rows/0/code", on_missing="ignore")},
     )
-    ville = StateKeyRule(
-        schema={"type": "string"}, sources={"sql": StateSourceRule(path="/rows/0/ville")}
-    )
+    ville = StateKeyRule(schema={"type": "string"}, sources={"sql": StateSourceRule(path="/rows/0/ville")})
     rules = StateRules({"client": code, "ville": ville})
 
     async def run(rows: JsonValue) -> ToolOutput:
@@ -965,9 +893,7 @@ async def test_a_refused_write_keeps_the_result_a_success(
     """D8 (décision du 14/10) : l'outil a pu agir ; un résultat en erreur le ferait refaire."""
     fiche = RecordingTool(spec("fiche"), result=result)
     with caplog.at_level(logging.WARNING, logger="loom_ia.engine.session_state"):
-        outputs = completed(
-            await collect(stateful(fiche, **options), awaiting(call("c1", "fiche")))
-        )
+        outputs = completed(await collect(stateful(fiche, **options), awaiting(call("c1", "fiche"))))
     output = outputs["c1"]
     assert not output.is_error
     assert (output.blocks, output.data) == (result.blocks, result.data)
@@ -1112,9 +1038,7 @@ async def test_a_result_read_from_the_journal_counts_for_the_batch_size() -> Non
         def from_journal(self, run_id: object, call_id: str) -> bool:
             return call_id == "c1"
 
-        async def output(
-            self, run_id: object, call_id: str, *args: object
-        ) -> tuple[ToolOutput, None]:
+        async def output(self, run_id: object, call_id: str, *args: object) -> tuple[ToolOutput, None]:
             if call_id == "c1":
                 return ToolOutput(state={"a": "x" * 900}), None
             # La doublure répond après la lecture du journal.
@@ -1144,9 +1068,7 @@ async def test_an_erasure_read_from_the_journal_frees_its_room_in_the_batch() ->
         def from_journal(self, run_id: object, call_id: str) -> bool:
             return call_id == "c1"
 
-        async def output(
-            self, run_id: object, call_id: str, *args: object
-        ) -> tuple[ToolOutput, None]:
+        async def output(self, run_id: object, call_id: str, *args: object) -> tuple[ToolOutput, None]:
             if call_id == "c1":
                 return ToolOutput(state={"a": None}), None
             await asyncio.sleep(0.02)
@@ -1182,9 +1104,7 @@ async def test_a_sub_run_keeps_no_state_from_the_journal() -> None:
         async def approve(self, run_id: object, pending: PendingApproval) -> Approved:
             return Approved()
 
-    child = awaiting(call("c1", "fiche")).model_copy(
-        update={"parent_run_id": RunId("parent"), "depth": 1}
-    )
+    child = awaiting(call("c1", "fiche")).model_copy(update={"parent_run_id": RunId("parent"), "depth": 1})
     executor = stateful(RecordingTool(spec("fiche")))
     executor.replay = Journal()  # pyright: ignore[reportAttributeAccessIssue]
     [output] = completed([e async for e in executor.run_batch(child)]).values()
@@ -1207,9 +1127,7 @@ async def test_after_tool_policies_decide_which_result_writes() -> None:
     outputs = completed([e async for e in stateful(fiche).run_batch(state, policies=bound)])
     assert outputs["c1"].is_error and outputs["c1"].state == {}
     assert outputs["c2"].state == {"client": "C-003", "etiquette": "vip"}
-    assert outputs["c2"].state_refused == (
-        "ville non posé : chemin '/adresse/ville' absent du résultat",
-    )
+    assert outputs["c2"].state_refused == ("ville non posé : chemin '/adresse/ville' absent du résultat",)
 
 
 async def test_the_call_order_decides_whatever_order_the_tools_finish_in() -> None:
@@ -1217,9 +1135,7 @@ async def test_the_call_order_decides_whatever_order_the_tools_finish_in() -> No
     rules = StateRules({"client": CLIENT})
     lent = RecordingTool(spec("lent"), delay=0.05, result=ToolOutput(state={"client": "C-001"}))
     rapide = RecordingTool(spec("rapide"), result=ToolOutput(state={"client": "C-002"}))
-    model = ScriptedModel(
-        tool_call_message(("c1", "lent", {}), ("c2", "rapide", {})), Message.assistant("Fait.")
-    )
+    model = ScriptedModel(tool_call_message(("c1", "lent", {}), ("c2", "rapide", {})), Message.assistant("Fait."))
     ctx = RunContext(
         agent="demo",
         store=InMemoryEventStore(),
@@ -1241,9 +1157,7 @@ async def test_a_resumed_batch_shows_the_same_state_to_its_remaining_calls() -> 
     journal.start("?")
     journal.model_turn(tool_call_message(("c1", "rapide", {}), ("c2", "lent", {})))
     drafts = journal.take()
-    done = ToolCompleted(
-        call_id="c1", tool_name="rapide", output=ToolOutput(state={"client": "C-777"})
-    )
+    done = ToolCompleted(call_id="c1", tool_name="rapide", output=ToolOutput(state={"client": "C-777"}))
     drafts.append(journal.scope.draft(done))
     events = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
     state = fold(events, journal.run_id)
@@ -1323,10 +1237,7 @@ async def test_a_batch_cannot_grow_the_state_beyond_its_limit_together() -> None
     """Chaque appel compte ce que les précédents du lot ont posé (D7)."""
     big = StateKeyRule(schema={"type": "string"})
     rules = StateRules({"a": big, "b": big, "c": big}, max_value_bytes=1000, max_total_bytes=2500)
-    tools = [
-        RecordingTool(spec(name), result=ToolOutput(state={name: "x" * 900}))
-        for name in ("a", "b", "c")
-    ]
+    tools = [RecordingTool(spec(name), result=ToolOutput(state={name: "x" * 900})) for name in ("a", "b", "c")]
     executor = ToolExecutor(tools, state_rules=rules)
     state = awaiting(call("c1", "a"), call("c2", "b"), call("c3", "c"))
     outputs = completed(await collect(executor, state))
@@ -1344,13 +1255,9 @@ async def test_the_batch_limit_counts_in_call_order_whatever_order_the_tools_fin
     """
     texte = StateKeyRule(schema={"type": "string"})
     rules = StateRules({"k": texte, "j": texte}, max_value_bytes=1000, max_total_bytes=1000)
-    lent = RecordingTool(
-        spec("lent"), delay=0.05, result=ToolOutput(state={"k": "x" * 10, "j": "y" * 500})
-    )
+    lent = RecordingTool(spec("lent"), delay=0.05, result=ToolOutput(state={"k": "x" * 10, "j": "y" * 500}))
     rapide = RecordingTool(spec("rapide"), result=ToolOutput(state={"k": "z" * 600}))
-    model = ScriptedModel(
-        tool_call_message(("c1", "lent", {}), ("c2", "rapide", {})), Message.assistant("Fait.")
-    )
+    model = ScriptedModel(tool_call_message(("c1", "lent", {}), ("c2", "rapide", {})), Message.assistant("Fait."))
     ctx = RunContext(
         agent="demo",
         store=InMemoryEventStore(),
@@ -1361,9 +1268,7 @@ async def test_the_batch_limit_counts_in_call_order_whatever_order_the_tools_fin
     started = await begin_run(ctx, "?")
     state = await drive(ctx, started.run_id)
     events = await ctx.store.read(state.context.tenant_id, state.session_id)
-    outputs = {
-        e.payload.call_id: e.payload.output for e in events if isinstance(e.payload, ToolCompleted)
-    }
+    outputs = {e.payload.call_id: e.payload.output for e in events if isinstance(e.payload, ToolCompleted)}
     kept = session_state(events)
 
     assert list(outputs) == ["c2", "c1"]
@@ -1384,9 +1289,7 @@ async def test_a_resumed_batch_counts_the_calls_already_settled() -> None:
     journal.start("?")
     journal.model_turn(tool_call_message(("c1", "rapide", {}), ("c2", "lent", {})))
     drafts = journal.take()
-    done = ToolCompleted(
-        call_id="c1", tool_name="rapide", output=ToolOutput(state={"k": "z" * 600})
-    )
+    done = ToolCompleted(call_id="c1", tool_name="rapide", output=ToolOutput(state={"k": "z" * 600}))
     drafts.append(journal.scope.draft(done))
     state = fold([d.to_event(seq) for seq, d in enumerate(drafts, start=1)], journal.run_id)
     assert [c.call_id for c in state.pending_calls] == ["c2"]
@@ -1408,14 +1311,10 @@ async def test_a_session_over_its_limit_can_still_shrink() -> None:
     grow = RecordingTool(spec("grossit"), result=ToolOutput(state={"b": "x" * 950}))
     executor = ToolExecutor([shrink, grow], state_rules=rules)
     state = awaiting(call("c1", "reduit"))
-    [output] = completed(
-        [e async for e in executor.run_batch(state, session_state=session)]
-    ).values()
+    [output] = completed([e async for e in executor.run_batch(state, session_state=session)]).values()
     assert output.state == {"a": "x" * 100}
     state = awaiting(call("c1", "grossit"))
-    [output] = completed(
-        [e async for e in executor.run_batch(state, session_state=session)]
-    ).values()
+    [output] = completed([e async for e in executor.run_batch(state, session_state=session)]).values()
     assert output.state == {}
     assert "ferait" in output.state_refused[0]
 
@@ -1453,8 +1352,7 @@ def test_the_application_can_still_shrink_a_session_over_its_limit() -> None:
     assert rules.opening({"a": None}, session) == []
     grown: dict[str, JsonValue] = {"a": "x" * 700, "b": "y" * 600}
     assert rules.opening({"a": "x" * 700}, session) == [
-        f"le state de la session ferait {state_size(grown)} octets, "
-        "au-delà de sessions.state.max_total_bytes (1000)"
+        f"le state de la session ferait {state_size(grown)} octets, au-delà de sessions.state.max_total_bytes (1000)"
     ]
     # Sans clé obligatoire, rien ne manque jamais.
     assert rules.opening({}, {}) == []
@@ -1463,9 +1361,7 @@ def test_the_application_can_still_shrink_a_session_over_its_limit() -> None:
 async def test_a_sub_run_neither_reads_nor_writes_the_state() -> None:
     """D3 : ni valeurs, ni valeurs par défaut ; ce que ses outils écrivent est retiré sans bruit."""
     fiche = RecordingTool(spec("fiche"), result=data(FICHE, state={"langue": "en"}))
-    child = awaiting(call("c1", "fiche")).model_copy(
-        update={"parent_run_id": RunId("parent"), "depth": 1}
-    )
+    child = awaiting(call("c1", "fiche")).model_copy(update={"parent_run_id": RunId("parent"), "depth": 1})
     session: dict[str, JsonValue] = {"client": "C-002"}
     events = [e async for e in stateful(fiche).run_batch(child, session_state=session)]
     [(_, context)] = fiche.calls
@@ -1477,9 +1373,7 @@ async def test_a_sub_run_neither_reads_nor_writes_the_state() -> None:
 async def test_an_agent_without_state_drops_what_its_tools_write() -> None:
     """Un outil partagé qui écrit du state, chez un agent qui n'en déclare pas : rien au modèle."""
     tool_ = RecordingTool(spec("fiche"), result=data(FICHE, state={"client": "C-002"}))
-    [output] = completed(
-        await collect(ToolExecutor([tool_]), awaiting(call("c1", "fiche")))
-    ).values()
+    [output] = completed(await collect(ToolExecutor([tool_]), awaiting(call("c1", "fiche")))).values()
     assert (output.state, output.state_refused) == ({}, ())
 
 

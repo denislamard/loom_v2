@@ -120,9 +120,7 @@ async def ouvre(vm: Vm, port: int, attente: float) -> Session:
     return await Session.open(reader, writer)
 
 
-async def essai(
-    vm: Vm, port: int, attente: float, controle: Controle, lancement: float | None
-) -> None:
+async def essai(vm: Vm, port: int, attente: float, controle: Controle, lancement: float | None) -> None:
     print("\n--- un second run.sh pendant que la VM tourne ---")
     pid = vm.pid
     refuse = await asyncio.create_subprocess_exec(
@@ -213,9 +211,7 @@ async def essai(
     print("\n--- fermer une session pendant son job (30 s, wall_ms 20000) ---")
     abandon = await ouvre(vm, port, attente)
     await abandon.put_code("essai.py", ESSAI)
-    tache = asyncio.create_task(
-        abandon.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000})
-    )
+    tache = asyncio.create_task(abandon.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000}))
     await asyncio.sleep(0.5)
     await abandon.close()
     try:
@@ -230,9 +226,7 @@ async def essai(
     controle.tient("le job suivant passe", fait.ok)
     # execd n'exécute qu'un job à la fois : sans l'arrêt du job abandonné, le
     # suivant attendrait son wall_ms (20 s).
-    controle.tient(
-        f"il n'attend pas le job abandonné (rendu en {attendu:.2f} s)", fait.ok and attendu < 3
-    )
+    controle.tient(f"il n'attend pas le job abandonné (rendu en {attendu:.2f} s)", fait.ok and attendu < 3)
 
 
 async def main() -> int:

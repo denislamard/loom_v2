@@ -59,9 +59,7 @@ class InMemoryIdempotency:
             return None
         return record
 
-    async def reserve(
-        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
-    ) -> bool:
+    async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
         now = datetime.now(UTC)
         held = self._held.get(key)
         # C'est la date qui protège : une réservation tenue ou un résultat
@@ -69,17 +67,13 @@ class InMemoryIdempotency:
         if held is not None and held.record.alive(now):
             return False
         self._held[key] = _Held(
-            record=IdempotencyRecord(
-                key=key, status="in_progress", expires_at=now + timedelta(seconds=ttl)
-            ),
+            record=IdempotencyRecord(key=key, status="in_progress", expires_at=now + timedelta(seconds=ttl)),
             scope=scope,
             holder=holder,
         )
         return True
 
-    async def complete(
-        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
-    ) -> None:
+    async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
         now = datetime.now(UTC)
         self._forget(now)
         held = self._held.get(key)
@@ -101,20 +95,13 @@ class InMemoryIdempotency:
 
     async def release(self, key: str, *, holder: str | None = None) -> None:
         held = self._held.get(key)
-        if (
-            held is not None
-            and held.record.status == "in_progress"
-            and (holder is None or held.holder == holder)
-        ):
+        if held is not None and held.record.status == "in_progress" and (holder is None or held.holder == holder):
             del self._held[key]
 
     async def forget(self, tenant_id: TenantId, session_id: SessionId | None = None) -> int:
         """Oublie les clés d'un client, ou de l'une de ses sessions (RGPD)."""
         partantes = [
-            key
-            for key, held in self._held.items()
-            if held.scope.tenant_id == tenant_id
-            and (session_id is None or held.scope.session_id == session_id)
+            key for key, held in self._held.items() if held.scope.tenant_id == tenant_id and (session_id is None or held.scope.session_id == session_id)
         ]
         for key in partantes:
             del self._held[key]
@@ -122,10 +109,6 @@ class InMemoryIdempotency:
 
     def _forget(self, now: datetime) -> None:
         """Oublie les résultats hors rétention ; les réservations restent."""
-        stale = [
-            key
-            for key, held in self._held.items()
-            if held.record.status == "completed" and not held.record.alive(now)
-        ]
+        stale = [key for key, held in self._held.items() if held.record.status == "completed" and not held.record.alive(now)]
         for key in stale:
             del self._held[key]

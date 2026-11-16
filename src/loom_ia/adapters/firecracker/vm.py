@@ -104,9 +104,7 @@ class Vm:
                 execd_src=env.get("EXECD_SRC", ""),
             )
         except KeyError as exc:
-            raise VmError(
-                f"{env_file} : clé {exc} absente — reconstruis la VM avec make_vm.sh"
-            ) from exc
+            raise VmError(f"{env_file} : clé {exc} absente — reconstruis la VM avec make_vm.sh") from exc
         except ValueError as exc:
             raise VmError(f"{env_file} : valeur illisible — {exc}") from exc
 
@@ -228,9 +226,7 @@ class Vm:
                 # tourne à cet instant, un démarrage concurrent a gagné.
                 if self.is_running():
                     raise VmError(f"{self.name} tourne déjà (pid {self.pid})")
-                raise VmError(
-                    f"{self.name} : firecracker s'est arrêté (code {code})\n{self._console_tail()}"
-                )
+                raise VmError(f"{self.name} : firecracker s'est arrêté (code {code})\n{self._console_tail()}")
             # Le verrou prouve que c'est bien ce lancement qui répond, et non
             # un socket résiduel servi par un ancien VMM.
             if self.is_running():
@@ -378,10 +374,7 @@ class Vm:
                     status = int(lines[0].split()[1])
                 except (IndexError, ValueError) as exc:
                     raise VmError(f"{method} {path} : réponse illisible {lines[0]!r}") from exc
-                headers = {
-                    key.strip().lower(): value.strip()
-                    for key, _, value in (line.partition(":") for line in lines[1:] if line)
-                }
+                headers = {key.strip().lower(): value.strip() for key, _, value in (line.partition(":") for line in lines[1:] if line)}
                 length = int(headers.get("content-length", "0") or 0)
                 data = await reader.readexactly(length) if length else b""
             finally:
@@ -425,9 +418,7 @@ class Vm:
                 reader, writer = await asyncio.open_unix_connection(self.vsock_uds)
             except (FileNotFoundError, ConnectionRefusedError) as exc:
                 if loop.time() >= deadline:
-                    raise VmError(
-                        f"{self.name} : {self.vsock_uds} injoignable — VM arrêtée ?"
-                    ) from exc
+                    raise VmError(f"{self.name} : {self.vsock_uds} injoignable — VM arrêtée ?") from exc
                 await asyncio.sleep(retry_delay)
                 continue
             greeting = b""

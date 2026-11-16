@@ -77,15 +77,9 @@ def _api_key(spec: ModelSpec, environ: Mapping[str, str]) -> str:
         return NO_API_KEY
     value = environ.get(spec.api_key_env, "").strip()
     if not value:
-        raise ModelConfigError(
-            f"Modèle {spec.id!r} : la variable d'environnement {spec.api_key_env} "
-            "est absente ou vide"
-        )
+        raise ModelConfigError(f"Modèle {spec.id!r} : la variable d'environnement {spec.api_key_env} est absente ou vide")
     return value
 
 
 def _missing_extra(spec: ModelSpec, extra: str) -> ModelConfigError:
-    return ModelConfigError(
-        f"Modèle {spec.id!r} : le SDK {extra!r} n'est pas installé "
-        f"(installer l'extra : loom-ia[{extra}])"
-    )
+    return ModelConfigError(f"Modèle {spec.id!r} : le SDK {extra!r} n'est pas installé (installer l'extra : loom-ia[{extra}])")

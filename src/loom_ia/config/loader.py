@@ -140,10 +140,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     if loaded.strict and loaded.server.http.user is not None:
         # D-1b : en production, chaque appelant présente sa clé. Contrôlé ici et
         # non dans ``LoomConfig.check`` : le profil actif n'y est pas encore posé.
-        raise ConfigError(
-            f"{root} : 'server.http.user' est refusé en profil 'prod', où chaque appelant "
-            "présente sa clé (security.api_keys)"
-        )
+        raise ConfigError(f"{root} : 'server.http.user' est refusé en profil 'prod', où chaque appelant présente sa clé (security.api_keys)")
     return loaded
 
 
@@ -181,8 +178,7 @@ def _check_env_file_at_root(data: dict[str, Any], *, source: Path) -> None:
     for name, overrides in cast("dict[str, Any]", declared).items():
         if isinstance(overrides, dict) and ENV_FILE_KEY in overrides:
             raise ConfigError(
-                f"profiles.{name}.{ENV_FILE_KEY} — refusé : le fichier d'environnement est lu "
-                f"avant le choix du profil ; déclarer '{ENV_FILE_KEY}' à la racine",
+                f"profiles.{name}.{ENV_FILE_KEY} — refusé : le fichier d'environnement est lu avant le choix du profil ; déclarer '{ENV_FILE_KEY}' à la racine",
                 source=source,
             )
 
@@ -212,9 +208,7 @@ def _deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
     for key, value in over.items():
         current = merged.get(key)
         if isinstance(current, dict) and isinstance(value, dict) and key not in WHOLE:
-            merged[key] = _deep_merge(
-                cast("dict[str, Any]", current), cast("dict[str, Any]", value)
-            )
+            merged[key] = _deep_merge(cast("dict[str, Any]", current), cast("dict[str, Any]", value))
         else:
             merged[key] = value
     return merged
@@ -228,9 +222,7 @@ def _launched_from(server: McpServerSpec, base_dir: Path) -> McpServerSpec:
     return server.model_copy(update={"cwd": cwd})
 
 
-def _load_agents(
-    agents_dir: Path, resources_dir: Path, base_dir: Path
-) -> list[tuple[AgentSpec, Path]]:
+def _load_agents(agents_dir: Path, resources_dir: Path, base_dir: Path) -> list[tuple[AgentSpec, Path]]:
     """Les agents du dossier, chacun avec le fichier d'où il vient."""
     if not agents_dir.is_dir():
         raise ConfigError(f"Dossier d'agents introuvable : {agents_dir}")
@@ -274,10 +266,7 @@ def _culprit(error: ValidationError, loaded: Sequence[tuple[AgentSpec, Path]]) -
 
 def _with_contracts(spec: AgentSpec, base_dir: Path, *, source: Path) -> AgentSpec:
     """Schémas de sortie donnés par fichier, lus : agent, rôles, outils Python, MCP et de paquet."""
-    roles = tuple(
-        role.model_copy(update={"output": _schema(role.output, base_dir, source=source)})
-        for role in spec.roles
-    )
+    roles = tuple(role.model_copy(update={"output": _schema(role.output, base_dir, source=source)}) for role in spec.roles)
     tools = tuple(
         tool.model_copy(update={"tools": _with_schemas(tool.tools, base_dir, source=source)})
         if isinstance(tool, McpTools | SourceTools)
@@ -288,20 +277,11 @@ def _with_contracts(spec: AgentSpec, base_dir: Path, *, source: Path) -> AgentSp
     return spec.model_copy(update={"output": output, "roles": roles, "tools": tools})
 
 
-def _with_schemas(
-    overrides: dict[str, ToolOverrides], base_dir: Path, *, source: Path
-) -> dict[str, ToolOverrides]:
-    return {
-        name: override.model_copy(
-            update={"output": _schema(override.output, base_dir, source=source)}
-        )
-        for name, override in overrides.items()
-    }
+def _with_schemas(overrides: dict[str, ToolOverrides], base_dir: Path, *, source: Path) -> dict[str, ToolOverrides]:
+    return {name: override.model_copy(update={"output": _schema(override.output, base_dir, source=source)}) for name, override in overrides.items()}
 
 
-def _schema(
-    contract: OutputContract | None, base_dir: Path, *, source: Path
-) -> OutputContract | None:
+def _schema(contract: OutputContract | None, base_dir: Path, *, source: Path) -> OutputContract | None:
     """Contrat dont le schéma donné par fichier est lu et vérifié."""
     if contract is None or contract.schema_file is None:
         return contract
@@ -317,10 +297,7 @@ def _schema(
 def _with_prompts(spec: AgentSpec, resources_dir: Path, *, source: Path) -> AgentSpec:
     """Rend absolus les chemins des prompts (``main`` et rôles), et vérifie qu'ils sont lisibles."""
     main = _with_prompt(spec.main, resources_dir, "main", source=source)
-    roles = tuple(
-        _with_prompt(role, resources_dir, f"roles[{role.name}]", source=source)
-        for role in spec.roles
-    )
+    roles = tuple(_with_prompt(role, resources_dir, f"roles[{role.name}]", source=source) for role in spec.roles)
     return spec.model_copy(update={"main": main, "roles": roles})
 
 
@@ -335,8 +312,7 @@ def _within_resources(resources_dir: Path, written: Path, label: str, *, source:
     path = resources_dir / written
     if not path.resolve().is_relative_to(resources_dir.resolve()):
         raise ConfigError(
-            f"{label} — le fichier doit être dans le dossier des ressources "
-            f"({resources_dir}) : {path}",
+            f"{label} — le fichier doit être dans le dossier des ressources ({resources_dir}) : {path}",
             source=source,
         )
     return path
@@ -353,13 +329,10 @@ def _hint(resources_dir: Path, written: Path) -> str:
 def _with_prompt[R: BaseRole](role: R, resources_dir: Path, label: str, *, source: Path) -> R:
     if role.system_file is None:
         return role
-    prompt = _within_resources(
-        resources_dir, role.system_file, f"{label}.system_file", source=source
-    )
+    prompt = _within_resources(resources_dir, role.system_file, f"{label}.system_file", source=source)
     if not prompt.is_file():
         raise ConfigError(
-            f"{label}.system_file — prompt introuvable : {prompt}"
-            f"{_hint(resources_dir, role.system_file)}",
+            f"{label}.system_file — prompt introuvable : {prompt}{_hint(resources_dir, role.system_file)}",
             source=source,
         )
     try:
@@ -372,11 +345,7 @@ def _with_prompt[R: BaseRole](role: R, resources_dir: Path, label: str, *, sourc
 def _with_tool_skills(spec: AgentSpec, resources_dir: Path, *, source: Path) -> AgentSpec:
     """Skills d'outils donnés par fichier, lus : outils Python, références MCP et de paquet."""
     tools = tuple(
-        tool.model_copy(
-            update={
-                "tools": _with_skills(tool.tools, resources_dir, _ref_label(tool), source=source)
-            }
-        )
+        tool.model_copy(update={"tools": _with_skills(tool.tools, resources_dir, _ref_label(tool), source=source)})
         if isinstance(tool, McpTools | SourceTools)
         else _styles_read(
             _templates_read(
@@ -394,9 +363,7 @@ def _with_tool_skills(spec: AgentSpec, resources_dir: Path, *, source: Path) -> 
     return spec.model_copy(update={"tools": tools})
 
 
-def _templates_read(
-    declared: PythonTool, resources_dir: Path, label: str, *, source: Path
-) -> PythonTool:
+def _templates_read(declared: PythonTool, resources_dir: Path, label: str, *, source: Path) -> PythonTool:
     """Les modèles de document d'un outil fourni (``loom.word``, ``loom.pdf``), lus.
 
     Comme un ``skill_file`` : chaque fichier YAML, relatif à ``resources_dir`` et contenu
@@ -446,9 +413,7 @@ def _template_style(given: object, where: str, path: Path, *, source: Path) -> S
         raise ConfigError(f"{lines}\n({path})", source=source) from exc
 
 
-def _styles_read(
-    declared: PythonTool, resources_dir: Path, label: str, *, source: Path
-) -> PythonTool:
+def _styles_read(declared: PythonTool, resources_dir: Path, label: str, *, source: Path) -> PythonTool:
     """La charte d'un outil ``loom.word`` ou ``loom.pdf``, lue, et la cascade de chaque
     modèle vérifiée.
 
@@ -507,9 +472,7 @@ def _style_read(ref: StyleRef, resources_dir: Path, where: str, *, source: Path)
     file = cast(Path, ref.file)
     path = _within_resources(resources_dir, file, where, source=source)
     if not path.is_file():
-        raise ConfigError(
-            f"{where} — style introuvable : {path}{_hint(resources_dir, file)}", source=source
-        )
+        raise ConfigError(f"{where} — style introuvable : {path}{_hint(resources_dir, file)}", source=source)
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
@@ -522,12 +485,7 @@ def _style_read(ref: StyleRef, resources_dir: Path, where: str, *, source: Path)
     try:
         data = load_yaml(text)
     except (yaml.YAMLError, DuplicateKey) as exc:
-        hint = (
-            " — un texte qui contient « : » ou « # » s'écrit entre guillemets, ou après | "
-            "à la ligne"
-            if _COLON in str(exc)
-            else ""
-        )
+        hint = " — un texte qui contient « : » ou « # » s'écrit entre guillemets, ou après | à la ligne" if _COLON in str(exc) else ""
         raise ConfigError(f"{where} — YAML invalide : {exc}{hint} : {path}", source=source) from exc
     try:
         spec = StyleFile.model_validate(data if data is not None else {})
@@ -612,27 +570,18 @@ def _fonts_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Pat
         if fault is not None:
             raise ConfigError(f"{label} — {fault} : {path}", source=source)
         fonts[family][variant] = data
-    return spec.model_copy(
-        update={"fonts": {family: FontFiles(**files) for family, files in fonts.items()}}
-    )
+    return spec.model_copy(update={"fonts": {family: FontFiles(**files) for family, files in fonts.items()}})
 
 
 def _ref_label(ref: McpTools | SourceTools) -> str:
     return f"tools[mcp {ref.mcp}]" if isinstance(ref, McpTools) else f"tools[source {ref.source}]"
 
 
-def _with_skills(
-    overrides: dict[str, ToolOverrides], resources_dir: Path, label: str, *, source: Path
-) -> dict[str, ToolOverrides]:
-    return {
-        name: _skill_read(override, resources_dir, f"{label}.tools[{name}]", source=source)
-        for name, override in overrides.items()
-    }
+def _with_skills(overrides: dict[str, ToolOverrides], resources_dir: Path, label: str, *, source: Path) -> dict[str, ToolOverrides]:
+    return {name: _skill_read(override, resources_dir, f"{label}.tools[{name}]", source=source) for name, override in overrides.items()}
 
 
-def _skill_read[T: (PythonTool, ToolOverrides)](
-    declared: T, resources_dir: Path, label: str, *, source: Path
-) -> T:
+def _skill_read[T: (PythonTool, ToolOverrides)](declared: T, resources_dir: Path, label: str, *, source: Path) -> T:
     """Le skill lu depuis son fichier et rangé dans ``skill`` ; ``skill_file`` n'est plus gardé.
 
     Lu une fois, au chargement, comme ``schema_file`` : une faute se voit dès
@@ -667,9 +616,7 @@ def _absolute_sessions(config: LoomConfig, resources_dir: Path, *, source: Path)
     prompt = _within_resources(resources_dir, compaction.system_file, label, source=source)
     if not prompt.is_file():
         raise ConfigError(f"{label} — prompt introuvable : {prompt}", source=source)
-    return sessions.model_copy(
-        update={"compaction": compaction.model_copy(update={"system_file": prompt})}
-    )
+    return sessions.model_copy(update={"compaction": compaction.model_copy(update={"system_file": prompt})})
 
 
 def _absolute_tenant(tenant: TenantSpec, base_dir: Path) -> TenantSpec:
@@ -695,11 +642,7 @@ def _check_variables(config: LoomConfig, *, source: Path) -> None:
             where = f"{label}.system"
             if role.system_file is not None:
                 written = Path(role.system_file)
-                shown_file = (
-                    written.relative_to(source.parent)
-                    if written.is_relative_to(source.parent)
-                    else written
-                )
+                shown_file = written.relative_to(source.parent) if written.is_relative_to(source.parent) else written
                 where = f"{label}.system_file ({shown_file})"
             try:
                 template = Template.parse(system_text(role))
@@ -718,8 +661,7 @@ def _check_variables(config: LoomConfig, *, source: Path) -> None:
                     who = tenant.id if tenant is not None else DEFAULT_TENANT
                     shown = "{{ " + ".".join(path) + " }}"
                     raise ConfigError(
-                        f"Agent {spec.name!r}, {where} — {shown} : variable non "
-                        f"définie pour le client {who!r} (tenants[].variables)",
+                        f"Agent {spec.name!r}, {where} — {shown} : variable non définie pour le client {who!r} (tenants[].variables)",
                         source=source,
                     )
 
@@ -728,17 +670,11 @@ def _absolute_storage(storage: StorageConfig, base_dir: Path) -> StorageConfig:
     """Chemins du journal, des artefacts et des clés rapportés au dossier de la config."""
     update: dict[str, object] = {}
     if storage.events.path is not None:
-        update["events"] = storage.events.model_copy(
-            update={"path": base_dir / storage.events.path}
-        )
+        update["events"] = storage.events.model_copy(update={"path": base_dir / storage.events.path})
     if storage.artifacts.path is not None:
-        update["artifacts"] = storage.artifacts.model_copy(
-            update={"path": base_dir / storage.artifacts.path}
-        )
+        update["artifacts"] = storage.artifacts.model_copy(update={"path": base_dir / storage.artifacts.path})
     if storage.idempotency.path is not None:
-        update["idempotency"] = storage.idempotency.model_copy(
-            update={"path": base_dir / storage.idempotency.path}
-        )
+        update["idempotency"] = storage.idempotency.model_copy(update={"path": base_dir / storage.idempotency.path})
     return storage.model_copy(update=update) if update else storage
 
 
@@ -747,9 +683,7 @@ def _absolute_security(config: LoomConfig, base_dir: Path) -> object:
     audit = config.security.audit
     if audit is None:
         return config.security
-    return config.security.model_copy(
-        update={"audit": audit.model_copy(update={"path": base_dir / audit.path})}
-    )
+    return config.security.model_copy(update={"audit": audit.model_copy(update={"path": base_dir / audit.path})})
 
 
 def _absolute_server(config: LoomConfig, base_dir: Path) -> object:

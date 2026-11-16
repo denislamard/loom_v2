@@ -96,15 +96,11 @@ class Paquets:
         self.site = site
         self.modules: list[str] = []
 
-    def installe(
-        self, paquet: str, module: str, code: str, points: dict[str, str], version: str = "0.1"
-    ) -> None:
+    def installe(self, paquet: str, module: str, code: str, points: dict[str, str], version: str = "0.1") -> None:
         (self.site / f"{module}.py").write_text(textwrap.dedent(code), encoding="utf-8")
         info = self.site / f"{paquet.replace('-', '_')}-{version}.dist-info"
         info.mkdir()
-        (info / "METADATA").write_text(
-            f"Metadata-Version: 2.1\nName: {paquet}\nVersion: {version}\n", encoding="utf-8"
-        )
+        (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {paquet}\nVersion: {version}\n", encoding="utf-8")
         lignes = "".join(f"{nom} = {cible}\n" for nom, cible in points.items())
         (info / "entry_points.txt").write_text(f"[{GROUP}]\n{lignes}", encoding="utf-8")
         self.modules.append(module)
@@ -150,9 +146,7 @@ def masque(paquets: Paquets, monkeypatch: pytest.MonkeyPatch) -> Paquets:
 
 @pytest.fixture
 def carnet(paquets: Paquets) -> Paquets:
-    paquets.installe(
-        "carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"}
-    )
+    paquets.installe("carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"})
     return paquets
 
 
@@ -179,19 +173,11 @@ def config_file(
     (base / "devis.json").write_text(json.dumps(CARNET), encoding="utf-8")
     config: dict[str, Any] = {
         "version": 1,
-        "models": [
-            {"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": script(*calls)}}
-        ],
-        "tool_sources": (
-            sources
-            if sources is not None
-            else [{"name": "carnet", "entry_point": "carnet", "params": {"fichier": "devis.json"}}]
-        ),
+        "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": script(*calls)}}],
+        "tool_sources": (sources if sources is not None else [{"name": "carnet", "entry_point": "carnet", "params": {"fichier": "devis.json"}}]),
         **root,
     }
-    (base / "loom.yaml").write_text(
-        yaml.safe_dump(secured(config), allow_unicode=True), encoding="utf-8"
-    )
+    (base / "loom.yaml").write_text(yaml.safe_dump(secured(config), allow_unicode=True), encoding="utf-8")
     agent: dict[str, Any] = {
         "name": "relance",
         "main": {"model": "FAKE", "system": "Tu relances."},
@@ -235,9 +221,7 @@ def test_a_source_is_declared_once_and_referenced_by_name(tmp_path: Path) -> Non
         ),
     ],
 )
-def test_a_badly_declared_source_is_refused(
-    tmp_path: Path, sources: list[dict[str, Any]] | None, tools: list[dict[str, Any]], said: str
-) -> None:
+def test_a_badly_declared_source_is_refused(tmp_path: Path, sources: list[dict[str, Any]] | None, tools: list[dict[str, Any]], said: str) -> None:
     with pytest.raises(ConfigError, match=said):
         load_config(config_file(tmp_path, sources=sources, tools=tools))
 
@@ -277,9 +261,7 @@ def test_a_contract_given_by_file_is_read(tmp_path: Path) -> None:
 
 def test_installed_entry_points_are_listed_without_importing_anything(paquets: Paquets) -> None:
     paquets.installe("piege", "piege_loom", PIEGE, {"piege": "piege_loom:fabrique"}, "2.0")
-    paquets.installe(
-        "carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"}
-    )
+    paquets.installe("carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"})
     listed = [(p.name, p.package, p.version, p.value) for p in installed()]
     assert ("carnet", "carnet-devis", "0.1", "carnet_devis:fabrique") in listed
     assert ("piege", "piege", "2.0", "piege_loom:fabrique") in listed
@@ -304,9 +286,7 @@ def test_two_packages_with_the_same_name_are_both_named(carnet: Paquets) -> None
 
 def test_a_package_that_does_not_import_says_why(paquets: Paquets) -> None:
     paquets.installe("piege", "piege_loom", PIEGE, {"piege": "piege_loom:fabrique"})
-    with pytest.raises(
-        ConfigError, match=r"\(piege 0\.1, piege_loom:fabrique\) : import impossible"
-    ):
+    with pytest.raises(ConfigError, match=r"\(piege 0\.1, piege_loom:fabrique\) : import impossible"):
         source_factory("piege")
 
 
@@ -330,9 +310,7 @@ async def test_the_agent_uses_the_tools_of_the_package(carnet: Paquets, tmp_path
     module = carnet.module("carnet_devis")
     assert first.status == second.status == RunStatus.COMPLETED
     called = [e.payload for e in events if isinstance(e.payload, ToolCalled)]
-    assert [(c.tool_name, c.arguments) for c in called] == [
-        ("carnet__chercher_devis", {"numero": "D-2026-042"})
-    ]
+    assert [(c.tool_name, c.arguments) for c in called] == [("carnet__chercher_devis", {"numero": "D-2026-042"})]
     assert module.APPELS == ["D-2026-042", "D-2026-042"]
     # La fabrique : une fois au montage, avec le nom, les params et les secrets du client.
     assert module.RECUS == [{"name": "carnet", "params": {"fichier": "devis.json"}, "jeton": "j-1"}]
@@ -349,9 +327,7 @@ async def test_only_the_referenced_package_is_imported(carnet: Paquets, tmp_path
     assert "carnet_devis" in sys.modules and "piege_loom" not in sys.modules
 
 
-async def test_choices_and_declarations_of_the_config_apply(
-    carnet: Paquets, tmp_path: Path
-) -> None:
+async def test_choices_and_declarations_of_the_config_apply(carnet: Paquets, tmp_path: Path) -> None:
     sources = [
         {
             "name": "carnet",
@@ -380,9 +356,7 @@ async def test_choices_and_declarations_of_the_config_apply(
         from loom_ia.core.model import RunId, SessionId
         from loom_ia.core.ports import SourceContext
 
-        opened_for = SourceContext(
-            tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), agent="relance"
-        )
+        opened_for = SourceContext(tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), agent="relance")
         async with context.tools.opened(opened_for) as opened:
             specs = {spec.name: spec for spec in opened.tools.specs}
     assert "c__noter" not in specs
@@ -392,9 +366,7 @@ async def test_choices_and_declarations_of_the_config_apply(
     assert found.description == "Le devis d'un client, par son numéro."
 
 
-async def test_a_package_tool_declared_always_needs_a_durable_journal(
-    carnet: Paquets, tmp_path: Path
-) -> None:
+async def test_a_package_tool_declared_always_needs_a_durable_journal(carnet: Paquets, tmp_path: Path) -> None:
     """La config met ``noter`` en approbation : la mémoire ne tiendrait pas la pause (#28)."""
     sources = [
         {
@@ -419,9 +391,7 @@ async def test_a_package_tool_declared_always_needs_a_durable_journal(
             assert loom.context("relance") is not None
 
 
-async def test_a_mount_refused_by_the_journal_guard_creates_no_source(
-    carnet: Paquets, tmp_path: Path
-) -> None:
+async def test_a_mount_refused_by_the_journal_guard_creates_no_source(carnet: Paquets, tmp_path: Path) -> None:
     """La garde juge la config avant que la fabrique du paquet ne soit appelée : rien à refermer."""
     sources = [
         {
@@ -445,22 +415,16 @@ async def test_a_mount_refused_by_the_journal_guard_creates_no_source(
         ({}, "refusée par sa fabrique — 'fichier' : le chemin du carnet est attendu"),
     ],
 )
-async def test_params_refused_by_the_package_refuse_the_mount(
-    carnet: Paquets, tmp_path: Path, params: dict[str, Any], said: str
-) -> None:
+async def test_params_refused_by_the_package_refuse_the_mount(carnet: Paquets, tmp_path: Path, params: dict[str, Any], said: str) -> None:
     sources = [{"name": "carnet", "entry_point": "carnet", "params": params}]
     async with Loom(load_config(config_file(tmp_path, sources=sources))) as loom:
         with pytest.raises(ConfigError) as caught:
             loom.context("relance")
     assert said in str(caught.value)
-    assert "Agent 'relance', source 'carnet' (carnet-devis 0.1, carnet_devis:fabrique)" in str(
-        caught.value
-    )
+    assert "Agent 'relance', source 'carnet' (carnet-devis 0.1, carnet_devis:fabrique)" in str(caught.value)
 
 
-async def test_a_factory_that_returns_no_source_is_refused(
-    paquets: Paquets, tmp_path: Path
-) -> None:
+async def test_a_factory_that_returns_no_source_is_refused(paquets: Paquets, tmp_path: Path) -> None:
     paquets.installe(
         "vide",
         "vide_loom",
@@ -494,9 +458,7 @@ def fabrique(**reglages):
 
 
 @pytest.mark.parametrize("required", [False, True])
-async def test_an_unavailable_source_is_journaled(
-    paquets: Paquets, tmp_path: Path, required: bool
-) -> None:
+async def test_an_unavailable_source_is_journaled(paquets: Paquets, tmp_path: Path, required: bool) -> None:
     paquets.installe("panne", "panne_loom", PANNE, {"carnet": "panne_loom:fabrique"})
     tools = [{"source": "carnet", "required": required}]
     async with Loom(load_config(config_file(tmp_path, tools=tools, calls=()))) as loom:
@@ -508,9 +470,7 @@ async def test_an_unavailable_source_is_journaled(
     assert result.status == (RunStatus.FAILED if required else RunStatus.COMPLETED)
 
 
-async def test_a_run_with_a_package_replays_without_calling_it(
-    carnet: Paquets, tmp_path: Path
-) -> None:
+async def test_a_run_with_a_package_replays_without_calling_it(carnet: Paquets, tmp_path: Path) -> None:
     path = config_file(tmp_path, storage={"events": {"backend": "jsonl", "path": "data"}})
     async with Loom(load_config(path)) as loom:
         result = await loom.run("relance", "Relance.", user=DEV)
@@ -536,9 +496,7 @@ async def test_an_eval_double_can_target_a_package_tool(carnet: Paquets, tmp_pat
     assert "inconnu" in str(unknown)
 
 
-async def test_a_role_can_read_the_results_of_a_package_tool(
-    carnet: Paquets, tmp_path: Path
-) -> None:
+async def test_a_role_can_read_the_results_of_a_package_tool(carnet: Paquets, tmp_path: Path) -> None:
     """Le nom préfixé d'un outil de paquet est connu au montage, avant toute ouverture."""
     role = {
         "name": "rediger",
@@ -558,25 +516,17 @@ async def test_a_role_can_read_the_results_of_a_package_tool(
 # --- La ligne de commande -----------------------------------------------------------
 
 
-def test_validate_names_sources_packages_and_tools(
-    carnet: Paquets, masque: Paquets, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_names_sources_packages_and_tools(carnet: Paquets, masque: Paquets, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     carnet.installe("piege", "piege_loom", PIEGE, {"piege": "piege_loom:fabrique"}, "2.0")
     assert main(["--config", str(config_file(tmp_path)), "validate"]) == 0
     out = capsys.readouterr().out
     assert "  Sources      carnet → point d'entrée carnet\n" in out
-    assert (
-        "  Paquets      carnet · carnet-devis 0.1 · utilisé\n"
-        "               piege · piege 2.0\n"
-        "               groupe loom_ia.tools\n"
-    ) in out
+    assert ("  Paquets      carnet · carnet-devis 0.1 · utilisé\n               piege · piege 2.0\n               groupe loom_ia.tools\n") in out
     assert "carnet       carnet__chercher_devis, carnet__noter\n" in out
     assert "piege_loom" not in sys.modules
 
 
-def test_validate_says_nothing_of_packages_without_any(
-    masque: Paquets, demo: Callable[..., Path], capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_nothing_of_packages_without_any(masque: Paquets, demo: Callable[..., Path], capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "validate"]) == 0
     out = capsys.readouterr().out
     assert "Paquets" not in out and "Sources" not in out
@@ -591,9 +541,7 @@ async def test_each_client_gets_its_own_source_and_secrets(carnet: Paquets, tmp_
     environ = {"DUPONT_JETON": "jd", "MARTIN_JETON": "jm"}
     async with Loom(config, environ=environ) as loom:
         for tenant in ("dupont", "martin"):
-            result = await loom.run(
-                "relance", "Relance.", tenant=TenantId(tenant), user=TenantId(tenant)
-            )
+            result = await loom.run("relance", "Relance.", tenant=TenantId(tenant), user=TenantId(tenant))
             assert result.status == RunStatus.COMPLETED
     recus = carnet.module("carnet_devis").RECUS
     assert [r["jeton"] for r in recus] == ["jd", "jm"]
@@ -635,9 +583,7 @@ class CoffreVivant:
         return self.table
 
 
-async def test_a_package_factory_gets_only_what_its_client_may_read(
-    paquets: Paquets, tmp_path: Path
-) -> None:
+async def test_a_package_factory_gets_only_what_its_client_may_read(paquets: Paquets, tmp_path: Path) -> None:
     """La table qui part à la fabrique tierce : celle du client, en lecture seule."""
     paquets.installe("espion", "espion_loom", ESPION, {"espion": "espion_loom:fabrique"})
     tenants = [
@@ -650,21 +596,14 @@ async def test_a_package_factory_gets_only_what_its_client_may_read(
     environ = {"DUPONT_JETON": "jd", "MARTIN_JETON": "jm", "AWS_SECRET_ACCESS_KEY": "autre"}
     async with Loom(load_config(path), environ=environ) as loom:
         for tenant in ("dupont", "martin"):
-            result = await loom.run(
-                "relance", "Relance.", tenant=TenantId(tenant), user=TenantId(tenant)
-            )
+            result = await loom.run("relance", "Relance.", tenant=TenantId(tenant), user=TenantId(tenant))
             assert result.status == RunStatus.COMPLETED
     # Chacun ne voit que le nom que la config lui fait rediriger ; rien n'a été écrit.
-    assert (
-        paquets.module("espion_loom").VUS
-        == [{"variables": ["CARNET_JETON"], "ecriture": "refusée"}] * 2
-    )
+    assert paquets.module("espion_loom").VUS == [{"variables": ["CARNET_JETON"], "ecriture": "refusée"}] * 2
     assert "PIRATE" not in environ
 
 
-async def test_a_package_factory_cannot_write_into_a_provider_table(
-    paquets: Paquets, tmp_path: Path
-) -> None:
+async def test_a_package_factory_cannot_write_into_a_provider_table(paquets: Paquets, tmp_path: Path) -> None:
     """Même un fournisseur qui livre son dictionnaire vivant : la fabrique le lit, sans plus."""
     paquets.installe("espion", "espion_loom", ESPION, {"espion": "espion_loom:fabrique"})
     sources = [{"name": "espion", "entry_point": "espion"}]
@@ -673,9 +612,7 @@ async def test_a_package_factory_cannot_write_into_a_provider_table(
     async with Loom(load_config(path), environ={}, secrets=coffre) as loom:
         result = await loom.run("relance", "Relance.", user=DEV)
     assert result.status == RunStatus.COMPLETED
-    assert paquets.module("espion_loom").VUS == [
-        {"variables": ["CARNET_JETON"], "ecriture": "refusée"}
-    ]
+    assert paquets.module("espion_loom").VUS == [{"variables": ["CARNET_JETON"], "ecriture": "refusée"}]
     assert coffre.table == {"CARNET_JETON": "j-1"}
 
 
@@ -721,17 +658,13 @@ def fabrique(**reglages):
 '''
 
 
-async def test_a_package_tool_is_a_python_tool_whatever_it_says(
-    paquets: Paquets, tmp_path: Path
-) -> None:
+async def test_a_package_tool_is_a_python_tool_whatever_it_says(paquets: Paquets, tmp_path: Path) -> None:
     paquets.installe("genres", "genres_loom", GENRES, {"carnet": "genres_loom:fabrique"})
     async with Loom(load_config(config_file(tmp_path, calls=()))) as loom:
         from loom_ia.core.model import RunId, SessionId
         from loom_ia.core.ports import SourceContext
 
-        opened_for = SourceContext(
-            tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), agent="relance"
-        )
+        opened_for = SourceContext(tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), agent="relance")
         async with loom.context("relance").tools.opened(opened_for) as opened:
             kinds = {spec.name: spec.kind for spec in opened.tools.specs}
     assert kinds["carnet__pretendu"] == "python"

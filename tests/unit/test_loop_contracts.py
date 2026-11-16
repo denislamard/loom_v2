@@ -89,9 +89,7 @@ def reset() -> None:
 
 @pytest.fixture(params=["memory", "jsonl"])
 async def store(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[EventStore]:
-    instance: EventStore = (
-        InMemoryEventStore() if request.param == "memory" else JsonlEventStore(tmp_path)
-    )
+    instance: EventStore = InMemoryEventStore() if request.param == "memory" else JsonlEventStore(tmp_path)
     yield instance
     await instance.aclose()
 
@@ -124,9 +122,7 @@ def context(
     **options: Any,
 ) -> RunContext:
     guard = ContractGuard(output)
-    policies = Policies(
-        [BoundPolicy(policy=guard, name=CONTRACT_POLICY, points=guard.points, max_attempts=None)]
-    )
+    policies = Policies([BoundPolicy(policy=guard, name=CONTRACT_POLICY, points=guard.points, max_attempts=None)])
     return RunContext(
         agent="demo",
         store=store,
@@ -234,9 +230,7 @@ async def test_final_answer_is_repaired_by_the_orchestrator(store: EventStore) -
         ("fallback", RunStatus.COMPLETED, "Relance à reprendre à la main.", False),
     ],
 )
-async def test_exhausted_repairs_follow_on_failure(
-    store: EventStore, on_failure: str, status: RunStatus, text: str, unverified: bool
-) -> None:
+async def test_exhausted_repairs_follow_on_failure(store: EventStore, on_failure: str, status: RunStatus, text: str, unverified: bool) -> None:
     output = contract(
         on_failure=on_failure,
         fallback_message="Relance à reprendre à la main.",
@@ -267,15 +261,11 @@ async def test_exhausted_repairs_follow_on_failure(
         assert ("fallback" in closing.facets) is fallback
 
 
-async def test_a_forbidden_text_stays_out_of_the_diagnostics_and_the_logs(
-    store: EventStore, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_forbidden_text_stays_out_of_the_diagnostics_and_the_logs(store: EventStore, caplog: pytest.LogCaptureFixture) -> None:
     """Le texte du modèle est au journal, comme message : rien ne le redouble, ni dans les
     raisons, ni dans le retour au modèle, ni dans l'erreur de fin de run, ni dans les logs INFO."""
     secret = "sk-ABCDEF1234567890XYZ"
-    output = OutputContract.model_validate(
-        {"must_not_match": r"sk-[A-Za-z0-9]{10,}", "repair": {"max_attempts": 1}}
-    )
+    output = OutputContract.model_validate({"must_not_match": r"sk-[A-Za-z0-9]{10,}", "repair": {"max_attempts": 1}})
     model = scripted(Message.assistant(f"La clé : {secret}"), Message.assistant(f"Encore {secret}"))
     with caplog.at_level(logging.INFO):
         state = await run(context(store, model, output=output))
@@ -357,13 +347,9 @@ async def test_an_exhausted_role_returns_an_error_to_the_orchestrator(store: Eve
     state = await run(context(store, main, role(writer)))
 
     assert state.status is RunStatus.COMPLETED
-    [completed] = [
-        e.payload for e in await journal(store, state) if isinstance(e.payload, ToolCompleted)
-    ]
+    [completed] = [e.payload for e in await journal(store, state) if isinstance(e.payload, ToolCompleted)]
     assert completed.output.is_error
-    assert completed.output.as_text.startswith(
-        "Sortie du rôle rediger refusée par son contrat de sortie après 1 réparation"
-    )
+    assert completed.output.as_text.startswith("Sortie du rôle rediger refusée par son contrat de sortie après 1 réparation")
     assert "Réponds de nouveau" not in completed.output.as_text
     assert "Sortie reçue" not in completed.output.as_text
     assert "Bonjour encore." not in completed.output.as_text
@@ -453,16 +439,10 @@ def collector() -> tuple[list[ModelChunk], Any]:
 
 
 def texts(chunks: Sequence[ModelChunk]) -> str:
-    return "".join(
-        c.text if isinstance(c, TextDelta) else "|"
-        for c in chunks
-        if isinstance(c, TextDelta | StreamReset)
-    )
+    return "".join(c.text if isinstance(c, TextDelta) else "|" for c in chunks if isinstance(c, TextDelta | StreamReset))
 
 
-async def stream(
-    store: EventStore, model: ScriptedModel, mode: StreamOutput, *tools: object, **options: Any
-) -> tuple[RunState, list[ModelChunk]]:
+async def stream(store: EventStore, model: ScriptedModel, mode: StreamOutput, *tools: object, **options: Any) -> tuple[RunState, list[ModelChunk]]:
     chunks, on_chunk = collector()
     ctx = context(store, model, *tools, on_chunk=on_chunk, stream_output=mode, **options)
     return await run(ctx), chunks
@@ -572,17 +552,13 @@ class Broken(DelegatedTool):
         ("empty", "terminé sans résultat"),
     ],
 )
-async def test_delegated_tool_failures_become_error_results(
-    store: EventStore, behaviour: str, message: str
-) -> None:
+async def test_delegated_tool_failures_become_error_results(store: EventStore, behaviour: str, message: str) -> None:
     broken = Broken(behaviour)
     broken._spec = broken.spec.model_copy(update={"timeout": 0.01})  # pyright: ignore[reportPrivateUsage]
     main = scripted(tool_call_message(("c1", "casse", {})), Message.assistant("Tant pis."))
     state = await run(context(store, main, broken))
     assert state.status is RunStatus.COMPLETED
-    [completed] = [
-        e.payload for e in await journal(store, state) if isinstance(e.payload, ToolCompleted)
-    ]
+    [completed] = [e.payload for e in await journal(store, state) if isinstance(e.payload, ToolCompleted)]
     assert completed.output.is_error and message in completed.output.as_text
 
 

@@ -45,9 +45,7 @@ def accumulate(*chunks: ModelChunk) -> ResponseAccumulator:
 
 
 def test_request_hash_is_stable_and_sensitive() -> None:
-    request = ModelRequest(
-        model_id="m", messages=(Message.user("Bonjour"),), params={"b": 1, "a": 2}
-    )
+    request = ModelRequest(model_id="m", messages=(Message.user("Bonjour"),), params={"b": 1, "a": 2})
     same = ModelRequest(model_id="m", messages=(Message.user("Bonjour"),), params={"a": 2, "b": 1})
     other = request.model_copy(update={"tool_choice": "none"})
     assert request.request_hash() == same.request_hash()
@@ -71,9 +69,7 @@ def test_the_hash_of_a_request_with_a_tool_result_is_frozen() -> None:
             Message(role="tool", blocks=(ToolResultBlock(call_id="c1", output=found),)),
         ),
     )
-    assert request.request_hash() == (
-        "599c1cdebf4174d2b781c8a35d140f5c5c111824a8e0bcb5b28e9db9f2bd4ff3"
-    )
+    assert request.request_hash() == ("599c1cdebf4174d2b781c8a35d140f5c5c111824a8e0bcb5b28e9db9f2bd4ff3")
 
 
 def test_accumulator_keeps_block_order() -> None:
@@ -128,9 +124,7 @@ def test_unreadable_arguments_are_kept_raw(raw: str) -> None:
 
 
 def test_missing_arguments_mean_an_empty_object() -> None:
-    response = accumulate(ToolCallStarted(index=0, call_id="c1", name="heure")).result(
-        model_id="m", provider="fake"
-    )
+    response = accumulate(ToolCallStarted(index=0, call_id="c1", name="heure")).result(model_id="m", provider="fake")
     assert response.message.tool_calls[0].arguments == {}
 
 
@@ -185,9 +179,7 @@ async def test_complete_rebuilds_the_scripted_message() -> None:
     message = Message(
         role="assistant",
         blocks=(
-            ReasoningBlock(
-                text="un raisonnement assez long", provider_meta=meta, model_id="fake-1"
-            ),
+            ReasoningBlock(text="un raisonnement assez long", provider_meta=meta, model_id="fake-1"),
             TextBlock(text="Je calcule, puis je réponds."),
             ToolCallBlock(call_id="c1", name="calculer", arguments={"expr": "12*7+3"}),
             ToolCallBlock(call_id="c2", name="heure"),
@@ -256,9 +248,7 @@ async def test_scripted_model_errors_and_callables() -> None:
 
 
 def test_message_to_chunks_rejects_foreign_blocks() -> None:
-    message = Message.model_validate(
-        {"role": "assistant", "blocks": [{"type": "json", "data": {"a": 1}}]}
-    )
+    message = Message.model_validate({"role": "assistant", "blocks": [{"type": "json", "data": {"a": 1}}]})
     with pytest.raises(ValueError, match="json"):
         message_to_chunks(message)
     chunks = message_to_chunks(Message.assistant(""), stop_reason="refusal")

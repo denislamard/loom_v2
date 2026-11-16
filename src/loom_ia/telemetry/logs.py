@@ -40,9 +40,7 @@ _HANDLER_MARK: Final = "_loom_ia_configured"
 
 # Caractères qu'un terminal exécute au lieu de les afficher — C0 sauf la
 # tabulation et le saut de ligne, DEL, C1 —, et ce qui les montre à leur place.
-_CONTROLS: Final = {
-    code: f"\\x{code:02x}" for code in (*range(0x09), *range(0x0B, 0x20), *range(0x7F, 0xA0))
-}
+_CONTROLS: Final = {code: f"\\x{code:02x}" for code in (*range(0x09), *range(0x0B, 0x20), *range(0x7F, 0xA0))}
 
 
 def printable(text: str) -> str:
@@ -82,9 +80,7 @@ class ConsoleFormatter(logging.Formatter):
             # Le détail d'un refus d'accès (``access/audit.py``) : il porte déjà le
             # client et le run, et son motif est le message.
             detail = cast(dict[str, object], audit)
-            context = {key: value for key, value in detail.items() if key != "reason"} | {
-                key: value for key, value in context.items() if key not in detail
-            }
+            context = {key: value for key, value in detail.items() if key != "reason"} | {key: value for key, value in context.items() if key not in detail}
         if not context:
             return printable(line)
         suffix = " ".join(f"{key}={value}" for key, value in context.items())

@@ -149,9 +149,7 @@ def streamed(*events: dict[str, Any]) -> httpx2.Response:
 
 
 def request(*messages: Message, **options: Any) -> ModelRequest:
-    return ModelRequest.model_validate(
-        {"model_id": "claude-test", "messages": messages or (Message.user("?"),), **options}
-    )
+    return ModelRequest.model_validate({"model_id": "claude-test", "messages": messages or (Message.user("?"),), **options})
 
 
 async def test_stream_is_read_in_order() -> None:
@@ -197,9 +195,7 @@ async def test_stream_is_read_in_order() -> None:
     assert response.stop_reason == "tool_use"
     assert response.model_id == "claude-test-20260101"
     assert response.provider == "anthropic"
-    assert response.usage == Usage(
-        input_tokens=120, output_tokens=85, cache_read_tokens=1000, cache_write_tokens=50
-    )
+    assert response.usage == Usage(input_tokens=120, output_tokens=85, cache_read_tokens=1000, cache_write_tokens=50)
     assert [c.type for c in chunks][-2:] == ["usage", "stopped"]
     assert repr(model) == "AnthropicModel('CLAUDE', model='claude-test')"
     sent = server.requests[0]
@@ -442,9 +438,7 @@ def api_error(status: int, error_type: str, message: str, **headers: str) -> htt
         ),
     ],
 )
-async def test_errors_are_classified(
-    response: httpx2.Response, kind: str, status: int | None, retry: float | None
-) -> None:
+async def test_errors_are_classified(response: httpx2.Response, kind: str, status: int | None, retry: float | None) -> None:
     server = Server(response)
     with pytest.raises(ModelError) as caught:
         await complete(server.model(), request())
@@ -524,9 +518,7 @@ async def test_httpx_errors_while_reading_the_stream_are_transient_model_errors(
         await complete(Server(cut(error)).model(), request())
     failure = caught.value
     assert (failure.kind, failure.http_status, failure.retryable) == ("transient", None, True)
-    assert (
-        failure.message.startswith("Flux interrompu : ") and type(error).__name__ in failure.message
-    )
+    assert failure.message.startswith("Flux interrompu : ") and type(error).__name__ in failure.message
     assert failure.__cause__ is error
 
 
@@ -598,9 +590,7 @@ async def test_a_cut_stream_trips_the_breaker_and_falls_back() -> None:
 
 
 def without_streaming(spec: ModelSpec) -> ModelSpec:
-    return spec.model_copy(
-        update={"capabilities": spec.capabilities.model_copy(update={"streaming": False})}
-    )
+    return spec.model_copy(update={"capabilities": spec.capabilities.model_copy(update={"streaming": False})})
 
 
 def unreadable_stream() -> httpx2.Response:
@@ -611,9 +601,7 @@ def unreadable_stream() -> httpx2.Response:
 
 
 def unreadable_answer() -> httpx2.Response:
-    return httpx2.Response(
-        200, text='{"id": "msg_2", "type"', headers={"content-type": "application/json"}
-    )
+    return httpx2.Response(200, text='{"id": "msg_2", "type"', headers={"content-type": "application/json"})
 
 
 async def test_an_unreadable_event_or_answer_is_a_transient_model_error() -> None:
@@ -670,9 +658,7 @@ async def test_environment_headers_do_not_reach_the_provider(
 ) -> None:
     # La config décide seule de ce qui part : ni en-tête de l'environnement du
     # process, ni sa clé à la place de celle du client.
-    monkeypatch.setenv(
-        "ANTHROPIC_CUSTOM_HEADERS", "X-API-KEY: cle-du-process\nX-Env: oui\nsans deux-points"
-    )
+    monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", "X-API-KEY: cle-du-process\nX-Env: oui\nsans deux-points")
     server = Server(streamed(start(), *end("end_turn")))
     await complete(server.model(), request())
     sent = server.requests[0].headers
@@ -722,9 +708,7 @@ def cached_spec(**cache: Any) -> ModelSpec:
 
 
 def answered() -> httpx2.Response:
-    return streamed(
-        start(), block_start(0, {"type": "text", "text": ""}), stop(0), *end("end_turn")
-    )
+    return streamed(start(), block_start(0, {"type": "text", "text": ""}), stop(0), *end("end_turn"))
 
 
 EPHEMERAL: dict[str, Any] = {"type": "ephemeral"}
@@ -737,9 +721,7 @@ async def test_cache_points_on_tools_system_and_last_message() -> None:
         Message(
             role="assistant",
             blocks=(
-                ReasoningBlock(
-                    text="calcul", provider_meta={"anthropic": AnthropicMeta(signature="s")}
-                ),
+                ReasoningBlock(text="calcul", provider_meta={"anthropic": AnthropicMeta(signature="s")}),
                 ToolCallBlock(call_id="t1", name="calculer", arguments={"expr": "1"}),
             ),
         ),
@@ -767,10 +749,7 @@ async def test_cache_points_on_tools_system_and_last_message() -> None:
 
 async def test_marked_blocks_and_the_four_points_limit() -> None:
     server = Server(answered(), answered())
-    marked = [
-        Message(role="user", blocks=(TextBlock(text=f"partie {n}", cache_breakpoint=True),))
-        for n in range(3)
-    ]
+    marked = [Message(role="user", blocks=(TextBlock(text=f"partie {n}", cache_breakpoint=True),)) for n in range(3)]
     thinking = Message(
         role="assistant",
         blocks=(
@@ -793,12 +772,7 @@ async def test_marked_blocks_and_the_four_points_limit() -> None:
         request(*marked, Message.user("fin"), system="S", tools=(TOOL,)),
     )
     body = server.body
-    placed = [
-        n
-        for n, message in enumerate(body["messages"])
-        for b in message["content"]
-        if "cache_control" in b
-    ]
+    placed = [n for n, message in enumerate(body["messages"]) for b in message["content"] if "cache_control" in b]
     # Système, outils, dernier message, puis la marque la plus récente : quatre au plus.
     assert "cache_control" in body["system"][0] and "cache_control" in body["tools"][0]
     assert len(body["messages"]) == 1
@@ -821,9 +795,7 @@ async def test_the_conversation_cache_point_precedes_the_session_state() -> None
     server = Server(answered(), answered(), answered(), answered())
     spec = cached_spec(messages=True)
     called = tool_call_message(("t1", "calculer", {"expr": "1"}))
-    result = Message(
-        role="tool", blocks=(ToolResultBlock(call_id="t1", output=ToolOutput.text("1")),)
-    )
+    result = Message(role="tool", blocks=(ToolResultBlock(call_id="t1", output=ToolOutput.text("1")),))
     history = (Message.user("Bonjour"), called, result)
     bodies: list[dict[str, Any]] = []
     for client in ("C-002", "C-007"):
@@ -849,9 +821,7 @@ async def test_the_conversation_cache_point_precedes_the_session_state() -> None
     assert [("cache_control" in b) for b in contents] == [True, False, False]
 
     # Le state ouvre un message (après une réponse du modèle) : le point remonte d'un message.
-    await complete(
-        server.model(spec), request(Message.user("Bonjour"), Message.assistant("Oui ?"), shown(a=1))
-    )
+    await complete(server.model(spec), request(Message.user("Bonjour"), Message.assistant("Oui ?"), shown(a=1)))
     body = server.body
     assert body["messages"][1]["content"][0]["cache_control"] == EPHEMERAL
     assert "cache_control" not in body["messages"][2]["content"][0]
@@ -862,9 +832,7 @@ async def test_a_session_state_with_nothing_cacheable_before_it_gets_no_cache_po
     server = Server(answered())
     reasoning = Message(
         role="assistant",
-        blocks=(
-            ReasoningBlock(text="x", provider_meta={"anthropic": AnthropicMeta(signature="s")}),
-        ),
+        blocks=(ReasoningBlock(text="x", provider_meta={"anthropic": AnthropicMeta(signature="s")}),),
     )
     await complete(server.model(cached_spec(messages=True)), request(reasoning, shown(a=1)))
     assert all("cache_control" not in b for m in server.body["messages"] for b in m["content"])
@@ -924,9 +892,7 @@ async def test_output_schema_goes_to_output_config_with_native_json() -> None:
     server = Server(answered(), answered(), answered())
     await complete(server.model(), request(output_schema=schema))
     assert "output_config" not in server.body
-    native = SPEC.model_copy(
-        update={"capabilities": SPEC.capabilities.model_copy(update={"native_json": True})}
-    )
+    native = SPEC.model_copy(update={"capabilities": SPEC.capabilities.model_copy(update={"native_json": True})})
     await complete(
         server.model(native),
         request(output_schema=schema, params={"output_config": {"effort": "low"}}),
@@ -987,8 +953,7 @@ async def test_a_refusal_without_key_says_no_key_was_sent() -> None:
         await complete(server.model(keyless), request())
     assert caught.value.kind == "auth"
     assert str(caught.value).endswith(
-        "invalid x-api-key'}} — aucune clé d'API envoyée : le modèle CLAUDE n'a pas "
-        "d'api_key_env (déclarer par exemple api_key_env: ANTHROPIC_API_KEY)"
+        "invalid x-api-key'}} — aucune clé d'API envoyée : le modèle CLAUDE n'a pas d'api_key_env (déclarer par exemple api_key_env: ANTHROPIC_API_KEY)"
     )
     # Avec une clé, le refus reste celui du fournisseur.
     server = Server(api_error(401, "authentication_error", "invalid x-api-key"))

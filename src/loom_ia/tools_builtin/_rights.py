@@ -54,9 +54,7 @@ def resolve[R: str](
             return {}
         raise ValueError(_legacy(table, known=names, defaults=default_of, where=where, form=form))
     if not isinstance(rights, list | tuple):
-        raise ValueError(
-            f"{where} : 'rights' attend une liste de droits ({', '.join(names)}), pas {rights!r}"
-        )
+        raise ValueError(f"{where} : 'rights' attend une liste de droits ({', '.join(names)}), pas {rights!r}")
     given = [str(item) for item in cast("Sequence[object]", rights)]
     doubles = sorted({right for right in given if given.count(right) > 1}, key=given.index)
     if doubles:
@@ -67,32 +65,20 @@ def resolve[R: str](
     return {right: chosen.get(right, default_of.get(right, "never")) for right in ordered}
 
 
-def _approval(
-    approval: object, *, given: Sequence[str], known: Sequence[str], where: str
-) -> dict[str, RightApproval]:
+def _approval(approval: object, *, given: Sequence[str], known: Sequence[str], where: str) -> dict[str, RightApproval]:
     if approval is None:
         return {}
     if not isinstance(approval, Mapping):
-        raise ValueError(
-            f"{where} : 'approval' attend une table droit → never ou always, pas {approval!r}"
-        )
+        raise ValueError(f"{where} : 'approval' attend une table droit → never ou always, pas {approval!r}")
     chosen: dict[str, RightApproval] = {}
     for key, value in cast(Mapping[object, object], approval).items():
         right = str(key)
         if right not in known:
-            raise ValueError(
-                f"{where} : approval {right!r} — droit inconnu (droits : {', '.join(known)})"
-            )
+            raise ValueError(f"{where} : approval {right!r} — droit inconnu (droits : {', '.join(known)})")
         if value not in APPROVALS:
-            raise ValueError(
-                f"{where} : approval {right!r} vaut {value!r} — attendu : never (sans "
-                "approbation) ou always (approbation humaine)"
-            )
+            raise ValueError(f"{where} : approval {right!r} vaut {value!r} — attendu : never (sans approbation) ou always (approbation humaine)")
         if right not in given:
-            raise ValueError(
-                f"{where} : approval {right!r} porte sur un droit non accordé — l'ajouter "
-                "à 'rights', ou le retirer d'approval"
-            )
+            raise ValueError(f"{where} : approval {right!r} porte sur un droit non accordé — l'ajouter à 'rights', ou le retirer d'approval")
         chosen[right] = value
     return chosen
 
@@ -110,9 +96,7 @@ def _legacy(
     rights = [right for right in known if right in said]
     rights += [right for right in said if right not in known]
     # Seuls les écarts aux défauts : le reste s'obtient sans rien écrire.
-    departures = {
-        right: said[right] for right in rights if said[right] != defaults.get(right, "never")
-    }
+    departures = {right: said[right] for right in rights if said[right] != defaults.get(right, "never")}
     listed = f"[{', '.join(rights)}]"
     approval = "{ " + ", ".join(f"{right}: {value}" for right, value in departures.items()) + " }"
     if form == "folder":
@@ -121,7 +105,4 @@ def _legacy(
     else:
         written = f"{{ rights: {listed}, approval: {approval} }}" if departures else listed
         subject = "la table droit → approbation n'est plus acceptée"
-    return (
-        f"{where} : {subject} (never voulait dire « sans approbation », pas « refusé ») "
-        f"— écrire {written}"
-    )
+    return f"{where} : {subject} (never voulait dire « sans approbation », pas « refusé ») — écrire {written}"

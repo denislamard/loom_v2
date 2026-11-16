@@ -121,10 +121,7 @@ class ResourceReader:
         """Les gabarits, ou aucun si l'appelant ne peut pas lire."""
         if not self._caller.may("read"):
             return []
-        return [
-            types.ResourceTemplate(uriTemplate=uri, name=name, description=description)
-            for uri, name, description in TEMPLATES
-        ]
+        return [types.ResourceTemplate(uriTemplate=uri, name=name, description=description) for uri, name, description in TEMPLATES]
 
     # --- Lecture --------------------------------------------------------------
 
@@ -164,8 +161,7 @@ class ResourceReader:
             key = self._caller.key
             bound = f"La clé {key.id}" if key is not None else "La clé"
             raise self._denied(
-                f"{bound} est bornée à certains agents : la liste des sessions ne peut pas "
-                "être filtrée",
+                f"{bound} est bornée à certains agents : la liste des sessions ne peut pas être filtrée",
                 "read",
             )
         records = await self._loom.sessions(tenant_id=self._caller.tenant)
@@ -253,9 +249,7 @@ class ResourceReader:
         if not self._whole():
             # Un fichier se lit comme la session qui le porte : chacun de ses agents.
             try:
-                info = await self._loom.session(
-                    SessionId(location.session), tenant_id=self._caller.tenant
-                )
+                info = await self._loom.session(SessionId(location.session), tenant_id=self._caller.tenant)
             except UnknownSession:
                 raise _unknown(uri) from None
             for agent in dict.fromkeys(run.agent for run in info.runs):
@@ -266,8 +260,7 @@ class ResourceReader:
             raise _unknown(uri) from None
         if len(data) > self._policy.max_bytes:
             raise _refused(
-                f"{location.name} : {len(data)} octets, au-delà de la limite de lecture "
-                f"({self._policy.max_bytes} octets, execution.attachments.max_bytes)"
+                f"{location.name} : {len(data)} octets, au-delà de la limite de lecture ({self._policy.max_bytes} octets, execution.attachments.max_bytes)"
             )
         return [ReadResourceContents(content=data, mime_type=_media(location.name))]
 
@@ -317,9 +310,7 @@ def _split(uri: str) -> tuple[str, SessionId | None]:
 
 
 def _json(payload: object) -> ReadResourceContents:
-    return ReadResourceContents(
-        content=json.dumps(payload, ensure_ascii=False), mime_type=JSON_TYPE
-    )
+    return ReadResourceContents(content=json.dumps(payload, ensure_ascii=False), mime_type=JSON_TYPE)
 
 
 def _media(name: str) -> str:

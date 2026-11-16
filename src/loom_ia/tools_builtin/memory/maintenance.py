@@ -115,25 +115,18 @@ class EvalReport(BaseModel):
     recall_at_1: float
     recall_at_5: float
     mrr: float
-    lowest_expected: float | None = Field(
-        default=None, description="Plus bas score d'un document attendu et trouvé"
-    )
-    highest_off_topic: float | None = Field(
-        default=None, description="Plus haut score obtenu par une question hors sujet"
-    )
+    lowest_expected: float | None = Field(default=None, description="Plus bas score d'un document attendu et trouvé")
+    highest_off_topic: float | None = Field(default=None, description="Plus haut score obtenu par une question hors sujet")
     separable: bool | None = Field(
         default=None,
-        description="Un seuil sépare-t-il les réponses attendues du hors-sujet ? "
-        "None sans question hors sujet",
+        description="Un seuil sépare-t-il les réponses attendues du hors-sujet ? None sans question hors sujet",
     )
     suggested_min_score: float | None = Field(
         description="Sans question hors sujet : le plus haut seuil qui ne perd aucun cas trouvé. "
         "Avec : le milieu entre le hors-sujet le plus fort et la réponse attendue la plus "
         "faible, s'ils sont séparables ; None sinon"
     )
-    noise_removed_at_suggested: float | None = Field(
-        description="Part des résultats hors document attendu qui tomberaient sous ce seuil"
-    )
+    noise_removed_at_suggested: float | None = Field(description="Part des résultats hors document attendu qui tomberaient sous ce seuil")
     results: list[CaseResult]
 
 
@@ -187,11 +180,7 @@ async def evaluate(service: MemoryService, cases: list[GoldenCase], k: int = 10)
     highest = max(off_topic) if off_topic else None
     off = len(results) - count
     separable, suggested = _threshold(lowest, highest if off else None)
-    noise = (
-        sum(1 for score in negatives if score < suggested) / len(negatives)
-        if suggested is not None and negatives
-        else None
-    )
+    noise = sum(1 for score in negatives if score < suggested) / len(negatives) if suggested is not None and negatives else None
     return EvalReport(
         cases=count,
         off_topic=off,

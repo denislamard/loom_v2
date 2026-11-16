@@ -288,10 +288,7 @@ def check_deletable_id(kind: str, value: str) -> None:
     jamais le lire comme « tout le client » (``UnusableId``).
     """
     if not value:
-        raise UnusableId(
-            f"{kind} {value!r} inutilisable : un identifiant vide ne désigne rien de précis "
-            "à supprimer"
-        )
+        raise UnusableId(f"{kind} {value!r} inutilisable : un identifiant vide ne désigne rien de précis à supprimer")
 
 
 class AgentNotAllowed(PermissionError):
@@ -348,13 +345,8 @@ class ApprovalStale(ValueError):
     45 s après l'échéance accordait l'appel, qui s'exécutait.
     """
 
-    def __init__(
-        self, run_id: RunId, session_id: SessionId, expired: Sequence[PendingApproval]
-    ) -> None:
-        calls = ", ".join(
-            f"{asked.tool_name} (appel {asked.call_id}) a expiré le {_local(asked.expire_at)}"
-            for asked in expired
-        )
+    def __init__(self, run_id: RunId, session_id: SessionId, expired: Sequence[PendingApproval]) -> None:
+        calls = ", ".join(f"{asked.tool_name} (appel {asked.call_id}) a expiré le {_local(asked.expire_at)}" for asked in expired)
         super().__init__(
             f"Run {run_id} : la demande d'approbation de {calls} ; elle ne peut plus être "
             f"tranchée. Reprendre le run (loom resume {run_id} --session {session_id}, "
@@ -452,9 +444,7 @@ class RetentionReport(DomainModel):
 
     dry_run: bool
     # Borne par client, telle qu'elle a été lue ; ``None`` : aucune règle.
-    days: dict[TenantId, NonNegativeInt | None] = Field(
-        default_factory=dict[TenantId, NonNegativeInt | None]
-    )
+    days: dict[TenantId, NonNegativeInt | None] = Field(default_factory=dict[TenantId, NonNegativeInt | None])
     scanned: NonNegativeInt = 0
     kept: NonNegativeInt = 0
     swept: tuple[SessionSwept, ...] = ()
@@ -475,9 +465,7 @@ def _masked_approvals(approvals: tuple[PendingApproval, ...]) -> tuple[PendingAp
     ``approve`` sans ``read_content`` trancherait à l'aveugle, et
     ``loom validate`` le signale.
     """
-    return tuple(
-        approval.model_copy(update={"arguments": {}, "reason": ""}) for approval in approvals
-    )
+    return tuple(approval.model_copy(update={"arguments": {}, "reason": ""}) for approval in approvals)
 
 
 def _approvals_redacted(approvals: tuple[PendingApproval, ...]) -> list[str]:
@@ -665,9 +653,7 @@ class SessionFile(DomainModel):
 
     def masked(self) -> Self:
         """Sans le nom : il peut dire ce que contient le fichier (``facture-Dupont.pdf``)."""
-        return self.model_copy(
-            update={"name": None, "redacted": ("name",) if self.name is not None else ()}
-        )
+        return self.model_copy(update={"name": None, "redacted": ("name",) if self.name is not None else ()})
 
 
 class JudgeVerdict(DomainModel):
@@ -693,9 +679,7 @@ class JudgeVerdict(DomainModel):
 
     def masked(self) -> Self:
         """Verdict sans ses motifs : les notes restent, la prose part."""
-        return self.model_copy(
-            update={"criteria": tuple(c.model_copy(update={"reason": ""}) for c in self.criteria)}
-        )
+        return self.model_copy(update={"criteria": tuple(c.model_copy(update={"reason": ""}) for c in self.criteria)})
 
     @classmethod
     def of(cls, event: Event, verdict: JudgeEvaluated) -> Self:
@@ -864,9 +848,7 @@ class RunResult(DomainModel):
             report = report.model_copy(
                 update={
                     "runs": tuple(run for run in report.runs if run.agent not in hidden),
-                    "roles": tuple(
-                        line for line in report.roles if not line.name.startswith(prefixes)
-                    ),
+                    "roles": tuple(line for line in report.roles if not line.name.startswith(prefixes)),
                 }
             )
         return self.model_copy(
@@ -901,16 +883,9 @@ class RunResult(DomainModel):
             unverified=state.unverified,
             fallback=state.fallback,
             report=usage_report(tree, state.session_id, state.run_id) if tree else None,
-            verdicts=tuple(
-                JudgeVerdict.of(event, payload)
-                for event in tree
-                if isinstance(payload := event.payload, JudgeEvaluated)
-            ),
+            verdicts=tuple(JudgeVerdict.of(event, payload) for event in tree if isinstance(payload := event.payload, JudgeEvaluated)),
             skipped_judges=tuple(
-                skip
-                for event in tree
-                if isinstance(checked := event.payload, GuardChecked)
-                and (skip := JudgeSkip.of(event, checked)) is not None
+                skip for event in tree if isinstance(checked := event.payload, GuardChecked) and (skip := JudgeSkip.of(event, checked)) is not None
             ),
             pending_approvals=_awaited(state, tree),
             pending_questions=_asked(state, tree),
@@ -938,12 +913,7 @@ def _produced_below(state: RunState, tree: Sequence[Event]) -> tuple[ArtifactRec
     below: list[ArtifactRecord] = []
     for event in tree:
         payload = event.payload
-        if (
-            event.run_id != state.run_id
-            and isinstance(payload, ArtifactStored)
-            and payload.origin == "tool_output"
-            and payload.uri not in known
-        ):
+        if event.run_id != state.run_id and isinstance(payload, ArtifactStored) and payload.origin == "tool_output" and payload.uri not in known:
             known.add(payload.uri)
             below.append(payload.record)
     return tuple(below)
@@ -959,12 +929,7 @@ def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, .
     """
     if state.finished:
         return state.awaiting
-    inner = [
-        approval
-        for run_id, own in _by_run(tree).items()
-        if run_id != state.run_id
-        for approval in fold(own, run_id).awaiting
-    ]
+    inner = [approval for run_id, own in _by_run(tree).items() if run_id != state.run_id for approval in fold(own, run_id).awaiting]
     return (*state.awaiting, *inner)
 
 
@@ -977,11 +942,7 @@ def _asking_runs(state: RunState, tree: Sequence[Event]) -> list[RunState]:
     """Le run et ceux de ses sous-runs qui ont une question sans réponse."""
     if state.finished:
         return [state] if state.asking else []
-    inner = [
-        folded
-        for run_id, own in _by_run(tree).items()
-        if run_id != state.run_id and (folded := fold(own, run_id)).asking
-    ]
+    inner = [folded for run_id, own in _by_run(tree).items() if run_id != state.run_id and (folded := fold(own, run_id)).asking]
     return [state, *inner] if state.asking else inner
 
 
@@ -996,12 +957,7 @@ def _asked_with(state: RunState, tree: Sequence[Event]) -> str:
     for owner in _asking_runs(state, tree):
         open_calls = {question.call_id for question in owner.asking}
         carrier = next(
-            (
-                message
-                for message in reversed(owner.messages)
-                if message.role == "assistant"
-                and any(call.call_id in open_calls for call in message.tool_calls)
-            ),
+            (message for message in reversed(owner.messages) if message.role == "assistant" and any(call.call_id in open_calls for call in message.tool_calls)),
             None,
         )
         if carrier is not None and carrier.text.strip():
@@ -1017,9 +973,7 @@ def _usable(what: str, value: str) -> str:
     journal JSONL. Il est contrôlé à la porte, et non au moment d'écrire.
     """
     if not SAFE_ID.fullmatch(value):
-        raise DeliveryRefused(
-            f"{what} inutilisable : {value!r} (attendu lettres, chiffres, '.', '_' ou '-')"
-        )
+        raise DeliveryRefused(f"{what} inutilisable : {value!r} (attendu lettres, chiffres, '.', '_' ou '-')")
     return value
 
 
@@ -1094,9 +1048,7 @@ class _Signed:
     self_approved: bool = False
 
 
-def _launched_by(
-    actor: Actor, context: CallerContext | None, tenant: TenantId | None
-) -> tuple[CallerContext, TenantId | None]:
+def _launched_by(actor: Actor, context: CallerContext | None, tenant: TenantId | None) -> tuple[CallerContext, TenantId | None]:
     """Le contexte d'un run lancé par cet utilisateur, et son client (règle 1, D-7).
 
     Le contexte porte son identifiant — et la passerelle, s'il est endossé :
@@ -1106,9 +1058,7 @@ def _launched_by(
     """
     given = context or CallerContext()
     if given.user_id is not None and given.user_id != actor.user:
-        raise ValueError(
-            f"Utilisateur contradictoire : user={actor.user!r} et context.user_id={given.user_id!r}"
-        )
+        raise ValueError(f"Utilisateur contradictoire : user={actor.user!r} et context.user_id={given.user_id!r}")
     named = tenant is not None or (context is not None and "tenant_id" in context.model_fields_set)
     return (
         given.model_copy(update={"user_id": actor.user, "via": actor.via}),
@@ -1225,9 +1175,7 @@ def _awaiting_runs(tree: Sequence[Event]) -> list[RunState]:
     return [state for state in _run_states(tree) if state.awaiting]
 
 
-def _where(
-    tree: Sequence[Event], run_id: RunId, call_id: str
-) -> tuple[SpanId | None, SpanId | None]:
+def _where(tree: Sequence[Event], run_id: RunId, call_id: str) -> tuple[SpanId | None, SpanId | None]:
     """Span de la demande qu'une décision vient trancher (#17).
 
     Une décision prise hors de la boucle — par REST, par la CLI, par
@@ -1238,11 +1186,7 @@ def _where(
     retrouvée, le span racine du run vaut.
     """
     for event in reversed(tree):
-        if (
-            event.run_id == run_id
-            and isinstance(request := event.payload, ApprovalRequested | QuestionAsked)
-            and request.call_id == call_id
-        ):
+        if event.run_id == run_id and isinstance(request := event.payload, ApprovalRequested | QuestionAsked) and request.call_id == call_id:
             return event.span_id, event.parent_span_id
     return None, None
 
@@ -1269,11 +1213,7 @@ def _unfinished(events: Sequence[Event]) -> list[RunState]:
     Les marqueurs de session sont écartés : ils portent l'identifiant de leur
     session, pas celui d'un run, et une session résumée en a.
     """
-    return [
-        state
-        for state in _run_states(events)
-        if state.parent_run_id is None and state.kind == "normal" and not state.finished
-    ]
+    return [state for state in _run_states(events) if state.parent_run_id is None and state.kind == "normal" and not state.finished]
 
 
 def traced_agents(trace: Trace) -> list[str]:
@@ -1286,9 +1226,7 @@ def traced_agents(trace: Trace) -> list[str]:
     return list(dict.fromkeys([trace.agent, *(str(n) for n in named if n is not None)]))
 
 
-def tree_tools(
-    config: LoomConfig, agent: str, context_of: Callable[[str], RunContext]
-) -> tuple[dict[str, str], tuple[str, ...]]:
+def tree_tools(config: LoomConfig, agent: str, context_of: Callable[[str], RunContext]) -> tuple[dict[str, str], tuple[str, ...]]:
     """Les outils de l'agent et de ses sous-agents (nom → genre), et les préfixes de ses sources.
 
     ``context_of`` monte chaque agent de l'arbre. Un outil MCP ou de paquet est
@@ -1330,20 +1268,13 @@ def doubles_problem(
         if known.get(name) == "role":
             return f"{name!r} est un rôle — de la logique, qui tourne ; il ne se double pas"
         if name not in known and not name.startswith(prefixes):
-            return (
-                f"doublure pour un outil inconnu, {name!r} "
-                f"(outils : {', '.join(sorted(known)) or 'aucun'})"
-            )
+            return f"doublure pour un outil inconnu, {name!r} (outils : {', '.join(sorted(known)) or 'aucun'})"
     return None
 
 
-def _check_mode(
-    mode: ReplayMode, models: Mapping[str, str] | None, doubles: Mapping[str, Double] | None
-) -> None:
+def _check_mode(mode: ReplayMode, models: Mapping[str, str] | None, doubles: Mapping[str, Double] | None) -> None:
     if mode == "exact" and (models or doubles):
-        raise ReplayError(
-            "Rejeu identique : 'models' et 'doubles' ne servent qu'en variante (mode='variant')"
-        )
+        raise ReplayError("Rejeu identique : 'models' et 'doubles' ne servent qu'en variante (mode='variant')")
 
 
 def _no_subagent(agent: str) -> RunContext:
@@ -1402,9 +1333,7 @@ class _ReplayMount:
         def client(spec: ModelSpec) -> ModelClient:
             if not self.variant:
                 return ReplayModelClient(book, spec)
-            return VariantModelClient(
-                book, spec, lambda: create_model_client(spec, environ=secrets)
-            )
+            return VariantModelClient(book, spec, lambda: create_model_client(spec, environ=secrets))
 
         built = self._build(
             self._config,
@@ -1454,9 +1383,7 @@ class Loom:
         self._config = config
         # Le pool des outils synchrones de l'instance (B-2, D-4) : ses threads sont des
         # démons, que ``aclose`` attend au plus ``execution.tools.grace`` secondes.
-        self._threads = tool_threads.ToolThreads(
-            config.execution.tools.threads, grace=config.execution.tools.grace
-        )
+        self._threads = tool_threads.ToolThreads(config.execution.tools.threads, grace=config.execution.tools.grace)
         # Outils servis à part, posés sur chaque agent monté (sous-agents
         # compris) : c'est ainsi qu'une éval double ou refuse un outil à effets
         # de bord (J6.3a). Sans lui, chaque outil s'exécute.
@@ -1468,8 +1395,7 @@ class Loom:
         unknown = sorted(set(models or {}) - declared)
         if unknown:
             raise ConfigError(
-                f"Clients de modèle fournis pour des modèles non déclarés : {', '.join(unknown)} "
-                f"(modèles : {', '.join(sorted(declared)) or 'aucun'})"
+                f"Clients de modèle fournis pour des modèles non déclarés : {', '.join(unknown)} (modèles : {', '.join(sorted(declared)) or 'aucun'})"
             )
         self._models: dict[str, ModelClient] = dict(models or {})
         # Fournisseur de secrets de l'appelant, s'il en a donné un : une éval le
@@ -1483,9 +1409,7 @@ class Loom:
         self._agents = AgentRegistry.from_config(config)
         # Clients (L1) : résolus ici, pour qu'une surcharge incohérente soit
         # une erreur de démarrage et non une erreur au premier run du client.
-        provider: SecretProvider = (
-            secrets if secrets is not None else EnvironmentSecrets(config, environ)
-        )
+        provider: SecretProvider = secrets if secrets is not None else EnvironmentSecrets(config, environ)
         self._tenants = Tenants(config, environ=environ, secrets=provider)
         # Sceau des contenus au repos (5.5b) : un trousseau quand la config le
         # déclare, et c'est lui qui donne son codec au journal et sa clé aux
@@ -1498,11 +1422,7 @@ class Loom:
         # Un journal fourni par l'appelant reste à lui de fermer.
         self._owns_store = store is None
         # Stockage des fichiers, commun aux agents ; même règle de fermeture.
-        self._shared_artifacts = (
-            artifacts
-            if artifacts is not None
-            else create_artifact_store(config, keyring=self._keyring)
-        )
+        self._shared_artifacts = artifacts if artifacts is not None else create_artifact_store(config, keyring=self._keyring)
         self._owns_artifacts = artifacts is None
         # Isolation physique (#34) : un client qui déclare son propre stockage
         # a le sien, les autres partagent celui de la racine. Le routeur est
@@ -1515,18 +1435,12 @@ class Loom:
             shared_artifacts=self._shared_artifacts,
         )
         inner: EventStore = RoutedEventStore(self._router) if self._router.routed else shared
-        self._artifacts: ArtifactStore = (
-            RoutedArtifactStore(self._router) if self._router.routed else self._shared_artifacts
-        )
+        self._artifacts: ArtifactStore = RoutedArtifactStore(self._router) if self._router.routed else self._shared_artifacts
         # Bus des nouvelles d'écriture (5.3c) : sans lui, un abonné ne voit
         # que ce que son propre process écrit. Un journal notifiant fourni par
         # l'appelant garde le sien, s'il en a un.
         self._bus = create_bus(config) if not isinstance(inner, NotifyingEventStore) else None
-        self._store = (
-            inner
-            if isinstance(inner, NotifyingEventStore)
-            else NotifyingEventStore(inner, bus=self._bus, source=self._worker_id)
-        )
+        self._store = inner if isinstance(inner, NotifyingEventStore) else NotifyingEventStore(inner, bus=self._bus, source=self._worker_id)
         # Tâche qui suit le bus, lancée à l'entrée du contexte.
         self._following: asyncio.Task[None] | None = None
         # Export des runs terminés vers les collecteurs (6.1a) : un abonné du
@@ -1695,17 +1609,12 @@ class Loom:
         """Un client et ses surcharges ; lève ``UnknownTenant`` s'il n'est pas déclaré."""
         return self._tenants.get(tenant_id)
 
-    def _for(
-        self, agent: str, context: CallerContext | None, tenant: TenantId | None
-    ) -> tuple[CallerContext, Tenant]:
+    def _for(self, agent: str, context: CallerContext | None, tenant: TenantId | None) -> tuple[CallerContext, Tenant]:
         """Contexte appelant et client d'un lancement, l'agent vérifié ouvert à lui."""
         caller = context or CallerContext()
         if tenant is not None and tenant != caller.tenant_id:
             if context is not None and "tenant_id" in context.model_fields_set:
-                raise ValueError(
-                    f"Client contradictoire : tenant={tenant!r} et "
-                    f"context.tenant_id={caller.tenant_id!r}"
-                )
+                raise ValueError(f"Client contradictoire : tenant={tenant!r} et context.tenant_id={caller.tenant_id!r}")
             caller = caller.model_copy(update={"tenant_id": tenant})
         found = self._tenants.get(caller.tenant_id)
         if not found.allows(agent):
@@ -1767,9 +1676,7 @@ class Loom:
         Un utilisateur inconnu ne peut rien ; un run inconnu lève ``UnknownRun``.
         """
         if permission == "self_approve":
-            raise ValueError(
-                "self_approve se déduit du lanceur du run : demander 'approve' sur ce run"
-            )
+            raise ValueError("self_approve se déduit du lanceur du run : demander 'approve' sur ce run")
         try:
             actor = user if isinstance(user, Actor) else Actor.of(self.config.security, user)
         except AccessDenied:
@@ -1782,12 +1689,7 @@ class Loom:
             tree = RunTree(run_id).select(events)
             if not tree:
                 raise UnknownRun(run_id)
-            asked = [
-                (owner, request)
-                for owner in _awaiting_runs(tree)
-                for request in owner.awaiting
-                if call_id is None or request.call_id == call_id
-            ]
+            asked = [(owner, request) for owner in _awaiting_runs(tree) for request in owner.awaiting if call_id is None or request.call_id == call_id]
             if not asked:
                 return False
             try:
@@ -1856,9 +1758,7 @@ class Loom:
 
     def _require_on_run(self, actor: Actor, permission: Permission, state: RunState) -> None:
         """Les droits de l'acteur sur l'agent d'un run existant, chez le client du run."""
-        require(
-            actor, permission, agent=self._agents.get(state.agent), tenant=state.context.tenant_id
-        )
+        require(actor, permission, agent=self._agents.get(state.agent), tenant=state.context.tenant_id)
 
     def _judged(self, judges: JudgesMode) -> JudgesMode:
         """Ce que l'appelant demande aux juges, si le profil le permet (M4).
@@ -1869,9 +1769,7 @@ class Loom:
         barrière, comme depuis 3.3.
         """
         if judges == "skip" and self.config.strict:
-            raise ConfigError(
-                "Profil prod : judges='skip' retire un contrôle et n'y est pas permis"
-            )
+            raise ConfigError("Profil prod : judges='skip' retire un contrôle et n'y est pas permis")
         return judges
 
     @audited
@@ -1946,9 +1844,7 @@ class Loom:
             self._may_answer(actor, routed)
             return await self._answered_run(ctx, routed, message, caller)
         await self._unclaimed(run_id, session_id, who.id)
-        started = await self._start(
-            ctx, message, attachments, session_id, caller, run_id, judges, state
-        )
+        started = await self._start(ctx, message, attachments, session_id, caller, run_id, judges, state)
         return await self._result(started)
 
     async def _routed(
@@ -2036,11 +1932,7 @@ class Loom:
     def _asks(self, tenant: TenantId) -> bool:
         """Un agent de ce client a-t-il ``loom.ask`` ? Sans lui, aucune question n'attend."""
         config = self._tenants.get(tenant).config
-        return any(
-            getattr(tool, "python", None) == "loom.ask"
-            for agent in config.agents
-            for tool in agent.tools
-        )
+        return any(getattr(tool, "python", None) == "loom.ask" for agent in config.agents for tool in agent.tools)
 
     async def _answered_run(
         self,
@@ -2059,9 +1951,7 @@ class Loom:
             session_id=root.session_id,
             tenant_id=root.context.tenant_id,
         )
-        state = await self.state(
-            root.run_id, session_id=root.session_id, tenant_id=root.context.tenant_id
-        )
+        state = await self.state(root.run_id, session_id=root.session_id, tenant_id=root.context.tenant_id)
         writer = await self._writer(state.context.tenant_id, state.session_id)
         return await self._result(await self._piloted(ctx, state, writer))
 
@@ -2135,9 +2025,7 @@ class Loom:
             task = asyncio.create_task(
                 self._answered_run(ctx, routed, message, caller)
                 if routed is not None
-                else self._start(
-                    ctx, message, attachments, session_id, caller, run_id, judges, state
-                )
+                else self._start(ctx, message, attachments, session_id, caller, run_id, judges, state)
             )
             task.add_done_callback(lambda _: items.put_nowait(None))
             try:
@@ -2216,9 +2104,7 @@ class Loom:
                 built.context.tools.replay = self._intercept
             self._built[key] = built
         # La concession appartient à l'instance, pas à la config de l'agent.
-        context = replace(
-            built.context, worker_id=self._worker_id, lease=self._config.execution.lease
-        )
+        context = replace(built.context, worker_id=self._worker_id, lease=self._config.execution.lease)
         if on_chunk is None and approver is None and answerer is None:
             return context
         return replace(
@@ -2266,9 +2152,7 @@ class Loom:
         tenant = self._tenants.get(tenant_id)
         session = session_id or SessionId(run_id)
         events = await self._store.read(tenant.id, session)
-        return await self._replay_events(
-            events, run_id, tenant, mode=mode, models=models, doubles=doubles, export=export
-        )
+        return await self._replay_events(events, run_id, tenant, mode=mode, models=models, doubles=doubles, export=export)
 
     async def replay_journal(
         self,
@@ -2312,24 +2196,16 @@ class Loom:
         finished = [run for run in runs if run.finished]
         unfinished = tuple(run.run_id for run in runs if not run.finished)
         if not finished:
-            raise ReplayError(
-                f"Rien à rejouer dans {said} : aucun run fini"
-                + (f" ({len(unfinished)} inachevé(s))" if unfinished else "")
-            )
+            raise ReplayError(f"Rien à rejouer dans {said} : aucun run fini" + (f" ({len(unfinished)} inachevé(s))" if unfinished else ""))
         if export is not None and len(finished) > 1:
-            raise ReplayError(
-                f"'export' garde le journal d'un rejeu : {said} a {len(finished)} runs à "
-                "rejouer, en nommer un (run_id)"
-            )
+            raise ReplayError(f"'export' garde le journal d'un rejeu : {said} a {len(finished)} runs à rejouer, en nommer un (run_id)")
         reports: list[ReplayReport] = []
         for run in finished:
             try:
                 tenant = self._tenants.get(run.tenant_id)
             except UnknownTenant as exc:
                 raise ReplayError(f"Run {run.run_id} de {said} : {exc.args[0]}") from exc
-            session = [
-                e for e in events if e.tenant_id == run.tenant_id and e.session_id == run.session_id
-            ]
+            session = [e for e in events if e.tenant_id == run.tenant_id and e.session_id == run.session_id]
             reports.append(
                 await self._replay_events(
                     session,
@@ -2467,11 +2343,7 @@ class Loom:
             read = await self._store.read(tenant, session, after_seq=after_seq, run_id=run_id)
             return own.select(read)
         tree = RunTree(run_id)
-        return [
-            event
-            for event in tree.select(await self._store.read(tenant, session))
-            if event.seq > after_seq
-        ]
+        return [event for event in tree.select(await self._store.read(tenant, session)) if event.seq > after_seq]
 
     async def trace(
         self,
@@ -2546,9 +2418,7 @@ class Loom:
         tenant_id: TenantId | None = None,
     ) -> RunState:
         """État d'un run, reconstruit depuis son journal."""
-        events = await self.events(
-            run_id, session_id=session_id, tenant_id=tenant_id, subruns=False
-        )
+        events = await self.events(run_id, session_id=session_id, tenant_id=tenant_id, subruns=False)
         if not events:
             raise UnknownRun(run_id)
         return fold(events, run_id)
@@ -2664,9 +2534,7 @@ class Loom:
                 # Plus ancienne que ``since`` : ses runs aussi, et ceux de toutes
                 # les sessions qui suivent. Rien n'est laissé derrière.
                 break
-            if scanned >= sessions or (
-                len(found) >= limit and record.updated_at < found[-1].updated_at
-            ):
+            if scanned >= sessions or (len(found) >= limit and record.updated_at < found[-1].updated_at):
                 # Un run n'est jamais plus récent que la dernière écriture de sa
                 # session : plus aucune de celles qui restent n'en a de plus
                 # récent que le dernier de la page.
@@ -2675,9 +2543,7 @@ class Loom:
             scanned += 1
             try:
                 events = await self._store.read(tenant, record.session_id)
-                listing = [
-                    RunListed.of(fold(own, own[0].run_id), own) for own in _by_run(events).values()
-                ]
+                listing = [RunListed.of(fold(own, own[0].run_id), own) for own in _by_run(events).values()]
             except _UNREADABLE as error:
                 _unreadable("Runs", tenant, record.session_id, error)
                 continue
@@ -2700,9 +2566,7 @@ class Loom:
         """
         return await self._store.query(query)
 
-    async def session(
-        self, session_id: SessionId, *, tenant_id: TenantId | None = None
-    ) -> SessionInfo:
+    async def session(self, session_id: SessionId, *, tenant_id: TenantId | None = None) -> SessionInfo:
         """Fiche d'une session : ses runs, et ce qu'il faut trancher pour qu'elle avance.
 
         Le journal est lu une fois et replié run par run. Une session inconnue
@@ -2742,11 +2606,7 @@ class Loom:
         events = await self._store.read(tenant_id or DEFAULT_TENANT, session_id)
         if not events:
             raise UnknownSession(session_id)
-        tools = {
-            (event.run_id, event.payload.call_id): event.payload.tool_name
-            for event in events
-            if isinstance(event.payload, ToolCalled)
-        }
+        tools = {(event.run_id, event.payload.call_id): event.payload.tool_name for event in events if isinstance(event.payload, ToolCalled)}
         found: dict[str, SessionFile] = {}
         for event in events:
             stored = event.payload
@@ -2770,9 +2630,7 @@ class Loom:
             )
         return tuple(found.values())
 
-    async def session_file(
-        self, session_id: SessionId, file: str, *, tenant_id: TenantId | None = None
-    ) -> tuple[SessionFile, bytes]:
+    async def session_file(self, session_id: SessionId, file: str, *, tenant_id: TenantId | None = None) -> tuple[SessionFile, bytes]:
         """Un fichier de la session, désigné par son nom dans le stockage, et ses octets.
 
         Cherché parmi les fichiers que le journal de **cette** session décrit :
@@ -2785,9 +2643,7 @@ class Loom:
                 return described, await self._artifacts.get(described.uri)
         raise ArtifactNotFound(f"{session_id}/{file}")
 
-    async def export_session(
-        self, session_id: SessionId, *, tenant_id: TenantId | None = None
-    ) -> list[Event]:
+    async def export_session(self, session_id: SessionId, *, tenant_id: TenantId | None = None) -> list[Event]:
         """Tous les événements d'une session, dans l'ordre du journal.
 
         Les fichiers n'y sont pas : chaque événement porte leur URI, et
@@ -2798,9 +2654,7 @@ class Loom:
             raise UnknownSession(session_id)
         return events
 
-    async def session_state(
-        self, session_id: SessionId, *, tenant_id: TenantId | None = None
-    ) -> dict[str, JsonValue]:
+    async def session_state(self, session_id: SessionId, *, tenant_id: TenantId | None = None) -> dict[str, JsonValue]:
         """State de la session, relu dans son journal : ce qui est écrit, sans valeurs par défaut.
 
         Ce que l'application a posé à l'ouverture de chaque run, et ce que les
@@ -2815,9 +2669,7 @@ class Loom:
         except (ProjectionError, ValidationError) as error:
             raise SessionUnreadable(session_id, error) from error
 
-    async def delete_session(
-        self, session_id: SessionId, *, tenant_id: TenantId | None = None
-    ) -> SessionDeletion:
+    async def delete_session(self, session_id: SessionId, *, tenant_id: TenantId | None = None) -> SessionDeletion:
         """Supprime physiquement une session : ses clés, ses fichiers, son journal (RGPD).
 
         Le journal part en dernier : tant qu'il est là, on sait ce qu'il reste
@@ -2907,16 +2759,10 @@ class Loom:
         declared = self._config.security.audit
         if declared is None or declared.retention_days is None:
             return None
-        swept = await asyncio.to_thread(
-            audit.sweep, declared.path, declared.retention_days, now=moment, dry_run=dry_run
-        )
-        return AuditSwept(
-            days=declared.retention_days, scanned=swept.scanned, removed=swept.removed
-        )
+        swept = await asyncio.to_thread(audit.sweep, declared.path, declared.retention_days, now=moment, dry_run=dry_run)
+        return AuditSwept(days=declared.retention_days, scanned=swept.scanned, removed=swept.removed)
 
-    async def _sweep(
-        self, tenant: TenantId, record: SessionRecord, *, dry_run: bool
-    ) -> SessionSwept:
+    async def _sweep(self, tenant: TenantId, record: SessionRecord, *, dry_run: bool) -> SessionSwept:
         found = SessionSwept(
             tenant_id=tenant,
             session_id=record.session_id,
@@ -3024,9 +2870,7 @@ class Loom:
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
 
-    async def _piloted(
-        self, ctx: RunContext, state: RunState, writer: SessionWriter | None
-    ) -> RunState:
+    async def _piloted(self, ctx: RunContext, state: RunState, writer: SessionWriter | None) -> RunState:
         """Pilote un run dans une tâche suivie, que ``cancel`` sait retrouver.
 
         Si l'appelant est annulé (``task.cancel()``, délai), la tâche l'est
@@ -3079,9 +2923,7 @@ class Loom:
         # ``cancel`` tient le run jusqu'à la clôture : on la laisse s'écrire, puis
         # le journal dit ce qu'il en est.
         async with self._holding(key):
-            final = await self.state(
-                state.run_id, session_id=state.session_id, tenant_id=state.context.tenant_id
-            )
+            final = await self.state(state.run_id, session_id=state.session_id, tenant_id=state.context.tenant_id)
         if final.finished:
             return final
         raise interrupted
@@ -3141,23 +2983,15 @@ class Loom:
         """
         actor = self._actor(user)
         tenant_id = tenant_id or actor.tenant
-        self._require_on_run(
-            actor, "cancel", await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
-        )
-        stopping = asyncio.create_task(
-            self._cancel(
-                run_id, session_id=session_id, tenant_id=tenant_id, by=actor.user, via=actor.via
-            )
-        )
+        self._require_on_run(actor, "cancel", await self.state(run_id, session_id=session_id, tenant_id=tenant_id))
+        stopping = asyncio.create_task(self._cancel(run_id, session_id=session_id, tenant_id=tenant_id, by=actor.user, via=actor.via))
         try:
             return await asyncio.shield(stopping)
         except asyncio.CancelledError:
             # L'arrêt demandé va au bout, puis l'annulation de l'appelant remonte.
             await asyncio.wait({stopping})
             if not stopping.cancelled() and (error := stopping.exception()) is not None:
-                logger.warning(
-                    "Run %s : l'arrêt a échoué, son appelant étant parti — %s", run_id, error
-                )
+                logger.warning("Run %s : l'arrêt a échoué, son appelant étant parti — %s", run_id, error)
             raise
 
     async def _cancel(
@@ -3183,16 +3017,12 @@ class Loom:
                 return False
             # ``state.session_id`` vaut le run_id pour un run anonyme : l'écrivain
             # partagé de l'instance vaut donc dans les deux cas.
-            writer = await self._writers.open(
-                self._store, state.context.tenant_id, state.session_id
-            )
+            writer = await self._writers.open(self._store, state.context.tenant_id, state.session_id)
             # Les sous-runs encore ouverts partent avec lui, dans la même écriture :
             # plus rien ne les reprendrait, et ils figeraient le snapshot de la session.
             tree = await self.events(run_id, session_id=session_id, tenant_id=tenant_id)
             try:
-                await writer.append(
-                    [*subruns_cancellation(tree, state), *cancellation(state, by=by, via=via)]
-                )
+                await writer.append([*subruns_cancellation(tree, state), *cancellation(state, by=by, via=via)])
             except RunMoved:
                 return False
             return True
@@ -3326,9 +3156,7 @@ class Loom:
             return ()
         decided: list[tuple[RunState, PendingApproval]] = []
         for owner in _awaiting_runs(tree):
-            decided += [
-                (owner, a) for a in owner.awaiting if call_id is None or a.call_id == call_id
-            ]
+            decided += [(owner, a) for a in owner.awaiting if call_id is None or a.call_id == call_id]
         if call_id is not None and not decided:
             raise UnknownApproval(run_id, call_id)
         decided, signatures, skipped = _decidable(actor, decided, tree, tenant, amend=amend)
@@ -3360,10 +3188,7 @@ class Loom:
             # décisions pour un appel, et la projection rendrait la session illisible.
             for event in landed:
                 payload = event.payload
-                if (
-                    isinstance(payload, ApprovalGranted | ApprovalRejected | ApprovalExpired)
-                    and (event.run_id, payload.call_id) in targets
-                ):
+                if isinstance(payload, ApprovalGranted | ApprovalRejected | ApprovalExpired) and (event.run_id, payload.call_id) in targets:
                     raise _AlreadyDecided
 
         drafts: list[EventDraft] = []
@@ -3398,8 +3223,7 @@ class Loom:
             # doit donc savoir qu'elle a eu lieu ; l'opérateur, que la reprise
             # reste à faire.
             logger.error(
-                "Run %s : décision écrite au journal, mais sa reprise n'a pas pu être "
-                "mise en file — recover() ou resume() le reprend",
+                "Run %s : décision écrite au journal, mais sa reprise n'a pas pu être mise en file — recover() ou resume() le reprend",
                 root.root_run_id,
                 exc_info=True,
             )
@@ -3442,9 +3266,7 @@ class Loom:
             by=actor.user,
             via=actor.via,
         )
-        root = await self._write_answer(
-            run_id, call_id, reply, session_id=session_id, tenant_id=tenant_id, actor=actor
-        )
+        root = await self._write_answer(run_id, call_id, reply, session_id=session_id, tenant_id=tenant_id, actor=actor)
         answered = root[1]
         try:
             await self._queue.submit(
@@ -3458,8 +3280,7 @@ class Loom:
             )
         except Exception:
             logger.error(
-                "Run %s : réponse écrite au journal, mais sa reprise n'a pas pu être mise en "
-                "file — recover() ou resume() le reprend",
+                "Run %s : réponse écrite au journal, mais sa reprise n'a pas pu être mise en file — recover() ou resume() le reprend",
                 root[0].root_run_id,
                 exc_info=True,
             )
@@ -3489,12 +3310,7 @@ class Loom:
         if not tree:
             raise UnknownRun(run_id)
         root = fold([e for e in tree if e.run_id == run_id], run_id)
-        open_questions = [
-            (owner, question)
-            for owner in _run_states(tree)
-            for question in owner.asking
-            if call_id is None or question.call_id == call_id
-        ]
+        open_questions = [(owner, question) for owner in _run_states(tree) for question in owner.asking if call_id is None or question.call_id == call_id]
         if root.finished or not open_questions:
             raise UnknownQuestion(run_id, call_id)
         if len(open_questions) > 1:
@@ -3504,10 +3320,7 @@ class Loom:
         if actor is not None:
             self._require_on_run(actor, "answer", owner)
         if question.stale(datetime.now(UTC)):
-            raise QuestionStale(
-                f"Run {root.root_run_id} : la question {question.call_id} a expiré ; "
-                "la reprise du run la clôt"
-            )
+            raise QuestionStale(f"Run {root.root_run_id} : la question {question.call_id} a expiré ; la reprise du run la clôt")
         problem = reply_problem(question, reply)
         if problem is not None:
             raise InvalidAnswer(f"Réponse refusée : {problem}")
@@ -3521,13 +3334,8 @@ class Loom:
             # lecture : écrire la nôtre ferait deux réponses (journal illisible).
             for event in landed:
                 payload = event.payload
-                if (
-                    isinstance(payload, QuestionAnswered | QuestionExpired)
-                    and (event.run_id, payload.call_id) == target
-                ) or (
-                    event.run_id == owner.run_id
-                    and event.category == "run"
-                    and event.type in ("run.cancelled", "run.failed", "run.completed")
+                if (isinstance(payload, QuestionAnswered | QuestionExpired) and (event.run_id, payload.call_id) == target) or (
+                    event.run_id == owner.run_id and event.category == "run" and event.type in ("run.cancelled", "run.failed", "run.completed")
                 ):
                     raise UnknownQuestion(run_id, question.call_id)
 
@@ -3583,9 +3391,7 @@ class Loom:
             # Comme ``run`` : un message dans une session où une question de cet agent
             # attend y répond, et c'est le run qui l'a posée qui repart (wait_answer).
             # Une livraison de porte n'est pas une réponse de l'utilisateur.
-            routed = await self._routed(
-                agent, who.id, session_id, message, attachments, state, run_id
-            )
+            routed = await self._routed(agent, who.id, session_id, message, attachments, state, run_id)
             if routed is not None:
                 self._may_answer(actor, routed)
                 return await self._answered_later(routed, message, caller)
@@ -3709,13 +3515,9 @@ class Loom:
                 raise
             return seen
         state = await self.state(opened, session_id=session_id, tenant_id=tenant)
-        return Triggered(
-            trigger=name, run_id=opened, session_id=state.session_id, status=state.status
-        )
+        return Triggered(trigger=name, run_id=opened, session_id=state.session_id, status=state.status)
 
-    async def _elsewhere(
-        self, name: str, run_id: RunId, session_id: SessionId, tenant: TenantId
-    ) -> None:
+    async def _elsewhere(self, name: str, run_id: RunId, session_id: SessionId, tenant: TenantId) -> None:
         """Refuse un identifiant de livraison déjà pris dans une autre session du client.
 
         Quand la session se rend depuis la charge, la même livraison avec une
@@ -3727,9 +3529,7 @@ class Loom:
         SQLite et en Postgres, relu en entier en JSONL — seulement pour une
         porte qui déclare à la fois ``session`` et ``delivery_header``.
         """
-        started = await self._store.query(
-            EventQuery(tenant_id=tenant, run_id=run_id, types=("run.started",))
-        )
+        started = await self._store.query(EventQuery(tenant_id=tenant, run_id=run_id, types=("run.started",)))
         other = next((e for e in started if e.session_id != session_id), None)
         if other is None:
             return
@@ -3741,9 +3541,7 @@ class Loom:
             f"session, et celle-ci donnerait {session_id}"
         )
 
-    async def _already(
-        self, name: str, run_id: RunId, session_id: SessionId | None, tenant: TenantId
-    ) -> Triggered | None:
+    async def _already(self, name: str, run_id: RunId, session_id: SessionId | None, tenant: TenantId) -> Triggered | None:
         """Le run de cette livraison s'il existe déjà, sinon rien."""
         events = await self.events(run_id, session_id=session_id, tenant_id=tenant, subruns=False)
         if not events:
@@ -3758,8 +3556,7 @@ class Loom:
             # Le run d'une livraison porte son identifiant : celui-ci appartient
             # à un autre run (autre porte, ou run ordinaire), pas à cette livraison.
             raise DeliveryRefused(
-                f"Identifiant de livraison {run_id!r} déjà pris par un run "
-                + (f"du déclencheur {opened_by!r}" if opened_by else "qui n'en vient pas")
+                f"Identifiant de livraison {run_id!r} déjà pris par un run " + (f"du déclencheur {opened_by!r}" if opened_by else "qui n'en vient pas")
             )
         return Triggered(
             trigger=name,
@@ -3769,9 +3566,7 @@ class Loom:
             repeated=True,
         )
 
-    async def recover(
-        self, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None
-    ) -> tuple[RunId, ...]:
+    async def recover(self, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None) -> tuple[RunId, ...]:
         """Remet en file les runs racine laissés en plan, et rend leurs identifiants (H3).
 
         À appeler soi-même : une instance ne redémarre pas les runs d'un autre
@@ -3798,11 +3593,7 @@ class Loom:
         tenant = tenant_id or DEFAULT_TENANT
         known = set(self.names)
         found: list[RunId] = []
-        sessions = (
-            [session_id]
-            if session_id is not None
-            else [record.session_id for record in await self.store.sessions(tenant)]
-        )
+        sessions = [session_id] if session_id is not None else [record.session_id for record in await self.store.sessions(tenant)]
         for session in sessions:
             try:
                 events = await self._store.read(tenant, session)
@@ -3883,8 +3674,7 @@ class Loom:
         waits = int(waited) + 1 if isinstance(waited, int) else 1
         if waits > MAX_CLAIM_WAITS:
             logger.warning(
-                "Run %s : bail tenu par %s après %d attentes, travail abandonné — "
-                "le run reste au journal, une reprise le retrouvera",
+                "Run %s : bail tenu par %s après %d attentes, travail abandonné — le run reste au journal, une reprise le retrouvera",
                 job.run_id,
                 conflict.worker_id,
                 MAX_CLAIM_WAITS,
@@ -3926,15 +3716,11 @@ class Loom:
             # Un client retiré de la config depuis le lancement du run.
             return
         try:
-            await self._usage.record(
-                tenant, state.run_id, Spent(total.usage, total.cost, total.calls)
-            )
+            await self._usage.record(tenant, state.run_id, Spent(total.usage, total.cost, total.calls))
         except Exception:
             logger.warning("Consommation du run %s non enregistrée", state.run_id, exc_info=True)
 
-    async def compact(
-        self, session_id: SessionId, *, tenant_id: TenantId | None = None
-    ) -> SessionCompacted | None:
+    async def compact(self, session_id: SessionId, *, tenant_id: TenantId | None = None) -> SessionCompacted | None:
         """Résume maintenant les échanges anciens d'une session (#23).
 
         Ne tient pas compte du seuil ``over_tokens`` : c'est la compaction à
@@ -4007,8 +3793,7 @@ class Loom:
         except Exception:
             # Le run est écrit : un résumé qui ne part pas n'a pas à le faire échouer.
             logger.error(
-                "Session %s : résumé non mis en file après le run %s — il sera "
-                "retenté à la fin d'un prochain run, ou par compact()",
+                "Session %s : résumé non mis en file après le run %s — il sera retenté à la fin d'un prochain run, ou par compact()",
                 state.session_id,
                 state.run_id,
                 exc_info=True,
@@ -4046,8 +3831,7 @@ class Loom:
         except Exception:
             # Le run est écrit, ``expire_at`` aussi : seul le réveil manque.
             logger.error(
-                "Run %s : réveil d'échéance non mis en file — la demande expirera "
-                "à la prochaine reprise (recover(), resume())",
+                "Run %s : réveil d'échéance non mis en file — la demande expirera à la prochaine reprise (recover(), resume())",
                 state.run_id,
                 exc_info=True,
             )
@@ -4064,26 +3848,18 @@ class Loom:
             # Run sans session nommée : personne ne relira ce journal.
             return
         try:
-            writer = await self._writers.open(
-                self._store, state.context.tenant_id, state.session_id
-            )
+            writer = await self._writers.open(self._store, state.context.tenant_id, state.session_id)
             await write_snapshot(writer, events, state, every=self._config.sessions.snapshot_every)
         except Exception:
-            logger.warning(
-                "Session %s : snapshot d'historique non écrit", state.session_id, exc_info=True
-            )
+            logger.warning("Session %s : snapshot d'historique non écrit", state.session_id, exc_info=True)
 
-    async def _writer(
-        self, tenant_id: TenantId, session_id: SessionId | None
-    ) -> SessionWriter | None:
+    async def _writer(self, tenant_id: TenantId, session_id: SessionId | None) -> SessionWriter | None:
         """Écrivain partagé d'une session nommée ; None pour un run anonyme."""
         if session_id is None:
             return None
         return await self._writers.open(self._store, tenant_id, session_id)
 
-    async def _unclaimed(
-        self, run_id: RunId | None, session_id: SessionId | None, tenant: TenantId
-    ) -> None:
+    async def _unclaimed(self, run_id: RunId | None, session_id: SessionId | None, tenant: TenantId) -> None:
         """Refuse un ``run_id`` choisi par l'appelant et déjà pris dans une autre session.
 
         ``begin_run`` ne regarde que la session du run. Au test N2 du 23/10, un
@@ -4100,9 +3876,7 @@ class Loom:
         if run_id is None:
             return
         session = session_id or SessionId(run_id)
-        started = await self._store.query(
-            EventQuery(tenant_id=tenant, run_id=run_id, types=("run.started",))
-        )
+        started = await self._store.query(EventQuery(tenant_id=tenant, run_id=run_id, types=("run.started",)))
         other = next((e for e in started if e.session_id != session), None)
         if other is not None:
             raise RunExists(run_id, session_id=other.session_id)

@@ -43,10 +43,7 @@ class Template:
                 parts.append(source[position : match.start()])
             expression = match.group(1).strip()
             if not _PATH.fullmatch(expression):
-                raise TemplateError(
-                    f"Variable invalide : {match.group(0)!r} "
-                    "(attendu un chemin pointé, par exemple {{ args.devis }})"
-                )
+                raise TemplateError(f"Variable invalide : {match.group(0)!r} (attendu un chemin pointé, par exemple {{{{ args.devis }}}})")
             parts.append(tuple(expression.split(".")))
             position = match.end()
         rest = source[position:]
@@ -62,10 +59,7 @@ class Template:
         return tuple(part for part in self.parts if isinstance(part, tuple))
 
     def render(self, values: Mapping[str, JsonValue]) -> str:
-        return "".join(
-            part if isinstance(part, str) else render_value(lookup(values, part))
-            for part in self.parts
-        )
+        return "".join(part if isinstance(part, str) else render_value(lookup(values, part)) for part in self.parts)
 
 
 def lookup(values: Mapping[str, JsonValue], path: Path) -> JsonValue:
@@ -74,11 +68,7 @@ def lookup(values: Mapping[str, JsonValue], path: Path) -> JsonValue:
     for key in path:
         if isinstance(current, Mapping):
             current = cast(Mapping[str, object], current).get(key)
-        elif (
-            isinstance(current, Sequence)
-            and not isinstance(current, str)
-            and re.fullmatch(r"[0-9]{1,18}", key)
-        ):
+        elif isinstance(current, Sequence) and not isinstance(current, str) and re.fullmatch(r"[0-9]{1,18}", key):
             items = cast(Sequence[object], current)
             index = int(key)
             current = items[index] if index < len(items) else None

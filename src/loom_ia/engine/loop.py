@@ -456,10 +456,7 @@ async def begin_run(
     if store is not None:
         stored = [await _store_attachment(store, scope, *item) for item in checked]
     if stored:
-        files = tuple(
-            ArtifactRefBlock(uri=s.uri, media_type=s.media_type, size=s.size, name=s.name)
-            for s in stored
-        )
+        files = tuple(ArtifactRefBlock(uri=s.uri, media_type=s.media_type, size=s.size, name=s.name) for s in stored)
         message = message.model_copy(update={"blocks": (*message.blocks, *files)})
     if writer is None:
         writer = await SessionWriter.open(ctx.store, scope.tenant_id, scope.session_id)
@@ -529,9 +526,7 @@ def _accepts_state(ctx: RunContext, posed: Mapping[str, JsonValue]) -> None:
         raise StateRefused([f"l'agent {ctx.agent!r} ne déclare pas de state"])
 
 
-def _check_opening(
-    ctx: RunContext, posed: Mapping[str, JsonValue], prior: Mapping[str, JsonValue]
-) -> None:
+def _check_opening(ctx: RunContext, posed: Mapping[str, JsonValue], prior: Mapping[str, JsonValue]) -> None:
     """Le state posé, puis les clés obligatoires, sur le state de la session (D6, D7, D13)."""
     rules = ctx.tools.state_rules
     if not rules:
@@ -541,9 +536,7 @@ def _check_opening(
         raise StateRefused(problems)
 
 
-async def _check_history(
-    ctx: RunContext, tenant_id: TenantId, session_id: SessionId
-) -> dict[str, JsonValue]:
+async def _check_history(ctx: RunContext, tenant_id: TenantId, session_id: SessionId) -> dict[str, JsonValue]:
     """Relit l'historique de la session avant d'y ouvrir un run racine.
 
     Rend le state de la session pour un agent qui en déclare (vide sinon) : il
@@ -565,9 +558,7 @@ async def _check_history(
     return prior
 
 
-async def _store_attachment(
-    store: ArtifactStore, scope: RunScope, attachment: Attachment, media_type: str
-) -> ArtifactStored:
+async def _store_attachment(store: ArtifactStore, scope: RunScope, attachment: Attachment, media_type: str) -> ArtifactStored:
     """Range une pièce jointe validée ; son ``artifact.stored`` précède le message."""
     uri = artifact_uri(scope.tenant_id, scope.session_id, attachment.data, media_type)
     await store.put(uri, attachment.data)
@@ -624,14 +615,10 @@ async def drive(
         return await _closed_elsewhere(ctx, run_id, tenant, session, moved)
     # La vue du pilote s'ouvre aussitôt la concession écrite, sans attente entre les
     # deux : tout ce qui s'écrit ensuite sur la session passe sous ses yeux (#27).
-    held: AbstractContextManager[SessionWriter] = (
-        nullcontext(journal) if claimed is None else journal.held(run_id, claimed.worker_id)
-    )
+    held: AbstractContextManager[SessionWriter] = nullcontext(journal) if claimed is None else journal.held(run_id, claimed.worker_id)
     try:
         with held as piloting:
-            return await _driven(
-                ctx, state, tenant, session, piloting, scope, claimed, earlier, cause
-            )
+            return await _driven(ctx, state, tenant, session, piloting, scope, claimed, earlier, cause)
     except RunMoved as moved:
         return await _closed_elsewhere(ctx, run_id, tenant, session, moved)
     except ClaimConflict as taken:
@@ -661,9 +648,7 @@ def _effect(event: Event) -> bool:
     return event.category in {"model", "tool"} and not judged
 
 
-async def _closed_elsewhere(
-    ctx: RunContext, run_id: RunId, tenant: TenantId, session: SessionId, moved: RunMoved
-) -> RunState:
+async def _closed_elsewhere(ctx: RunContext, run_id: RunId, tenant: TenantId, session: SessionId, moved: RunMoved) -> RunState:
     """Le run a été clos par un autre process pendant qu'on le pilotait : le journal fait foi.
 
     Un arrêt demandé ailleurs (``Loom.cancel``, REST ou MCP sur un autre process)
@@ -680,9 +665,7 @@ async def _closed_elsewhere(
     return fold(own, run_id)
 
 
-async def _taken_over(
-    ctx: RunContext, run_id: RunId, tenant: TenantId, session: SessionId, taken: ClaimConflict
-) -> RunState:
+async def _taken_over(ctx: RunContext, run_id: RunId, tenant: TenantId, session: SessionId, taken: ClaimConflict) -> RunState:
     """Un autre worker a pris la concession en plein pilotage : le pilote s'arrête (#27).
 
     Son bail a expiré sans être renouvelé — store injoignable, process gelé —,
@@ -706,9 +689,7 @@ async def _taken_over(
     raise taken
 
 
-async def _history_unreadable(
-    state: RunState, journal: SessionWriter, scope: RunScope, error: Exception
-) -> RunState:
+async def _history_unreadable(state: RunState, journal: SessionWriter, scope: RunScope, error: Exception) -> RunState:
     """Filet de ``begin_run`` : l'historique est devenu illisible depuis l'ouverture du run.
 
     ``begin_run`` refuse d'ouvrir un run sur une session illisible
@@ -792,11 +773,7 @@ async def _driven(
     # Un run dont l'état est déjà final n'a plus qu'à écrire sa clôture : ses
     # sources n'ont rien à y faire, et leurs événements (``tool.source_unavailable``,
     # ``circuit.opened``) viendraient après l'état final.
-    opening = (
-        nullcontext(OpenedTools(tools=ctx.tools))
-        if state.status.is_terminal
-        else ctx.tools.opened(sources)
-    )
+    opening = nullcontext(OpenedTools(tools=ctx.tools)) if state.status.is_terminal else ctx.tools.opened(sources)
     async with opening as opened, _renewed(claimed, journal, scope) as stop_renewing:
         blocking: tuple[Event, ToolSourceUnavailable] | None = None
         for payload in opened.events:
@@ -838,9 +815,7 @@ async def _driven(
             limit = asyncio.timeout(left)
             try:
                 async with limit:
-                    async with aclosing(
-                        step(state, run_ctx, previous, cause=cause, session=session_spent)
-                    ) as drafts:
+                    async with aclosing(step(state, run_ctx, previous, cause=cause, session=session_spent)) as drafts:
                         async for draft in drafts:
                             await write(draft)
                             emitted += 1
@@ -880,9 +855,7 @@ async def _driven(
                 # sans que l'échéance puisse l'interrompre ni défaire la clôture.
                 await _release(ctx, state)
             if emitted == 0:
-                raise RuntimeError(
-                    f"Run {run_id} : aucune progression depuis l'état {state.status}"
-                )
+                raise RuntimeError(f"Run {run_id} : aucune progression depuis l'état {state.status}")
         # Le run s'arrête sans être fini — en pause, le temps qu'on l'approuve.
         # Sa concession n'a plus de porteur : la garder vivante ferait refuser
         # la reprise pendant tout ce qu'il reste du bail (jusqu'à 60 s).
@@ -957,9 +930,7 @@ async def _handed_back(
     if claim is None or state.finished:
         return
     try:
-        await write(
-            scope.draft(RunClaimed(worker_id=claim.worker_id, lease_until=datetime.now(UTC)))
-        )
+        await write(scope.draft(RunClaimed(worker_id=claim.worker_id, lease_until=datetime.now(UTC))))
     except ClaimConflict as taken:
         # Un autre worker a pris la concession entre-temps : il n'y a plus rien à rendre.
         # Ce que le pilote a écrit l'a été avant cette prise, sans quoi il aurait été
@@ -972,9 +943,7 @@ async def _handed_back(
         )
 
 
-async def _claim(
-    state: RunState, ctx: RunContext, journal: SessionWriter, scope: RunScope
-) -> RunClaim | None:
+async def _claim(state: RunState, ctx: RunContext, journal: SessionWriter, scope: RunScope) -> RunClaim | None:
     """Prend la concession du run, ou lève si un autre pilote la tient (#27).
 
     Sans ``worker_id`` — un ``drive`` appelé directement, un sous-run que son
@@ -1023,9 +992,7 @@ def _not_taken(worker_id: str, run_id: RunId) -> Callable[[Sequence[Event]], Non
 
 
 @asynccontextmanager
-async def _renewed(
-    claim: RunClaim | None, journal: SessionWriter, scope: RunScope
-) -> AsyncGenerator[Callable[[], Awaitable[None]]]:
+async def _renewed(claim: RunClaim | None, journal: SessionWriter, scope: RunScope) -> AsyncGenerator[Callable[[], Awaitable[None]]]:
     """Renouvelle la concession au tiers du bail, tant que le run est piloté.
 
     Un minuteur, et pas un renouvellement entre deux étapes : un run bloqué
@@ -1062,9 +1029,7 @@ async def _renewed(
                 # Clos ailleurs : le pilote le verra à sa prochaine écriture.
                 return
             except ClaimConflict as taken:
-                logger.warning(
-                    "Concession du run %s : renouvellement arrêté — %s", scope.run_id, taken
-                )
+                logger.warning("Concession du run %s : renouvellement arrêté — %s", scope.run_id, taken)
                 return
             except Exception:
                 logger.warning(
@@ -1193,15 +1158,9 @@ async def _expired(
             f"({done + decided:.1f} s de pilotage déjà écoulées avant elle)"
         )
     elif cut:
-        reason = (
-            f"délai maximal de {limit:.1f} s dépassé : l'étape {state.step} a été "
-            f"interrompue en cours ({done:.1f} s d'étapes déjà terminées)"
-        )
+        reason = f"délai maximal de {limit:.1f} s dépassé : l'étape {state.step} a été interrompue en cours ({done:.1f} s d'étapes déjà terminées)"
     else:
-        reason = (
-            f"délai maximal de {limit:.1f} s dépassé : {done + decided:.1f} s de pilotage "
-            "déjà écoulées avant l'étape suivante"
-        )
+        reason = f"délai maximal de {limit:.1f} s dépassé : {done + decided:.1f} s de pilotage déjà écoulées avant l'étape suivante"
     await write(scope.draft(_failed(state, "timeout", reason)))
 
 
@@ -1251,9 +1210,7 @@ async def step(
 # --- Décisions ---------------------------------------------------------------
 
 
-async def _decide(
-    state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None
-) -> list[EventDraft] | None:
+async def _decide(state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None) -> list[EventDraft] | None:
     """Transition ou clôture dues à l'état courant, ou None s'il reste un effet à exécuter.
 
     Une réponse de l'orchestrateur passe d'abord par les politiques
@@ -1282,11 +1239,7 @@ async def _decide(
             data = _structured(ctx.output, output) if output is not None else None
             return [scope.draft(_completed(state, output, data=data))]
         case RunStatus.FAILED if not state.finished:
-            return [
-                scope.draft(
-                    _failed(state, "Interrupted", "run interrompu après son passage en échec")
-                )
-            ]
+            return [scope.draft(_failed(state, "Interrupted", "run interrompu après son passage en échec"))]
         case RunStatus.READY_FOR_MODEL | RunStatus.FINALIZING if answered and last is not None:
             return await _review(state, ctx, scope, cause, last)
         case RunStatus.PAUSED:
@@ -1314,10 +1267,7 @@ async def _decide(
                         policy=TERMINAL_RULE,
                         point="after_tool",
                         decision="continue",
-                        reason=(
-                            f"Outil terminal {call.name} appelé avec d'autres outils : "
-                            "sa sortie revient à l'orchestrateur."
-                        ),
+                        reason=(f"Outil terminal {call.name} appelé avec d'autres outils : sa sortie revient à l'orchestrateur."),
                         call_id=call.call_id,
                     )
                 )
@@ -1328,9 +1278,7 @@ async def _decide(
             return None
 
 
-def _resumed(
-    state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None
-) -> list[EventDraft] | None:
+def _resumed(state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None) -> list[EventDraft] | None:
     """Ce qu'un run en pause peut faire des décisions qui lui sont parvenues (#17).
 
     Une demande dont la date est passée expire **ici**, au moment où on la
@@ -1395,9 +1343,7 @@ def _called_name(state: RunState, call_id: str) -> str:
     return call.name if call is not None else "ask"
 
 
-async def _review(
-    state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None, answer: Message
-) -> list[EventDraft]:
+async def _review(state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None, answer: Message) -> list[EventDraft]:
     """Suite d'une réponse de l'orchestrateur : politiques ``after_model``, puis outils ou fin."""
     finalizing = state.status is RunStatus.FINALIZING
     verdict = await ctx.policies.run(
@@ -1545,17 +1491,9 @@ def _repair(
     puis le diagnostic est écrit. Après une sortie terminale refusée, le run
     revient à l'orchestrateur.
     """
-    drafts = _close_calls(
-        state, scope, f"Non exécuté : réponse refusée par le contrôle {repair.policy}."
-    )
+    drafts = _close_calls(state, scope, f"Non exécuté : réponse refusée par le contrôle {repair.policy}.")
     text = f"{REPAIR_PREFIX} ({repair.policy}) : {repair.feedback}"
-    drafts.append(
-        scope.draft(
-            UserMessage(
-                message=Message.user(text), kind="repair", policy=repair.policy, tools=repair.tools
-            )
-        )
-    )
+    drafts.append(scope.draft(UserMessage(message=Message.user(text), kind="repair", policy=repair.policy, tools=repair.tools)))
     if state.status is RunStatus.AWAITING_TOOLS:
         drafts.append(_transition(state, scope, _after_tools(state, ctx), cause))
     return drafts
@@ -1565,9 +1503,7 @@ def _close_calls(state: RunState, scope: RunScope, reason: str) -> list[EventDra
     """Résultats d'erreur pour les appels en attente, qui ne seront pas exécutés."""
     return [
         scope.draft(
-            ToolCompleted(
-                call_id=call.call_id, tool_name=call.name, output=ToolOutput.error(reason)
-            ),
+            ToolCompleted(call_id=call.call_id, tool_name=call.name, output=ToolOutput.error(reason)),
             span_id=new_span_id(),
         )
         for call in state.pending_calls
@@ -1617,9 +1553,7 @@ def _transition(
     )
 
 
-def _terminal(
-    state: RunState, ctx: RunContext
-) -> tuple[ToolCallBlock | None, tuple[ToolCallBlock, ...]]:
+def _terminal(state: RunState, ctx: RunContext) -> tuple[ToolCallBlock | None, tuple[ToolCallBlock, ...]]:
     """Appel terminal dont la sortie devient la réponse finale (#13), ou None.
 
     Le second élément : les outils terminaux appelés avec d'autres, pour qui
@@ -1638,9 +1572,7 @@ def _terminal(
         )
         return None, tuple(terminal)
     last = state.messages[-1]
-    succeeded = all(
-        isinstance(block, ToolResultBlock) and not block.output.is_error for block in last.blocks
-    )
+    succeeded = all(isinstance(block, ToolResultBlock) and not block.output.is_error for block in last.blocks)
     return (terminal[0] if succeeded else None), ()
 
 
@@ -1658,9 +1590,7 @@ def _answered_with_state(state: RunState, ctx: RunContext) -> Message | None:
     if model_tool is None:
         return None
     messages = state.messages
-    position = next(
-        (i for i in range(len(messages) - 1, -1, -1) if messages[i].role == "assistant"), None
-    )
+    position = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].role == "assistant"), None)
     if position is None:
         return None
     turn = messages[position]
@@ -1728,9 +1658,7 @@ def _completed(
     )
 
 
-def _failed(
-    state: RunState, error_type: str, error: str, *, spent: tuple[Usage, float] = (Usage(), 0.0)
-) -> RunFailed:
+def _failed(state: RunState, error_type: str, error: str, *, spent: tuple[Usage, float] = (Usage(), 0.0)) -> RunFailed:
     usage, cost = spent
     return RunFailed(
         error_type=error_type,
@@ -1967,9 +1895,7 @@ async def _model_step(
     yield current.completed(emitted + 1)
 
 
-async def _tool_step(
-    state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None = None
-) -> AsyncGenerator[EventDraft]:
+async def _tool_step(state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None = None) -> AsyncGenerator[EventDraft]:
     current = _Step(state, scope, "tool_batch")
     yield current.started()
     # Un span par appel d'outil, choisi d'avance : un sous-agent y rattache
@@ -2014,11 +1940,7 @@ async def _tool_step(
             if isinstance(item, Delegated):
                 inner = model_spans.setdefault(item.call_id, new_span_id())
                 yield scope.draft(item.payload, span_id=inner, parent_span_id=span, role=item.role)
-            elif (
-                isinstance(item, Decided)
-                and isinstance(item.payload, _CALL_EVENTS)
-                and item.payload.judge is not None
-            ):
+            elif isinstance(item, Decided) and isinstance(item.payload, _CALL_EVENTS) and item.payload.judge is not None:
                 judged = judge_spans.setdefault(item.call_id, new_span_id())
                 yield scope.draft(
                     item.payload,
@@ -2031,11 +1953,7 @@ async def _tool_step(
             elif isinstance(item, Stored | Decided):
                 draft = scope.draft(item.payload, span_id=span, parent_span_id=current.span)
                 payload = item.payload
-                if (
-                    isinstance(payload, PolicyDecided)
-                    and payload.decision == "fail"
-                    and not failure
-                ):
+                if isinstance(payload, PolicyDecided) and payload.decision == "fail" and not failure:
                     failure = draft, payload
                 yield draft
             else:

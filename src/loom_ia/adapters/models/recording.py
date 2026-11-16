@@ -36,9 +36,7 @@ class RecordingClient(httpx2.AsyncClient):
         # ``transport`` sert aux essais (``MockTransport``) ; sans lui, celui de httpx.
         super().__init__(limits=LIMITS, follow_redirects=True, transport=transport)
 
-    async def send(
-        self, request: httpx2.Request, *, stream: bool = False, **options: Any
-    ) -> httpx2.Response:
+    async def send(self, request: httpx2.Request, *, stream: bool = False, **options: Any) -> httpx2.Response:
         log = exchange_log()
         if log is None:
             return await super().send(request, stream=stream, **options)
@@ -135,8 +133,6 @@ def _decoded(response: httpx2.Response, received: bytes) -> bytes:
     if encoding in ("", "identity"):
         return received
     try:
-        return httpx2.Response(
-            200, headers={"content-encoding": encoding}, stream=httpx2.ByteStream(received)
-        ).read()
+        return httpx2.Response(200, headers={"content-encoding": encoding}, stream=httpx2.ByteStream(received)).read()
     except httpx2.DecodingError:
         return received

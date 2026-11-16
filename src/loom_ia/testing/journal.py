@@ -42,9 +42,7 @@ from loom_ia.core.model import (
 )
 
 
-def tool_call_message(
-    *calls: tuple[str, str, dict[str, JsonValue]], text: str | None = None
-) -> Message:
+def tool_call_message(*calls: tuple[str, str, dict[str, JsonValue]], text: str | None = None) -> Message:
     """Réponse ``assistant`` qui demande des outils : ``(call_id, nom, arguments)``."""
     blocks: list[TextBlock | ToolCallBlock] = [TextBlock(text=text)] if text else []
     blocks += [ToolCallBlock(call_id=c, name=n, arguments=a) for c, n, a in calls]
@@ -157,9 +155,7 @@ class RunJournal:
         """Exécution du lot d'outils en attente, puis retour au modèle."""
         self._begin_step("tool_batch")
         for call_id in outputs:
-            self._add(
-                ToolCalled(call_id=call_id, tool_name=self._pending[call_id], tool_kind="python")
-            )
+            self._add(ToolCalled(call_id=call_id, tool_name=self._pending[call_id], tool_kind="python"))
         for call_id, output in outputs.items():
             self._add(
                 ToolCompleted(

@@ -194,9 +194,7 @@ class CompactionJob:
             tokens_before=before,
             tokens_after=estimate_tokens([Message.user(summary)]),
             cost_usd=final.cost_usd,
-            fidelity=("warning" if final.unverified else "ok")
-            if self.plan.fidelity_check
-            else "skipped",
+            fidelity=("warning" if final.unverified else "ok") if self.plan.fidelity_check else "skipped",
         )
         writer = await self._writers.open(self._store, tenant_id, session_id)
         # Sans contrôle de séquence : le marqueur ne couvre que des événements
@@ -213,9 +211,7 @@ class CompactionJob:
         )
         return payload
 
-    async def before_run(
-        self, tenant_id: TenantId, session_id: SessionId, *, run_id: RunId | None = None
-    ) -> None:
+    async def before_run(self, tenant_id: TenantId, session_id: SessionId, *, run_id: RunId | None = None) -> None:
         """À l'ouverture d'un run : le résumé dû, s'il est bloquant, puis le filet.
 
         Un résumé bloquant qui échoue ne fait pas échouer le run : il part avec
@@ -236,9 +232,7 @@ class CompactionJob:
                 )
         await self.ensure_fits(tenant_id, session_id, run_id=run_id)
 
-    async def ensure_fits(
-        self, tenant_id: TenantId, session_id: SessionId, *, run_id: RunId | None = None
-    ) -> None:
+    async def ensure_fits(self, tenant_id: TenantId, session_id: SessionId, *, run_id: RunId | None = None) -> None:
         """Filet de sécurité : compacte en synchrone, ou retire les vieux tours.
 
         ``run_id`` : le run qui s'ouvre, noté ``triggered_by`` du résumé, comme
@@ -248,9 +242,7 @@ class CompactionJob:
         if not oversized(events, self.plan.hard_tokens):
             return
         try:
-            await self.compact(
-                tenant_id, session_id, triggered_by=run_id, limit=self.plan.hard_tokens
-            )
+            await self.compact(tenant_id, session_id, triggered_by=run_id, limit=self.plan.hard_tokens)
         except Exception:
             # Le filet ne tombe pas avec ce qu'il protège : clé du modèle de résumé
             # absente, panne, modèle inconnu… le run démarre, les vieux tours partent.
@@ -267,9 +259,7 @@ class CompactionJob:
             return
         await self._trim(tenant_id, session_id, events)
 
-    async def _trim(
-        self, tenant_id: TenantId, session_id: SessionId, events: Sequence[Event]
-    ) -> None:
+    async def _trim(self, tenant_id: TenantId, session_id: SessionId, events: Sequence[Event]) -> None:
         """Retire les tours les plus anciens jusqu'à repasser sous la limite.
 
         Si même le dernier tour seul dépasse la limite, on coupe quand même
@@ -280,13 +270,7 @@ class CompactionJob:
         covered = summarised(events)
         possible = Cuts(events)
         # Deux runs qui se chevauchent n'ont qu'une coupe entre eux : la même.
-        usable = sorted(
-            {
-                up_to_seq
-                for start in run_starts(events)
-                if (up_to_seq := possible.at_most(start - 1)) > covered
-            }
-        )
+        usable = sorted({up_to_seq for start in run_starts(events) if (up_to_seq := possible.at_most(start - 1)) > covered})
         if not usable:
             logger.warning("Session %s : rien à retirer de plus", session_id)
             return
@@ -296,11 +280,7 @@ class CompactionJob:
         def after(up_to_seq: int) -> list[Event]:
             return [e for e in events if e.seq > up_to_seq and e.category != "session"]
 
-        fitting = (
-            up_to_seq
-            for up_to_seq in usable
-            if not oversized(after(up_to_seq), self.plan.hard_tokens)
-        )
+        fitting = (up_to_seq for up_to_seq in usable if not oversized(after(up_to_seq), self.plan.hard_tokens))
         # À défaut d'une coupe qui suffise, la plus large : le dernier tour seul.
         up_to_seq = next(fitting, usable[-1])
         kept = after(up_to_seq)
@@ -338,9 +318,7 @@ class CompactionJob:
             kind="compaction",
             triggered_by=triggered_by,
         )
-        final = await drive(
-            context, state.run_id, session_id=session_id, tenant_id=tenant_id, writer=writer
-        )
+        final = await drive(context, state.run_id, session_id=session_id, tenant_id=tenant_id, writer=writer)
         if final.status is not RunStatus.COMPLETED:
             logger.warning(
                 "Compaction de %s : le run %s s'est arrêté en %s (%s)",

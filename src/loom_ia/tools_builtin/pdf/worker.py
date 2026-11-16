@@ -20,10 +20,7 @@ import resource
 import sys
 from typing import Any
 
-_BOMB = (
-    "PDF refusé : un flux dépasse, une fois décompressé, les bornes de pypdf "
-    "(bombe de décompression ?)."
-)
+_BOMB = "PDF refusé : un flux dépasse, une fois décompressé, les bornes de pypdf (bombe de décompression ?)."
 
 
 def _limit(memory: int, seconds: int) -> None:

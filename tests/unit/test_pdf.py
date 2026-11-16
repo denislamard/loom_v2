@@ -278,9 +278,7 @@ async def test_underline_is_drawn_not_written(tool: PdfTool) -> None:
     ("pages", "numbers"),
     [("2", [2]), ("2-3", [2, 3]), ("3-", [3, 4]), (" 1 - 2 ", [1, 2]), ("4-9", [4])],
 )
-async def test_pages_choose_what_is_read(
-    tool: PdfTool, disk: Path, pages: str, numbers: list[int]
-) -> None:
+async def test_pages_choose_what_is_read(tool: PdfTool, disk: Path, pages: str, numbers: list[int]) -> None:
     (disk / "recus" / "quatre.pdf").write_bytes(pdf_of("un", "deux", "trois", "quatre"))
     found = await call(tool, action="read", path="recus/quatre.pdf", pages=pages)
     assert [page["number"] for page in found["pages"]] == numbers
@@ -317,9 +315,7 @@ async def test_a_page_without_text_is_said(tool: PdfTool, disk: Path) -> None:
 
 
 async def test_form_fields_are_read(tool: PdfTool, disk: Path) -> None:
-    (disk / "recus" / "cerfa.pdf").write_bytes(
-        pdf_of("Formulaire", "suite", form={"nom": "Dupont"})
-    )
+    (disk / "recus" / "cerfa.pdf").write_bytes(pdf_of("Formulaire", "suite", form={"nom": "Dupont"}))
     found = await call(tool, action="read", path="recus/cerfa.pdf")
     assert found["fields"] == {"nom": "Dupont"}
     # Les champs ne reviennent qu'avec la première page.
@@ -357,8 +353,7 @@ def bomb(size: int) -> bytes:
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
-        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
         b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(stream) + stream + b"\nendstream",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
@@ -390,9 +385,7 @@ def fake_worker(tmp_path: Path, code: str) -> Path:
     return script
 
 
-async def test_a_worker_that_hangs_is_killed(
-    tool: PdfTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_worker_that_hangs_is_killed(tool: PdfTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(reader_module, "WORKER", fake_worker(disk, "import time\ntime.sleep(60)\n"))
     monkeypatch.setattr(reader_module, "READ_DEADLINE", 0.5)
     (disk / "recus" / "a.pdf").write_bytes(pdf_of("un"))
@@ -401,23 +394,17 @@ async def test_a_worker_that_hangs_is_killed(
     assert time.monotonic() - started < 5
 
 
-async def test_a_worker_killed_by_its_bounds(
-    tool: PdfTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_worker_killed_by_its_bounds(tool: PdfTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     code = "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n"
     monkeypatch.setattr(reader_module, "WORKER", fake_worker(disk, code))
     (disk / "recus" / "a.pdf").write_bytes(pdf_of("un"))
     await refused(tool, "arrêtée par ses bornes", action="read", path="recus/a.pdf")
 
 
-async def test_a_cancelled_read_kills_its_worker(
-    tool: PdfTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_cancelled_read_kills_its_worker(tool: PdfTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Le délai de l'outil annule l'appel : le process ne lui survit pas."""
     pid_file = disk / "pid"
-    code = (
-        f"import os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
-    )
+    code = f"import os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
     monkeypatch.setattr(reader_module, "WORKER", fake_worker(disk, code))
     (disk / "recus" / "a.pdf").write_bytes(pdf_of("un"))
     task = asyncio.create_task(tool.invoke({"action": "read", "path": "recus/a.pdf"}, CONTEXT))
@@ -450,9 +437,7 @@ def test_the_worker_bounds_its_own_memory() -> None:
         "worker._limit(256 << 20, 5)\n"
         "try:\n    bytearray(1 << 30)\nexcept MemoryError:\n    print('borne')\n"
     )
-    done = subprocess.run(
-        [sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=30, check=False
-    )
+    done = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=30, check=False)
     assert done.stdout.strip() == "borne"
 
 
@@ -470,17 +455,13 @@ def pdf_agent(**reference: Any) -> dict[str, Any]:
         ({"images": True}, r"images → blocks: \[image\]"),
     ],
 )
-def test_pdf_blocks_when_the_config_loads(
-    demo: ConfigFactory, given: dict[str, Any], said: str
-) -> None:
+def test_pdf_blocks_when_the_config_loads(demo: ConfigFactory, given: dict[str, Any], said: str) -> None:
     folders = [{"name": "s", "path": "/tmp", "rights": ["write"]}]
     with pytest.raises(ConfigError, match=said):
         load_config(demo(agents=[pdf_agent(folders=folders, **given)]))
 
 
-def test_a_missing_extra_is_said_at_mount(
-    demo: ConfigFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_missing_extra_is_said_at_mount(demo: ConfigFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "sortie").mkdir()
     package = "loom_ia.tools_builtin.pdf"
     for name in [n for n in sys.modules if n == package or n.startswith(f"{package}.")]:
@@ -499,9 +480,7 @@ def test_a_missing_extra_is_said_at_mount(
         build_agent(load_config(path), "demo", InMemoryEventStore())
 
 
-def test_validate_shows_the_folders(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_folders(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "recus").mkdir()
     folders = [{"name": "recus", "path": "recus", "rights": ["read"]}]
     path = demo(agents=[pdf_agent(folders=folders)], storage=JSONL)
@@ -548,9 +527,7 @@ def test_the_worker_says_what_it_refuses(worker: Any, data: bytes, said: str) ->
     assert said in worker.read(data, 1, None, 40_000)["error"]
 
 
-def test_the_worker_main_writes_json(
-    worker: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_worker_main_writes_json(worker: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     import json
 
     request = {"first": 1, "last": None, "budget": 40_000, "memory": 1, "seconds": 1}
@@ -594,9 +571,7 @@ def _with_bars(table: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("table", [TOP10, _with_bars(TOP10)], ids=["six", "avec-barres"])
-async def test_header_words_and_short_values_are_never_cut(
-    tool: PdfTool, disk: Path, table: dict[str, Any]
-) -> None:
+async def test_header_words_and_short_values_are_never_cut(tool: PdfTool, disk: Path, table: dict[str, Any]) -> None:
     """Essais réels du 29/10 : « Ran / g », puis, à côté d'une large colonne, « Cod / e »
     et « C-42 / 9 ». Un mot d'en-tête, ou une valeur courte, tient dans sa colonne."""
     from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -635,9 +610,7 @@ async def test_header_words_and_short_values_are_never_cut(
 @pytest.fixture
 def charted(disk: Path) -> PdfTool:
     """Le même outil, monté avec ``blocks: [chart]``."""
-    return make(
-        disk, {"name": "sortie", "path": "sortie", "rights": ["read", "write"]}, blocks=["chart"]
-    )
+    return make(disk, {"name": "sortie", "path": "sortie", "rights": ["read", "write"]}, blocks=["chart"])
 
 
 async def test_charts_are_off_unless_asked(tool: PdfTool, charted: PdfTool) -> None:
@@ -685,9 +658,7 @@ async def test_a_chart_is_drawn_in_the_pdf(charted: PdfTool, disk: Path) -> None
     result = await call(tool, path="sortie/graphiques.pdf", blocks=blocks)
     # Un libellé de graphique passe par la même vérification des polices que le texte.
     assert [w for w in result["warnings"] if "🔥" in w]
-    text = " ".join(
-        page.extract_text() for page in PdfReader(disk / "sortie" / "graphiques.pdf").pages
-    ).replace("\u00a0", " ")
+    text = " ".join(page.extract_text() for page in PdfReader(disk / "sortie" / "graphiques.pdf").pages).replace("\u00a0", " ")
     for said in ("TTC par client", "Julien Barre", "18 034,17 €", "Facturé", "60,0 %"):
         assert said in text, said
     again = await call(tool, path="sortie/graphiques2.pdf", blocks=blocks)
@@ -722,9 +693,7 @@ async def test_images_in_a_pdf(disk: Path) -> None:
     assert (result["images"], result["pages"], result["warnings"]) == (3, 2, [])
     found = PdfReader(disk / "sortie" / "cdc.pdf")
     # Trois images posées, dans leurs pixels ; la même image deux fois.
-    drawn: list[Any] = [
-        cast(Any, image).image.size for page in found.pages for image in page.images
-    ]
+    drawn: list[Any] = [cast(Any, image).image.size for page in found.pages for image in page.images]
     assert sorted(drawn) == [(390, 844), (390, 844), (2016, 1512)]
     assert "Écran 1" in found.pages[0].extract_text()
     again = await call(tool, path="sortie/cdc2.pdf", title="Cahier", blocks=blocks)
@@ -741,9 +710,7 @@ async def test_a_pdf_follows_its_template(disk: Path) -> None:
     assert "- rapport" in tool.spec.description
     done: list[Any] = [{"type": "paragraph", "text": "Fait."}]
     with pytest.raises(ToolError, match="section\\(s\\) absente\\(s\\) : « Contexte »"):
-        await call(
-            tool, path="sortie/r.pdf", template="rapport", sections={"Travaux réalisés": done}
-        )
+        await call(tool, path="sortie/r.pdf", template="rapport", sections={"Travaux réalisés": done})
     sections = {"Contexte": done, "Travaux réalisés": done}
     written = await call(tool, path="sortie/r.pdf", template="rapport", sections=sections)
     assert (written["template"], written["pages"]) == ("rapport", 1)
@@ -836,9 +803,7 @@ def test_no_visual_value_in_the_pdf_code() -> None:
     familles standard du PDF de ``PDF_FONTS``. Reste le blanc du papier (le trait entre deux
     secteurs d'un graphique)."""
     folder = Path(writer_module.__file__).parent
-    fonts = re.compile(
-        "|".join(sorted({*SAFE_FONTS, "helvetica", "times", "courier"})), re.IGNORECASE
-    )
+    fonts = re.compile("|".join(sorted({*SAFE_FONTS, "helvetica", "times", "courier"})), re.IGNORECASE)
     for source in sorted(folder.glob("*.py")):
         code = source.read_text(encoding="utf-8")
         assert not re.findall(r"\b[0-9A-F]{6}\b", code), source.name
@@ -891,9 +856,7 @@ async def test_a_facture_in_the_style_of_its_template(disk: Path) -> None:
     """La facture de Word, en PDF : la charte (logo, couleurs, filets, mentions, filigrane)
     et le modèle (émetteur et client côte à côte, récapitulatif à droite, titres discrets)."""
     tool = styled_pdf(disk)
-    written = await call(
-        tool, path="sortie/f.pdf", template="facture", title="Facture", sections=FACTURE_SECTIONS
-    )
+    written = await call(tool, path="sortie/f.pdf", template="facture", title="Facture", sections=FACTURE_SECTIONS)
     assert (written["pages"], written["warnings"]) == (1, [])
     page = PdfReader(disk / "sortie" / "f.pdf").pages[0]
     found = placed(page)
@@ -910,9 +873,7 @@ async def test_a_facture_in_the_style_of_its_template(disk: Path) -> None:
     assert b".043137 .364706 .231373" in drawn(page)  # brand, 0B5D3B
     assert b".909804 .945098 .92549 rg" in drawn(page)  # E8F1EC, l'en-tête des tableaux
     assert b" Do" in drawn(page)  # le logo
-    again = await call(
-        tool, path="sortie/g.pdf", template="facture", title="Facture", sections=FACTURE_SECTIONS
-    )
+    again = await call(tool, path="sortie/g.pdf", template="facture", title="Facture", sections=FACTURE_SECTIONS)
     assert again["sha256"] == written["sha256"]
 
 
@@ -1212,10 +1173,7 @@ async def test_an_embedded_font(disk: Path) -> None:
     first = await call(tool, path="sortie/a.pdf", title="Devis", blocks=blocks)
     second = await call(tool, path="sortie/b.pdf", title="Devis", blocks=blocks)
     assert first["sha256"] == second["sha256"]
-    assert first["warnings"] == [
-        "1 caractère(s) absent(s) des polices du PDF, imprimé(s) en carré noir : 🙂 — les "
-        "remplacer par du texte"
-    ]
+    assert first["warnings"] == ["1 caractère(s) absent(s) des polices du PDF, imprimé(s) en carré noir : 🙂 — les remplacer par du texte"]
     page = PdfReader(disk / "sortie" / "a.pdf").pages[0]
     resources = cast(dict[str, Any], page["/Resources"])
     fonts = cast(dict[str, Any], resources["/Font"])
@@ -1291,8 +1249,7 @@ RICH: Final[list[dict[str, Any]]] = [
     {"type": "heading", "text": "Objet"},
     {
         "type": "paragraph",
-        "text": "Voir [le site](https://example.com/a?b=1)^[Par [courriel](mailto:a@b.fr), "
-        "voir §[Détail].] et le détail en §[Détail].",
+        "text": "Voir [le site](https://example.com/a?b=1)^[Par [courriel](mailto:a@b.fr), voir §[Détail].] et le détail en §[Détail].",
     },
     {"type": "heading", "text": "Détail", "level": 2},
     {
@@ -1365,9 +1322,7 @@ INVOICE: Final[list[dict[str, Any]]] = [
 
 
 async def test_an_invoice_in_a_pdf(disk: Path) -> None:
-    tool = make(
-        disk, SORTIE, blocks=["invoice_totals"], style={"spec": {"table_group": {"fill": "EAF1DD"}}}
-    )
+    tool = make(disk, SORTIE, blocks=["invoice_totals"], style={"spec": {"table_group": {"fill": "EAF1DD"}}})
     written = await call(tool, path="sortie/f.pdf", title="Facture", blocks=INVOICE)
     assert written["warnings"] == []
     page = PdfReader(disk / "sortie" / "f.pdf").pages[0]

@@ -101,10 +101,7 @@ MARGE = 0.2
 CAS = ("annulation", "delai", "interruption", "arriere_plan", "concession")
 ERP = "consulter_erp"
 FINALS = frozenset({"completed", "failed", "cancelled"})
-CONSIGNE_ERP = (
-    "\n\nAvant toute chose, appelle `consulter_erp` : l'ERP dit si le devis a "
-    "déjà été payé. Ne rédige rien avant d'avoir sa réponse.\n"
-)
+CONSIGNE_ERP = "\n\nAvant toute chose, appelle `consulter_erp` : l'ERP dit si le devis a déjà été payé. Ne rédige rien avant d'avoir sa réponse.\n"
 
 
 @tool
@@ -166,13 +163,9 @@ def adjusted(config: LoomConfig, *, reel: bool) -> tuple[LoomConfig, str, str]:
     # Sans consigne, un vrai modèle ignore l'ERP : il cherche le devis et
     # délègue, comme le lui dit le prompt de `relance/`. L'exemple raconterait
     # alors autre chose que ce qu'il montre (vu au run réel du 21/09).
-    main = spec.main.model_copy(
-        update={"system": prompt_text(spec.main) + CONSIGNE_ERP, "system_file": None}
-    )
+    main = spec.main.model_copy(update={"system": prompt_text(spec.main) + CONSIGNE_ERP, "system_file": None})
     lent = spec.model_copy(update={"main": main, "tools": (*spec.tools, _erp())})
-    presse = lent.model_copy(
-        update={"name": f"{base}_presse", "timeout": DELAI_REEL if reel else DELAI}
-    )
+    presse = lent.model_copy(update={"name": f"{base}_presse", "timeout": DELAI_REEL if reel else DELAI})
     agents = [lent if a.name == base else a for a in config.agents]
     models = list(config.models)
     if not reel:
@@ -180,14 +173,7 @@ def adjusted(config: LoomConfig, *, reel: bool) -> tuple[LoomConfig, str, str]:
         def script(spec: ModelSpec, replies: list[dict[str, Any]]) -> ModelSpec:
             return spec.model_copy(update={"params": {**spec.params, "script": replies}})
 
-        models = [
-            script(m, MAIN)
-            if m.id == "FAKE_MAIN"
-            else script(m, ROLE)
-            if m.id == "FAKE_ROLE"
-            else m
-            for m in models
-        ]
+        models = [script(m, MAIN) if m.id == "FAKE_MAIN" else script(m, ROLE) if m.id == "FAKE_ROLE" else m for m in models]
     updated = config.model_copy(update={"models": tuple(models), "agents": (*agents, presse)})
     return updated, base, presse.name
 
@@ -206,9 +192,7 @@ def piloting(events: list[Event], run_id: RunId) -> float:
 def unfinished(events: list[Event], run_id: RunId) -> int:
     """Étapes commencées et jamais terminées : l'effet coupé en plein vol."""
     own = [e for e in events if e.run_id == run_id]
-    return len([e for e in own if e.type == "step.started"]) - len(
-        [e for e in own if e.type == "step.completed"]
-    )
+    return len([e for e in own if e.type == "step.started"]) - len([e for e in own if e.type == "step.completed"])
 
 
 def outcome(result: RunResult) -> str:
@@ -240,15 +224,9 @@ async def dans_l_erp(loom: Loom, run_id: RunId, session: SessionId) -> None:
         events: list[Event] = []
         with suppress(UnknownSession):
             events = [e for e in await loom.export_session(session) if e.run_id == run_id]
-        partis = {
-            payload.call_id
-            for e in events
-            if isinstance(payload := e.payload, ToolCalled) and payload.tool_name == ERP
-        }
+        partis = {payload.call_id for e in events if isinstance(payload := e.payload, ToolCalled) and payload.tool_name == ERP}
         finis = {payload.call_id for e in events if isinstance(payload := e.payload, ToolCompleted)}
-        if partis - finis or any(
-            e.type.startswith("run.") and e.type[4:] in FINALS for e in events
-        ):
+        if partis - finis or any(e.type.startswith("run.") and e.type[4:] in FINALS for e in events):
             return
         await asyncio.sleep(0.05)
     raise TimeoutError(f"le run {run_id} n'a pas appelé {ERP} en {ATTENTE_MAX:g} s")
@@ -273,9 +251,7 @@ async def expiration(loom: Loom, run_id: RunId, session: SessionId) -> float:
 async def annulation(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Annulé : la décision d'arrêter, écrite au journal\n")
     run_id = new_run_id()
-    task = asyncio.create_task(
-        loom.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev")
-    )
+    task = asyncio.create_task(loom.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev"))
     await dans_l_erp(loom, run_id, session)
     print("  l'artisan annule pendant la consultation de l'ERP…")
     arrete = await loom.cancel(run_id, session_id=session, user="dev")
@@ -284,16 +260,11 @@ async def annulation(loom: Loom, agent: str, session: SessionId) -> None:
         await task
     events = await loom.export_session(session)
     state = fold([e for e in events if e.run_id == run_id], run_id)
-    marker = next(
-        (p for e in events if isinstance(p := e.payload, RunCancelled) and e.run_id == run_id), None
-    )
+    marker = next((p for e in events if isinstance(p := e.payload, RunCancelled) and e.run_id == run_id), None)
     assert marker is not None
     print(f"  cancel() : {arrete} — run.cancelled, motif « {marker.reason} », par {marker.by}")
     print(f"  état     : {state.status} (terminal : {state.status.is_terminal})")
-    print(
-        f"  étapes   : {piloting(events, run_id):.2f} s terminées, "
-        f"{unfinished(events, run_id)} coupée en cours"
-    )
+    print(f"  étapes   : {piloting(events, run_id):.2f} s terminées, {unfinished(events, run_id)} coupée en cours")
     encore = await loom.cancel(run_id, session_id=session, user="dev")
     repris = await loom.resume(run_id, session_id=session, user="dev")
     print(f"  annuler à nouveau : {encore} · reprendre : {outcome(repris)}\n")
@@ -312,10 +283,7 @@ async def delai(loom: Loom, presse: str, session: SessionId, *, reel: bool) -> N
     assert failed is not None
     print(f"  résultat : {outcome(result)}")
     print(f"  message  : {failed.error}")
-    print(
-        f"  étapes   : {piloting(events, result.run_id):.2f} s terminées, "
-        f"{unfinished(events, result.run_id)} coupée en cours"
-    )
+    print(f"  étapes   : {piloting(events, result.run_id):.2f} s terminées, {unfinished(events, result.run_id)} coupée en cours")
     repris = await loom.resume(result.run_id, session_id=session, user="dev")
     print(f"  reprendre ce run : {outcome(repris)} — un run clos reste clos\n")
 
@@ -323,9 +291,7 @@ async def delai(loom: Loom, presse: str, session: SessionId, *, reel: bool) -> N
 async def interruption(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Interrompu : personne ne décide, donc rien n'est écrit\n")
     run_id = new_run_id()
-    task = asyncio.create_task(
-        loom.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev")
-    )
+    task = asyncio.create_task(loom.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev"))
     await dans_l_erp(loom, run_id, session)
     print("  l'appelant abandonne (process tué, flux fermé, requête coupée)…")
     task.cancel()
@@ -362,16 +328,12 @@ async def arriere_plan(loom: Loom, agent: str, session: SessionId) -> None:
 async def concession(config: LoomConfig, agent: str, session: SessionId) -> None:
     """Deux instances, un seul pilote — et la reprise quand celui-ci meurt."""
     print(f"— Concession : un run ne se pilote qu'à un (bail de {BAIL:g} s)\n")
-    court = config.model_copy(
-        update={"execution": config.execution.model_copy(update={"lease": BAIL})}
-    )
+    court = config.model_copy(update={"execution": config.execution.model_copy(update={"lease": BAIL})})
     async with Loom(court) as un, Loom(court) as deux:
         un.register("consulter_erp", consulter_erp)
         deux.register("consulter_erp", consulter_erp)
         run_id = new_run_id()
-        pilotage = asyncio.create_task(
-            un.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev")
-        )
+        pilotage = asyncio.create_task(un.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev"))
         await dans_l_erp(un, run_id, session)
         print("  l'instance 1 pilote le run (elle est dans l'ERP)")
         try:
@@ -400,10 +362,7 @@ async def concession(config: LoomConfig, agent: str, session: SessionId) -> None
         print(f"  bail passé, reprise : {outcome(result)} en {result.iterations} itération(s)")
         events = [e for e in await deux.export_session(session) if e.run_id == run_id]
         pilotes = [p.worker_id for e in events if isinstance(p := e.payload, RunClaimed)]
-        print(
-            f"  concessions : {len(pilotes)} écrites (prises et renouvelées), "
-            f"{len(set(pilotes))} pilotes"
-        )
+        print(f"  concessions : {len(pilotes)} écrites (prises et renouvelées), {len(set(pilotes))} pilotes")
         print(f"  réponse  : {result.text.splitlines()[0][:70] if result.text else '—'}\n")
 
 
@@ -428,10 +387,7 @@ async def main(argv: list[str]) -> int:
     async with Loom(config) as loom:
         loom.register("consulter_erp", consulter_erp)
         print(f"Session : {session}")
-        print(
-            f"Agents  : {agent} (sans délai), {presse} "
-            f"(délai {DELAI_REEL if args.reel else DELAI:g} s)\n"
-        )
+        print(f"Agents  : {agent} (sans délai), {presse} (délai {DELAI_REEL if args.reel else DELAI:g} s)\n")
         try:
             for nom in cas:
                 if nom == "annulation":

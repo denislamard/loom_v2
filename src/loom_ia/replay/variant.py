@@ -76,10 +76,7 @@ REFUSED: Final = (
     "({effects}) et cet appel n'est pas au journal sous ces arguments ; il n'est "
     "jamais réexécuté."
 )
-NOBODY: Final = (
-    "rejeu en variante : cet appel s'exécuterait pour de vrai, et personne n'est là "
-    "pour l'approuver"
-)
+NOBODY: Final = "rejeu en variante : cet appel s'exécuterait pour de vrai, et personne n'est là pour l'approuver"
 _FATES: Final[Mapping[ToolFate, str]] = {
     "journal": "lu au journal",
     "double": "remplacé par sa doublure",
@@ -131,9 +128,7 @@ class VariantModelClient(AnsweringClient):
                 self._real = self._make()
             except ValueError as exc:
                 # Clé absente, extra manquant : la variante ne peut pas appeler ce modèle.
-                raise ModelError(
-                    "auth", f"variante : le modèle {self.spec.id} ne peut pas être appelé — {exc}"
-                ) from exc
+                raise ModelError("auth", f"variante : le modèle {self.spec.id} ne peut pas être appelé — {exc}") from exc
         return self._real
 
 
@@ -275,16 +270,11 @@ def swap_models(config: LoomConfig, agent: str, models: Mapping[str, str]) -> Lo
     declared = {model.id for model in config.models}
     unknown = sorted({model for model in models.values() if model not in declared})
     if unknown:
-        raise ReplayError(
-            f"Variante : modèle(s) non déclaré(s) dans la config : {', '.join(unknown)}"
-        )
+        raise ReplayError(f"Variante : modèle(s) non déclaré(s) dans la config : {', '.join(unknown)}")
     steps = _steps(spec)
     wrong = sorted(set(models) - set(steps))
     if wrong:
-        raise ReplayError(
-            f"Variante : étape(s) inconnue(s) de l'agent {agent!r} : {', '.join(wrong)} "
-            f"(étapes : {', '.join(steps)})"
-        )
+        raise ReplayError(f"Variante : étape(s) inconnue(s) de l'agent {agent!r} : {', '.join(wrong)} (étapes : {', '.join(steps)})")
     changed = _swapped(spec, models)
     agents = tuple(changed if a.name == agent else a for a in config.agents)
     return config.model_copy(update={"agents": agents})

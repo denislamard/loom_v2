@@ -50,10 +50,7 @@ def keyless(error: ModelError, spec: ModelSpec, *, sent_key: bool) -> ModelError
     """
     if error.kind == "auth" and not sent_key:
         variable = KEY_VARIABLES.get(spec.sdk, "NOM_DE_LA_VARIABLE")
-        error.message = (
-            f"{error.message} — aucune clé d'API envoyée : le modèle {spec.id} n'a pas "
-            f"d'api_key_env (déclarer par exemple api_key_env: {variable})"
-        )
+        error.message = f"{error.message} — aucune clé d'API envoyée : le modèle {spec.id} n'a pas d'api_key_env (déclarer par exemple api_key_env: {variable})"
         error.args = (error.message,)
     return error
 
@@ -106,9 +103,7 @@ _STRICT_KEYWORDS: Final = frozenset(
     }
 )
 
-_QUOTA_HINTS: Final = frozenset(
-    {"insufficient_quota", "billing_error", "billing_hard_limit_reached"}
-)
+_QUOTA_HINTS: Final = frozenset({"insufficient_quota", "billing_error", "billing_hard_limit_reached"})
 _FILTER_HINTS: Final = frozenset({"content_filter", "content_policy_violation"})
 _AUTH_HINTS: Final = frozenset({"authentication_error", "permission_error", "invalid_api_key"})
 _RATE_HINTS: Final = frozenset({"rate_limit_error", "rate_limit_exceeded"})
@@ -147,9 +142,7 @@ def classify_error(
 
     if found & _QUOTA_HINTS or http_status == 402:
         return error("quota_exhausted")
-    if found & _CONTEXT_HINTS or (
-        http_status in {None, 400, 413} and _CONTEXT_MESSAGE.search(message)
-    ):
+    if found & _CONTEXT_HINTS or (http_status in {None, 400, 413} and _CONTEXT_MESSAGE.search(message)):
         return error("context_overflow")
     if found & _FILTER_HINTS:
         return error("content_filtered")
@@ -218,8 +211,7 @@ def unreadable_json(error: json.JSONDecodeError) -> ModelError:
     """
     return ModelError(
         "transient",
-        f"Réponse illisible : JSON invalide du fournisseur ({error.msg}, "
-        f"ligne {error.lineno}, colonne {error.colno})",
+        f"Réponse illisible : JSON invalide du fournisseur ({error.msg}, ligne {error.lineno}, colonne {error.colno})",
     )
 
 
@@ -251,8 +243,7 @@ def _block_text(block: OutputBlock) -> str:
         case InlineDataBlock():
             raise ModelError(
                 "invalid_request",
-                "Image dans un résultat d'outil : cette API ne l'accepte pas "
-                "(déclarer tool_result_media: false)",
+                "Image dans un résultat d'outil : cette API ne l'accepte pas (déclarer tool_result_media: false)",
             )
 
 

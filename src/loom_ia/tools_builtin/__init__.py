@@ -167,20 +167,14 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         target="loom_ia.tools_builtin.local_files:build",
         params="loom_ia.tools_builtin.local_files_params:LocalFilesParams",
         refused=("approval", "side_effects", "idempotent"),
-        refused_because=(
-            "les droits de chaque dossier les expriment (folders[].rights), et "
-            "l'approbation se règle par dossier (folders[].approval)"
-        ),
+        refused_because=("les droits de chaque dossier les expriment (folders[].rights), et l'approbation se règle par dossier (folders[].approval)"),
         own_description=True,
     ),
     "loom.excel": Builtin(
         target="loom_ia.tools_builtin.excel:build",
         params="loom_ia.tools_builtin.excel_params:ExcelParams",
         refused=("approval", "side_effects", "idempotent"),
-        refused_because=(
-            "les droits de chaque dossier les expriment (folders[].rights), et "
-            "l'approbation se règle par dossier (folders[].approval)"
-        ),
+        refused_because=("les droits de chaque dossier les expriment (folders[].rights), et l'approbation se règle par dossier (folders[].approval)"),
         extra="office",
         own_description=True,
     ),
@@ -188,20 +182,14 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         target="loom_ia.tools_builtin.word:build",
         params="loom_ia.tools_builtin.word_params:WordParams",
         refused=("approval", "side_effects", "idempotent"),
-        refused_because=(
-            "les droits de chaque dossier les expriment (folders[].rights), et "
-            "l'approbation se règle par dossier (folders[].approval)"
-        ),
+        refused_because=("les droits de chaque dossier les expriment (folders[].rights), et l'approbation se règle par dossier (folders[].approval)"),
         own_description=True,
     ),
     "loom.pdf": Builtin(
         target="loom_ia.tools_builtin.pdf:build",
         params="loom_ia.tools_builtin.pdf_params:PdfParams",
         refused=("approval", "side_effects", "idempotent"),
-        refused_because=(
-            "les droits de chaque dossier les expriment (folders[].rights), et "
-            "l'approbation se règle par dossier (folders[].approval)"
-        ),
+        refused_because=("les droits de chaque dossier les expriment (folders[].rights), et l'approbation se règle par dossier (folders[].approval)"),
         extra="pdf",
         own_description=True,
     ),
@@ -209,10 +197,7 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         target="loom_ia.tools_builtin.sql:build",
         params="loom_ia.tools_builtin.sql_params:SqlParams",
         refused=("approval", "side_effects", "idempotent"),
-        refused_because=(
-            "les droits de chaque table les expriment (tables), et l'approbation se règle "
-            "par table (tables.<table>.approval)"
-        ),
+        refused_because=("les droits de chaque table les expriment (tables), et l'approbation se règle par table (tables.<table>.approval)"),
         extra="sql",
         own_description=True,
     ),
@@ -220,10 +205,7 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         target="loom_ia.tools_builtin.memory:build",
         params="loom_ia.tools_builtin.memory_params:MemoryParams",
         refused=("approval", "side_effects", "idempotent"),
-        refused_because=(
-            "chaque action permise a son approbation (actions.<action>.approval), et ses "
-            "effets tiennent à l'action"
-        ),
+        refused_because=("chaque action permise a son approbation (actions.<action>.approval), et ses effets tiennent à l'action"),
         extra="memory",
         own_description=True,
     ),
@@ -232,8 +214,7 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         params="loom_ia.tools_builtin.state_params:StateParams",
         refused=("approval", "side_effects", "idempotent"),
         refused_because=(
-            "l'outil n'agit que sur le state de la session, sans effet hors de loom ; "
-            "qui peut écrire chaque clé se règle sur la clé (state.<clé>.writers)"
+            "l'outil n'agit que sur le state de la session, sans effet hors de loom ; qui peut écrire chaque clé se règle sur la clé (state.<clé>.writers)"
         ),
         own_description=True,
     ),
@@ -242,8 +223,7 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         params="loom_ia.tools_builtin.ask_params:AskParams",
         refused=("approval", "side_effects", "idempotent", "timeout", "output"),
         refused_because=(
-            "l'outil ne fait rien lui-même : il pose une question et attend la réponse de "
-            "l'utilisateur ; une action à faire valider passe par l'approbation"
+            "l'outil ne fait rien lui-même : il pose une question et attend la réponse de l'utilisateur ; une action à faire valider passe par l'approbation"
         ),
     ),
 }
@@ -287,9 +267,7 @@ def parameterized_builtins() -> Mapping[str, tuple[type[BaseModel], Builtin]]:
     return found
 
 
-def builtin_tool(
-    reference: str, params: BaseModel | None = None, *, context: BuiltinContext | None = None
-) -> Tool:
+def builtin_tool(reference: str, params: BaseModel | None = None, *, context: BuiltinContext | None = None) -> Tool:
     """L'outil fourni ``reference``, son module importé à ce moment-là.
 
     Un outil à paramètres est construit par sa fabrique, avec ``params``

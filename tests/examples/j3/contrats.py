@@ -83,10 +83,7 @@ def describe(event: Event, progress: Progress) -> str | None:
     """Une ligne par étape : appels de modèle, puis le déroulé partagé avec la CLI."""
     if isinstance(event.payload, ModelResponded):
         usage = event.payload.usage
-        return (
-            f"· modèle [{event.role}] {event.payload.model_id} · "
-            f"{usage.input_tokens}/{usage.output_tokens} tokens"
-        )
+        return f"· modèle [{event.role}] {event.payload.model_id} · {usage.input_tokens}/{usage.output_tokens} tokens"
     return progress.line(event)
 
 
@@ -96,14 +93,7 @@ def scripted(config: LoomConfig, variant: str, on_failure: str) -> LoomConfig:
     def script(spec: ModelSpec, replies: list[dict[str, Any]]) -> ModelSpec:
         return spec.model_copy(update={"params": {**spec.params, "script": replies}})
 
-    models = tuple(
-        script(m, MAIN)
-        if m.id == "FAKE_MAIN"
-        else script(m, ROLE[variant])
-        if m.id == "FAKE_ROLE"
-        else m
-        for m in config.models
-    )
+    models = tuple(script(m, MAIN) if m.id == "FAKE_MAIN" else script(m, ROLE[variant]) if m.id == "FAKE_ROLE" else m for m in config.models)
     agents: list[AgentSpec] = []
     for spec in config.agents:
         if spec.name == "relance":

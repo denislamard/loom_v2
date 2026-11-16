@@ -135,11 +135,7 @@ async def answer(
     """La réponse écrite au journal, comme le fera ``Loom.answer``."""
     [asked] = owner.asking
     writer = await SessionWriter.open(store, DEFAULT_TENANT, owner.session_id)
-    draft = run_scope(owner).draft(
-        QuestionAnswered(
-            call_id=asked.call_id, tool_name="ask", answers=answers, text=text, by="denis"
-        )
-    )
+    draft = run_scope(owner).draft(QuestionAnswered(call_id=asked.call_id, tool_name="ask", answers=answers, text=text, by="denis"))
     await writer.append([draft])
 
 
@@ -213,9 +209,7 @@ def test_the_answer_comes_back_as_the_tool_result(tmp_path: Path) -> None:
         assert result.run_id == first.run_id and result.text == "Devis préparé."
         seen = types(events)
         assert seen.index("question.answered") < seen.index("tool.completed")
-        assert tool_text(events) == (
-            "Réponse de l'utilisateur :\n- Pour quel client faut-il préparer le devis ? → Dupont"
-        )
+        assert tool_text(events) == ("Réponse de l'utilisateur :\n- Pour quel client faut-il préparer le devis ? → Dupont")
 
     asyncio.run(go())
 
@@ -227,9 +221,7 @@ def test_a_free_message_is_an_answer(tmp_path: Path) -> None:
             await answer(store, await loom.state(first.run_id, session_id=SESSION), text="Dupont")
             await loom.resume(first.run_id, session_id=SESSION, user=DEV)
             events = await loom.export_session(SESSION)
-        assert tool_text(events) == (
-            f"Réponse de l'utilisateur, en message libre : Dupont\n\n{OFF_TOPIC}"
-        )
+        assert tool_text(events) == (f"Réponse de l'utilisateur, en message libre : Dupont\n\n{OFF_TOPIC}")
 
     asyncio.run(go())
 
@@ -334,9 +326,7 @@ def test_a_subagent_question_holds_its_parent(tmp_path: Path) -> None:
             assert first.status is RunStatus.WAITING_CHILD
             events = await loom.export_session(SESSION)
             child = next(e.run_id for e in events if isinstance(e.payload, QuestionAsked))
-            await answer(
-                store, fold([e for e in events if e.run_id == child], child), text="Dupont"
-            )
+            await answer(store, fold([e for e in events if e.run_id == child], child), text="Dupont")
             result = await loom.resume(first.run_id, session_id=SESSION, user=DEV)
         assert result.status is RunStatus.COMPLETED and result.text == "C'est fait."
 
@@ -360,9 +350,7 @@ def test_an_answered_run_replays_identically(tmp_path: Path) -> None:
 
 
 def test_a_new_turn_hears_that_a_question_still_waits() -> None:
-    pending = PendingQuestion(
-        call_id="c1", questions=(Question(question="Quel client ?", options=()),)
-    )
+    pending = PendingQuestion(call_id="c1", questions=(Question(question="Quel client ?", options=()),))
     note = question_note([pending])
     assert note is not None
     assert "attend encore la réponse de l'utilisateur : Quel client ?" in note.text
@@ -381,9 +369,7 @@ def test_the_tool_the_model_sees(tmp_path: Path) -> None:
         async with mounted(config(tmp_path)) as (loom, _):
             [tool] = [d for d in loom.context("demo").tools.definitions() if d.name == "ask"]
         assert "ce n'est pas une autorisation" in tool.description
-        size = len(tool.description) + len(
-            json.dumps(tool.input_schema, ensure_ascii=False, separators=(",", ":"))
-        )
+        size = len(tool.description) + len(json.dumps(tool.input_schema, ensure_ascii=False, separators=(",", ":")))
         assert "appelle ask" in tool.description and "pourquoi" in tool.description
         # Environ 390 tokens par appel de modèle, pour un agent qui déclare l'outil.
         assert size < 1_500
@@ -428,9 +414,7 @@ def test_answer_resumes_the_same_run(tmp_path: Path) -> None:
             assert asked.questions[0].header == "Client"
             info = await loom.session(SESSION)
             assert [q.call_id for q in info.pending_questions] == [asked.call_id]
-            call = await loom.answer(
-                first.run_id, answers=[["Dupont"]], user=DEV, session_id=SESSION
-            )
+            call = await loom.answer(first.run_id, answers=[["Dupont"]], user=DEV, session_id=SESSION)
             assert call == asked.call_id
             await loom.drain()
             result = await loom.result(first.run_id, session_id=SESSION)
@@ -463,11 +447,7 @@ def test_a_streamed_message_is_the_answer_too(tmp_path: Path) -> None:
     async def go() -> None:
         async with mounted(config(tmp_path)) as (loom, _):
             first = await loom.run("demo", "Prépare un devis.", session_id=SESSION, user=DEV)
-            seen = [
-                item.type
-                async for item in loom.stream("demo", "Dupont", session_id=SESSION, user=DEV)
-                if isinstance(item, Event)
-            ]
+            seen = [item.type async for item in loom.stream("demo", "Dupont", session_id=SESSION, user=DEV) if isinstance(item, Event)]
             result = await loom.result(first.run_id, session_id=SESSION)
         assert "question.answered" in seen and seen[-1] == "run.completed"
         assert result.status is RunStatus.COMPLETED
@@ -481,19 +461,13 @@ def test_bad_answers_are_refused_and_nothing_is_written(tmp_path: Path) -> None:
             first = await loom.run("demo", "Prépare un devis.", session_id=SESSION, user=DEV)
             before = len(await loom.export_session(SESSION))
             with pytest.raises(InvalidAnswer, match="2 réponse"):
-                await loom.answer(
-                    first.run_id, answers=[["a"], ["b"]], session_id=SESSION, user=DEV
-                )
+                await loom.answer(first.run_id, answers=[["a"], ["b"]], session_id=SESSION, user=DEV)
             with pytest.raises(InvalidAnswer, match="un seul choix"):
-                await loom.answer(
-                    first.run_id, answers=[["Dupont", "Martin"]], session_id=SESSION, user=DEV
-                )
+                await loom.answer(first.run_id, answers=[["Dupont", "Martin"]], session_id=SESSION, user=DEV)
             with pytest.raises(InvalidAnswer, match="soit 'answers'"):
                 await loom.answer(first.run_id, session_id=SESSION, user=DEV)
             with pytest.raises(UnknownQuestion):
-                await loom.answer(
-                    first.run_id, text="x", call_id="autre", session_id=SESSION, user=DEV
-                )
+                await loom.answer(first.run_id, text="x", call_id="autre", session_id=SESSION, user=DEV)
             assert len(await loom.export_session(SESSION)) == before
 
     asyncio.run(go())
@@ -515,12 +489,8 @@ def test_a_refused_answer_names_the_questions_and_the_rule() -> None:
     def problem(pending: PendingQuestion, *answers: tuple[str, ...]) -> str | None:
         return reply_problem(pending, QuestionReply(answers=answers))
 
-    assert problem(two, ("Oui",)) == (
-        "1 réponse pour 2 questions (Relances, Acompte) : une réponse par question, dans leur ordre"
-    )
-    assert (
-        problem(two, ("Oui", "Non"), ("rien",)) == "question 1 (Relances) : un seul choix attendu"
-    )
+    assert problem(two, ("Oui",)) == ("1 réponse pour 2 questions (Relances, Acompte) : une réponse par question, dans leur ordre")
+    assert problem(two, ("Oui", "Non"), ("rien",)) == "question 1 (Relances) : un seul choix attendu"
     assert problem(two, ("Oui",), (" ",)) == "question 2 (Acompte) : réponse vide"
     assert problem(two, ("Oui",), ("rien",)) is None
 
@@ -528,19 +498,14 @@ def test_a_refused_answer_names_the_questions_and_the_rule() -> None:
         call_id="c2",
         questions=(Question(question="A ?"), Question(question="B ?"), Question(question="C ?")),
     )
-    assert problem(bare) == (
-        "0 réponse pour 3 questions (questions 1, 2 et 3) : une réponse par question, "
-        "dans leur ordre"
-    )
+    assert problem(bare) == ("0 réponse pour 3 questions (questions 1, 2 et 3) : une réponse par question, dans leur ordre")
     assert problem(bare, ("a",), ("b", "c"), ("d",)) == "question 2 : un seul choix attendu"
 
     mixed = PendingQuestion(call_id="c3", questions=(relances, Question(question="B ?")))
     assert "pour 2 questions (Relances, question 2) :" in (problem(mixed, ("Oui",)) or "")
 
     one = PendingQuestion(call_id="c4", questions=(Question(question="A ?"),))
-    assert problem(one, ("a",), ("b",)) == (
-        "2 réponses pour 1 question (question 1) : une réponse par question, dans leur ordre"
-    )
+    assert problem(one, ("a",), ("b",)) == ("2 réponses pour 1 question (question 1) : une réponse par question, dans leur ordre")
     # Un message libre convient toujours ; vide, il est refusé, comme avant.
     assert reply_problem(two, QuestionReply(text="oui, rien versé")) is None
     assert reply_problem(two, QuestionReply(text="  ")) == "réponse vide"
@@ -555,9 +520,7 @@ def test_an_inline_answerer_answers_without_pausing(tmp_path: Path) -> None:
             return QuestionReply(answers=(("Martin",),), by="script")
 
         async with mounted(config(tmp_path)) as (loom, _):
-            result = await loom.run(
-                "demo", "Prépare un devis.", session_id=SESSION, answerer=answerer, user=DEV
-            )
+            result = await loom.run("demo", "Prépare un devis.", session_id=SESSION, answerer=answerer, user=DEV)
             events = await loom.export_session(SESSION)
         assert result.status is RunStatus.COMPLETED and len(seen) == 1
         assert "paused" not in [e.facets.get("to_state") for e in events]
@@ -573,9 +536,7 @@ def test_an_approver_does_not_answer(tmp_path: Path) -> None:
             return Approved(by="script")
 
         async with mounted(config(tmp_path)) as (loom, _):
-            result = await loom.run(
-                "demo", "Prépare un devis.", session_id=SESSION, approver=approver, user=DEV
-            )
+            result = await loom.run("demo", "Prépare un devis.", session_id=SESSION, approver=approver, user=DEV)
         assert result.status is RunStatus.PAUSED and len(result.pending_questions) == 1
 
     asyncio.run(go())
@@ -636,9 +597,7 @@ def test_a_chosen_run_id_is_a_new_turn_and_the_question_still_waits(tmp_path: Pa
     async def go() -> None:
         async with mounted(config(tmp_path)) as (loom, _):
             first = await loom.run("demo", "Prépare un devis.", session_id=SESSION, user=DEV)
-            again = await loom.run(
-                "demo", "Autre chose", session_id=SESSION, run_id=RunId("tour-2"), user=DEV
-            )
+            again = await loom.run("demo", "Autre chose", session_id=SESSION, run_id=RunId("tour-2"), user=DEV)
             info = await loom.session(SESSION)
         assert again.run_id == "tour-2"
         assert first.pending_questions[0].call_id in [q.call_id for q in info.pending_questions]

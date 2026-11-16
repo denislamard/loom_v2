@@ -95,12 +95,7 @@ async def run(ctx: RunContext, prompt: str = "Vas-y.") -> tuple[RunState, list[E
 
 
 def results(state: RunState) -> list[ToolOutput]:
-    return [
-        block.output
-        for message in state.messages
-        for block in message.blocks
-        if isinstance(block, ToolResultBlock)
-    ]
+    return [block.output for message in state.messages for block in message.blocks if isinstance(block, ToolResultBlock)]
 
 
 # --- Fichiers produits -----------------------------------------------------------
@@ -127,17 +122,13 @@ async def test_images_from_tools_are_stored() -> None:
     uri = stored.payload.uri
     assert await files.get(uri) == PNG
     [output] = results(state)
-    assert output.blocks == (
-        ArtifactRefBlock(uri=uri, media_type="image/png", size=len(PNG), name="graphe.png"),
-    )
+    assert output.blocks == (ArtifactRefBlock(uri=uri, media_type="image/png", size=len(PNG), name="graphe.png"),)
     assert output.artifacts == (uri,)
     assert [(a.uri, a.origin) for a in state.artifacts] == [(uri, "tool_output")]
     # Le modèle orchestrateur, sans vision, n'en reçoit qu'une mention.
     shown = main.requests[1].messages[2].blocks[0]
     assert isinstance(shown, ToolResultBlock)
-    assert shown.output.as_text == (
-        "[image renvoyée graphe.png (image/png, 32 octets) : non visible par ce modèle]"
-    )
+    assert shown.output.as_text == ("[image renvoyée graphe.png (image/png, 32 octets) : non visible par ce modèle]")
 
 
 async def test_files_without_store_become_a_mention() -> None:
@@ -145,11 +136,7 @@ async def test_files_without_store_become_a_mention() -> None:
     state, events = await run(context(main, graphique, artifacts=None))
     assert not any(isinstance(e.payload, ArtifactStored) for e in events)
     [output] = results(state)
-    assert output.blocks == (
-        TextBlock(
-            text="[fichier image/png de 32 octets non conservé : aucun stockage d'artefacts]"
-        ),
-    )
+    assert output.blocks == (TextBlock(text="[fichier image/png de 32 octets non conservé : aucun stockage d'artefacts]"),)
 
 
 async def test_store_failures_become_tool_errors() -> None:
@@ -161,10 +148,7 @@ async def test_store_failures_become_tool_errors() -> None:
     state, _ = await run(context(main, graphique, artifacts=Broken()))
     [output] = results(state)
     assert output.is_error
-    assert output.as_text == (
-        "Résultat de l'outil graphique perdu : échec du stockage d'artefacts "
-        "(OSError: disque plein)."
-    )
+    assert output.as_text == ("Résultat de l'outil graphique perdu : échec du stockage d'artefacts (OSError: disque plein).")
 
 
 # --- Déport ---------------------------------------------------------------------
@@ -174,9 +158,7 @@ async def test_long_text_is_offloaded_and_read_back() -> None:
     files = InMemoryArtifactStore()
     main = ScriptedModel(
         tool_call_message(("c1", "journal_brut", {})),
-        lambda request: tool_call_message(
-            ("c2", ARTIFACT_READ, {"ref": _offloaded(request), "offset": 12, "limit": 24})
-        ),
+        lambda request: tool_call_message(("c2", ARTIFACT_READ, {"ref": _offloaded(request), "offset": 12, "limit": 24})),
         Message.assistant("Lu."),
     )
     state, events = await run(context(main, journal_brut, artifacts=files))
@@ -203,10 +185,7 @@ async def test_long_text_is_offloaded_and_read_back() -> None:
     # artifact_read n'apparaît qu'après le premier déport, et n'est jamais déporté.
     assert [t.name for t in main.requests[0].tools] == ["journal_brut"]
     assert [t.name for t in main.requests[1].tools] == ["journal_brut", ARTIFACT_READ]
-    assert (
-        read.as_text
-        == "[Caractères 12 à 36 sur 36000 ; suite : offset=36]\nligne 00001\nligne 00002\n"
-    )
+    assert read.as_text == "[Caractères 12 à 36 sur 36000 ; suite : offset=36]\nligne 00001\nligne 00002\n"
 
 
 def _offloaded(request: ModelRequest, index: int = -1) -> str:
@@ -222,9 +201,7 @@ async def test_artifact_read_checks_its_reference() -> None:
         tool_call_message(
             ("c2", ARTIFACT_READ, {"ref": "artifact://default/x/y.txt"}),
         ),
-        lambda request: tool_call_message(
-            ("c3", ARTIFACT_READ, {"ref": _offloaded(request, 2), "offset": 99_999})
-        ),
+        lambda request: tool_call_message(("c3", ARTIFACT_READ, {"ref": _offloaded(request, 2), "offset": 99_999})),
         Message.assistant("Fini."),
     )
     state, _ = await run(context(main, journal_brut, artifacts=InMemoryArtifactStore()))
@@ -252,9 +229,7 @@ async def test_offloaded_json_keeps_its_structure_and_its_reference() -> None:
     )
     main = ScriptedModel(
         tool_call_message(("c1", "devis", {})),
-        tool_call_message(
-            ("c2", "recevoir", {"devis": {"$ref": "result:1"}}), ("c3", "rediger", {})
-        ),
+        tool_call_message(("c2", "recevoir", {"devis": {"$ref": "result:1"}}), ("c3", "rediger", {})),
         Message.assistant("Fait."),
     )
     role = RoleTool(definition, writer, SPEC)
@@ -265,10 +240,7 @@ async def test_offloaded_json_keeps_its_structure_and_its_reference() -> None:
     assert first.offloaded.endswith(".json")
     [text] = first.blocks
     assert isinstance(text, TextBlock)
-    assert text.text.startswith(
-        'Objet JSON, 2 clé(s) :\n- devis : "D-42"\n- lignes : liste de 500 élément(s)\n\n'
-        "[Résultat déporté : "
-    )
+    assert text.text.startswith('Objet JSON, 2 clé(s) :\n- devis : "D-42"\n- lignes : liste de 500 élément(s)\n\n[Résultat déporté : ')
     # Avec des rôles, le modèle apprend qu'il peut transmettre le tout par $ref.
     assert "sa référence $ref" in text.text
     # $ref et tool_results transmettent le contenu complet, relu dans le stockage.
@@ -282,10 +254,7 @@ async def test_without_store_long_results_are_truncated() -> None:
     state, events = await run(context(main, journal_brut, artifacts=None, offload_over=100))
     [output] = results(state)
     assert output.offloaded is None
-    assert output.as_text == (
-        LONG[:100] + "\n\n[Résultat tronqué : 100 caractères montrés sur 36000, "
-        "aucun stockage d'artefacts pour conserver le reste.]"
-    )
+    assert output.as_text == (LONG[:100] + "\n\n[Résultat tronqué : 100 caractères montrés sur 36000, aucun stockage d'artefacts pour conserver le reste.]")
     assert not any(isinstance(e.payload, ArtifactStored) for e in events)
     assert ARTIFACT_READ not in [t.name for t in main.requests[1].tools]
 
@@ -295,9 +264,7 @@ async def test_thresholds() -> None:
     # Le seuil de l'outil l'emporte sur celui de l'exécuteur ; None désactive le déport.
     patient = journal_brut.spec.model_copy(update={"offload_over": 100_000})
     main = ScriptedModel(tool_call_message(("c1", "journal_brut", {})), Message.assistant("Ok."))
-    state, _ = await run(
-        context(main, ConfiguredTool(tool=journal_brut, spec=patient), artifacts=files)
-    )
+    state, _ = await run(context(main, ConfiguredTool(tool=journal_brut, spec=patient), artifacts=files))
     assert results(state)[0].offloaded is None and len(files) == 0
 
     main = ScriptedModel(tool_call_message(("c1", "journal_brut", {})), Message.assistant("Ok."))
@@ -328,10 +295,7 @@ def test_previews() -> None:
     assert shown.startswith("Objet JSON, 25 clé(s) :\n- k0 : 0\n")
     assert shown.endswith("- k19 : 19\n- … et 5 autre(s) clé(s)")
     long_text: JsonValue = {"texte": "é" * 100, "objet": {"a": 1}, "vrai": True}
-    assert preview(long_text) == (
-        'Objet JSON, 3 clé(s) :\n- texte : texte de 100 caractères, "' + "é" * 80 + '"…\n'
-        "- objet : objet à 1 clé(s)\n- vrai : true"
-    )
+    assert preview(long_text) == ('Objet JSON, 3 clé(s) :\n- texte : texte de 100 caractères, "' + "é" * 80 + '"…\n- objet : objet à 1 clé(s)\n- vrai : true')
     assert preview(42) == "42"
 
 
@@ -347,13 +311,7 @@ async def test_journal_keeps_no_offloaded_content() -> None:
 
 # --- State de la session ----------------------------------------------------------
 
-DEVIS_KEY = StateRules(
-    {
-        "devis": StateKeyRule(
-            schema={"type": "string"}, sources={"devis": StateSourceRule(path="/devis")}
-        )
-    }
-)
+DEVIS_KEY = StateRules({"devis": StateKeyRule(schema={"type": "string"}, sources={"devis": StateSourceRule(path="/devis")})})
 
 
 async def test_the_state_is_read_before_the_offload_and_kept_by_it() -> None:
@@ -365,9 +323,7 @@ async def test_the_state_is_read_before_the_offload_and_kept_by_it() -> None:
 
     for artifacts, offload_over in ((InMemoryArtifactStore(), 10_000), (None, 100)):
         main = ScriptedModel(tool_call_message(("c1", "devis", {})), Message.assistant("Ok."))
-        ctx = context(
-            main, devis, artifacts=artifacts, offload_over=offload_over, state_rules=DEVIS_KEY
-        )
+        ctx = context(main, devis, artifacts=artifacts, offload_over=offload_over, state_rules=DEVIS_KEY)
         state, events = await run(ctx)
         [completed] = [e.payload for e in events if isinstance(e.payload, ToolCompleted)]
         assert completed.output.data is None

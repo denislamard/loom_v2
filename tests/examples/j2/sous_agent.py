@@ -44,20 +44,14 @@ from loom_ia.core.projections import fold_all
 from loom_ia.runtime import apply_logging
 
 CONFIG = Path(__file__).parent / "assistant" / "loom.yaml"
-QUESTION = (
-    "Quelle heure est-il à Paris ? Et combien d'heures y a-t-il entre "
-    "le 1er septembre et le 31 décembre 2026 ?"
-)
+QUESTION = "Quelle heure est-il à Paris ? Et combien d'heures y a-t-il entre le 1er septembre et le 31 décembre 2026 ?"
 
 
 def describe(event: Event) -> str | None:
     """Une ligne par étape marquante d'un run."""
     match event.payload:
         case ModelResponded(model_id=model, usage=usage, cost_usd=cost):
-            return (
-                f"modèle   [{event.role}] {model} · {usage.input_tokens}/"
-                f"{usage.output_tokens} tokens · {cost:.5f} $"
-            )
+            return f"modèle   [{event.role}] {model} · {usage.input_tokens}/{usage.output_tokens} tokens · {cost:.5f} $"
         case ToolSourceUnavailable(source=source, error=error):
             return f"serveur  {source} indisponible : {error}"
         case ToolCalled(tool_name=name, tool_kind=kind, arguments=arguments):
@@ -69,15 +63,10 @@ def describe(event: Event) -> str | None:
             return None
 
 
-def show_tree(
-    events: list[Event], states: dict[RunId, RunState], run_id: RunId, indent: str = "  "
-) -> None:
+def show_tree(events: list[Event], states: dict[RunId, RunState], run_id: RunId, indent: str = "  ") -> None:
     """Un run, ses étapes, et le sous-arbre de chaque sous-agent sous son appel."""
     state = states[run_id]
-    print(
-        f"{indent}{state.agent} · run {run_id} · profondeur {state.depth} · {state.status}"
-        f" · {state.iterations} itération(s) · {state.cost_usd:.5f} $"
-    )
+    print(f"{indent}{state.agent} · run {run_id} · profondeur {state.depth} · {state.status} · {state.iterations} itération(s) · {state.cost_usd:.5f} $")
     for event in (e for e in events if e.run_id == run_id):
         line = describe(event)
         if line is not None:
@@ -89,9 +78,7 @@ def show_tree(
 
 async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Orchestrateur et sous-agent")
-    parser.add_argument(
-        "--reel", action="store_true", help="vrais modèles (MiniMax-M3, GLM-5.3-Flash)"
-    )
+    parser.add_argument("--reel", action="store_true", help="vrais modèles (MiniMax-M3, GLM-5.3-Flash)")
     parser.add_argument("--question", default=QUESTION)
     args = parser.parse_args(argv)
     agent = "assistant_reel" if args.reel else "assistant"
@@ -117,10 +104,7 @@ async def main(argv: list[str]) -> int:
     print(result.text or result.error or "—")
     print("\nArbre des runs :")
     show_tree(events, fold_all(events), result.run_id)
-    print(
-        f"\nStatut     : {result.status} · itérations : {result.iterations}"
-        f" · coût total (sous-runs compris) : {result.cost_usd:.5f} $"
-    )
+    print(f"\nStatut     : {result.status} · itérations : {result.iterations} · coût total (sous-runs compris) : {result.cost_usd:.5f} $")
     store = loom.store.inner
     if isinstance(store, JsonlEventStore):
         print(f"Journal    : {store.path(DEFAULT_TENANT, result.session_id)}")

@@ -96,9 +96,7 @@ def contexts(run: str) -> tuple[SourceContext, ToolContext]:
     session = SessionId(run)
     return (
         SourceContext(tenant_id=TENANT, session_id=session, run_id=RunId(run), agent="essai"),
-        ToolContext(
-            tenant_id=TENANT, session_id=session, run_id=RunId(run), call_id="c1", agent="essai"
-        ),
+        ToolContext(tenant_id=TENANT, session_id=session, run_id=RunId(run), call_id="c1", agent="essai"),
     )
 
 
@@ -156,9 +154,7 @@ async def second_run(source: Any, controle: Controle) -> None:
     async with source.open(source_ctx) as tools:
         noms = [tool.spec.name for tool in tools]
         print(f"  outils : {noms}")
-        controle.tient(
-            "somme_carres est un outil à part entière", noms == [FORGE, CALL, "somme_carres"]
-        )
+        controle.tient("somme_carres est un outil à part entière", noms == [FORGE, CALL, "somme_carres"])
         if "somme_carres" in noms:
             outil = named(tools)["somme_carres"]
             print(f"  schéma : {json.dumps(outil.spec.input_schema)}")
@@ -207,9 +203,7 @@ async def main() -> int:
         try:
             await premier_run(source, vm, controle, tournait)
             print("\n--- catalogue ---")
-            controle.tient(
-                "un seul outil au catalogue, son module et outil.json", inventaire(catalogue)
-            )
+            controle.tient("un seul outil au catalogue, son module et outil.json", inventaire(catalogue))
             await second_run(source, controle)
         except (VmError, OSError) as exc:
             controle.tient(f"l'essai va au bout ({type(exc).__name__}: {exc})", False)
@@ -222,9 +216,7 @@ async def main() -> int:
                 if tournait:
                     controle.tient("la VM, qui tournait avant, tourne encore", vm.is_running())
                 else:
-                    controle.tient(
-                        "la VM, démarrée par la source, est arrêtée", not vm.is_running()
-                    )
+                    controle.tient("la VM, démarrée par la source, est arrêtée", not vm.is_running())
     finally:
         shutil.rmtree(catalogue, ignore_errors=True)
     return 0 if controle.bilan() else 1

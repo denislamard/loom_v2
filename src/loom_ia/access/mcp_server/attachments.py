@@ -122,9 +122,7 @@ class AttachmentReader:
                 data, found = await self._linked(uri)
                 return Attachment(data=data, media_type=media_type, name=name or found)
             case other:
-                raise AttachmentError(
-                    f"pièce jointe {n} : type {other!r} inconnu (image ou resource_link)"
-                )
+                raise AttachmentError(f"pièce jointe {n} : type {other!r} inconnu (image ou resource_link)")
 
     async def _linked(self, uri: str) -> tuple[bytes, str]:
         """Octets et nom du fichier désigné par un lien."""
@@ -133,9 +131,7 @@ class AttachmentReader:
         if uri.startswith(FILE_SCHEME):
             return await asyncio.to_thread(self._file, uri)
         scheme = uri.split(":", 1)[0] if ":" in uri else uri
-        raise AttachmentError(
-            f"{uri} : lien {scheme!r} non pris en charge (artifact://… ou file:///…)"
-        )
+        raise AttachmentError(f"{uri} : lien {scheme!r} non pris en charge (artifact://… ou file:///…)")
 
     async def _artifact(self, uri: str) -> tuple[bytes, str]:
         try:
@@ -156,9 +152,7 @@ class AttachmentReader:
     def _file(self, uri: str) -> tuple[bytes, str]:
         """Fichier local sous un dossier autorisé, lu jusqu'à la taille limite."""
         if not self._roots:
-            raise AttachmentError(
-                f"{uri} : liens file:// refusés, aucun dossier autorisé (server.mcp.file_roots)"
-            )
+            raise AttachmentError(f"{uri} : liens file:// refusés, aucun dossier autorisé (server.mcp.file_roots)")
         try:
             parts = urlsplit(uri)
         except ValueError:

@@ -109,9 +109,7 @@ def _remove(where: object, path: str) -> bool:
 
 def _carries(value: object) -> bool:
     """Vrai si la valeur porte vraiment quelque chose à cacher."""
-    return (
-        value is not _ABSENT and value is not None and value != "" and value != [] and value != {}
-    )
+    return value is not _ABSENT and value is not None and value != "" and value != [] and value != {}
 
 
 class _Absent:

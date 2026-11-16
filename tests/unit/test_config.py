@@ -341,18 +341,14 @@ def test_a_key_written_twice_in_loom_yaml_is_refused(tmp_path: Path) -> None:
     path.write_text(DOUBLE_ROOT, encoding="utf-8")
     with pytest.raises(ConfigError) as refus:
         load_config(path)
-    assert str(refus.value) == (
-        f"{path}: clé 'logging' donnée deux fois dans le même objet (lignes 5 et 6) : "
-        "la seconde écraserait la première en silence"
-    )
+    assert str(refus.value) == (f"{path}: clé 'logging' donnée deux fois dans le même objet (lignes 5 et 6) : la seconde écraserait la première en silence")
 
 
 def test_a_key_written_twice_in_an_agent_is_refused(tmp_path: Path) -> None:
     path = write(tmp_path)
     agent = tmp_path / "agents" / "demo.yaml"
     agent.write_text(
-        "name: demo\nmax_iterations: 5\nmax_iterations: 1\n"
-        "main: {model: FAKE, system: Tu calcules.}\n",
+        "name: demo\nmax_iterations: 5\nmax_iterations: 1\nmain: {model: FAKE, system: Tu calcules.}\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match=r"demo\.yaml: clé 'max_iterations' .*lignes 2 et 3"):
@@ -360,9 +356,7 @@ def test_a_key_written_twice_in_an_agent_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_key_written_twice_in_a_schema_file_is_refused(tmp_path: Path) -> None:
-    (tmp_path / "objet.yaml").write_text(
-        "type: object\nrequired: [a]\nrequired: [b]\n", encoding="utf-8"
-    )
+    (tmp_path / "objet.yaml").write_text("type: object\nrequired: [a]\nrequired: [b]\n", encoding="utf-8")
     agent = {**AGENT, "output": {"schema_file": "objet.yaml"}}
     path = write(tmp_path, agents={"demo": agent})
     with pytest.raises(ConfigError, match=r"objet\.yaml: clé 'required' .*lignes 2 et 3"):
@@ -374,12 +368,7 @@ def test_a_merge_key_may_be_overridden_and_the_same_key_may_repeat_elsewhere(
 ) -> None:
     path = write(tmp_path)
     path.write_text(
-        "version: 1\n"
-        "models:\n"
-        "- &base {id: FAKE, sdk: fake, model: fake-1, max_tokens: 100}\n"
-        "- <<: *base\n"
-        "  id: AUTRE\n"
-        "  max_tokens: 200\n" + SECURITY_YAML,
+        "version: 1\nmodels:\n- &base {id: FAKE, sdk: fake, model: fake-1, max_tokens: 100}\n- <<: *base\n  id: AUTRE\n  max_tokens: 200\n" + SECURITY_YAML,
         encoding="utf-8",
     )
     config = load_config(path)
@@ -411,10 +400,7 @@ def test_a_broken_reference_is_reported_in_the_file_of_its_agent(tmp_path: Path)
     with pytest.raises(ConfigError) as refus:
         load_config(path)
     assert refus.value.source == tmp_path / "agents" / "zinzin.yaml"
-    assert str(refus.value) == (
-        f"{tmp_path / 'agents' / 'zinzin.yaml'}: "
-        "Agent 'zinzin' : modèle 'SONNET' non déclaré (modèles connus : FAKE)"
-    )
+    assert str(refus.value) == (f"{tmp_path / 'agents' / 'zinzin.yaml'}: Agent 'zinzin' : modèle 'SONNET' non déclaré (modèles connus : FAKE)")
 
 
 def test_an_error_no_single_agent_causes_stays_with_loom_yaml(tmp_path: Path) -> None:
@@ -428,9 +414,7 @@ def test_an_error_no_single_agent_causes_stays_with_loom_yaml(tmp_path: Path) ->
 def test_an_unresolved_tool_names_its_agent_and_tool(tmp_path: Path) -> None:
     agent = {**AGENT, "tools": [{"python": "prix_ht"}]}
     config = load_config(write(tmp_path, agents={"demo": agent}))
-    with pytest.raises(
-        ConfigError, match=r"^Agent 'demo', outil 'prix_ht' : Référence 'prix_ht' introuvable"
-    ):
+    with pytest.raises(ConfigError, match=r"^Agent 'demo', outil 'prix_ht' : Référence 'prix_ht' introuvable"):
         build_agent(config, "demo", InMemoryEventStore())
 
 
@@ -504,9 +488,7 @@ def test_each_config_gets_its_own_neighbour_modules(tmp_path: Path) -> None:
     for folder in (a, b):
         (folder / "paquet_50").mkdir()
         (folder / "paquet_50" / "__init__.py").write_text("", encoding="utf-8")
-        (folder / "paquet_50" / "sous.py").write_text(
-            f"ORIGINE = {folder.name!r}\n", encoding="utf-8"
-        )
+        (folder / "paquet_50" / "sous.py").write_text(f"ORIGINE = {folder.name!r}\n", encoding="utf-8")
     import_modules(["paquet_50.sous"], base_dir=a)
     import_modules(["paquet_50.sous"], base_dir=b)
     assert sys.modules["paquet_50.sous"].ORIGINE == "b"
@@ -668,9 +650,7 @@ def state_agent(**changes: Any) -> dict[str, Any]:
     return {**spec, **changes}
 
 
-def write_state(
-    tmp_path: Path, *agents: dict[str, Any], root: dict[str, Any] | None = None
-) -> Path:
+def write_state(tmp_path: Path, *agents: dict[str, Any], root: dict[str, Any] | None = None) -> Path:
     return write(
         tmp_path,
         root={"imports": ["outils_state"], **(root or {})},
@@ -808,16 +788,12 @@ STRING: dict[str, Any] = {"type": "string"}
             "main.context : 'session_summary' refusé, seul 'session_state' est accepté",
         ),
         (
-            state_agent(
-                main={"model": "FAKE", "context": ["session_state", {"session_state": ["langue"]}]}
-            ),
+            state_agent(main={"model": "FAKE", "context": ["session_state", {"session_state": ["langue"]}]}),
             "session_state déclaré deux fois",
         ),
     ],
 )
-def test_a_declared_state_is_checked_at_load(
-    tmp_path: Path, agent: dict[str, Any], message: str
-) -> None:
+def test_a_declared_state_is_checked_at_load(tmp_path: Path, agent: dict[str, Any], message: str) -> None:
     with pytest.raises(ConfigError, match=re.escape(message)):
         load_config(write_state(tmp_path, agent))
 
@@ -846,12 +822,8 @@ def test_the_state_values_of_the_config_stay_within_the_session_limits(tmp_path:
         main={"model": "FAKE"},
         state={"a": {"schema": STRING, "default": ten}, "b": {"schema": STRING, "default": ten}},
     )
-    refused(
-        both, "les valeurs par défaut font 35 octets, au-delà de sessions.state.max_total_bytes"
-    )
-    load_config(
-        write_state(tmp_path, with_key("k", {"schema": STRING, "default": ten}), root=limits)
-    )
+    refused(both, "les valeurs par défaut font 35 octets, au-delà de sessions.state.max_total_bytes")
+    load_config(write_state(tmp_path, with_key("k", {"schema": STRING, "default": ten}), root=limits))
 
     inverted = {"sessions": {"state": {"max_value_bytes": 64, "max_total_bytes": 32}}}
     with pytest.raises(ConfigError, match=re.escape("max_value_bytes (64) dépasse")):
@@ -891,8 +863,7 @@ def sourced(source: dict[str, Any], **changes: Any) -> dict[str, Any]:
     [
         (
             sourced({"tool": "absent", "value": "x"}),
-            "state 'k' : from désigne 'absent', qui n'est pas un outil de l'agent "
-            "(outils : get_client, cloturer, rediger, verifier)",
+            "state 'k' : from désigne 'absent', qui n'est pas un outil de l'agent (outils : get_client, cloturer, rediger, verifier)",
         ),
         (sourced({"tool": "cloturer", "path": ""}), "l'outil 'cloturer' ne rend pas de données"),
         (sourced({"tool": "rediger", "path": "/a"}), "le rôle 'rediger' rend du texte"),
@@ -943,9 +914,7 @@ def sourced(source: dict[str, Any], **changes: Any) -> dict[str, Any]:
         ),
     ],
 )
-async def test_the_sources_of_the_state_are_checked_at_mount(
-    tmp_path: Path, agent: dict[str, Any], message: str | None
-) -> None:
+async def test_the_sources_of_the_state_are_checked_at_mount(tmp_path: Path, agent: dict[str, Any], message: str | None) -> None:
     (tmp_path / "objet.json").write_text('{"type": "object"}', encoding="utf-8")
     config = load_config(write_state(tmp_path, agent, HELPER))
     if message is not None:
@@ -975,9 +944,7 @@ def test_a_missing_path_is_refused_unless_its_source_ignores_it(tmp_path: Path) 
     config = load_config(write_state(tmp_path, with_key("k", {"schema": STRING, "from": [source]})))
     [spec] = config.agents
     rules = state_rules(config, spec)
-    assert rules.keys["k"].sources["get_client"] == StateSourceRule(
-        path="/code", on_missing="ignore"
-    )
+    assert rules.keys["k"].sources["get_client"] == StateSourceRule(path="/code", on_missing="ignore")
 
 
 def test_the_state_can_be_declared_in_python() -> None:
@@ -1052,9 +1019,7 @@ async def test_a_tool_reads_what_an_earlier_run_of_the_session_wrote(tmp_path: P
 
     [found] = [e.payload for e in before if isinstance(e.payload, ToolCompleted)]
     assert found.output.state == {"client_courant": "C-002"}
-    assert found.output.state_refused == (
-        "rang non posé : ne suit pas son schéma — doit être un entier (reçu : du texte)",
-    )
+    assert found.output.state_refused == ("rang non posé : ne suit pas son schéma — doit être un entier (reçu : du texte)",)
     [read] = [e.payload for e in after if isinstance(e.payload, ToolCompleted)]
     assert read.output.as_text == "C-002 / fr"
     assert session_state([*before, *after]) == {"client_courant": "C-002"}
@@ -1095,9 +1060,7 @@ async def test_the_orchestrator_reads_the_session_state_declared_by_its_config(
             report = await loom.replay(run.run_id, session_id=session)
             assert report.identical, report.divergence
 
-    sent = [
-        json.loads(e.payload.request_body) for e in events if isinstance(e.payload, ModelExchanged)
-    ]
+    sent = [json.loads(e.payload.request_body) for e in events if isinstance(e.payload, ModelExchanged)]
     assert [request["messages"][-1]["blocks"][0]["text"] for request in sent] == [
         '<session_state>\n{"langue":"fr"}\n</session_state>',
         '<session_state>\n{"client_courant":"C-002","langue":"fr"}\n</session_state>',

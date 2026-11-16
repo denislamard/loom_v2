@@ -110,10 +110,7 @@ def _fill(color: str) -> str:
 
 
 def _line(color: str, width: int = 28575) -> str:
-    return (
-        f'<c:spPr><a:ln w="{width}" cap="rnd"><a:solidFill><a:srgbClr val="{color}"/>'
-        "</a:solidFill><a:round/></a:ln></c:spPr>"
-    )
+    return f'<c:spPr><a:ln w="{width}" cap="rnd"><a:solidFill><a:srgbClr val="{color}"/></a:solidFill><a:round/></a:ln></c:spPr>'
 
 
 def _column(index: int) -> str:
@@ -122,22 +119,13 @@ def _column(index: int) -> str:
 
 
 def _categories(labels: Sequence[str]) -> str:
-    points = "".join(
-        f'<c:pt idx="{i}"><c:v>{escape(label)}</c:v></c:pt>' for i, label in enumerate(labels)
-    )
-    return (
-        f"<c:cat><c:strRef><c:f>Feuil1!$A$2:$A${len(labels) + 1}</c:f><c:strCache>"
-        f'<c:ptCount val="{len(labels)}"/>{points}</c:strCache></c:strRef></c:cat>'
-    )
+    points = "".join(f'<c:pt idx="{i}"><c:v>{escape(label)}</c:v></c:pt>' for i, label in enumerate(labels))
+    return f'<c:cat><c:strRef><c:f>Feuil1!$A$2:$A${len(labels) + 1}</c:f><c:strCache><c:ptCount val="{len(labels)}"/>{points}</c:strCache></c:strRef></c:cat>'
 
 
 def _values(index: int, values: Sequence[float | None], code: str) -> str:
     column = _column(index)
-    points = "".join(
-        f'<c:pt idx="{i}"><c:v>{value!r}</c:v></c:pt>'
-        for i, value in enumerate(values)
-        if value is not None
-    )
+    points = "".join(f'<c:pt idx="{i}"><c:v>{value!r}</c:v></c:pt>' for i, value in enumerate(values) if value is not None)
     return (
         f"<c:val><c:numRef><c:f>Feuil1!${column}$2:${column}${len(values) + 1}</c:f>"
         f"<c:numCache><c:formatCode>{escape(code)}</c:formatCode>"
@@ -191,15 +179,9 @@ def _scale(chart: ChartOut) -> str:
 def _axes(chart: ChartOut, paint: Paint) -> str:
     horizontal = chart.kind == "horizontal_bar"
     code = AXIS_FORMATS[chart.value_type]
-    grid = (
-        '<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill>'
-        f'<a:srgbClr val="{paint.look.grid}"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>'
-    )
+    grid = f'<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="{paint.look.grid}"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>'
     no_line = "<c:spPr><a:ln><a:noFill/></a:ln></c:spPr>"
-    axis_line = (
-        f'<c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="{paint.look.grid}"/></a:solidFill>'
-        "</a:ln></c:spPr>"
-    )
+    axis_line = f'<c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="{paint.look.grid}"/></a:solidFill></a:ln></c:spPr>'
     # Barres horizontales : la première catégorie en haut, l'axe des valeurs en bas.
     order = "maxMin" if horizontal else "minMax"
     return (
@@ -238,10 +220,7 @@ def _plot(chart: ChartOut, paint: Paint) -> str:
                 f"{_labels(paint, '0%', percent=True, position='outEnd')}"
                 f"{_categories(chart.categories)}{_values(0, values, label)}</c:ser>"
             )
-            return (
-                f'<c:pieChart><c:varyColors val="1"/>{series}'
-                '<c:firstSliceAng val="0"/></c:pieChart>'
-            )
+            return f'<c:pieChart><c:varyColors val="1"/>{series}<c:firstSliceAng val="0"/></c:pieChart>'
         case "line":
             series = "".join(
                 f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/>{_name(i, name)}'
@@ -254,8 +233,7 @@ def _plot(chart: ChartOut, paint: Paint) -> str:
             )
             return (
                 f'<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>{series}'
-                '<c:marker val="1"/><c:axId val="1001"/><c:axId val="1002"/></c:lineChart>'
-                + _axes(chart, paint)
+                '<c:marker val="1"/><c:axId val="1001"/><c:axId val="1002"/></c:lineChart>' + _axes(chart, paint)
             )
         case "bar" | "horizontal_bar":
             labelled = _labelled(chart)
@@ -289,9 +267,7 @@ def part(chart: ChartOut, look: ChartLook, font: str, language: str = "fr-FR") -
         else '<c:autoTitleDeleted val="1"/>'
     )
     legend = (
-        '<c:legend><c:legendPos val="'
-        + ("r" if chart.kind == "pie" else "b")
-        + f'"/><c:overlay val="0"/>{_text_props(paint, 900)}</c:legend>'
+        '<c:legend><c:legendPos val="' + ("r" if chart.kind == "pie" else "b") + f'"/><c:overlay val="0"/>{_text_props(paint, 900)}</c:legend>'
         if chart.kind == "pie" or len(chart.series) > 1
         else ""
     )

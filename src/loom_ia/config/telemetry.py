@@ -64,12 +64,8 @@ class CaptureOverride(DomainModel):
     def over(self, root: CaptureConfig) -> CaptureConfig:
         return CaptureConfig(
             exports=self.exports if self.exports is not None else root.exports,
-            raw_exchanges=(
-                self.raw_exchanges if self.raw_exchanges is not None else root.raw_exchanges
-            ),
-            raw_max_bytes=(
-                self.raw_max_bytes if self.raw_max_bytes is not None else root.raw_max_bytes
-            ),
+            raw_exchanges=(self.raw_exchanges if self.raw_exchanges is not None else root.raw_exchanges),
+            raw_max_bytes=(self.raw_max_bytes if self.raw_max_bytes is not None else root.raw_max_bytes),
         )
 
 
@@ -92,10 +88,7 @@ class RedactionPattern(DomainModel):
     @model_validator(mode="after")
     def _check(self) -> Self:
         if self.name in BUILTIN_PATTERNS:
-            raise ValueError(
-                f"Masquage : {self.name!r} est un motif fourni, qui s'applique déjà — "
-                "donner un autre nom à celui-ci"
-            )
+            raise ValueError(f"Masquage : {self.name!r} est un motif fourni, qui s'applique déjà — donner un autre nom à celui-ci")
         try:
             compiled = compile_pattern(self.regex)
         except PatternError as error:
@@ -134,10 +127,7 @@ class RedactionConfig(DomainModel):
         for pattern in self.patterns:
             if isinstance(pattern, str):
                 if pattern not in BUILTIN_PATTERNS:
-                    raise ValueError(
-                        f"Masquage : motif {pattern!r} inconnu (fournis : "
-                        f"{', '.join(BUILTIN_PATTERNS)} ; ou {{name, regex}} pour le sien)"
-                    )
+                    raise ValueError(f"Masquage : motif {pattern!r} inconnu (fournis : {', '.join(BUILTIN_PATTERNS)} ; ou {{name, regex}} pour le sien)")
                 names.append(pattern)
             else:
                 names.append(pattern.name)

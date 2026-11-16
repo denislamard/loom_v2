@@ -48,18 +48,14 @@ exec "{python}" "{faux}" --api-sock runtime/fc.sock --config-file vm-config.json
 # Celui d'avant le 08/10, qu'ont encore les VM construites avant : il ouvre le
 # verrou avec ``>``, qui le vide avant même de tenter ``flock`` — un lancement
 # refusé efface le PID de celui qui tourne.
-RUN_SH_WIPING = RUN_SH.replace("exec 9<>runtime/vm.lock", "exec 9>runtime/vm.lock").replace(
-    "printf '%s\\n' $$ > runtime/vm.lock", "printf '%s\\n' $$ >&9"
-)
+RUN_SH_WIPING = RUN_SH.replace("exec 9<>runtime/vm.lock", "exec 9>runtime/vm.lock").replace("printf '%s\\n' $$ > runtime/vm.lock", "printf '%s\\n' $$ >&9")
 
 
 def _short_dir(prefix: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix, dir="/tmp"))
 
 
-def write_vm(
-    directory: Path, *, name: str = "essai", execd_port: int | None = 5100, run_sh: str = RUN_SH
-) -> Path:
+def write_vm(directory: Path, *, name: str = "essai", execd_port: int | None = 5100, run_sh: str = RUN_SH) -> Path:
     """Un dossier de VM à la manière de make_vm.sh, dont le VMM est le faux."""
     directory.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -72,9 +68,7 @@ def write_vm(
     if execd_port is not None:
         lines.append(f'EXECD_PORT="{execd_port}"')
     (directory / "vm.env").write_text("# vm.env de test\n" + "\n".join(lines) + "\n")
-    (directory / "vm-config.json").write_text(
-        '{"vsock": {"guest_cid": 3, "uds_path": "runtime/v.sock"}}'
-    )
+    (directory / "vm-config.json").write_text('{"vsock": {"guest_cid": 3, "uds_path": "runtime/v.sock"}}')
     run = directory / "run.sh"
     run.write_text(run_sh.format(python=sys.executable, faux=FAUX))
     run.chmod(0o755)
@@ -255,9 +249,7 @@ def root_execd(execd_service: Path) -> Iterator[Execd]:
     groups_before = os.getgroups()
     os.setgroups([0, SANDBOX_GID + 1])
     try:
-        running = start_execd(
-            service, root, drop_to=(SANDBOX_UID, SANDBOX_GID), python=str(system_python)
-        )
+        running = start_execd(service, root, drop_to=(SANDBOX_UID, SANDBOX_GID), python=str(system_python))
     finally:
         os.setgroups(groups_before)
     try:

@@ -205,9 +205,7 @@ class RedisIdempotency:
 
     def _redis(self) -> redis.Redis:
         if self._client is None:
-            self._client = redis.from_url(
-                self._url, socket_timeout=SOCKET_TIMEOUT, socket_connect_timeout=SOCKET_TIMEOUT
-            )
+            self._client = redis.from_url(self._url, socket_timeout=SOCKET_TIMEOUT, socket_connect_timeout=SOCKET_TIMEOUT)
         return self._client
 
     async def get(self, key: str) -> IdempotencyRecord | None:
@@ -220,13 +218,9 @@ class RedisIdempotency:
         status = _status(held.get("status"))
         if status == "completed" and expires <= datetime.now(UTC):
             return None
-        return IdempotencyRecord(
-            key=key, status=status, result=held.get("result"), expires_at=expires
-        )
+        return IdempotencyRecord(key=key, status=status, result=held.get("result"), expires_at=expires)
 
-    async def reserve(
-        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
-    ) -> bool:
+    async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
         now = datetime.now(UTC)
         owner = _owner(scope.tenant_id, scope.session_id)
         record = json.dumps(
@@ -251,9 +245,7 @@ class RedisIdempotency:
         )
         return int(taken) == 1
 
-    async def complete(
-        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
-    ) -> None:
+    async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=self.retention if ttl is None else ttl)
         record = json.dumps(
@@ -269,9 +261,7 @@ class RedisIdempotency:
         )
         # Le jeton n'est passé au script que s'il y en a un à contrôler.
         proofs = [] if holder is None else [holder]
-        done = await self._redis().eval(
-            _COMPLETE, 1, RECORD + key, record, _ms((expires - now).total_seconds()), *proofs
-        )
+        done = await self._redis().eval(_COMPLETE, 1, RECORD + key, record, _ms((expires - now).total_seconds()), *proofs)
         # 0 : la clé n'existe plus. 2 : elle est à un autre détenteur, sans effet.
         if int(done) == 0:
             raise KeyError(f"Clé {key!r} non réservée : rien à enregistrer")
@@ -293,10 +283,7 @@ class RedisIdempotency:
         else:
             # Le client encodé n'a ni ``:`` ni caractère de motif : le motif ne
             # désigne que ses ensembles.
-            owners = [
-                key.decode() if isinstance(key, bytes) else str(key)
-                async for key in client.scan_iter(match=f"{OWNER}{_part(tenant_id)}:*")
-            ]
+            owners = [key.decode() if isinstance(key, bytes) else str(key) async for key in client.scan_iter(match=f"{OWNER}{_part(tenant_id)}:*")]
         removed = 0
         for owner in owners:
             removed += int(await client.eval(_FORGET, 1, owner))

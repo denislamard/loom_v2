@@ -119,8 +119,7 @@ EVAL_JUDGE: Final = "eval"
 # Qui tranche une approbation pendant une éval.
 EVAL_APPROVER: Final = "éval"
 REFUSED: Final = (
-    "Non exécuté : éval. L'outil {name} a des effets de bord ({effects}) et la suite ne lui "
-    "donne pas de doublure ; il n'est jamais exécuté pendant une éval."
+    "Non exécuté : éval. L'outil {name} a des effets de bord ({effects}) et la suite ne lui donne pas de doublure ; il n'est jamais exécuté pendant une éval."
 )
 NOBODY: Final = "éval : cet appel s'exécuterait pour de vrai, et personne n'est là pour l'approuver"
 # Le contrôle d'un run rejoué (J6.3b).
@@ -245,17 +244,10 @@ class EvalCase(DomainModel):
     @model_validator(mode="after")
     def _kind(self) -> Self:
         if self.input is None and self.replay is None:
-            raise ValueError(
-                f"cas {self.name!r} : ni demande ('input') ni journaux à rejouer ('replay')"
-            )
+            raise ValueError(f"cas {self.name!r} : ni demande ('input') ni journaux à rejouer ('replay')")
         if self.input is not None and self.replay is not None:
-            raise ValueError(
-                f"cas {self.name!r} : une demande ('input') ou des journaux à rejouer "
-                "('replay'), pas les deux"
-            )
-        if self.replay is not None and (
-            self.expect.count or self.criteria or self.tenant or self.state
-        ):
+            raise ValueError(f"cas {self.name!r} : une demande ('input') ou des journaux à rejouer ('replay'), pas les deux")
+        if self.replay is not None and (self.expect.count or self.criteria or self.tenant or self.state):
             raise ValueError(
                 f"cas {self.name!r} : un cas de rejeu n'a ni attendus, ni critères, ni client, "
                 "ni state — il passe si chaque run de ses journaux se rejoue à l'identique, au "
@@ -329,15 +321,9 @@ class EvalSuite(DomainModel):
             if case.replay is not None:
                 continue
             if case.expect.count == 0 and not case.criteria and not common:
-                raise ValueError(
-                    f"cas {case.name!r} : aucun attendu — un cas sans contrôle ni critère "
-                    "n'éprouverait rien"
-                )
+                raise ValueError(f"cas {case.name!r} : aucun attendu — un cas sans contrôle ni critère n'éprouverait rien")
             if case.criteria and self.judge is None:
-                raise ValueError(
-                    f"cas {case.name!r} : des critères sans juge — déclarer 'judge: "
-                    "{model: …}' dans la suite"
-                )
+                raise ValueError(f"cas {case.name!r} : des critères sans juge — déclarer 'judge: {{model: …}}' dans la suite")
             _unique(f"critère du cas {case.name!r}", [c.name for c in (*common, *case.criteria)])
         return self
 
@@ -440,12 +426,7 @@ def isolated(config: LoomConfig, scratch: Path) -> LoomConfig:
         )
         for tenant in config.tenants
     )
-    agents = tuple(
-        agent.model_copy(update={"budget": _without_period(agent.budget)})
-        if agent.budget is not None
-        else agent
-        for agent in config.agents
-    )
+    agents = tuple(agent.model_copy(update={"budget": _without_period(agent.budget)}) if agent.budget is not None else agent for agent in config.agents)
     return config.model_copy(
         update={
             "storage": StorageConfig(
@@ -479,9 +460,7 @@ class EvalTools:
         self._effects: dict[tuple[str, str], str] = {}
 
     def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool:
-        if tool.spec.kind == "role" or (
-            tool.spec.kind == "agent" and call.name not in self.doubles
-        ):
+        if tool.spec.kind == "role" or (tool.spec.kind == "agent" and call.name not in self.doubles):
             # De la logique, et un sous-agent sans doublure : ils tournent ; les outils
             # du sous-agent passent ici. Doublé, il ne tourne pas : sa doublure répond.
             return False
@@ -596,20 +575,14 @@ def check(expect: Expect, outcome: Outcome) -> list[CheckResult]:
     results: list[CheckResult] = []
     if expect.status is not None:
         same = outcome.status == expect.status
-        results.append(
-            CheckResult(f"statut {expect.status.value}", same, "" if same else _status(outcome))
-        )
+        results.append(CheckResult(f"statut {expect.status.value}", same, "" if same else _status(outcome)))
     elif outcome.status != RunStatus.COMPLETED:
-        results.append(
-            CheckResult(f"statut {RunStatus.COMPLETED.value} (par défaut)", False, _status(outcome))
-        )
+        results.append(CheckResult(f"statut {RunStatus.COMPLETED.value} (par défaut)", False, _status(outcome)))
     text = outcome.text
     for wanted in expect.contains:
         results.append(CheckResult(f"contient « {wanted} »", wanted in text, kind="text"))
     for unwanted in expect.not_contains:
-        results.append(
-            CheckResult(f"ne contient pas « {unwanted} »", unwanted not in text, kind="text")
-        )
+        results.append(CheckResult(f"ne contient pas « {unwanted} »", unwanted not in text, kind="text"))
     for pattern in expect.matches:
         label = f"correspond à /{pattern}/"
         try:
@@ -623,26 +596,18 @@ def check(expect: Expect, outcome: Outcome) -> list[CheckResult]:
         present, actual = _field(outcome.data, path)
         label = f"champ {path} = {_compact(value)}"
         if not present:
-            results.append(
-                CheckResult(label, False, "absent de la sortie structurée", kind="field")
-            )
+            results.append(CheckResult(label, False, "absent de la sortie structurée", kind="field"))
         else:
             same = same_json(actual, value)
             detail = "" if same else f"vaut {_compact(actual)}"
             results.append(CheckResult(label, same, detail, kind="field"))
     for wanted_tool in expect.called:
-        label = f"appelle {wanted_tool.name}" + (
-            f" avec {_compact(wanted_tool.arguments)}" if wanted_tool.arguments else ""
-        )
+        label = f"appelle {wanted_tool.name}" + (f" avec {_compact(wanted_tool.arguments)}" if wanted_tool.arguments else "")
         same_name = [use for use in outcome.tools if use.name == wanted_tool.name]
         hit = any(_contains(use.arguments, wanted_tool.arguments) for use in same_name)
         detail = ""
         if not hit:
-            detail = (
-                "arguments reçus : " + " ; ".join(_received(use) for use in same_name)
-                if same_name
-                else _calls(outcome.tools)
-            )
+            detail = "arguments reçus : " + " ; ".join(_received(use) for use in same_name) if same_name else _calls(outcome.tools)
         results.append(CheckResult(label, hit, detail, kind="tool"))
     for unwanted_tool in expect.not_called:
         count = sum(1 for use in outcome.tools if use.name == unwanted_tool)
@@ -687,10 +652,7 @@ def judged(scores: Sequence[CriterionScore]) -> list[CheckResult]:
 
 def unjudged(criteria: Sequence[Criterion], reason: str) -> list[CheckResult]:
     """Les critères d'un run que le juge n'a pas pu noter : ils tombent, en le disant."""
-    return [
-        CheckResult(f"juge : {c.name} ≥ {_score(c.min_score)}", False, reason, kind="judge")
-        for c in criteria
-    ]
+    return [CheckResult(f"juge : {c.name} ≥ {_score(c.min_score)}", False, reason, kind="judge") for c in criteria]
 
 
 def _status(outcome: Outcome) -> str:
@@ -704,9 +666,7 @@ def _field(data: JsonValue, path: str) -> tuple[bool, JsonValue]:
     for step in path.split("."):
         if isinstance(node, dict) and step in node:
             node = node[step]
-        elif (
-            isinstance(node, list) and re.fullmatch(r"[0-9]{1,18}", step) and int(step) < len(node)
-        ):
+        elif isinstance(node, list) and re.fullmatch(r"[0-9]{1,18}", step) and int(step) < len(node):
             node = node[int(step)]
         else:
             return False, None
@@ -982,10 +942,7 @@ class EvalReport:
                 name: {
                     **dict(described),
                     "passed_cases": self.summary(name).passed_cases,
-                    "cases": {
-                        case: {"passed": ok, "played": played}
-                        for case, (ok, played) in self.summary(name).cases.items()
-                    },
+                    "cases": {case: {"passed": ok, "played": played} for case, (ok, played) in self.summary(name).cases.items()},
                     "skipped": self.summary(name).skipped,
                     "cost_usd": self.summary(name).cost_usd,
                     "judge_cost_usd": self.summary(name).judge_cost_usd,
@@ -1005,8 +962,7 @@ def render_eval(report: EvalReport) -> list[str]:
     """Les lignes de ``loom eval`` : variante par variante, cas par cas, puis le bilan."""
     variants = len(report.variants)
     lines = [
-        f"Suite      : {report.suite} — agent {report.agent}, {len(report.cases)} cas, "
-        f"{variants} variante(s), {report.repeat} répétition(s) par cas",
+        f"Suite      : {report.suite} — agent {report.agent}, {len(report.cases)} cas, {variants} variante(s), {report.repeat} répétition(s) par cas",
     ]
     if report.judge_model is not None:
         lines.append(f"Juge       : {report.judge_model}")
@@ -1027,14 +983,8 @@ def render_eval(report: EvalReport) -> list[str]:
     lines += [
         "",
         f"Bilan      : {sum(1 for r in played if r.passed)}/{len(played)} run(s) réussi(s), "
-        f"{report.spent_usd:.6f} $ dépensé(s)"
-        + (f", {report.skipped} run(s) non joué(s)" if report.skipped else ""),
-        "Verdict    : "
-        + (
-            "tout passe"
-            if report.passed
-            else "des attendus tombent, ou des runs n'ont pas été joués"
-        ),
+        f"{report.spent_usd:.6f} $ dépensé(s)" + (f", {report.skipped} run(s) non joué(s)" if report.skipped else ""),
+        "Verdict    : " + ("tout passe" if report.passed else "des attendus tombent, ou des runs n'ont pas été joués"),
     ]
     return lines
 
@@ -1072,9 +1022,7 @@ def _case(case: str, runs: Sequence[EvalRun]) -> list[str]:
         lines.append(head + (f" ({run.failure})" if run.failure else ""))
         failed = [c for c in run.checks if not c.passed]
         for result in failed:
-            lines.append(
-                f"{pad}{_INDENT}✗ {result.label}" + (f" — {result.detail}" if result.detail else "")
-            )
+            lines.append(f"{pad}{_INDENT}✗ {result.label}" + (f" — {result.detail}" if result.detail else ""))
         if any(c.kind == "text" for c in failed):
             text = run.text or "(vide)"
             lines.append(f"{pad}{_INDENT}texte :")
@@ -1088,11 +1036,7 @@ def _replayed(case: str, runs: Sequence[EvalRun]) -> list[str]:
     passed = sum(1 for r in replayed if r.passed)
     mark = "ok       " if runs and all(r.passed for r in runs) else "ÉCHEC    "
     missed = len(runs) - len(replayed)
-    lines = [
-        f"{_INDENT}{mark}{case} ({passed}/{len(replayed)} run(s) rejoué(s) à l'identique"
-        + (f", {missed} non rejoué(s)" if missed else "")
-        + ")"
-    ]
+    lines = [f"{_INDENT}{mark}{case} ({passed}/{len(replayed)} run(s) rejoué(s) à l'identique" + (f", {missed} non rejoué(s)" if missed else "") + ")"]
     pad = _INDENT * 3
     for run in runs:
         if run.passed:
@@ -1103,9 +1047,5 @@ def _replayed(case: str, runs: Sequence[EvalRun]) -> list[str]:
             lines.append(f"{pad}{where + ' : ' if where else ''}{run.error}")
             continue
         lines.append(f"{pad}{where} :")
-        lines += [
-            f"{pad}{_INDENT}✗ {c.label}" + (f" — {c.detail}" if c.detail else "")
-            for c in run.checks
-            if not c.passed
-        ]
+        lines += [f"{pad}{_INDENT}✗ {c.label}" + (f" — {c.detail}" if c.detail else "") for c in run.checks if not c.passed]
     return lines

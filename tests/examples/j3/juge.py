@@ -54,9 +54,7 @@ CORPS = (
     "1 840 € pour le remplacement de votre chauffe-eau, envoyé le 2 septembre. "
     "Avez-vous pu en prendre connaissance ?{promesse}\n\nBien cordialement,\nPlomberie Dupont"
 )
-INVENTEE = CORPS.format(
-    promesse=" Pour une signature avant la fin du mois, nous vous accordons une réduction de 10 %."
-)
+INVENTEE = CORPS.format(promesse=" Pour une signature avant la fin du mois, nous vous accordons une réduction de 10 %.")
 # L'orchestrateur simulé : chercher le devis, puis faire rédiger.
 MAIN: list[dict[str, Any]] = [
     {"tool_calls": [{"name": "chercher_devis", "arguments": {"numero": "D-2026-042"}}]},
@@ -65,11 +63,7 @@ MAIN: list[dict[str, Any]] = [
 ]
 # Le rôle simulé : une promesse inventée, puis, après le verdict du juge, sans elle.
 ROLE: list[dict[str, Any]] = [
-    {
-        "text": json.dumps(
-            {"objet": "Votre devis D-2026-042", "corps": INVENTEE}, ensure_ascii=False
-        )
-    },
+    {"text": json.dumps({"objet": "Votre devis D-2026-042", "corps": INVENTEE}, ensure_ascii=False)},
     {
         "text": json.dumps(
             {"objet": "Votre devis D-2026-042", "corps": CORPS.format(promesse="")},
@@ -84,10 +78,7 @@ def describe(event: Event, progress: Progress) -> str | None:
     if isinstance(event.payload, ModelResponded):
         payload = event.payload
         usage = payload.usage
-        return (
-            f"· modèle [{event.role}] {payload.model_id} · "
-            f"{usage.input_tokens}/{usage.output_tokens} tokens · {payload.cost_usd:.5f} $"
-        )
+        return f"· modèle [{event.role}] {payload.model_id} · {usage.input_tokens}/{usage.output_tokens} tokens · {payload.cost_usd:.5f} $"
     return progress.line(event)
 
 
@@ -99,25 +90,12 @@ def adjusted(config: LoomConfig, agent: str, sample: float | None, scripted: boo
 
     models = config.models
     if scripted:
-        models = tuple(
-            script(m, MAIN)
-            if m.id == "FAKE_MAIN"
-            else script(m, ROLE)
-            if m.id == "FAKE_ROLE"
-            else m
-            for m in config.models
-        )
+        models = tuple(script(m, MAIN) if m.id == "FAKE_MAIN" else script(m, ROLE) if m.id == "FAKE_ROLE" else m for m in config.models)
     agents: list[AgentSpec] = []
     for spec in config.agents:
         if spec.name == agent and sample is not None:
             roles = tuple(
-                role.model_copy(
-                    update={
-                        "judge": role.judge.model_copy(
-                            update={"when": role.judge.when.model_copy(update={"sample": sample})}
-                        )
-                    }
-                )
+                role.model_copy(update={"judge": role.judge.model_copy(update={"when": role.judge.when.model_copy(update={"sample": sample})})})
                 if role.judge is not None
                 else role
                 for role in spec.roles
@@ -129,12 +107,8 @@ def adjusted(config: LoomConfig, agent: str, sample: float | None, scripted: boo
 
 async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Juge d'un rôle")
-    parser.add_argument(
-        "--reel", action="store_true", help="vrais modèles (MiniMax-M3, GLM, Haiku)"
-    )
-    parser.add_argument(
-        "--echantillon", type=float, default=None, help="part des runs jugés (0 à 1)"
-    )
+    parser.add_argument("--reel", action="store_true", help="vrais modèles (MiniMax-M3, GLM, Haiku)")
+    parser.add_argument("--echantillon", type=float, default=None, help="part des runs jugés (0 à 1)")
     parser.add_argument("--juges", choices=JUDGES_MODES, default="auto")
     parser.add_argument("--question", default=QUESTION)
     args = parser.parse_args(argv)
@@ -164,11 +138,7 @@ async def main(argv: list[str]) -> int:
     progress = Progress()
     for line in filter(None, (describe(e, progress) for e in events)):
         print(f"  {line}")
-    judged = sum(
-        e.payload.cost_usd
-        for e in events
-        if isinstance(e.payload, ModelResponded) and e.payload.judge is not None
-    )
+    judged = sum(e.payload.cost_usd for e in events if isinstance(e.payload, ModelResponded) and e.payload.judge is not None)
     print(
         f"\nStatut     : {result.status} · non vérifiée : {'oui' if result.unverified else 'non'}"
         f" · itérations : {result.iterations}"

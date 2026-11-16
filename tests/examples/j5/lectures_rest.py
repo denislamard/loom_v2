@@ -95,9 +95,7 @@ def bref(identifiant: str) -> str:
 
 
 def declarees(config: LoomConfig, keys: tuple[ApiKey, ...]) -> LoomConfig:
-    return config.model_copy(
-        update={"security": config.security.model_copy(update={"api_keys": keys})}
-    )
+    return config.model_copy(update={"security": config.security.model_copy(update={"api_keys": keys})})
 
 
 def trois(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
@@ -263,14 +261,10 @@ async def runs(config: LoomConfig, agent: str, prefixe: str, controle: Controle)
         titre("Trois sessions chez Dupont, une chez Martin")
         lances: list[Any] = []
         for numero in range(3):
-            corps = await lance(
-                base, agent, session=f"{prefixe}-d{numero}", key=jetons["dupont"], tenant=DUPONT
-            )
+            corps = await lance(base, agent, session=f"{prefixe}-d{numero}", key=jetons["dupont"], tenant=DUPONT)
             lances.append(corps)
             print(f"  {prefixe}-d{numero} → run {bref(corps['run_id'])} {corps['status']}")
-        chez_martin = await lance(
-            base, agent, session=f"{prefixe}-m", key=jetons["martin"], tenant=MARTIN
-        )
+        chez_martin = await lance(base, agent, session=f"{prefixe}-m", key=jetons["martin"], tenant=MARTIN)
         print(f"  {prefixe}-m  → run {bref(chez_martin['run_id'])} {chez_martin['status']}")
 
         titre("GET /runs — lus au journal, du plus récemment écrit au plus ancien")
@@ -278,10 +272,7 @@ async def runs(config: LoomConfig, agent: str, prefixe: str, controle: Controle)
         controle.code("GET /runs", 200, code, liste)
         print(f"  {'run':<14}{'session':<26}{'agent':<14}{'statut':<11}{'tours':>6}{'coût $':>10}")
         for run in liste["runs"]:
-            print(
-                f"  {bref(run['run_id']):<14}{run['session_id']:<26}{run['agent']:<14}"
-                f"{run['status']:<11}{run['iterations']:>6}{run['cost_usd']:>10.6f}"
-            )
+            print(f"  {bref(run['run_id']):<14}{run['session_id']:<26}{run['agent']:<14}{run['status']:<11}{run['iterations']:>6}{run['cost_usd']:>10.6f}")
         print(f"  journaux ouverts : {liste['scanned']}   tronquée : {liste['truncated']}")
         miens = {corps["run_id"] for corps in lances}
         print(
@@ -302,21 +293,14 @@ async def runs(config: LoomConfig, agent: str, prefixe: str, controle: Controle)
             "  chaque run porte sa session et son premier événement : "
             + controle.tient(
                 "un run listé ne se situe pas dans le journal",
-                all(
-                    run["session_id"].startswith(prefixe) and run["started_at"] <= run["updated_at"]
-                    for run in liste["runs"]
-                ),
+                all(run["session_id"].startswith(prefixe) and run["started_at"] <= run["updated_at"] for run in liste["runs"]),
             )
         )
         print(
             "  aucun contenu dans la liste : "
             + controle.tient(
                 "un champ de contenu s'est glissé dans la liste",
-                all(
-                    champ not in run
-                    for run in liste["runs"]
-                    for champ in ("text", "output", "error", "data")
-                ),
+                all(champ not in run for run in liste["runs"] for champ in ("text", "output", "error", "data")),
             )
         )
 
@@ -341,18 +325,12 @@ async def runs(config: LoomConfig, agent: str, prefixe: str, controle: Controle)
         borne = await page(base, f"{depuis}&limit=1", key=jetons["dupont"])
         peu = await page(base, f"{depuis}&sessions=1", key=jetons["dupont"])
         print(f"  …&limit=1    → {len(borne['runs'])} run(s), tronquée {borne['truncated']}")
-        print(
-            f"  …&sessions=1 → {len(peu['runs'])} run(s), "
-            f"{peu['scanned']} journal ouvert, tronquée {peu['truncated']}"
-        )
+        print(f"  …&sessions=1 → {len(peu['runs'])} run(s), {peu['scanned']} journal ouvert, tronquée {peu['truncated']}")
         print(
             "  une borne qui arrête la recherche le dit : "
             + controle.tient(
                 "une page bornée ne s'annonce pas tronquée",
-                len(borne["runs"]) == 1
-                and borne["truncated"]
-                and peu["scanned"] == 1
-                and peu["truncated"],
+                len(borne["runs"]) == 1 and borne["truncated"] and peu["scanned"] == 1 and peu["truncated"],
             )
         )
         filtree = await page(base, f"{depuis}&agent={agent}", key=jetons["dupont"])
@@ -372,10 +350,7 @@ async def runs(config: LoomConfig, agent: str, prefixe: str, controle: Controle)
         print(f"  le client a {len(journaux)} journaux, une page en ouvre {SESSIONS_MAX} au plus")
         if len(journaux) <= SESSIONS_MAX:
             entiere = await page(base, f"{depuis}&sessions={len(journaux)}", key=jetons["dupont"])
-            print(
-                f"  …&sessions={len(journaux)} → {entiere['scanned']} ouverts, "
-                f"tronquée {entiere['truncated']}"
-            )
+            print(f"  …&sessions={len(journaux)} → {entiere['scanned']} ouverts, tronquée {entiere['truncated']}")
             print(
                 "  tous ouverts, rien de tronqué : "
                 + controle.tient(
@@ -385,10 +360,7 @@ async def runs(config: LoomConfig, agent: str, prefixe: str, controle: Controle)
             )
         else:
             print("  plus de journaux qu'une page n'en ouvre : elle est forcément tronquée")
-            print(
-                "  et elle le dit : "
-                + controle.tient("une page bornée ne s'annonce pas tronquée", liste["truncated"])
-            )
+            print("  et elle le dit : " + controle.tient("une page bornée ne s'annonce pas tronquée", liste["truncated"]))
 
         code, refusee = await appel(f"{base}/v1/runs?limit=0", key=jetons["dupont"])
         ligne = controle.code("GET /runs?limit=0", 422, code, refusee)
@@ -398,12 +370,7 @@ async def runs(config: LoomConfig, agent: str, prefixe: str, controle: Controle)
         chez_lui = await page(base, depuis, key=jetons["martin"])
         rendus = [run["run_id"] for run in chez_lui["runs"]]
         print(f"  clé martin → {len(rendus)} run(s) : {', '.join(bref(r) for r in rendus)}")
-        print(
-            "  il ne voit que le sien : "
-            + controle.tient(
-                "une clé a listé les runs d'un autre client", rendus == [chez_martin["run_id"]]
-            )
-        )
+        print("  il ne voit que le sien : " + controle.tient("une clé a listé les runs d'un autre client", rendus == [chez_martin["run_id"]]))
 
         titre("Une clé limitée à un agent : refusée sur /sessions, admise sur /runs")
         code, sessions = await appel(f"{base}/v1/sessions", key=jetons["supervision"])
@@ -419,9 +386,7 @@ async def runs(config: LoomConfig, agent: str, prefixe: str, controle: Controle)
                 {run["agent"] for run in sienne["runs"]} == {agent},
             )
         )
-        code, ailleurs = await appel(
-            f"{base}/v1/runs?agent={autre_que(agent)}", key=jetons["supervision"]
-        )
+        code, ailleurs = await appel(f"{base}/v1/runs?agent={autre_que(agent)}", key=jetons["supervision"])
         ligne = controle.code("GET /runs?agent=<fermé>", 403, code, ailleurs)
         print(f"  …?agent={autre_que(agent):<14} → {ligne}")
         print("  (nommer un agent qu'on n'a pas le droit de lire est un refus, pas un vide)")
@@ -464,15 +429,12 @@ async def traces(config: LoomConfig, agent: str, prefixe: str, controle: Control
             types = ", ".join(sorted({event["type"] for event in trouves})) or "—"
             print(f"  {critere or '(la session entière)':<44} {len(trouves):>3} : {types}")
 
-        _, appels = await appel(
-            f"{base}/v1/events{sienne}&tool_name=chercher_devis", key=jetons["dupont"]
-        )
+        _, appels = await appel(f"{base}/v1/events{sienne}&tool_name=chercher_devis", key=jetons["dupont"])
         print(
             "  une facette ne rend que les événements qui la portent : "
             + controle.tient(
                 "la recherche par facette a rendu autre chose que l'outil demandé",
-                bool(appels)
-                and all(event["facets"].get("tool_name") == "chercher_devis" for event in appels),
+                bool(appels) and all(event["facets"].get("tool_name") == "chercher_devis" for event in appels),
             )
         )
         _, uniquement = await appel(f"{base}/v1/events{sienne}&category=run", key=jetons["dupont"])
@@ -483,22 +445,15 @@ async def traces(config: LoomConfig, agent: str, prefixe: str, controle: Control
                 bool(uniquement) and all(e["category"] == "run" for e in uniquement),
             )
         )
-        _, absente = await appel(
-            f"{base}/v1/events?session_id={prefixe}-absente", key=jetons["dupont"]
-        )
-        print(
-            "  une session inconnue rend une liste vide : "
-            + controle.tient("une session inconnue a rendu des événements", absente == [])
-        )
+        _, absente = await appel(f"{base}/v1/events?session_id={prefixe}-absente", key=jetons["dupont"])
+        print("  une session inconnue rend une liste vide : " + controle.tient("une session inconnue a rendu des événements", absente == []))
 
         titre("La pagination : after reprend après le dernier événement rendu")
         vus: list[str] = []
         curseur = ""
         pages = 0
         while True:
-            _, lot = await appel(
-                f"{base}/v1/events?session_id={session}&limit=4{curseur}", key=jetons["dupont"]
-            )
+            _, lot = await appel(f"{base}/v1/events?session_id={session}&limit=4{curseur}", key=jetons["dupont"])
             if not lot:
                 break
             pages += 1
@@ -564,10 +519,7 @@ async def traces(config: LoomConfig, agent: str, prefixe: str, controle: Control
         titre("Rien dans l'URL ne nomme un client")
         _, chez_martin = await appel(f"{base}/v1/events{sienne}", key=jetons["martin"])
         print(f"  la clé de Martin cherche la session de Dupont → {len(chez_martin)} événement(s)")
-        print(
-            "  on ne cherche que chez soi : "
-            + controle.tient("une clé a lu le journal d'un autre client", chez_martin == [])
-        )
+        print("  on ne cherche que chez soi : " + controle.tient("une clé a lu le journal d'un autre client", chez_martin == []))
 
 
 # --- Cas 3 : le document de l'API -------------------------------------------
@@ -581,11 +533,7 @@ async def openapi(config: LoomConfig, agent: str, prefixe: str, controle: Contro
         code, document = await appel(f"{base}/openapi.json", key=jetons["dupont"])
         controle.code("GET /openapi.json", 200, code, document)
         titre(f"{document['info']['title']} {document['info'].get('version', '?')}")
-        routes = [
-            (chemin, methode.upper(), spec)
-            for chemin, methodes in document["paths"].items()
-            for methode, spec in methodes.items()
-        ]
+        routes = [(chemin, methode.upper(), spec) for chemin, methodes in document["paths"].items() for methode, spec in methodes.items()]
         declarees_ = {tag["name"] for tag in document.get("tags", [])}
         print(f"  {len(routes)} routes, {len(declarees_)} familles décrites")
         for famille in document.get("tags", []):
@@ -596,50 +544,25 @@ async def openapi(config: LoomConfig, agent: str, prefixe: str, controle: Contro
 
         titre("Ce que le document doit tenir")
         sans_resume = [f"{m} {c}" for c, m, spec in routes if not spec.get("summary")]
-        mal_rangees = [
-            f"{m} {c}" for c, m, spec in routes if not set(spec.get("tags", [])) <= declarees_
-        ]
+        mal_rangees = [f"{m} {c}" for c, m, spec in routes if not set(spec.get("tags", [])) <= declarees_]
         sans_famille = [f"{m} {c}" for c, m, spec in routes if not spec.get("tags")]
         print(f"  familles déclarées : {', '.join(sorted(declarees_))}")
-        print(
-            "  chaque route a un résumé      : "
-            + controle.tient(f"routes sans résumé : {', '.join(sans_resume)}", not sans_resume)
-        )
-        print(
-            "  chaque route a une famille    : "
-            + controle.tient(f"routes sans famille : {', '.join(sans_famille)}", not sans_famille)
-        )
-        print(
-            "  et une famille qui est décrite : "
-            + controle.tient(f"routes mal rangées : {', '.join(mal_rangees)}", not mal_rangees)
-        )
+        print("  chaque route a un résumé      : " + controle.tient(f"routes sans résumé : {', '.join(sans_resume)}", not sans_resume))
+        print("  chaque route a une famille    : " + controle.tient(f"routes sans famille : {', '.join(sans_famille)}", not sans_famille))
+        print("  et une famille qui est décrite : " + controle.tient(f"routes mal rangées : {', '.join(mal_rangees)}", not mal_rangees))
         # Une liste figée de familles vieillirait au premier ajout de route :
         # ce qui doit tenir, c'est qu'aucune ne soit décrite sans servir.
         servies = {famille for _, _, spec in routes for famille in spec.get("tags", [])}
         orphelines = sorted(declarees_ - servies)
-        print(
-            "  et aucune n'est décrite sans servir : "
-            + controle.tient(
-                f"familles décrites sans route : {', '.join(orphelines)}", not orphelines
-            )
-        )
+        print("  et aucune n'est décrite sans servir : " + controle.tient(f"familles décrites sans route : {', '.join(orphelines)}", not orphelines))
 
         schemes = document["components"].get("securitySchemes", {})
         print(f"  clés déclarées : {', '.join(sorted(schemes)) or 'aucune'}")
         for nom, scheme in sorted(schemes.items()):
             detail = scheme.get("name") or scheme.get("scheme", "")
             print(f"    {nom:<14}{scheme['type']:<8}{detail}")
-        portantes = [
-            f"{m} {c}"
-            for c, m, spec in routes
-            if {nom for entree in spec.get("security", []) for nom in entree} != set(schemes)
-        ]
-        print(
-            "  chaque route les porte        : "
-            + controle.tient(
-                f"routes sans schéma d'authentification : {', '.join(portantes)}", not portantes
-            )
-        )
+        portantes = [f"{m} {c}" for c, m, spec in routes if {nom for entree in spec.get("security", []) for nom in entree} != set(schemes)]
+        print("  chaque route les porte        : " + controle.tient(f"routes sans schéma d'authentification : {', '.join(portantes)}", not portantes))
 
         titre("Les deux lectures de cette phase, telles que le document les annonce")
         for chemin in ("/v1/runs", "/v1/events"):
@@ -671,9 +594,7 @@ async def jouer(nom: str, config: LoomConfig, agent: str, prefixe: str, controle
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="Lectures REST : liste des runs, recherche au journal, document OpenAPI"
-    )
+    parser = argparse.ArgumentParser(description="Lectures REST : liste des runs, recherche au journal, document OpenAPI")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument("--session", default=None, help="préfixe des sessions")

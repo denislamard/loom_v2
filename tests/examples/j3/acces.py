@@ -96,9 +96,7 @@ MAIN: list[dict[str, Any]] = [
 MAIN_BUDGET: list[dict[str, Any]] = [
     *MAIN[:2],
     {
-        "tool_calls": [
-            {"name": "rediger_relance", "arguments": {"ton": "cordial", "consignes": CONSIGNES}}
-        ],
+        "tool_calls": [{"name": "rediger_relance", "arguments": {"ton": "cordial", "consignes": CONSIGNES}}],
         "forced": FORCEE,
     },
 ]
@@ -124,9 +122,7 @@ class Case:
 
 
 def _normalized(result: dict[str, Any], events: list[Event]) -> bool:
-    return result["data"] == FIDELE and any(
-        isinstance(e.payload, GuardChecked) and e.payload.normalized for e in events
-    )
+    return result["data"] == FIDELE and any(isinstance(e.payload, GuardChecked) and e.payload.normalized for e in events)
 
 
 def _corrected(result: dict[str, Any], events: list[Event]) -> bool:
@@ -233,9 +229,7 @@ def _scripted(spec: ModelSpec, model_id: str, replies: list[dict[str, Any]]) -> 
 
 async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Le scénario du jalon J3 par les trois accès")
-    parser.add_argument(
-        "--cas", action="append", choices=[c.key for c in CASES], help="cas à jouer (défaut : tous)"
-    )
+    parser.add_argument("--cas", action="append", choices=[c.key for c in CASES], help="cas à jouer (défaut : tous)")
     args = parser.parse_args(argv)
     cases = tuple(c for c in CASES if args.cas is None or c.key in args.cas)
     try:
@@ -258,10 +252,7 @@ async def main(argv: list[str]) -> int:
     success = True
     async with Loom(config) as loom:
         for case in cases:
-            journals = {
-                access: await loom.events(RunId(results[access][case.key]["run_id"]))
-                for access in ACCESSES
-            }
+            journals = {access: await loom.events(RunId(results[access][case.key]["run_id"])) for access in ACCESSES}
             success &= show(case, {a: results[a][case.key] for a in ACCESSES}, journals)
 
     print("\n— Rapport de coûts, par l'outil MCP run_report —")
@@ -288,14 +279,7 @@ def show(case: Case, results: dict[str, dict[str, Any]], journals: dict[str, lis
         print(f"  {access:<6} : {outcome(results[access], journals[access])}")
     kept = {access: comparable(results[access]) for access in ACCESSES}
     kinds = {access: [event.type for event in journals[access]] for access in ACCESSES}
-    differ = sorted(
-        {
-            key
-            for access in ACCESSES
-            for key, value in kept[access].items()
-            if value != kept["python"][key]
-        }
-    )
+    differ = sorted({key for access in ACCESSES for key, value in kept[access].items() if value != kept["python"][key]})
     same_journal = all(kinds[access] == kinds["python"] for access in ACCESSES)
     if not same_journal:
         differ.append("suite d'événements")
@@ -314,14 +298,9 @@ def describe(event: Event, progress: Progress) -> str | None:
     payload = event.payload
     if isinstance(payload, ModelResponded):
         usage = payload.usage
-        return (
-            f"· modèle [{event.role}] {payload.model_id} · "
-            f"{usage.input_tokens}/{usage.output_tokens} tokens · {payload.cost_usd:.5f} $"
-        )
+        return f"· modèle [{event.role}] {payload.model_id} · {usage.input_tokens}/{usage.output_tokens} tokens · {payload.cost_usd:.5f} $"
     if isinstance(payload, ModelRetried):
-        return (
-            f"· tentative {payload.attempt} de {payload.model_id} en échec : {payload.error_kind}"
-        )
+        return f"· tentative {payload.attempt} de {payload.model_id} en échec : {payload.error_kind}"
     return progress.line(event)
 
 
@@ -330,10 +309,7 @@ def outcome(result: dict[str, Any], events: list[Event]) -> str:
     verdicts = " → ".join("refus" if v["blocked"] else "accord" for v in result["verdicts"])
     checked = "non vérifiée" if result["unverified"] else "vérifiée"
     cost = f"{result['cost_usd']:.5f} $".replace(".", ",")
-    return (
-        f"{result['status']} · {checked} · {cost} · juge : {verdicts or '—'} · "
-        f"{len(events)} événements · {result['run_id']}"
-    )
+    return f"{result['status']} · {checked} · {cost} · juge : {verdicts or '—'} · {len(events)} événements · {result['run_id']}"
 
 
 def shortened(text: str, width: int = 96) -> str:
@@ -352,9 +328,7 @@ def comparable(result: dict[str, Any]) -> dict[str, Any]:
         "erreur": (result["error_type"], result["error"]),
         "coût": (result["cost_usd"], result["usage"]),
         "ventilation": [report.get(part) for part in ("total", "roles", "models")],
-        "verdicts": [
-            {k: v for k, v in item.items() if k != "run_id"} for item in result["verdicts"]
-        ],
+        "verdicts": [{k: v for k, v in item.items() if k != "run_id"} for item in result["verdicts"]],
     }
 
 
@@ -364,10 +338,7 @@ def comparable(result: dict[str, Any]) -> dict[str, Any]:
 async def by_python(config: LoomConfig, cases: tuple[Case, ...]) -> dict[str, dict[str, Any]]:
     """``Loom.run()`` : le ``RunResult`` de chaque cas, en JSON."""
     async with Loom(config) as loom:
-        return {
-            case.key: (await loom.run(case.agent, QUESTION, user="dev")).model_dump(mode="json")
-            for case in cases
-        }
+        return {case.key: (await loom.run(case.agent, QUESTION, user="dev")).model_dump(mode="json") for case in cases}
 
 
 def by_rest(config: LoomConfig, cases: tuple[Case, ...]) -> dict[str, dict[str, Any]]:
@@ -377,9 +348,7 @@ def by_rest(config: LoomConfig, cases: tuple[Case, ...]) -> dict[str, dict[str, 
     from loom_ia.access.http import create_app
 
     port = free_port()
-    settings = uvicorn.Config(
-        create_app(Loom(config), own=True), host="127.0.0.1", port=port, log_level="warning"
-    )
+    settings = uvicorn.Config(create_app(Loom(config), own=True), host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(settings)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -387,18 +356,13 @@ def by_rest(config: LoomConfig, cases: tuple[Case, ...]) -> dict[str, dict[str, 
     try:
         while not server.started:
             time.sleep(0.05)
-        return {
-            case.key: post_json(f"{base}/agents/{case.agent}/runs", {"message": QUESTION})
-            for case in cases
-        }
+        return {case.key: post_json(f"{base}/agents/{case.agent}/runs", {"message": QUESTION}) for case in cases}
     finally:
         server.should_exit = True
         thread.join(timeout=5)
 
 
-async def by_mcp(
-    config: LoomConfig, cases: tuple[Case, ...]
-) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+async def by_mcp(config: LoomConfig, cases: tuple[Case, ...]) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     """Client et serveur MCP dans le même process : l'outil de chaque agent, puis ``run_report``."""
     from mcp.shared.memory import create_connected_server_and_client_session as connected
     from mcp.types import TextContent
@@ -412,12 +376,8 @@ async def by_mcp(
             for case in cases:
                 called = await client.call_tool(case.agent, {"message": QUESTION})
                 results[case.key] = called.structuredContent or {}
-                report = await client.call_tool(
-                    REPORT_TOOL, {"run_id": results[case.key]["run_id"]}
-                )
-                reports[case.key] = "\n".join(
-                    part.text for part in report.content if isinstance(part, TextContent)
-                )
+                report = await client.call_tool(REPORT_TOOL, {"run_id": results[case.key]["run_id"]})
+                reports[case.key] = "\n".join(part.text for part in report.content if isinstance(part, TextContent))
     return results, reports
 
 

@@ -195,9 +195,7 @@ def avec_une_cle(config: LoomConfig) -> tuple[LoomConfig, str]:
         user=DUPONT,
         scopes=("read", "read_content"),
     )
-    return config.model_copy(
-        update={"security": config.security.model_copy(update={"api_keys": (key,)})}
-    ), jeton
+    return config.model_copy(update={"security": config.security.model_copy(update={"api_keys": (key,)})}), jeton
 
 
 def sur_redis(config: LoomConfig) -> LoomConfig:

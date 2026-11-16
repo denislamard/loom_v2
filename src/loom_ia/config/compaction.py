@@ -59,20 +59,13 @@ class CompactionConfig(DomainModel):
     @model_validator(mode="after")
     def _check(self) -> Self:
         if self.hard_tokens <= self.over_tokens:
-            raise ValueError(
-                "Compaction : 'hard_tokens' doit dépasser 'over_tokens' "
-                f"({self.hard_tokens} <= {self.over_tokens})"
-            )
+            raise ValueError(f"Compaction : 'hard_tokens' doit dépasser 'over_tokens' ({self.hard_tokens} <= {self.over_tokens})")
         return self
 
 
 def compaction_agent(spec: CompactionConfig) -> AgentSpec:
     """Agent interne qui résume un segment de session."""
-    main = (
-        MainRole(model=spec.model, system_file=spec.system_file)
-        if spec.system_file is not None
-        else MainRole(model=spec.model, system=COMPACTION_SYSTEM)
-    )
+    main = MainRole(model=spec.model, system_file=spec.system_file) if spec.system_file is not None else MainRole(model=spec.model, system=COMPACTION_SYSTEM)
     return AgentSpec(
         name=COMPACTION_AGENT,
         description="Résume les échanges anciens d'une session (agent interne).",

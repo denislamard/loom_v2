@@ -61,8 +61,7 @@ class PdfTool(DocumentTool):
 
     def _writing_notes(self) -> tuple[str, ...]:
         return (
-            "Polices du PDF : le français et les symboles courants passent ; un emoji ou un "
-            "idéogramme s'imprimerait en carré noir (signalé en avertissement).",
+            "Polices du PDF : le français et les symboles courants passent ; un emoji ou un idéogramme s'imprimerait en carré noir (signalé en avertissement).",
         )
 
     def _reading_help(self, folders: str) -> str:
@@ -75,11 +74,7 @@ class PdfTool(DocumentTool):
 
     def _options(self) -> tuple[tuple[str, str], ...]:
         reads = any("read" in folder.rights for folder in self._space.folders)
-        reading = (
-            f"oui, process à part ({reader.READ_DEADLINE:g} s, {reader.MEMORY >> 30} Gio)"
-            if reads
-            else "aucun dossier read"
-        )
+        reading = f"oui, process à part ({reader.READ_DEADLINE:g} s, {reader.MEMORY >> 30} Gio)" if reads else "aucun dossier read"
         return (*super()._options(), ("lecture des PDF", reading), *self._styles.said)
 
 
@@ -122,7 +117,4 @@ def _fonts_said(styles: Sequence[Style]) -> str | None:
             said.setdefault(family, how)
     if not said:
         return None
-    return " ; ".join(
-        f"{family} : {how}" if how == "embarquée" else f"{family} → {how}"
-        for family, how in sorted(said.items())
-    )
+    return " ; ".join(f"{family} : {how}" if how == "embarquée" else f"{family} → {how}" for family, how in sorted(said.items()))

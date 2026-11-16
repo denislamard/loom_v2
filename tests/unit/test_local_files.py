@@ -168,9 +168,7 @@ def test_a_destructive_right_under_approval_is_not_flagged(disk: Path) -> None:
     )
     assert not any(grant.unguarded for grant in grants)
     # La description que lit le modèle ne change pas.
-    assert "- work : read, write, delete (attend une approbation humaine : delete)" in (
-        tool.spec.description
-    )
+    assert "- work : read, write, delete (attend une approbation humaine : delete)" in (tool.spec.description)
 
 
 # --- Lire, lister, écrire, supprimer ------------------------------------------------
@@ -195,9 +193,7 @@ async def test_read(files: LocalFilesTool) -> None:
     }
 
 
-async def test_write_creates_folders_and_refuses_to_replace(
-    files: LocalFilesTool, disk: Path
-) -> None:
+async def test_write_creates_folders_and_refuses_to_replace(files: LocalFilesTool, disk: Path) -> None:
     done = await call(files, action="write", path="work/notes/2026/n.md", content="# Notes")
     assert done == {"path": "work/notes/2026/n.md", "bytes": 7, "written": True, "replaced": False}
     assert (disk / "work/notes/2026/n.md").read_text(encoding="utf-8") == "# Notes"
@@ -208,18 +204,14 @@ async def test_write_creates_folders_and_refuses_to_replace(
         path="work/notes/2026/n.md",
         content="v2",
     )
-    done = await call(
-        files, action="write", path="work/notes/2026/n.md", content="v2", overwrite=True
-    )
+    done = await call(files, action="write", path="work/notes/2026/n.md", content="v2", overwrite=True)
     assert (done["written"], done["replaced"]) == (True, True)
     assert (disk / "work/notes/2026/n.md").read_text(encoding="utf-8") == "v2"
     # Pas de fichier temporaire laissé derrière.
     assert not [p for p in (disk / "work/notes/2026").iterdir() if p.name.startswith(TEMP_PREFIX)]
 
 
-async def test_writing_the_same_content_again_changes_nothing(
-    files: LocalFilesTool, disk: Path
-) -> None:
+async def test_writing_the_same_content_again_changes_nothing(files: LocalFilesTool, disk: Path) -> None:
     """C'est ce qui rend l'écriture sûre à refaire après une interruption."""
     target = disk / "work/sub/a.txt"
     before = target.stat().st_mtime_ns
@@ -264,9 +256,7 @@ async def test_size_and_encoding_limits(files: LocalFilesTool, disk: Path) -> No
     await refused(files, "au-delà de", action="read", path="work/gros.txt")
     (disk / "work/latin1.txt").write_bytes("été".encode("latin-1"))
     await refused(files, "n'est pas un fichier texte UTF-8", action="read", path="work/latin1.txt")
-    await refused(
-        files, "au-delà de", action="write", path="work/x.txt", content="é" * MAX_READ_BYTES
-    )
+    await refused(files, "au-delà de", action="write", path="work/x.txt", content="é" * MAX_READ_BYTES)
 
 
 # --- Ce qui est refusé -----------------------------------------------------------------
@@ -320,9 +310,7 @@ async def test_a_nested_folder_keeps_its_own_rights(files: LocalFilesTool, disk:
 
 async def test_links_cannot_leave_their_folder(files: LocalFilesTool, disk: Path) -> None:
     (disk / "work/fuite").symlink_to(disk / "ailleurs")
-    await refused(
-        files, "mène hors des dossiers permis", action="read", path="work/fuite/secret.txt"
-    )
+    await refused(files, "mène hors des dossiers permis", action="read", path="work/fuite/secret.txt")
     # Un lien vers un autre dossier déclaré : il a ses propres droits, on y passe par son nom.
     (disk / "work/vers_clients").symlink_to(disk / "clients")
     await refused(
@@ -356,14 +344,10 @@ async def test_the_error_does_not_reveal_the_real_path(files: LocalFilesTool, di
 async def test_dot_and_unencodable_content_are_refused(files: LocalFilesTool) -> None:
     for path in (".", "./", "./."):
         await refused(files, "<dossier>/<chemin>", action="list", path=path)
-    await refused(
-        files, "ne s'écrivent pas en UTF-8", action="write", path="work/x.txt", content="\ud800"
-    )
+    await refused(files, "ne s'écrivent pas en UTF-8", action="write", path="work/x.txt", content="\ud800")
 
 
-async def test_a_listing_hides_links_that_leave_the_folder(
-    files: LocalFilesTool, disk: Path
-) -> None:
+async def test_a_listing_hides_links_that_leave_the_folder(files: LocalFilesTool, disk: Path) -> None:
     (disk / "work/fuite.txt").symlink_to(disk / "ailleurs/secret.txt")
     (disk / "work/ici.txt").symlink_to(disk / "work/sub/a.txt")
     listed = await call(files, action="list", path="work")
@@ -401,9 +385,7 @@ async def test_a_read_only_file_is_not_replaced(files: LocalFilesTool, disk: Pat
         target.chmod(0o644)
 
 
-async def test_parallel_writes_without_overwrite_do_not_replace_each_other(
-    files: LocalFilesTool, disk: Path
-) -> None:
+async def test_parallel_writes_without_overwrite_do_not_replace_each_other(files: LocalFilesTool, disk: Path) -> None:
     """Deux appels d'un même lot vers un même nouveau fichier : un seul l'écrit."""
     for attempt in range(20):
         path = f"work/course-{attempt}.txt"
@@ -419,9 +401,7 @@ async def test_parallel_writes_without_overwrite_do_not_replace_each_other(
         assert (disk / path).read_text(encoding="utf-8") in {"premier", "second"}
 
 
-async def test_without_hard_links_a_new_file_is_still_created_exclusively(
-    files: LocalFilesTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_without_hard_links_a_new_file_is_still_created_exclusively(files: LocalFilesTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def no_link(*_: object, **__: object) -> None:
         raise PermissionError(1, "Operation not permitted")
 
@@ -432,9 +412,7 @@ async def test_without_hard_links_a_new_file_is_still_created_exclusively(
     await refused(files, "existe déjà", action="write", path="work/sans-lien.txt", content="y")
 
 
-async def test_a_file_writable_by_nobody_is_not_replaced_even_by_root(
-    files: LocalFilesTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_file_writable_by_nobody_is_not_replaced_even_by_root(files: LocalFilesTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``os.access`` dit toujours oui à root : les droits du fichier comptent quand même."""
     target = disk / "work/sub/a.txt"
     target.chmod(0o444)
@@ -456,9 +434,7 @@ async def test_a_file_writable_by_nobody_is_not_replaced_even_by_root(
         target.chmod(0o644)
 
 
-def test_an_interrupted_creation_leaves_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_interrupted_creation_leaves_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un fichier tronqué ferait croire à un contenu, et une reprise dirait « existe déjà »."""
 
     def full(_: int) -> None:
@@ -501,8 +477,7 @@ async def test_overwrite_creates_a_missing_file(files: LocalFilesTool, disk: Pat
                 approval="always",
                 side_effects="reversible",
                 idempotent=True,
-                reason="écrire clients/c2.txt — la config exige une approbation pour écrire "
-                "dans clients",
+                reason="écrire clients/c2.txt — la config exige une approbation pour écrire dans clients",
             ),
         ),
         # Refusé à l'exécution pour la même raison : rien à approuver, aucun effet.
@@ -512,27 +487,18 @@ async def test_overwrite_creates_a_missing_file(files: LocalFilesTool, disk: Pat
         ({"action": "nope", "path": 3}, CallAssessment(side_effects="none")),
     ],
 )
-def test_each_call_is_assessed(
-    files: LocalFilesTool, arguments: dict[str, JsonValue], expected: CallAssessment
-) -> None:
+def test_each_call_is_assessed(files: LocalFilesTool, arguments: dict[str, JsonValue], expected: CallAssessment) -> None:
     assert files.assess_call(arguments) == expected
 
 
 def test_overwrite_asks_when_either_right_asks(disk: Path) -> None:
-    tool = make(
-        disk, {"name": "work", "path": "work", "rights": ["read", "write", "overwrite", "delete"]}
-    )
-    asked = tool.assess_call(
-        {"action": "write", "path": "work/a", "content": "x", "overwrite": True}
-    )
+    tool = make(disk, {"name": "work", "path": "work", "rights": ["read", "write", "overwrite", "delete"]})
+    asked = tool.assess_call({"action": "write", "path": "work/a", "content": "x", "overwrite": True})
     assert asked.approval == "always"
     assert asked.reason == (
-        "écrire work/a, en remplaçant le fichier s'il existe — la config exige une approbation "
-        "pour remplacer un fichier existant dans work"
+        "écrire work/a, en remplaçant le fichier s'il existe — la config exige une approbation pour remplacer un fichier existant dans work"
     )
-    assert (
-        tool.assess_call({"action": "write", "path": "work/a", "content": "x"}).approval == "never"
-    )
+    assert tool.assess_call({"action": "write", "path": "work/a", "content": "x"}).approval == "never"
     assert tool.assess_call({"action": "delete", "path": "work/a"}).approval == "always"
 
 
@@ -540,10 +506,7 @@ def test_the_assessment_does_not_touch_the_disk(disk: Path) -> None:
     """Il ne dépend que des arguments et de la config : même chose à la reprise et au rejeu."""
     tool = make(disk, {"name": "clients", "path": "clients", "rights": ["read", "write"]})
     (disk / "clients").rename(disk / "parti")
-    assert (
-        tool.assess_call({"action": "write", "path": "clients/x", "content": "y"}).side_effects
-        == "reversible"
-    )
+    assert tool.assess_call({"action": "write", "path": "clients/x", "content": "y"}).side_effects == "reversible"
 
 
 # --- La fabrique ---------------------------------------------------------------------
@@ -565,9 +528,7 @@ def test_relative_paths_follow_the_config(disk: Path) -> None:
         ("work", "work/sub", True, "contient la config"),
     ],
 )
-def test_a_folder_that_would_expose_loom_is_refused(
-    disk: Path, exposed: str, protected: str, subtree: bool, match: str
-) -> None:
+def test_a_folder_that_would_expose_loom_is_refused(disk: Path, exposed: str, protected: str, subtree: bool, match: str) -> None:
     with pytest.raises(ValueError, match=match):
         make(
             disk,
@@ -598,9 +559,7 @@ def test_a_subfolder_of_the_config_folder_can_be_exposed(disk: Path) -> None:
         ),
     ],
 )
-def test_the_factory_checks_the_folders(
-    disk: Path, folders: list[dict[str, Any]], match: str
-) -> None:
+def test_the_factory_checks_the_folders(disk: Path, folders: list[dict[str, Any]], match: str) -> None:
     with pytest.raises(ValueError, match=match):
         make(disk, *folders)
 
@@ -634,9 +593,7 @@ def test_mounted_from_the_config(demo: ConfigFactory, tmp_path: Path) -> None:
         ("outils_acces.py", "n'existe pas ou n'est pas un dossier"),
     ],
 )
-def test_loom_paths_are_never_exposed(
-    demo: ConfigFactory, tmp_path: Path, folder: str, match: str
-) -> None:
+def test_loom_paths_are_never_exposed(demo: ConfigFactory, tmp_path: Path, folder: str, match: str) -> None:
     (tmp_path / "journal" / "sous").mkdir(parents=True)
     folders = [{"name": "w", "path": folder, "rights": ["read"]}]
     path = demo(agents=[files_agent(folders=folders)], storage=JSONL)
@@ -715,19 +672,14 @@ async def test_a_run_waits_only_for_the_call_that_asks(demo: ConfigFactory, tmp_
         await agent.aclose()
     assert state.status is RunStatus.PAUSED
     [pending] = state.awaiting
-    assert pending.reason == (
-        "supprimer espace/a.txt — la config exige une approbation pour supprimer dans espace "
-        "(irréversible)"
-    )
+    assert pending.reason == ("supprimer espace/a.txt — la config exige une approbation pour supprimer dans espace (irréversible)")
     events = await store.read(DEFAULT_TENANT, run.session_id)
     [read] = [e.payload for e in events if isinstance(e.payload, ToolCompleted)]
     assert read.output.data == {"path": "espace/a.txt", "content": "bonjour", "size": 7}
     assert (tmp_path / "espace" / "a.txt").exists()
 
 
-def test_validate_shows_the_folders(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_folders(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "espace").mkdir()
     folders = [
         {
@@ -744,9 +696,7 @@ def test_validate_shows_the_folders(
     assert "  └ local_files  espace → ./espace\n                 read · write*\n" in out
 
 
-def test_an_approval_on_a_memory_journal_says_which_calls(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+def test_an_approval_on_a_memory_journal_says_which_calls(demo: ConfigFactory, tmp_path: Path) -> None:
     (tmp_path / "espace").mkdir()
     folders = [{"name": "espace", "path": "espace", "rights": ["read", "delete"]}]
     path = demo(agents=[files_agent(folders=folders)])
@@ -754,9 +704,7 @@ def test_an_approval_on_a_memory_journal_says_which_calls(
         build_agent(load_config(path), "demo", InMemoryEventStore())
 
 
-def test_a_mcp_server_protects_its_scripts_not_what_it_serves(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+def test_a_mcp_server_protects_its_scripts_not_what_it_serves(demo: ConfigFactory, tmp_path: Path) -> None:
     """Le dossier qu'un serveur filesystem sert reste exposable ; le dossier de son script, non."""
     for folder in ("docs", "servers/crm"):
         (tmp_path / folder).mkdir(parents=True)
@@ -782,9 +730,7 @@ def test_a_mcp_server_protects_its_scripts_not_what_it_serves(
         mount("servers/crm")
 
 
-def test_a_package_found_elsewhere_is_protected(
-    demo: ConfigFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_package_found_elsewhere_is_protected(demo: ConfigFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un paquet en disposition ``src/`` : Python le trouve là, c'est là qu'on le protège."""
     package = tmp_path / "src" / "monpaquet_essai"
     package.mkdir(parents=True)
@@ -836,9 +782,7 @@ def folder(**fields: Any) -> FolderSpec:
         ({"rights": ["read", "write"], "approval": None}, {"read": "never", "write": "never"}),
     ],
 )
-def test_rights_and_approval_resolve_to_the_internal_table(
-    fields: dict[str, Any], internal: dict[str, str]
-) -> None:
+def test_rights_and_approval_resolve_to_the_internal_table(fields: dict[str, Any], internal: dict[str, str]) -> None:
     assert folder(**fields).rights == internal
 
 
@@ -853,13 +797,11 @@ def test_the_internal_table_follows_the_order_of_the_rights() -> None:
     [
         (
             {"rights": ["read", "write"], "approval": {"delete": "never"}},
-            "dossier 'work' : approval 'delete' porte sur un droit non accordé — l'ajouter à "
-            "'rights', ou le retirer d'approval",
+            "dossier 'work' : approval 'delete' porte sur un droit non accordé — l'ajouter à 'rights', ou le retirer d'approval",
         ),
         (
             {"rights": ["read", "write"], "approval": {"write": "yes"}},
-            "dossier 'work' : approval 'write' vaut 'yes' — attendu : never (sans approbation) "
-            "ou always (approbation humaine)",
+            "dossier 'work' : approval 'write' vaut 'yes' — attendu : never (sans approbation) ou always (approbation humaine)",
         ),
         # « yes » sans guillemets : un booléen en YAML.
         ({"rights": ["write"], "approval": {"write": True}}, "approval 'write' vaut True"),
@@ -867,8 +809,7 @@ def test_the_internal_table_follows_the_order_of_the_rights() -> None:
         ({"rights": ["write"], "approval": {"write": "policy"}}, "approval 'write' vaut 'policy'"),
         (
             {"rights": ["read"], "approval": {"remove": "never"}},
-            "dossier 'work' : approval 'remove' — droit inconnu (droits : read, write, "
-            "overwrite, delete)",
+            "dossier 'work' : approval 'remove' — droit inconnu (droits : read, write, overwrite, delete)",
         ),
         (
             {"rights": ["read"], "approval": ["read"]},
@@ -896,8 +837,7 @@ def test_rights_and_approval_refused(fields: dict[str, Any], message: str) -> No
     [
         (
             {"read": "never", "write": "never", "overwrite": "never", "delete": "never"},
-            "rights: [read, write, overwrite, delete] et approval: { overwrite: never, "
-            "delete: never }",
+            "rights: [read, write, overwrite, delete] et approval: { overwrite: never, delete: never }",
         ),
         (
             {"write": "always", "read": "never"},
@@ -931,9 +871,7 @@ def test_the_old_table_is_refused_when_the_config_loads(demo: ConfigFactory) -> 
     folders = [{"name": "work", "path": "/tmp", "rights": {"read": "never", "delete": "never"}}]
     with pytest.raises(ConfigError) as raised:
         load_config(demo(agents=[files_agent(folders=folders)]))
-    assert (
-        "folders.0 — dossier 'work' : 'rights' en table droit → approbation n'est plus accepté"
-    ) in str(raised.value)
+    assert ("folders.0 — dossier 'work' : 'rights' en table droit → approbation n'est plus accepté") in str(raised.value)
     assert "écrire rights: [read, delete] et approval: { delete: never }" in str(raised.value)
 
 
@@ -951,9 +889,7 @@ def test_the_schema_shows_rights_as_a_list_and_approval() -> None:
     assert spec["properties"]["rights"]["type"] == "array"
     assert "anyOf" not in spec["properties"]["rights"]
     assert spec["properties"]["approval"]["additionalProperties"] == {"enum": ["never", "always"]}
-    assert spec["properties"]["approval"]["propertyNames"] == {
-        "enum": ["read", "write", "overwrite", "delete"]
-    }
+    assert spec["properties"]["approval"]["propertyNames"] == {"enum": ["read", "write", "overwrite", "delete"]}
     assert "approval" not in spec["required"]
 
 
@@ -968,9 +904,7 @@ async def seen(*files: tuple[str, bytes, str]) -> ConversationFiles:
         uri = artifact_uri("default", "s", data, media)
         await store.put(uri, data)
         refs.append(ArtifactRefBlock(uri=uri, media_type=media, size=len(data), name=name))
-    message = Message(
-        role="tool", blocks=(ToolResultBlock(call_id="k1", output=ToolOutput(blocks=tuple(refs))),)
-    )
+    message = Message(role="tool", blocks=(ToolResultBlock(call_id="k1", output=ToolOutput(blocks=tuple(refs))),))
     return ConversationFiles((message,), store, tenant="default", session="s")
 
 
@@ -987,15 +921,11 @@ async def test_write_copies_a_file_of_the_conversation(files: LocalFilesTool, di
         ("photo.png", PNG_BYTES, "image/png"),
         ("g.svg", b"<svg>dernier</svg>", "image/svg+xml"),
     )
-    out = await files.invoke(
-        {"action": "write", "path": "work/rendu/g.svg", "file": "g.svg"}, with_files(conversation)
-    )
+    out = await files.invoke({"action": "write", "path": "work/rendu/g.svg", "file": "g.svg"}, with_files(conversation))
     assert not out.is_error
     # Le plus récent du nom ; binaire compris.
     assert (disk / "work/rendu/g.svg").read_bytes() == b"<svg>dernier</svg>"
-    await files.invoke(
-        {"action": "write", "path": "work/p.png", "file": "photo.png"}, with_files(conversation)
-    )
+    await files.invoke({"action": "write", "path": "work/p.png", "file": "photo.png"}, with_files(conversation))
     assert (disk / "work/p.png").read_bytes() == PNG_BYTES
     # Le nom dans le stockage désigne aussi le fichier.
     stored = conversation.find("photo.png")
@@ -1024,9 +954,7 @@ async def test_write_copies_a_file_of_the_conversation(files: LocalFilesTool, di
         ({"action": "write", "path": "work/sub/a.txt", "file": "g.svg"}, "existe"),
     ],
 )
-async def test_a_copy_is_refused_like_a_write(
-    files: LocalFilesTool, arguments: dict[str, JsonValue], said: str
-) -> None:
+async def test_a_copy_is_refused_like_a_write(files: LocalFilesTool, arguments: dict[str, JsonValue], said: str) -> None:
     conversation = await seen(("g.svg", b"<svg/>", "image/svg+xml"))
     with pytest.raises(ToolError, match=said):
         await files.invoke(arguments, with_files(conversation))
@@ -1045,21 +973,13 @@ async def test_a_copy_is_bounded_and_a_missing_file_is_said(files: LocalFilesToo
         size=MAX_COPY_BYTES + 1,
         name="gros.bin",
     )
-    gone = ArtifactRefBlock(
-        uri="artifact://default/s/bb.txt", media_type="text/plain", size=3, name="parti.txt"
-    )
-    message = Message(
-        role="tool", blocks=(ToolResultBlock(call_id="k", output=ToolOutput(blocks=(big, gone))),)
-    )
+    gone = ArtifactRefBlock(uri="artifact://default/s/bb.txt", media_type="text/plain", size=3, name="parti.txt")
+    message = Message(role="tool", blocks=(ToolResultBlock(call_id="k", output=ToolOutput(blocks=(big, gone))),))
     conversation = ConversationFiles((message,), store, tenant="default", session="s")
     with pytest.raises(ToolError, match="au-delà de 16,0 Mo"):
-        await files.invoke(
-            {"action": "write", "path": "work/x", "file": "gros.bin"}, with_files(conversation)
-        )
+        await files.invoke({"action": "write", "path": "work/x", "file": "gros.bin"}, with_files(conversation))
     with pytest.raises(ToolError, match="absent du stockage"):
-        await files.invoke(
-            {"action": "write", "path": "work/x", "file": "parti.txt"}, with_files(conversation)
-        )
+        await files.invoke({"action": "write", "path": "work/x", "file": "parti.txt"}, with_files(conversation))
 
 
 async def test_a_reference_of_another_session_or_client_is_not_a_file_of_the_conversation(
@@ -1075,9 +995,7 @@ async def test_a_reference_of_another_session_or_client_is_not_a_file_of_the_con
     conversation = ConversationFiles((message,), store, tenant="default", session="s")
     assert conversation.names() == ()
     with pytest.raises(ToolError, match="inconnu ; fichiers de la conversation : aucun"):
-        await files.invoke(
-            {"action": "write", "path": "work/x", "file": "a.txt"}, with_files(conversation)
-        )
+        await files.invoke({"action": "write", "path": "work/x", "file": "a.txt"}, with_files(conversation))
 
 
 def test_a_copy_is_assessed_like_a_write(files: LocalFilesTool) -> None:
@@ -1093,9 +1011,7 @@ def test_a_copy_is_assessed_like_a_write(files: LocalFilesTool) -> None:
     assert (replaced.approval, replaced.side_effects) == ("never", "irreversible")
 
 
-async def test_a_copy_done_again_after_a_resume_writes_nothing(
-    files: LocalFilesTool, disk: Path
-) -> None:
+async def test_a_copy_done_again_after_a_resume_writes_nothing(files: LocalFilesTool, disk: Path) -> None:
     conversation = await seen(("g.svg", b"<svg/>", "image/svg+xml"))
     arguments: dict[str, JsonValue] = {"action": "write", "path": "work/g.svg", "file": "g.svg"}
     first = await files.invoke(arguments, with_files(conversation))

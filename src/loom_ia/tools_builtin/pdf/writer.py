@@ -206,9 +206,7 @@ class _Fonts:
     embarquée ; une autre se rend par son équivalent standard."""
 
     def __init__(self, style: Style) -> None:
-        self._embedded = {
-            family: _registered(family, files) for family, files in style.fonts.items()
-        }
+        self._embedded = {family: _registered(family, files) for family, files in style.fonts.items()}
 
     def name(self, family: str | None, bold: bool = False, italic: bool = False) -> str:
         """La police PDF d'une police du style, dans sa graisse et son style."""
@@ -285,12 +283,9 @@ def _merged(look: Look, props: Mapping[str, Any]) -> Look:
 
 def _framed(look: Look) -> bool:
     """Un style qui dessine autour du texte : un filet, un fond."""
-    return any(
-        value is not None and value != "none"
-        for value in (
-            look.border, look.border_top, look.border_bottom, look.border_left, look.border_right
-        )
-    ) or (look.fill is not None and look.fill != "none")
+    return any(value is not None and value != "none" for value in (look.border, look.border_top, look.border_bottom, look.border_left, look.border_right)) or (
+        look.fill is not None and look.fill != "none"
+    )
 
 
 # --- Les sections du modèle --------------------------------------------------------------
@@ -670,9 +665,7 @@ class _Body:
             if style.numbering != "none":
                 counters[block.level - 1] += 1
                 counters[block.level :] = [0] * (3 - block.level)
-                number = _heading_number(
-                    style.numbering, counters[: block.level], style.labels.article
-                )
+                number = _heading_number(style.numbering, counters[: block.level], style.labels.article)
                 self.heading_numbers[id(block)] = number
                 if rank in self.targeted:
                     self.ref_numbers[rank] = ".".join(str(n) for n in counters[: block.level])
@@ -698,8 +691,7 @@ class _Body:
             prefix=f"{number} " if number else "",
             # L'ancre du lien du sommaire, et sa page notée quand le titre se dessine (aussi
             # dans des colonnes, où le document ne voit pas passer le titre).
-            anchor=target
-            + (f'<a name="{key}"/><onDraw name="{MARK}" label="{key}"/>' if key else ""),
+            anchor=target + (f'<a name="{key}"/><onDraw name="{MARK}" label="{key}"/>' if key else ""),
         )
         return found
 
@@ -760,9 +752,7 @@ class _Body:
         size = look.size or 11.0
         return Spacer(1, size * LEADING * (look.line_spacing or 1.0) + points)
 
-    def blocks(
-        self, blocks: Sequence[BlockOut], width: float, layout: _Layout = PLAIN
-    ) -> list[Flowable]:
+    def blocks(self, blocks: Sequence[BlockOut], width: float, layout: _Layout = PLAIN) -> list[Flowable]:
         style = self.style
         found: list[Flowable] = []
         index = 0
@@ -783,9 +773,7 @@ class _Body:
             match block:
                 case TitleOut(runs=runs):
                     look = style.look("document_title")
-                    found.append(
-                        self.paragraph("document_title", look, runs, width, align=layout.align)
-                    )
+                    found.append(self.paragraph("document_title", look, runs, width, align=layout.align))
                 case HeadingOut():
                     found.append(self.heading(block, width, layout))
                 case ParagraphOut(runs=runs):
@@ -895,9 +883,7 @@ class _Body:
                         Paragraph(self.text(child.runs, pstyle, look), pstyle),
                     ]
                 )
-        table = Table(
-            rows, colWidths=[CHECK_COLUMN, CHECK_COLUMN, CHECK_COLUMN, width - 3 * CHECK_COLUMN], hAlign="LEFT"
-        )
+        table = Table(rows, colWidths=[CHECK_COLUMN, CHECK_COLUMN, CHECK_COLUMN, width - 3 * CHECK_COLUMN], hAlign="LEFT")
         table.setStyle(TableStyle(commands))
         return table
 
@@ -910,9 +896,7 @@ class _Body:
             source = self.style.look("quote_source")
             sstyle = self.paragraph_style("quote_source", source, bare=_framed(look))
             if _framed(look):
-                sstyle = ParagraphStyle(
-                    f"{sstyle.name}-in", parent=sstyle, spaceBefore=look.space_after or 0
-                )
+                sstyle = ParagraphStyle(f"{sstyle.name}-in", parent=sstyle, spaceBefore=look.space_after or 0)
             content.append(Paragraph(self.plain(f"\u2014 {block.source}", sstyle), sstyle))
         if not _framed(look):
             return KeepTogether(content)
@@ -947,12 +931,7 @@ class _Body:
 
         data: list[list[Paragraph | str]] = []
         if block.headers:
-            data.append(
-                [
-                    cell(text, header, "header", heading_align(i))
-                    for i, text in enumerate(block.headers)
-                ]
-            )
+            data.append([cell(text, header, "header", heading_align(i)) for i, text in enumerate(block.headers)])
         # Les lignes de données à fond alterné, et les lignes de groupe, de sous-total ou en
         # gras, par leur place dans le tableau.
         banded: list[int] = []
@@ -963,9 +942,7 @@ class _Body:
             "total": total,
         }
         band = 0
-        for kind, cells in zip(
-            block.kinds or ("body",) * len(block.cells), block.cells, strict=True
-        ):
+        for kind, cells in zip(block.kinds or ("body",) * len(block.cells), block.cells, strict=True):
             if kind == "group":
                 data.append([cell(cells[0], looks[kind], kind, "left"), *[""] * (len(widths) - 1)])
                 marked.append((kind, len(data) - 1))
@@ -975,25 +952,13 @@ class _Body:
                 if band % 2 == 1:
                     banded.append(len(data))
                 band += 1
-                data.append(
-                    [cell(text, tables, "body", block.align[i]) for i, text in enumerate(cells)]
-                )
+                data.append([cell(text, tables, "body", block.align[i]) for i, text in enumerate(cells)])
                 continue
             line = looks[kind]
-            data.append(
-                [
-                    cell(plain(text), line, kind, line.align or block.align[i])
-                    for i, text in enumerate(cells)
-                ]
-            )
+            data.append([cell(plain(text), line, kind, line.align or block.align[i]) for i, text in enumerate(cells)])
             marked.append((kind, len(data) - 1))
         if block.total is not None:
-            data.append(
-                [
-                    cell(text, total, "total", total.align or block.align[i])
-                    for i, text in enumerate(block.total)
-                ]
-            )
+            data.append([cell(text, total, "total", total.align or block.align[i]) for i, text in enumerate(block.total)])
         top, right, bottom, left = _pads(tables.padding, "cm")
         commands: list[tuple[Any, ...]] = [
             ("VALIGN", (0, 0), (-1, -1), _VALIGN[tables.valign or "top"]),
@@ -1027,11 +992,7 @@ class _Body:
         found = Table(
             data,
             colWidths=widths,
-            rowHeights=[
-                None if index < len(data) - len(block.cells) else tall for index in range(len(data))
-            ]
-            if tall
-            else None,
+            rowHeights=[None if index < len(data) - len(block.cells) else tall for index in range(len(data))] if tall else None,
             repeatRows=1 if block.headers else 0,
             hAlign=cast(Any, position.upper()),
         )
@@ -1110,9 +1071,7 @@ class _Body:
             parts.append(self.after(self.style.distances.image_space_after))
         return KeepTogether(parts)
 
-    def image_pair(
-        self, first: ImageOut, second: ImageOut, width: float, layout: _Layout
-    ) -> Flowable:
+    def image_pair(self, first: ImageOut, second: ImageOut, width: float, layout: _Layout) -> Flowable:
         """Deux images ``half`` côte à côte (``image.side_by_side``), chacune avec sa légende."""
         # La même place pour les deux : l'écart entre elles est pris sur la première cellule.
         half = width / 2
@@ -1157,9 +1116,7 @@ class _Body:
                 indent=None,
             )
             parts.append(self.paragraph("chart_title", look, (_run(block.title),), width))
-        self.fonts.setdefault(font, set()).update(
-            "".join(block.categories) + "".join(name for name, _ in block.series)
-        )
+        self.fonts.setdefault(font, set()).update("".join(block.categories) + "".join(name for name, _ in block.series))
         parts.append(chart.drawing(block, width, style.chart, font, style.language))
         if block.caption:
             parts.append(self.caption(style.labels.figure, block.caption, width, layout))
@@ -1179,15 +1136,9 @@ class _Body:
         sign = self.paragraph_style("signature-sign", replace(text, space_before=0, space_after=0))
         cells: list[list[Flowable]] = []
         for name in block.signers:
-            content: list[Flowable] = [
-                self.paragraph("signature", signer, (_run(name),), width / count, keep=True)
-            ]
+            content: list[Flowable] = [self.paragraph("signature", signer, (_run(name),), width / count, keep=True)]
             if block.mention:
-                content.append(
-                    self.paragraph(
-                        "signature_mention", mention, (_run(block.mention),), width / count
-                    )
-                )
+                content.append(self.paragraph("signature_mention", mention, (_run(block.mention),), width / count))
             content.append(Paragraph(self.plain(style.labels.date, date), date))
             content.append(Paragraph(self.plain(style.labels.signature, sign), sign))
             content.append(Spacer(1, _twips(signer.sign_height or 0)))
@@ -1256,11 +1207,7 @@ class _Body:
         while index < len(groups):
             group = groups[index]
             together = [group]
-            while (
-                group.row is not None
-                and index + len(together) < len(groups)
-                and groups[index + len(together)].row == group.row
-            ):
+            while group.row is not None and index + len(together) < len(groups) and groups[index + len(together)].row == group.row:
                 together.append(groups[index + len(together)])
             index += len(together)
             landscape = self.style.landscape or group.layout.landscape
@@ -1430,9 +1377,7 @@ class _Box:
         inner = (len(self.zones) - 1) * (before + after)
         return before + top + sum(z.height for z in self.zones) + inner + bottom + after
 
-    def draw(
-        self, canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None
-    ) -> None:
+    def draw(self, canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None) -> None:
         if not self.zones:
             return
         look = self.look
@@ -1556,9 +1501,7 @@ class _Bands:
             carries = any(element.logo for element in present.values()) and picture is not None
             height = max([_leading(own) for own in looks.values()] + ([logo_height] if carries else []))
 
-            def zone(
-                canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None
-            ) -> None:
+            def zone(canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None) -> None:
                 bottom = top - height
                 for place, element in present.items():
                     own = looks[place]
@@ -1569,13 +1512,7 @@ class _Bands:
                     text_width = pdfmetrics.stringWidth(text, font, size) if text else 0.0
                     space = gap if has_logo and text else 0.0
                     group = (logo_width if has_logo else 0.0) + space + text_width
-                    x = (
-                        left
-                        if place == "left"
-                        else right - group
-                        if place == "right"
-                        else (left + right - group) / 2
-                    )
+                    x = left if place == "left" else right - group if place == "right" else (left + right - group) / 2
                     if has_logo:
                         drawn: Any = canvas
                         drawn.drawImage(picture, x, bottom, logo_width, logo_height, mask="auto")
@@ -1663,10 +1600,7 @@ class _Bands:
         sample = "9" * (len(str(self.total)) if self.total else 3)
         # Un filet horizontal intérieur sous une ligne de la table, et l'écart au texte de
         # part et d'autre, comme celui du cadre (Word : ``_band_table``).
-        ruled = [
-            inner_h and not row.line and number + 1 < len(rows) and not rows[number + 1].line
-            for number, row in enumerate(rows)
-        ]
+        ruled = [inner_h and not row.line and number + 1 < len(rows) and not rows[number + 1].line for number, row in enumerate(rows)]
 
         def text_of(text: str, own: Look, page: int | None, total: int | None) -> str:
             if page is None:
@@ -1678,9 +1612,7 @@ class _Bands:
             placed: list[_GridRow] = []
             for number, row in enumerate(rows):
                 spans: list[tuple[BandElement, int, int]] = (
-                    [(row.cells[0], 0, count)]
-                    if row.line
-                    else [(cell, index, 1) for index, cell in enumerate(row.cells)]
+                    [(row.cells[0], 0, count)] if row.line else [(cell, index, 1) for index, cell in enumerate(row.cells)]
                 )
                 cells: list[_GridCell] = []
                 for cell, start, span in spans:
@@ -1702,20 +1634,12 @@ class _Bands:
                         said = text_of(text, own, page, total)
                         drawn = cell.logo and index == 0 and picture is not None
                         beside = (logo_width + (logo_gap if said else 0.0)) if drawn else 0.0
-                        paragraphs.append(
-                            (_split(said, font, size, max(room - beside, 1.0)) or [""], drawn)
-                        )
+                        paragraphs.append((_split(said, font, size, max(room - beside, 1.0)) or [""], drawn))
                     before, after = self.style.cell_spacing(cell.style, table.style or family, family)
                     content = sum(
-                        before
-                        + after
-                        + (max(leading, logo_height) if drawn else leading)
-                        + (len(lines) - 1) * leading
-                        for lines, drawn in paragraphs
+                        before + after + (max(leading, logo_height) if drawn else leading) + (len(lines) - 1) * leading for lines, drawn in paragraphs
                     )
-                    cells.append(
-                        _GridCell(cell, own, x0, x1, margins, paragraphs, content, font, size, leading, (before, after))
-                    )
+                    cells.append(_GridCell(cell, own, x0, x1, margins, paragraphs, content, font, size, leading, (before, after)))
                 height = max(c.margins[0] + c.content + c.margins[2] for c in cells)
                 placed.append(_GridRow(row.line, cells, height))
             return placed
@@ -1726,9 +1650,7 @@ class _Bands:
 
         measured = sum(row.height for row in layout(text_width(), None, None))
 
-        def draw(
-            canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None
-        ) -> None:
+        def draw(canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None) -> None:
             placed = layout(right - left, page, total)
             y = top
             for number, row in enumerate(placed):
@@ -1742,9 +1664,7 @@ class _Bands:
                         canvas.rect(x0, y - row.height, x1 - x0, row.height, stroke=0, fill=1)
                     m_top, m_left, m_bottom, m_right = cell.margins
                     room = row.height - m_top - m_bottom
-                    shift = {"top": 0.0, "center": (room - cell.content) / 2, "bottom": room - cell.content}[
-                        own.valign or look.valign or "top"
-                    ]
+                    shift = {"top": 0.0, "center": (room - cell.content) / 2, "bottom": room - cell.content}[own.valign or look.valign or "top"]
                     cursor = y - m_top - max(shift, 0.0)
                     # Une ligne de toute la largeur, dans un en-tête : centrée si son style ne dit
                     # pas d'alignement.
@@ -1759,13 +1679,7 @@ class _Bands:
                             image = logo_width + (logo_gap if text else 0.0) if first and drawn else 0.0
                             group = image + (pdfmetrics.stringWidth(text, cell.font, cell.size) if text else 0.0)
                             inner_left, inner_right = x0 + m_left, x1 - m_right
-                            x = (
-                                inner_left
-                                if align == "left"
-                                else inner_right - group
-                                if align == "right"
-                                else (inner_left + inner_right - group) / 2
-                            )
+                            x = inner_left if align == "left" else inner_right - group if align == "right" else (inner_left + inner_right - group) / 2
                             bottom = cursor - height
                             if first and drawn:
                                 logo: Any = canvas
@@ -1788,9 +1702,7 @@ class _Bands:
 
         return _Zone(measured, draw)
 
-    def _write(
-        self, canvas: Canvas, look: Look, font: str, size: float, color: Any, x: float, baseline: float, text: str
-    ) -> None:
+    def _write(self, canvas: Canvas, look: Look, font: str, size: float, color: Any, x: float, baseline: float, text: str) -> None:
         canvas.setFont(font, size)
         canvas.setFillColor(color)
         canvas.drawString(x, baseline, text)
@@ -1842,9 +1754,7 @@ class _Bands:
         if not text:
             return
         font = self._font(look)
-        points = min(
-            WATERMARK_HEIGHT * 0.75, WATERMARK_WIDTH / max(pdfmetrics.stringWidth(text, font, 1), 1)
-        )
+        points = min(WATERMARK_HEIGHT * 0.75, WATERMARK_WIDTH / max(pdfmetrics.stringWidth(text, font, 1), 1))
         canvas.saveState()
         canvas.setFillColor(_color(look.color) or colors.lightgrey)
         canvas.setFillAlpha(WATERMARK_ALPHA)
@@ -1855,9 +1765,7 @@ class _Bands:
         canvas.restoreState()
 
 
-def _build(
-    prepared: Prepared, style: Style, template: Template | None, known: _Pass
-) -> tuple[bytes, _Pass, _Body]:
+def _build(prepared: Prepared, style: Style, template: Template | None, known: _Pass) -> tuple[bytes, _Pass, _Body]:
     body = _Body(prepared, style, template, known.pages)
     bands = _Bands(style, body.title, body.typefaces, known.total)
     portrait = style.page
@@ -1873,11 +1781,7 @@ def _build(
     def text_width(landscape: bool) -> float:
         return sizes["landscape" if landscape else "portrait"][0] - left - right
 
-    body.max_height = min(
-        size[1] - max(top, above) - max(bottom, below)
-        for name, size in sizes.items()
-        if name != "cover"
-    )
+    body.max_height = min(size[1] - max(top, above) - max(bottom, below) for name, size in sizes.items() if name != "cover")
     units = body.units(_groups(prepared, template), text_width)
     # La première page sans en-tête ni pied : page de garde, ou ``first_page: false``.
     first = "portrait"
@@ -1922,9 +1826,7 @@ def _build(
             bottomPadding=0,
             id=name,
         )
-        templates[name] = PageTemplate(
-            id=name, frames=[frame], onPage=on_page(name == "cover"), pagesize=page
-        )
+        templates[name] = PageTemplate(id=name, frames=[frame], onPage=on_page(name == "cover"), pagesize=page)
     story: list[Flowable] = []
     current: str | None = None
     for unit in units:
@@ -1971,9 +1873,7 @@ def missing_glyphs(body: _Body) -> list[str]:
     return sorted(missing)
 
 
-def render(
-    prepared: Prepared, style: Style | None = None, template: Template | None = None
-) -> tuple[bytes, int, list[str]]:
+def render(prepared: Prepared, style: Style | None = None, template: Template | None = None) -> tuple[bytes, int, list[str]]:
     """Le PDF, son nombre de pages, et les avertissements du rendu. ``style`` : le style du
     document (le style maison sans lui) ; ``template`` : le modèle qu'il suit."""
     style = style or house()
@@ -1989,17 +1889,11 @@ def render(
             data, found, body = _build(prepared, style, template, known)
     except LayoutError:
         raise ToolError(
-            "Document refusé : un bloc ne tient pas dans une page (un tableau à une ligne "
-            "très haute, une section côte à côte trop longue) ; le découper"
+            "Document refusé : un bloc ne tient pas dans une page (un tableau à une ligne très haute, une section côte à côte trop longue) ; le découper"
         ) from None
     warnings: list[str] = []
     missing = missing_glyphs(body)
     if missing:
-        shown = " ".join(missing[:MAX_MISSING_SAID]) + (
-            " …" if len(missing) > MAX_MISSING_SAID else ""
-        )
-        warnings.append(
-            f"{len(missing)} caractère(s) absent(s) des polices du PDF, imprimé(s) en carré "
-            f"noir : {shown} — les remplacer par du texte"
-        )
+        shown = " ".join(missing[:MAX_MISSING_SAID]) + (" …" if len(missing) > MAX_MISSING_SAID else "")
+        warnings.append(f"{len(missing)} caractère(s) absent(s) des polices du PDF, imprimé(s) en carré noir : {shown} — les remplacer par du texte")
     return data, found.total or 0, warnings

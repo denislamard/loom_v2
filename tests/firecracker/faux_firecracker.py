@@ -63,11 +63,7 @@ async def _api(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> No
                     _stop()
                 return
         data = json.dumps(answer).encode()
-        writer.write(
-            f"HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n"
-            f"Content-Length: {len(data)}\r\n\r\n".encode()
-            + data
-        )
+        writer.write(f"HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {len(data)}\r\n\r\n".encode() + data)
         await writer.drain()
     finally:
         writer.close()
@@ -88,13 +84,7 @@ async def _vsock(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, boo
     port = int(os.environ.get("FAUX_PORT", "5100"))
     try:
         line = (await reader.readline()).decode().split()
-        if (
-            len(line) != 2
-            or line[0] != "CONNECT"
-            or int(line[1]) != port
-            or not target
-            or asyncio.get_running_loop().time() < booted
-        ):
+        if len(line) != 2 or line[0] != "CONNECT" or int(line[1]) != port or not target or asyncio.get_running_loop().time() < booted:
             return
         try:
             inner_reader, inner_writer = await asyncio.open_unix_connection(target)

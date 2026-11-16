@@ -80,9 +80,7 @@ ON CONFLICT(key) DO UPDATE SET
 WHERE idempotency.expires_at < ?
 """
 
-_COMPLETE: Final = (
-    "UPDATE idempotency SET status = 'completed', result = ?, expires_at = ? WHERE key = ?"
-)
+_COMPLETE: Final = "UPDATE idempotency SET status = 'completed', result = ?, expires_at = ? WHERE key = ?"
 # Avec un jeton de détenteur : la même instruction, bornée à la ligne encore à lui.
 _COMPLETE_HELD: Final = _COMPLETE + " AND holder = ?"
 
@@ -98,9 +96,7 @@ class SqliteIdempotency:
     réservations, jamais.
     """
 
-    def __init__(
-        self, path: str | os.PathLike[str], *, retention: float = DEFAULT_RETENTION
-    ) -> None:
+    def __init__(self, path: str | os.PathLike[str], *, retention: float = DEFAULT_RETENTION) -> None:
         self.path = Path(path)
         self.retention = retention
         self._connection: aiosqlite.Connection | None = None
@@ -137,8 +133,7 @@ class SqliteIdempotency:
         async with self._lock:
             connection = await self._connect()
             async with connection.execute(
-                "SELECT status, result, expires_at FROM idempotency WHERE key = ?"
-                " AND (status = 'in_progress' OR expires_at > ?)",
+                "SELECT status, result, expires_at FROM idempotency WHERE key = ? AND (status = 'in_progress' OR expires_at > ?)",
                 (key, datetime.now(UTC).isoformat()),
             ) as cursor:
                 row = await cursor.fetchone()
@@ -152,9 +147,7 @@ class SqliteIdempotency:
             expires_at=datetime.fromisoformat(expires_at),
         )
 
-    async def reserve(
-        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
-    ) -> bool:
+    async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
         now = datetime.now(UTC)
         values: tuple[Any, ...] = (
             key,
@@ -169,9 +162,7 @@ class SqliteIdempotency:
             async with connection.execute(_RESERVE, values) as cursor:
                 return cursor.rowcount == 1
 
-    async def complete(
-        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
-    ) -> None:
+    async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=self.retention if ttl is None else ttl)
         payload = json.dumps(recordable(result), ensure_ascii=False)

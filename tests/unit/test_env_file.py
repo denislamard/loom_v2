@@ -55,9 +55,7 @@ def test_the_env_file_next_to_the_config_is_read(tmp_path: Path) -> None:
     environ: dict[str, str] = {}
     report = load_env_file(config, environ=environ)
     assert environ == {"LOOM_ESSAI_CLE": SECRET}
-    assert report == EnvFileReport(
-        path=(tmp_path / ".env").resolve(), source="défaut", found=True, loaded=("LOOM_ESSAI_CLE",)
-    )
+    assert report == EnvFileReport(path=(tmp_path / ".env").resolve(), source="défaut", found=True, loaded=("LOOM_ESSAI_CLE",))
 
 
 def test_without_a_file_nothing_changes(tmp_path: Path) -> None:
@@ -68,9 +66,7 @@ def test_without_a_file_nothing_changes(tmp_path: Path) -> None:
     assert report.describe() == f"aucun ({(tmp_path / '.env').resolve()})"
 
 
-def test_neither_the_current_folder_nor_a_parent_is_searched(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_neither_the_current_folder_nor_a_parent_is_searched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un projet rangé sous un dépôt n'hérite pas des clés de sa racine."""
     write(tmp_path / "depot" / ".env", "LOOM_ESSAI_RACINE=1\n")
     config = projet(tmp_path / "depot" / "examples" / "projet")
@@ -81,9 +77,7 @@ def test_neither_the_current_folder_nor_a_parent_is_searched(
     assert environ == {}
 
 
-def test_without_a_config_no_env_file_is_looked_for(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_without_a_config_no_env_file_is_looked_for(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Chercher à côté d'un loom.yaml absent, ce serait lire le .env du dossier courant."""
     write(tmp_path / ".env", "LOOM_ESSAI_A=1\n")
     environ: dict[str, str] = {}
@@ -143,11 +137,7 @@ def test_the_file_is_read_as_written(tmp_path: Path) -> None:
     """Guillemets et ``export`` compris, commentaires sautés, ``${…}`` jamais remplacé."""
     write(
         tmp_path / ".env",
-        "# clés du projet\n"
-        'export LOOM_ESSAI_A="deux mots"   # commentaire\n'
-        "LOOM_ESSAI_B='${LOOM_ESSAI_A} tel quel'\n"
-        "LOOM_ESSAI_C=\n"
-        "LOOM_ESSAI_SANS_VALEUR\n",
+        "# clés du projet\nexport LOOM_ESSAI_A=\"deux mots\"   # commentaire\nLOOM_ESSAI_B='${LOOM_ESSAI_A} tel quel'\nLOOM_ESSAI_C=\nLOOM_ESSAI_SANS_VALEUR\n",
     )
     environ: dict[str, str] = {}
     load_env_file(projet(tmp_path), environ=environ)
@@ -171,9 +161,7 @@ def test_an_unreadable_line_names_its_number_never_its_content(tmp_path: Path) -
 # --- La configuration -------------------------------------------------------------
 
 
-def test_the_loaded_config_carries_env_file_as_an_absolute_path(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+def test_the_loaded_config_carries_env_file_as_an_absolute_path(demo: ConfigFactory, tmp_path: Path) -> None:
     config = load_config(demo(env_file="../secrets/loom.env"))
     assert config.env_file == (tmp_path.parent / "secrets" / "loom.env").resolve()
     assert load_config(demo()).env_file is None
@@ -189,9 +177,7 @@ def test_env_file_is_refused_in_any_profile(demo: ConfigFactory) -> None:
 # --- La ligne de commande ---------------------------------------------------------
 
 
-def test_the_file_comes_before_the_config_and_its_profile(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_file_comes_before_the_config_and_its_profile(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(PROFILE_ENV, raising=False)
     config = demo()
     write(config.parent / ".env", f"LOOM_PROFILE=dev\nLOOM_ESSAI_CLE={SECRET}\n")
@@ -203,9 +189,7 @@ def test_the_file_comes_before_the_config_and_its_profile(
     assert SECRET not in seen.out + seen.err
 
 
-def test_a_key_from_the_file_mounts_a_real_model(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_key_from_the_file_mounts_a_real_model(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     pytest.importorskip("anthropic")
     reel = {"id": "REEL", "sdk": "anthropic", "model": "claude-x", "api_key_env": "LOOM_ESSAI_CLE"}
     config = demo(
@@ -229,9 +213,7 @@ def test_no_env_file_reads_nothing(demo: ConfigFactory, capsys: pytest.CaptureFi
     assert "LOOM_ESSAI_A" not in os.environ
 
 
-def test_the_env_file_option_replaces_the_default(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_env_file_option_replaces_the_default(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     config = demo()
     write(config.parent / ".env", "LOOM_ESSAI_VOISIN=1\n")
     autre = write(tmp_path / "secrets" / "autre.env", "LOOM_ESSAI_AUTRE=1\n")
@@ -248,17 +230,13 @@ def test_the_two_options_together_are_refused(demo: ConfigFactory) -> None:
     assert raised.value.code == 2
 
 
-def test_a_missing_file_asked_for_stops_the_command(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_missing_file_asked_for_stops_the_command(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     absent = tmp_path / "absent.env"
     assert main(["--config", str(demo()), "--env-file", str(absent), "validate"]) == 2
     assert "introuvable (--env-file)" in capsys.readouterr().err
 
 
-def test_in_prod_variables_from_the_file_are_a_warning(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_in_prod_variables_from_the_file_are_a_warning(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     config = demo()
     write(config.parent / ".env", f"LOOM_ESSAI_CLE={SECRET}\n")
     assert main(["--config", str(config), "--profile", "prod", "validate"]) == 0

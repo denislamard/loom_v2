@@ -71,13 +71,8 @@ MAIN: list[dict[str, Any]] = [
     {"tool_calls": [{"name": "chercher_devis", "arguments": {"numero": "D-2026-042"}}]},
     {"tool_calls": [{"name": "rediger_relance", "arguments": {"ton": "cordial"}}]},
     {
-        "tool_calls": [
-            {"name": "rediger_relance", "arguments": {"ton": "cordial", "consignes": CONSIGNES}}
-        ],
-        "forced": (
-            "Relance du devis D-2026-042 non rédigée : budget du run atteint. "
-            "À reprendre à la main."
-        ),
+        "tool_calls": [{"name": "rediger_relance", "arguments": {"ton": "cordial", "consignes": CONSIGNES}}],
+        "forced": ("Relance du devis D-2026-042 non rédigée : budget du run atteint. À reprendre à la main."),
     },
 ]
 # Le rôle simulé : la promesse inventée, deux fois (appel, puis réparation) ;
@@ -94,10 +89,7 @@ def describe(event: Event, progress: Progress) -> str | None:
     if isinstance(event.payload, ModelResponded):
         payload = event.payload
         usage = payload.usage
-        return (
-            f"· modèle [{event.role}] {payload.model_id} · "
-            f"{usage.input_tokens}/{usage.output_tokens} tokens · {payload.cost_usd:.5f} $"
-        )
+        return f"· modèle [{event.role}] {payload.model_id} · {usage.input_tokens}/{usage.output_tokens} tokens · {payload.cost_usd:.5f} $"
     return progress.line(event)
 
 
@@ -109,24 +101,14 @@ def adjusted(config: LoomConfig, agent: str, args: argparse.Namespace) -> LoomCo
 
     models = config.models
     if not args.reel:
-        models = tuple(
-            script(m, MAIN)
-            if m.id == "FAKE_MAIN"
-            else script(m, ROLE)
-            if m.id == "FAKE_ROLE"
-            else m
-            for m in config.models
-        )
+        models = tuple(script(m, MAIN) if m.id == "FAKE_MAIN" else script(m, ROLE) if m.id == "FAKE_ROLE" else m for m in config.models)
     run: dict[str, float | int] = {}
     if args.plafond is not None:
         run["max_cost"] = args.plafond
     if args.appels is not None:
         run["max_calls"] = args.appels
     budget = Budgets.model_validate({"run": run, "on_exceed": args.action})
-    agents: list[AgentSpec] = [
-        spec.model_copy(update={"budget": budget}) if spec.name == agent else spec
-        for spec in config.agents
-    ]
+    agents: list[AgentSpec] = [spec.model_copy(update={"budget": budget}) if spec.name == agent else spec for spec in config.agents]
     return config.model_copy(update={"models": models, "agents": tuple(agents)})
 
 
@@ -157,9 +139,7 @@ async def main(argv: list[str]) -> int:
 
     async with Loom(config) as loom:
         print(f"> {args.question}")
-        limits = ", ".join(
-            f"{name} {value:g}" for name, value in budgets.run.model_dump().items() if value
-        )
+        limits = ", ".join(f"{name} {value:g}" for name, value in budgets.run.model_dump().items() if value)
         print(f"  budget du run : {limits} ; {budgets.on_exceed}\n")
         try:
             result = await loom.run(agent, args.question, user="dev")

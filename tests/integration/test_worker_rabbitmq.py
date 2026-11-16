@@ -203,9 +203,7 @@ async def test_a_message_that_is_not_a_job_is_dropped_not_replayed(rabbitmq_url:
         connection = await aio_pika.connect_robust(rabbitmq_url)
         try:
             channel = await connection.channel()
-            await channel.default_exchange.publish(
-                aio_pika.Message(b"ceci n'est pas un travail"), routing_key=WORK_QUEUE
-            )
+            await channel.default_exchange.publish(aio_pika.Message(b"ceci n'est pas un travail"), routing_key=WORK_QUEUE)
         finally:
             await connection.close()
         task = asyncio.create_task(queue.serve())
@@ -301,9 +299,7 @@ async def _remember(seen: list[Job], job: Job) -> None:
 # --- Le bail ------------------------------------------------------------------
 
 
-async def test_a_job_whose_run_is_held_comes_back_after_the_lease(
-    rabbitmq_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_job_whose_run_is_held_comes_back_after_the_lease(rabbitmq_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Le travail redélivré arrive trop tôt : il est reposé pour l'après-bail.
 
     C'est le mécanisme qui fait qu'un run passe d'un worker mort à un vivant.
@@ -321,9 +317,7 @@ async def test_a_job_whose_run_is_held_comes_back_after_the_lease(
         # courtier, et le bail du mort le fera attendre.
         assert await loom.recover() == (journal.run_id,)
         task = asyncio.create_task(loom.work())
-        finished = await waited(
-            lambda: "run.completed" in types_at(tmp_path / "data"), limit=bail + 10.0
-        )
+        finished = await waited(lambda: "run.completed" in types_at(tmp_path / "data"), limit=bail + 10.0)
         await loom.stop_work()
         await task
     assert finished, "le run n'a jamais été mené au bout"
@@ -337,9 +331,7 @@ async def _held(store_path: Path, *, worker: str, seconds: float) -> RunJournal:
     journal.start(QUESTION)
     drafts: list[EventDraft] = [
         *journal.take(),
-        journal.scope.draft(
-            RunClaimed(worker_id=worker, lease_until=datetime.now(UTC) + timedelta(seconds=seconds))
-        ),
+        journal.scope.draft(RunClaimed(worker_id=worker, lease_until=datetime.now(UTC) + timedelta(seconds=seconds))),
     ]
     store = JsonlEventStore(store_path)
     try:
@@ -373,9 +365,7 @@ async def _read(root: Path) -> list[Event]:
 # --- La scène en vrai ---------------------------------------------------------
 
 
-def test_a_killed_worker_hands_its_run_over(
-    rabbitmq_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_killed_worker_hands_its_run_over(rabbitmq_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un `loom worker` tué en plein appel d'outil, un autre qui mène le run au bout.
 
     C'est le scénario du jalon. Deux chemins y mènent — le courtier redélivre

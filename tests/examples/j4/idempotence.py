@@ -167,9 +167,7 @@ async def envoyer_metier(destinataire: str, devis: str, objet: str = "", corps: 
 
 @idempotent(key=lambda a: DEVIS_KEY.format(devis=a["devis"]))
 @tool(name=ENVOI, side_effects="irreversible", on_unknown="pause")
-async def envoyer_metier_a_verifier(
-    destinataire: str, devis: str, objet: str = "", corps: str = ""
-) -> str:
+async def envoyer_metier_a_verifier(destinataire: str, devis: str, objet: str = "", corps: str = "") -> str:
     """Envoie l'e-mail de relance du devis au client. Irréversible : parti, il est parti."""
     return _poster(destinataire, objet)
 
@@ -198,10 +196,7 @@ async def relecture(subject: AfterTool) -> Decision:
 # la tire du résultat de l'appel ; ici c'est le script qui la porte, le
 # ``with_text`` du modèle simulé ne voyant que la demande.
 FINS = {
-    "etat_inconnu": (
-        "Je n'ai pas pu confirmer l'envoi de la relance du devis D-2026-042 : "
-        "l'appel a été interrompu, et je préfère ne pas risquer un doublon."
-    )
+    "etat_inconnu": ("Je n'ai pas pu confirmer l'envoi de la relance du devis D-2026-042 : l'appel a été interrompu, et je préfère ne pas risquer un doublon.")
 }
 FIN = "La relance du devis D-2026-042 est partie à Mme Martin."
 
@@ -255,13 +250,8 @@ def adjusted(config: LoomConfig, nom: str, *, reel: bool) -> tuple[LoomConfig, s
     consigne = CONSIGNE_DOUBLE if double else CONSIGNE_METIER if nom in PARTAGE else CONSIGNE_ENVOI
     base = "relance_reel" if reel else "relance"
     spec = next(a for a in config.agents if a.name == base)
-    main = spec.main.model_copy(
-        update={"system": prompt_text(spec.main) + consigne, "system_file": None}
-    )
-    roles = tuple(
-        role.model_copy(update={"terminal": False}) if role.name == "rediger_relance" else role
-        for role in spec.roles
-    )
+    main = spec.main.model_copy(update={"system": prompt_text(spec.main) + consigne, "system_file": None})
+    roles = tuple(role.model_copy(update={"terminal": False}) if role.name == "rediger_relance" else role for role in spec.roles)
     lente = _lente(spec)
     agent = spec.model_copy(
         update={
@@ -279,27 +269,14 @@ def adjusted(config: LoomConfig, nom: str, *, reel: bool) -> tuple[LoomConfig, s
         # clé métier. Ces quatre cas-ci montrent l'autre : celui du journal,
         # qui n'a pas de stockage propre. C'est le seul réglage que l'exemple
         # change — le fichier de la base, lui, est nommé dans la config.
-        storage = storage.model_copy(
-            update={
-                "idempotency": storage.idempotency.model_copy(
-                    update={"backend": "journal", "path": None}
-                )
-            }
-        )
+        storage = storage.model_copy(update={"idempotency": storage.idempotency.model_copy(update={"backend": "journal", "path": None})})
     models = list(config.models)
     if not reel:
 
         def script(model: ModelSpec, replies: list[dict[str, Any]]) -> ModelSpec:
             return model.model_copy(update={"params": {**model.params, "script": replies}})
 
-        models = [
-            script(m, main_script(nom, double=double))
-            if m.id == "FAKE_MAIN"
-            else script(m, ROLE)
-            if m.id == "FAKE_ROLE"
-            else m
-            for m in models
-        ]
+        models = [script(m, main_script(nom, double=double)) if m.id == "FAKE_MAIN" else script(m, ROLE) if m.id == "FAKE_ROLE" else m for m in models]
     return (
         config.model_copy(update={"models": tuple(models), "agents": agents, "storage": storage}),
         base,
@@ -312,9 +289,7 @@ def _envoi(spec: Any) -> Any:
     Ni ``idempotent`` ni ``on_unknown`` ne sont posés ici : c'est l'outil qui
     les déclare — décorer, c'est déclarer.
     """
-    return spec.tools[0].model_copy(
-        update={"python": ENVOI, "side_effects": "irreversible", "idempotent": None}
-    )
+    return spec.tools[0].model_copy(update={"python": ENVOI, "side_effects": "irreversible", "idempotent": None})
 
 
 def _lente(spec: Any) -> Any:
@@ -322,9 +297,7 @@ def _lente(spec: Any) -> Any:
     modele = next(iter(spec.policies), None)
     if modele is None:
         raise ConfigError("l'agent de `relance/` devrait porter au moins une politique")
-    return modele.model_copy(
-        update={"hook": RELECTURE, "name": RELECTURE, "points": None, "timeout": None}
-    )
+    return modele.model_copy(update={"hook": RELECTURE, "name": RELECTURE, "points": None, "timeout": None})
 
 
 def outcome(result: RunResult) -> str:
@@ -341,13 +314,7 @@ def compte(events: list[Event], kind: str) -> int:
 
 def envois(events: list[Event]) -> tuple[int, int]:
     """Appels de l'outil d'envoi, et effets mémorisés."""
-    appels = len(
-        [
-            e
-            for e in events
-            if isinstance(payload := e.payload, ToolCalled) and payload.tool_name == ENVOI
-        ]
-    )
+    appels = len([e for e in events if isinstance(payload := e.payload, ToolCalled) and payload.tool_name == ENVOI])
     return appels, compte(events, "idempotency.recorded")
 
 
@@ -358,11 +325,7 @@ def dedoublonnes(events: list[Event]) -> int:
 
 def finis(events: list[Event]) -> list[ToolCompleted]:
     """Résultats de l'outil d'envoi écrits au journal."""
-    return [
-        payload
-        for e in events
-        if isinstance(payload := e.payload, ToolCompleted) and e.facets.get("tool_name") == ENVOI
-    ]
+    return [payload for e in events if isinstance(payload := e.payload, ToolCompleted) and e.facets.get("tool_name") == ENVOI]
 
 
 def dernier_resultat(events: list[Event]) -> str:
@@ -392,9 +355,7 @@ async def _parti(loom: Loom, run_id: RunId, session: SessionId, *, memorise: boo
 async def _interrompu(loom: Loom, agent: str, session: SessionId, *, memorise: bool) -> RunId:
     """Lance le run et abandonne le pilote dès que la relance est partie."""
     run_id = new_run_id()
-    task = asyncio.create_task(
-        loom.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev")
-    )
+    task = asyncio.create_task(loom.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev"))
     await _parti(loom, run_id, session, memorise=memorise)
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
@@ -409,10 +370,7 @@ async def rejoue(loom: Loom, agent: str, session: SessionId) -> None:
     appels, memorises = envois(events)
     print(f"  pilote tué : {appels} appel(s) d'envoi, {memorises} effet(s) mémorisé(s)")
     print(f"  boîte      : {len(BOITE)} relance(s) partie(s)")
-    print(
-        f"  journal    : {len(finis(events))} résultat(s) d'envoi écrit(s) — le pilote"
-        " est mort avant"
-    )
+    print(f"  journal    : {len(finis(events))} résultat(s) d'envoi écrit(s) — le pilote est mort avant")
 
     repris = await loom.resume(run_id, session_id=session, user="dev")
     events = [e for e in await loom.export_session(session) if e.run_id == run_id]
@@ -456,10 +414,7 @@ async def humain(loom: Loom, agent: str, session: SessionId) -> None:
     events = [e for e in await loom.export_session(session) if e.run_id == run_id]
     appels, _ = envois(events)
     print(f"  reprise    : {outcome(fin)} — {appels} appel(s) d'envoi")
-    print(
-        f"  boîte      : {len(BOITE)} relance(s) partie(s) — le doublon est un choix,"
-        " pas un accident"
-    )
+    print(f"  boîte      : {len(BOITE)} relance(s) partie(s) — le doublon est un choix, pas un accident")
     print(f"  réponse    : {fin.text.splitlines()[0][:70] if fin.text else '—'}\n")
 
 
@@ -506,10 +461,7 @@ async def cle_metier(loom: Loom, agent: str, session: SessionId) -> None:
     events = [e for e in await loom.export_session(suivante) if e.run_id == second.run_id]
     appels, _ = envois(events)
     print(f"  run 2      : {outcome(second)} — {appels} appel(s) d'envoi, dans une autre session")
-    print(
-        f"  journal    : {dedoublonnes(events)} idempotency.reused — "
-        "le run dit pourquoi l'appel n'a rien fait"
-    )
+    print(f"  journal    : {dedoublonnes(events)} idempotency.reused — le run dit pourquoi l'appel n'a rien fait")
     print(f"  boîte      : {len(BOITE)} relance(s) partie(s) — la clé du devis a tenu")
     print(f"  résultat   : {dernier_resultat(events)}")
     print(f"  réponse    : {second.text.splitlines()[0][:70] if second.text else '—'}\n")

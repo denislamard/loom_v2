@@ -94,14 +94,10 @@ def span_id(value: str) -> int:
     return number or 1
 
 
-def readable(
-    record: SpanRecord, resource: Resource, *, max_length: int | None = None
-) -> ReadableSpan:
+def readable(record: SpanRecord, resource: Resource, *, max_length: int | None = None) -> ReadableSpan:
     """Un span de loom, en span OTel prêt à exporter ; ses textes coupés à ``max_length``."""
     trace = trace_id(record.trace_id, str(record.attributes.get("loom.tenant_id", "")))
-    context = SpanContext(
-        trace, span_id(record.span_id), is_remote=False, trace_flags=TraceFlags(TraceFlags.SAMPLED)
-    )
+    context = SpanContext(trace, span_id(record.span_id), is_remote=False, trace_flags=TraceFlags(TraceFlags.SAMPLED))
     parent = (
         None
         if record.parent_span_id is None
@@ -112,21 +108,14 @@ def readable(
             trace_flags=TraceFlags(TraceFlags.SAMPLED),
         )
     )
-    status = (
-        Status(StatusCode.ERROR, record.error)
-        if record.error is not None
-        else Status(StatusCode.OK)
-    )
+    status = Status(StatusCode.ERROR, record.error) if record.error is not None else Status(StatusCode.OK)
     return ReadableSpan(
         name=record.name,
         context=context,
         parent=parent,
         resource=resource,
         attributes=_bounded(record.attributes, max_length),
-        events=[
-            OtelEvent(event.name, _bounded(event.attributes, max_length), _nanos(event.at))
-            for event in record.events
-        ],
+        events=[OtelEvent(event.name, _bounded(event.attributes, max_length), _nanos(event.at)) for event in record.events],
         kind=SpanKind.CLIENT if record.kind == "chat" else SpanKind.INTERNAL,
         status=status,
         start_time=_nanos(record.start),
@@ -173,11 +162,7 @@ def _hold_sdk_logs() -> None:
     est posé sur chacun de ceux que les modules d'export ont créés.
     """
     for name, found in list(logging.root.manager.loggerDict.items()):
-        if (
-            name.startswith(_SDK_EXPORTERS)
-            and isinstance(found, logging.Logger)
-            and _held not in found.filters
-        ):
+        if name.startswith(_SDK_EXPORTERS) and isinstance(found, logging.Logger) and _held not in found.filters:
             found.addFilter(_held)
 
 
@@ -208,13 +193,7 @@ class Reported(SpanExporter):
             for record in box:
                 logger.debug("Collecteur %s : %s", self._name, record.getMessage())
             return result
-        runs = sorted(
-            {
-                str(span.attributes["loom.run_id"])
-                for span in spans
-                if span.attributes is not None and "loom.run_id" in span.attributes
-            }
-        )
+        runs = sorted({str(span.attributes["loom.run_id"]) for span in spans if span.attributes is not None and "loom.run_id" in span.attributes})
         logger.warning(
             "Collecteur %s : %d span(s) non remis (run %s) — %s",
             self._name,
@@ -293,9 +272,7 @@ class OtelSpanSink:
                 OTLPSpanExporter as HttpExporter,
             )
 
-            exporter = HttpExporter(
-                endpoint=traces_url(endpoint), headers=dict(headers or {}), timeout=timeout
-            )
+            exporter = HttpExporter(endpoint=traces_url(endpoint), headers=dict(headers or {}), timeout=timeout)
         return cls(exporter, service_name=service_name, name=f"otel {endpoint}")
 
     @property
@@ -340,9 +317,7 @@ def _length_limit() -> int:
     return limit if limit > 0 else MAX_VALUE_LENGTH
 
 
-def _bounded(
-    attributes: Mapping[str, AttributeValue], max_length: int | None
-) -> dict[str, AttributeValue]:
+def _bounded(attributes: Mapping[str, AttributeValue], max_length: int | None) -> dict[str, AttributeValue]:
     """Les attributs, chaque texte trop long coupé en le disant."""
     if max_length is None:
         return dict(attributes)

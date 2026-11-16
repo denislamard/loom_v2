@@ -58,9 +58,7 @@ def checked_skill(text: str) -> str:
     if not stripped:
         raise ValueError("skill vide")
     if "{{" in stripped:
-        raise ValueError(
-            "les variables {{ }} ne sont pas rendues dans un skill — écrire le texte voulu"
-        )
+        raise ValueError("les variables {{ }} ne sont pas rendues dans un skill — écrire le texte voulu")
     return stripped
 
 
@@ -135,9 +133,7 @@ def recordable(result: object) -> JsonValue:
     encoded = json.dumps(result, ensure_ascii=False)
     if len(encoded) > MAX_RECORDED:
         raise ResultTooLarge(
-            f"Résultat de {len(encoded)} caractères non mémorisé : "
-            f"la limite est de {MAX_RECORDED}. Rangez-le dans un artefact et "
-            f"mémorisez sa référence."
+            f"Résultat de {len(encoded)} caractères non mémorisé : la limite est de {MAX_RECORDED}. Rangez-le dans un artefact et mémorisez sa référence."
         )
     # json.dumps a déjà prouvé que la valeur est du JSON.
     return result  # pyright: ignore[reportReturnType]
@@ -264,15 +260,8 @@ class ToolSpec(ToolDefinition):
         if overrides.skill_file is not None:
             # Seul le chargement lit le fichier. Recopié tel quel, le champ
             # serait posé sur la spec sans y exister, et le skill perdu sans un mot.
-            raise ValueError(
-                f"skill_file {overrides.skill_file} non lu : un skill se lit au chargement "
-                "(load_config)"
-            )
-        changes = {
-            name: value
-            for name in type(overrides).model_fields
-            if name not in _NOT_COPIED and (value := getattr(overrides, name)) is not None
-        }
+            raise ValueError(f"skill_file {overrides.skill_file} non lu : un skill se lit au chargement (load_config)")
+        changes = {name: value for name in type(overrides).model_fields if name not in _NOT_COPIED and (value := getattr(overrides, name)) is not None}
         if overrides.skill is not None:
             # ``model_copy`` ne valide rien : le contrôle se fait là où le skill sert.
             changes["skill"] = checked_skill(overrides.skill)
@@ -282,11 +271,7 @@ class ToolSpec(ToolDefinition):
         """Ce que voit le modèle : la description, le skill, puis la mention d'un outil terminal."""
         description = self.description
         if self.skill:
-            description = (
-                f"{description}{SKILL_SEPARATOR}{self.skill}" if description else self.skill
-            )
+            description = f"{description}{SKILL_SEPARATOR}{self.skill}" if description else self.skill
         if self.terminal:
             description = f"{description}\n\n{TERMINAL_HINT}" if description else TERMINAL_HINT
-        return ToolDefinition(
-            name=self.name, description=description, input_schema=self.input_schema
-        )
+        return ToolDefinition(name=self.name, description=description, input_schema=self.input_schema)

@@ -102,30 +102,16 @@ def adjusted(config: LoomConfig, args: argparse.Namespace) -> LoomConfig:
 
     models = list(config.models)
     if not args.reel:
-        models = [
-            script(m, MAIN)
-            if m.id == "FAKE_MAIN"
-            else script(m, ROLE)
-            if m.id == "FAKE_ROLE"
-            else m
-            for m in models
-        ]
+        models = [script(m, MAIN) if m.id == "FAKE_MAIN" else script(m, ROLE) if m.id == "FAKE_ROLE" else m for m in models]
     if args.filet:
         # Le modèle de résumé tombe en panne : la compaction ne peut plus rien.
         panne = [{"error": "invalid_request"}]
         models = [script(m, panne) if m.id in {"FAKE_RESUME", "HAIKU"} else m for m in models]
-        models = [
-            m.model_copy(update={"sdk": "fake", "model": "fake-panne"})
-            if m.id == "HAIKU" and args.reel
-            else m
-            for m in models
-        ]
+        models = [m.model_copy(update={"sdk": "fake", "model": "fake-panne"}) if m.id == "HAIKU" and args.reel else m for m in models]
     update: dict[str, Any] = {"model": "HAIKU"} if args.reel else {}
     if args.filet:
         update["hard_tokens"] = compaction.over_tokens + 1
-    sessions = config.sessions.model_copy(
-        update={"compaction": compaction.model_copy(update=update)}
-    )
+    sessions = config.sessions.model_copy(update={"compaction": compaction.model_copy(update=update)})
     return config.model_copy(update={"models": tuple(models), "sessions": sessions})
 
 
@@ -134,11 +120,7 @@ def markers(events: list[Event]) -> list[Event]:
 
 
 def checks(events: list[Event]) -> list[GuardChecked]:
-    return [
-        payload
-        for event in events
-        if isinstance(payload := event.payload, GuardChecked) and payload.guard == "fidelity"
-    ]
+    return [payload for event in events if isinstance(payload := event.payload, GuardChecked) and payload.guard == "fidelity"]
 
 
 class Controle:
@@ -175,9 +157,7 @@ class Controle:
         return False
 
 
-def expected(
-    controle: Controle, events: list[Event], tours: list[bool], args: argparse.Namespace
-) -> None:
+def expected(controle: Controle, events: list[Event], tours: list[bool], args: argparse.Namespace) -> None:
     """Ce que l'exemple annonçait, comparé à ce que le journal a gardé."""
     compacted = [e.payload for e in events if isinstance(e.payload, SessionCompacted)]
     trimmed = [e.payload for e in events if isinstance(e.payload, SessionTrimmed)]
@@ -192,9 +172,7 @@ def expected(
         controle.saute("au moins une compaction", "dépend des modèles réels")
         return
     if args.tours < SEUIL_TOURS:
-        controle.saute(
-            "au moins une compaction", f"moins de {SEUIL_TOURS} tours : seuil non atteint"
-        )
+        controle.saute("au moins une compaction", f"moins de {SEUIL_TOURS} tours : seuil non atteint")
         return
     controle.tient("au moins une compaction est écrite", len(compacted) >= 1)
     # Une liste vide ne réduit rien : sans compaction, « chacune réduit » ne vaut rien.
@@ -208,9 +186,7 @@ async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Compaction d'une session trop longue")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--tours", type=int, default=4, help="tours de conversation")
-    parser.add_argument(
-        "--filet", action="store_true", help="met le résumé en panne : coupe de sécurité"
-    )
+    parser.add_argument("--filet", action="store_true", help="met le résumé en panne : coupe de sécurité")
     parser.add_argument("--session", default=None, help="session à rejoindre ou à créer")
     args = parser.parse_args(argv)
     agent = "relance_reel" if args.reel else "relance"
@@ -262,10 +238,7 @@ async def main(argv: list[str]) -> int:
                 f"{payload.cost_usd:.5f} $"
             )
         elif isinstance(payload, SessionTrimmed):
-            print(
-                f"  · seq {event.seq} session.trimmed — couvre jusqu'à {payload.up_to_seq}, "
-                f"{payload.dropped} message(s) retiré(s) : {payload.reason}"
-            )
+            print(f"  · seq {event.seq} session.trimmed — couvre jusqu'à {payload.up_to_seq}, {payload.dropped} message(s) retiré(s) : {payload.reason}")
         else:
             print(f"  · seq {event.seq} {event.type}")
 

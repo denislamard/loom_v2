@@ -92,18 +92,14 @@ SCOPE = KeyScope(tenant_id=DEFAULT_TENANT, session_id=SESSION)
 
 def spec(name: str, **options: object) -> ToolSpec:
     schema: dict[str, JsonValue] = {"type": "object", "properties": {}}
-    return ToolSpec.model_validate(
-        {"name": name, "description": name, "kind": "python", "input_schema": schema, **options}
-    )
+    return ToolSpec.model_validate({"name": name, "description": name, "kind": "python", "input_schema": schema, **options})
 
 
 def awaiting(*calls: PendingCall) -> RunState:
     journal = RunJournal(agent="demo", session_id=SESSION)
     journal.start("?", context=CallerContext(tenant_id=DEFAULT_TENANT, user_id="u1"))
     events = [draft.to_event(seq) for seq, draft in enumerate(journal.take(), start=1)]
-    return fold(events, journal.run_id).model_copy(
-        update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls}
-    )
+    return fold(events, journal.run_id).model_copy(update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls})
 
 
 def call(call_id: str, name: str, *, started: bool = False, **arguments: JsonValue) -> PendingCall:
@@ -460,9 +456,7 @@ async def test_sqlite_forget_purges_the_database_and_the_wal(tmp_path: Path, whe
 
 
 @pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
-async def test_sqlite_forget_still_succeeds_when_a_reader_keeps_the_wal(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_sqlite_forget_still_succeeds_when_a_reader_keeps_the_wal(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Un lecteur d'un autre process bloque le point de reprise : ``forget`` réussit et prévient."""
     import logging
     import sqlite3
@@ -663,9 +657,7 @@ async def _until_gone(client: Any, *keys: str) -> None:
 
 
 @pytest.mark.integration
-async def test_a_redis_key_taken_back_by_another_session_is_not_forgotten_with_the_old_one(
-    redis_url: str, redis_client: Any
-) -> None:
+async def test_a_redis_key_taken_back_by_another_session_is_not_forgotten_with_the_old_one(redis_url: str, redis_client: Any) -> None:
     """Expirée, puis reprise par une autre session : elle reste listée dans l'ancien ensemble,
     mais elle est à la nouvelle, et l'oubli de l'ancienne ne l'emporte pas."""
     store = _redis(redis_url, retention=0.2)
@@ -683,9 +675,7 @@ async def test_a_redis_key_taken_back_by_another_session_is_not_forgotten_with_t
 
 
 @pytest.mark.integration
-async def test_a_shorter_redis_key_does_not_shorten_the_set_of_a_longer_one(
-    redis_url: str, redis_client: Any
-) -> None:
+async def test_a_shorter_redis_key_does_not_shorten_the_set_of_a_longer_one(redis_url: str, redis_client: Any) -> None:
     """Réserver une clé courte après une longue laissait l'ensemble expirer avec la courte."""
     store = _redis(redis_url, retention=0.2)
     await store.reserve("longue", 60, SCOPE)
@@ -698,9 +688,7 @@ async def test_a_shorter_redis_key_does_not_shorten_the_set_of_a_longer_one(
 
 
 @pytest.mark.integration
-async def test_a_redis_result_that_outlives_the_set_extends_it(
-    redis_url: str, redis_client: Any
-) -> None:
+async def test_a_redis_result_that_outlives_the_set_extends_it(redis_url: str, redis_client: Any) -> None:
     """``complete`` rallongeait l'enregistrement sans rallonger l'ensemble qui le nomme."""
     store = _redis(redis_url, retention=0.2)
     await store.reserve("k", 0.1, SCOPE)
@@ -718,9 +706,7 @@ async def test_a_redis_result_that_outlives_the_set_extends_it(
 
 
 @pytest.mark.integration
-async def test_a_completed_redis_record_keeps_its_result_and_its_owner(
-    redis_url: str, redis_client: Any
-) -> None:
+async def test_a_completed_redis_record_keeps_its_result_and_its_owner(redis_url: str, redis_client: Any) -> None:
     """Le script colle le nom de l'ensemble au JSON sans le recoder : ``[]`` reste ``[]``."""
     import json
 
@@ -741,9 +727,7 @@ async def test_a_completed_redis_record_keeps_its_result_and_its_owner(
 
 
 @pytest.mark.integration
-async def test_a_redis_reservation_from_before_the_owner_still_completes(
-    redis_url: str, redis_client: Any
-) -> None:
+async def test_a_redis_reservation_from_before_the_owner_still_completes(redis_url: str, redis_client: Any) -> None:
     """Un enregistrement écrit avant ``owner`` n'a pas d'ensemble à rallonger, et se complète."""
     import json
 
@@ -942,9 +926,7 @@ async def test_a_tool_that_fails_gives_its_key_back() -> None:
 
 
 @pytest.mark.parametrize("error", [RuntimeError("panne"), TimeoutError("connexion")])
-async def test_an_error_raised_by_the_tool_gives_its_key_back(
-    magasin: Magasin, error: Exception
-) -> None:
+async def test_an_error_raised_by_the_tool_gives_its_key_back(magasin: Magasin, error: Exception) -> None:
     """Une exception levée par l'outil rend la clé, un ``TimeoutError`` comme une autre."""
 
     @idempotent
@@ -965,9 +947,7 @@ async def test_an_error_raised_by_the_tool_gives_its_key_back(
     [(60, "déjà en cours"), (-1, "État inconnu")],
     ids=["tenue", "perimee"],
 )
-async def test_a_deadline_from_outside_keeps_the_key_and_the_effect_is_not_redone(
-    magasin: Magasin, reservation: float, reply: str
-) -> None:
+async def test_a_deadline_from_outside_keeps_the_key_and_the_effect_is_not_redone(magasin: Magasin, reservation: float, reply: str) -> None:
     """Délai venu de l'extérieur : on ignore où l'effet en était, il n'est pas refait."""
     effets: list[str] = []
     entre = asyncio.Event()
@@ -1094,9 +1074,7 @@ async def test_the_memorised_result_keeps_its_data() -> None:
 class _Panne(InMemoryIdempotency):
     """Magasin qui accepte les clés, puis tombe en panne au moment d'enregistrer l'effet."""
 
-    async def complete(
-        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
-    ) -> None:
+    async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
         raise ConnectionError("magasin injoignable")
 
 
@@ -1127,9 +1105,7 @@ async def test_the_model_is_not_told_of_a_failure_when_only_the_recording_failed
     assert envois == ["envoi"]
 
 
-async def test_an_oversized_result_is_given_back_and_recorded_in_a_reduced_form(
-    magasin: Magasin, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_an_oversized_result_is_given_back_and_recorded_in_a_reduced_form(magasin: Magasin, caplog: pytest.LogCaptureFixture) -> None:
     envois: list[str] = []
 
     @idempotent
@@ -1137,9 +1113,7 @@ async def test_an_oversized_result_is_given_back_and_recorded_in_a_reduced_form(
     async def exporter() -> ToolOutput:
         """Exporte tout."""
         envois.append("export")
-        return ToolOutput.text("x" * (MAX_RECORDED + 1)).model_copy(
-            update={"artifacts": ("loom://rapport",)}
-        )
+        return ToolOutput.text("x" * (MAX_RECORDED + 1)).model_copy(update={"artifacts": ("loom://rapport",)})
 
     store = magasin()
     ctx = context(store=store)
@@ -1185,9 +1159,7 @@ async def test_the_journal_store_records_a_reduced_form_of_an_oversized_result()
 
 
 @pytest.mark.parametrize("premier", ["echoue", "reussit"])
-async def test_a_stale_holder_leaves_the_key_of_its_successor_alone(
-    magasin: Magasin, premier: str
-) -> None:
+async def test_a_stale_holder_leaves_the_key_of_its_successor_alone(magasin: Magasin, premier: str) -> None:
     """Réservation expirée puis reprise : le premier appel, resté en vie, ne la défait pas."""
     arrivee = [asyncio.Event(), asyncio.Event()]
     depart = [asyncio.Event(), asyncio.Event()]
@@ -1478,9 +1450,7 @@ async def test_a_transfer_approved_then_killed_is_not_made_twice() -> None:
         return Approved(by="l'artisan")
 
     store = InMemoryEventStore()
-    modele = ScriptedModel(
-        tool_call_message(("c1", "virer", {"montant": 500})), Message.assistant("Vérifié.")
-    )
+    modele = ScriptedModel(tool_call_message(("c1", "virer", {"montant": 500})), Message.assistant("Vérifié."))
     spec_modele = ModelSpec(
         id="FAKE",
         sdk="fake",
@@ -1776,9 +1746,7 @@ async def test_forgetting_a_client_spares_the_clients_whose_id_looks_like_it(
 async def test_forgetting_a_session_spares_the_one_whose_ids_join_alike(magasin: Magasin) -> None:
     """``(a, b:s)`` et ``(a:b, s)`` sont deux sessions de deux clients, même mises bout à bout."""
     store = magasin()
-    await store.reserve(
-        "mienne", 60, KeyScope(tenant_id=TenantId("a"), session_id=SessionId("b:s"))
-    )
+    await store.reserve("mienne", 60, KeyScope(tenant_id=TenantId("a"), session_id=SessionId("b:s")))
     await store.reserve("autre", 60, KeyScope(tenant_id=TenantId("a:b"), session_id=SessionId("s")))
     assert await store.forget(TenantId("a"), SessionId("b:s")) == 1
     assert await store.get("mienne") is None
@@ -1878,9 +1846,7 @@ def _accorde(state: RunState, *, lance: bool) -> RunState:
         ApprovalGranted(call_id="c1", tool_name="envoyer", by="l'artisan"),
     ]
     if lance:
-        suite.append(
-            ToolCalled(call_id="c1", tool_name="envoyer", tool_kind="python", arguments={})
-        )
+        suite.append(ToolCalled(call_id="c1", tool_name="envoyer", tool_kind="python", arguments={}))
     return _after(state, *suite)
 
 
@@ -1925,9 +1891,7 @@ async def test_an_approval_asked_after_the_launch_takes_the_stale_reservation_ba
     state = _after(
         state,
         # Comme l'écrit l'exécuteur : la demande porte les arguments de l'appel.
-        ApprovalRequested(
-            call_id="c1", tool_name="envoyer", arguments={"devis": "D-1"}, reason=UNKNOWN_EFFECT
-        ),
+        ApprovalRequested(call_id="c1", tool_name="envoyer", arguments={"devis": "D-1"}, reason=UNKNOWN_EFFECT),
         ApprovalGranted(call_id="c1", tool_name="envoyer", by="l'artisan"),
     )
     executor = ToolExecutor([outil], idempotency=store)  # pyright: ignore[reportArgumentType]
@@ -1950,9 +1914,7 @@ async def test_an_online_approver_decides_after_the_batch(magasin: Magasin) -> N
     executor = ToolExecutor([outil], idempotency=store)  # pyright: ignore[reportArgumentType]
     events = await _run(executor, awaiting(call("c1", "envoyer", devis="D-1")), approver=accorde)
     assert [a.tool_name for a in vues] == ["envoyer"]
-    assert [type(e).__name__ for e in events if isinstance(e, ApprovalGranted)] == [
-        "ApprovalGranted"
-    ]
+    assert [type(e).__name__ for e in events if isinstance(e, ApprovalGranted)] == ["ApprovalGranted"]
     assert not completed(events)
     assert envois == []
 
@@ -2030,9 +1992,7 @@ async def test_the_journal_store_says_it_too() -> None:
     await writer.append(journal.take())
     envois, outil = _compteur()
     executor = ToolExecutor([outil])  # pyright: ignore[reportArgumentType]
-    state = awaiting(call("c1", "envoyer")).model_copy(
-        update={"run_id": journal.run_id, "session_id": SESSION}
-    )
+    state = awaiting(call("c1", "envoyer")).model_copy(update={"run_id": journal.run_id, "session_id": SESSION})
 
     await _run(executor, state, writer=writer, scope=journal.scope)
     repris = state.model_copy(update={"pending_calls": (call("c1", "envoyer", started=True),)})
@@ -2164,11 +2124,7 @@ async def test_the_trace_reaches_the_journal_under_its_call(
 
     assert not [e for e in premiers if isinstance(e.payload, IdempotencyReused)]
     dits = [e for e in seconds if isinstance(e.payload, IdempotencyReused)]
-    appels = [
-        e
-        for e in seconds
-        if isinstance(payload := e.payload, ToolCalled) and payload.tool_name == "envoyer_relance"
-    ]
+    appels = [e for e in seconds if isinstance(payload := e.payload, ToolCalled) and payload.tool_name == "envoyer_relance"]
     assert len(dits) == len(appels) == 1
     payload = dits[0].payload
     assert isinstance(payload, IdempotencyReused)
@@ -2179,9 +2135,7 @@ async def test_the_trace_reaches_the_journal_under_its_call(
 
 
 @pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
-async def test_deleting_a_session_takes_its_keys(
-    atelier: Callable[..., Path], tmp_path: Path
-) -> None:
+async def test_deleting_a_session_takes_its_keys(atelier: Callable[..., Path], tmp_path: Path) -> None:
     """RGPD : une clé métier peut porter une référence client."""
     path = atelier(magasin={"backend": "sqlite", "path": "keys.db"})
     store = _sqlite(tmp_path / "keys.db")
@@ -2199,13 +2153,7 @@ async def test_deleting_a_session_takes_its_keys(
 
 # --- State de la session ----------------------------------------------------------
 
-TICKET = StateRules(
-    {
-        "ticket": StateKeyRule(
-            schema={"type": "string"}, sources={"creer_ticket": StateSourceRule(path="/numero")}
-        )
-    }
-)
+TICKET = StateRules({"ticket": StateKeyRule(schema={"type": "string"}, sources={"creer_ticket": StateSourceRule(path="/numero")})})
 
 
 async def test_a_reused_effect_poses_the_same_state() -> None:
@@ -2246,9 +2194,7 @@ async def test_an_oversized_result_keeps_the_state_its_tool_wrote() -> None:
 
     rules = StateRules(
         {
-            "numero": StateKeyRule(
-                schema={"type": "string"}, sources={"creer_ticket": StateSourceRule(path="/numero")}
-            ),
+            "numero": StateKeyRule(schema={"type": "string"}, sources={"creer_ticket": StateSourceRule(path="/numero")}),
             "ticket": StateKeyRule(schema={"type": "string"}),
         }
     )

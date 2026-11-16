@@ -20,9 +20,5 @@ CLIENTS: list[tuple[int, str, str, str]] = [
 @tool
 def chercher_clients(nom: str = "", ville: str = "") -> dict[str, object]:
     """Cherche des clients par nom ou par ville ; rend id, code, nom et ville de chacun."""
-    rows = [
-        list(client)
-        for client in CLIENTS
-        if (not nom or client[2] == nom) and (not ville or client[3] == ville)
-    ]
+    rows = [list(client) for client in CLIENTS if (not nom or client[2] == nom) and (not ville or client[3] == ville)]
     return {"columns": ["id", "code", "nom", "ville"], "rows": rows, "truncated": False}

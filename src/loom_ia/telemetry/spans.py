@@ -90,9 +90,7 @@ class SpanRecord:
     error: str | None = None
 
 
-def run_spans(
-    events: Sequence[Event], *, content: bool = False, redactor: Redactor | None = None
-) -> list[SpanRecord]:
+def run_spans(events: Sequence[Event], *, content: bool = False, redactor: Redactor | None = None) -> list[SpanRecord]:
     """Les spans d'un run, dans l'ordre où ils s'ouvrent.
 
     ``events`` sont ceux d'un seul run, dans l'ordre du journal. Un sous-run
@@ -145,14 +143,9 @@ def _kind(members: Sequence[Event]) -> SpanKind:
         return "step"
     if any(isinstance(p, ToolCalled | ToolCompleted) for p in payloads):
         return "tool"
-    if any(isinstance(p, JudgeEvaluated) for p in payloads) or any(
-        isinstance(p, ModelResponded) and p.judge is not None for p in payloads
-    ):
+    if any(isinstance(p, JudgeEvaluated) for p in payloads) or any(isinstance(p, ModelResponded) and p.judge is not None for p in payloads):
         return "judge"
-    if all(
-        isinstance(p, ModelResponded | ModelRetried | ModelExchanged | ModelFellBack)
-        for p in payloads
-    ):
+    if all(isinstance(p, ModelResponded | ModelRetried | ModelExchanged | ModelFellBack) for p in payloads):
         return "model"
     return "other"
 

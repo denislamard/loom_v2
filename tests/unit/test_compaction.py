@@ -225,9 +225,7 @@ def test_an_email_at_the_end_of_a_sentence_loses_its_period() -> None:
 
 
 def test_an_email_must_survive() -> None:
-    assert missing("Écrire à a.martin@exemple.fr", "Écrire à la cliente.") == [
-        "a.martin@exemple.fr"
-    ]
+    assert missing("Écrire à a.martin@exemple.fr", "Écrire à la cliente.") == ["a.martin@exemple.fr"]
 
 
 def test_an_email_after_a_long_word_is_found_without_waiting() -> None:
@@ -272,9 +270,7 @@ async def test_only_completed_runs_are_turns_for_keep_last() -> None:
     # Deux tours gardés : les deux derniers qui ont fini, pas les runs qui les suivent.
     up_to = cut(events, keep_last=2)
     assert up_to == started[1] - 1
-    assert [m.text for m in history([e for e in events if e.seq <= up_to]) if m.role == "user"] == [
-        f"{DEVIS} (0)"
-    ]
+    assert [m.text for m in history([e for e in events if e.seq <= up_to]) if m.role == "user"] == [f"{DEVIS} (0)"]
     # Trois tours finis seulement : rien à résumer avec trois à garder.
     assert cut(events, keep_last=3) == 0
     scope = talked(SESSION, "x", "y").scope
@@ -293,9 +289,7 @@ async def test_an_interrupted_summary_does_not_freeze_the_session() -> None:
     store = InMemoryEventStore()
     await filled(store, 2)
     summary = RunJournal(agent=COMPACTION_AGENT, session_id=SESSION)
-    opened = summary.scope.draft(
-        RunStarted(context=CallerContext(tenant_id=DEFAULT_TENANT), kind="compaction")
-    )
+    opened = summary.scope.draft(RunStarted(context=CallerContext(tenant_id=DEFAULT_TENANT), kind="compaction"))
     asked = summary.scope.draft(UserMessage(message=Message.user("Segment à résumer")))
     await store.append([opened, asked], expected_seq=await store.last_seq(DEFAULT_TENANT, SESSION))
     events = await filled(store, 3)
@@ -305,9 +299,7 @@ async def test_an_interrupted_summary_does_not_freeze_the_session() -> None:
     assert boundary(events) == events[-1].seq
     assert cut(events, keep_last=2) == starts[-2] - 1
     # Le run interrompu n'entre pas dans l'historique.
-    assert [m.text for m in history(events) if m.role == "user"] == [
-        f"{DEVIS} ({n})" for n in (0, 1, 0, 1, 2)
-    ]
+    assert [m.text for m in history(events) if m.role == "user"] == [f"{DEVIS} ({n})" for n in (0, 1, 0, 1, 2)]
 
 
 async def test_nothing_is_summarised_twice() -> None:
@@ -362,9 +354,7 @@ async def test_a_trim_drops_what_it_covers() -> None:
     scope = talked(SESSION, "x", "y").scope
     middle = run_starts(events)[-1] - 1
 
-    await store.append(
-        [scope.draft(SessionTrimmed(up_to_seq=middle, dropped=3))], expected_seq=events[-1].seq
-    )
+    await store.append([scope.draft(SessionTrimmed(up_to_seq=middle, dropped=3))], expected_seq=events[-1].seq)
     messages = history(await store.read(DEFAULT_TENANT, SESSION))
 
     # Seul le dernier tour reste, sans rien à la place de l'autre.
@@ -399,9 +389,7 @@ async def test_the_queue_runs_deduplicates_and_drains() -> None:
 
 async def test_an_unknown_job_kind_fails_without_breaking_the_queue() -> None:
     queue = AsyncioTaskQueue({})
-    job_id = await queue.submit(
-        Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION)
-    )
+    job_id = await queue.submit(Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION))
 
     await queue.drain()
 
@@ -414,9 +402,7 @@ async def test_a_failing_job_is_logged_not_raised() -> None:
         raise RuntimeError("cassé")
 
     queue = AsyncioTaskQueue({"compaction": boom})
-    job_id = await queue.submit(
-        Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION)
-    )
+    job_id = await queue.submit(Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION))
 
     await queue.drain()
 
@@ -431,9 +417,7 @@ async def test_abandoning_the_queue_cancels_a_job_that_has_not_started() -> None
         ran.append(job.session_id)
 
     queue = AsyncioTaskQueue({"compaction": handler}, shutdown_timeout=60)
-    job_id = await queue.submit(
-        Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION)
-    )
+    job_id = await queue.submit(Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION))
 
     await queue.abandon()
 
@@ -457,9 +441,7 @@ async def test_abandoning_the_queue_stops_a_running_job_and_waits_for_it() -> No
             stopped.set()
 
     queue = AsyncioTaskQueue({"compaction": handler}, shutdown_timeout=60)
-    job_id = await queue.submit(
-        Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION)
-    )
+    job_id = await queue.submit(Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION))
     await started.wait()
 
     await queue.abandon()
@@ -500,9 +482,7 @@ def test_compacting_replaces_the_old_turns(conversation: ConfigFactory) -> None:
     assert messages[-1].text == REPONSE
 
 
-def test_a_queue_failure_after_the_run_does_not_fail_it(
-    conversation: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_queue_failure_after_the_run_does_not_fail_it(conversation: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Le résumé ne part pas : le run est écrit, il rend son résultat, la panne est en ERROR."""
     path = conversation(compaction={"over_tokens": 50, "keep_last": 1})
 
@@ -513,9 +493,7 @@ def test_a_queue_failure_after_the_run_does_not_fail_it(
         async with Loom.from_config(path) as loom:
             monkeypatch.setattr(loom._queue, "submit", broker_down)  # pyright: ignore[reportPrivateUsage]
             with caplog.at_level(logging.ERROR, logger="loom_ia.access.api"):
-                runs = [
-                    await loom.run("demo", DEVIS, session_id=SESSION, user=DEV) for _ in range(2)
-                ]
+                runs = [await loom.run("demo", DEVIS, session_id=SESSION, user=DEV) for _ in range(2)]
             return [run.status for run in runs], await loom.export_session(SESSION)
 
     statuses, events = asyncio.run(go())
@@ -594,9 +572,7 @@ def test_a_summary_that_loses_a_marker_is_repaired(conversation: ConfigFactory) 
             return await loom.export_session(SESSION)
 
     events = asyncio.run(go())
-    checks = [
-        e for e in events if e.type == "guard.checked" and e.facets.get("guard") == "fidelity"
-    ]
+    checks = [e for e in events if e.type == "guard.checked" and e.facets.get("guard") == "fidelity"]
     compacted = next(e.payload for e in events if e.type == "session.compacted")
 
     assert [c.facets.get("outcome") for c in checks] == ["failed", "passed"]
@@ -664,19 +640,13 @@ def test_a_blocking_summary_is_made_when_the_next_run_opens(conversation: Config
                 await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             await loom.drain()
             before = await loom.export_session(SESSION)
-            await loom.submit(
-                "demo", DEVIS, session_id=SESSION, run_id=RunId("troisieme"), user=DEV
-            )
+            await loom.submit("demo", DEVIS, session_id=SESSION, run_id=RunId("troisieme"), user=DEV)
             await loom.drain()
             await loom.run("demo", DEVIS, session_id=SESSION, run_id=RunId("quatrieme"), user=DEV)
             return before, await loom.export_session(SESSION)
 
     before, events = asyncio.run(go())
-    summaries = [
-        e.payload.triggered_by
-        for e in events
-        if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction"
-    ]
+    summaries = [e.payload.triggered_by for e in events if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction"]
     compacted = [e.seq for e in events if e.type == "session.compacted"]
     opened = {e.run_id: e.seq for e in events if e.type == "run.started"}
 
@@ -705,9 +675,7 @@ def test_a_blocking_summary_that_fails_does_not_fail_the_run(
             assert job is not None
             monkeypatch.setattr(job, "compact", down)
             with caplog.at_level(logging.WARNING, logger="loom_ia.sessions.compaction"):
-                runs = [
-                    await loom.run("demo", DEVIS, session_id=SESSION, user=DEV) for _ in range(3)
-                ]
+                runs = [await loom.run("demo", DEVIS, session_id=SESSION, user=DEV) for _ in range(3)]
             return [run.status for run in runs], await loom.export_session(SESSION)
 
     statuses, events = asyncio.run(go())
@@ -746,9 +714,7 @@ def test_ensure_fits_compacts_before_the_run(conversation: ConfigFactory, tmp_pa
     assert compacted[0] < starts[-1], "la compaction précède le run qu'elle protège"
 
 
-def test_a_session_that_cannot_be_summarised_is_trimmed(
-    conversation: ConfigFactory, tmp_path: Path
-) -> None:
+def test_a_session_that_cannot_be_summarised_is_trimmed(conversation: ConfigFactory, tmp_path: Path) -> None:
     path = conversation(
         summaries=[{"error": "invalid_request"}],
         compaction={"over_tokens": 40, "hard_tokens": 60, "keep_last": 1},
@@ -770,12 +736,8 @@ def test_a_session_that_cannot_be_summarised_is_trimmed(
     assert trimmed[0].status == "warning"
 
 
-def safety_net(
-    store: InMemoryEventStore, resolve: SummaryResolver, *, keep_last: int = 1
-) -> CompactionJob:
-    plan = CompactionPlan(
-        agent=COMPACTION_AGENT, over_tokens=40, hard_tokens=60, keep_last=keep_last
-    )
+def safety_net(store: InMemoryEventStore, resolve: SummaryResolver, *, keep_last: int = 1) -> CompactionJob:
+    plan = CompactionPlan(agent=COMPACTION_AGENT, over_tokens=40, hard_tokens=60, keep_last=keep_last)
     return CompactionJob(resolve, store, SessionWriters(), plan)
 
 
@@ -797,18 +759,14 @@ async def test_a_storage_not_ready_stops_the_run_before_the_summary() -> None:
         async def read(self, *args: Any, **kwargs: Any) -> Any:
             raise StorageNotReady("base non préparée")
 
-    plan = CompactionPlan(
-        agent=COMPACTION_AGENT, over_tokens=40, hard_tokens=60, keep_last=1, blocking=True
-    )
+    plan = CompactionPlan(agent=COMPACTION_AGENT, over_tokens=40, hard_tokens=60, keep_last=1, blocking=True)
     job = CompactionJob(broken(RuntimeError("jamais appelé")), Unprepared(), SessionWriters(), plan)
     with pytest.raises(StorageNotReady, match="non préparée"):
         await job.before_run(DEFAULT_TENANT, SESSION)
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("panne"), ConfigError("clé absente")])
-async def test_ensure_fits_trims_whatever_makes_the_summary_fail(
-    failure: Exception, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_ensure_fits_trims_whatever_makes_the_summary_fail(failure: Exception, caplog: pytest.LogCaptureFixture) -> None:
     """Le résumé lève : le filet journalise (sans contenu) et retire les vieux tours (revue)."""
     store = InMemoryEventStore()
     await filled(store, 3)
@@ -831,9 +789,7 @@ async def test_ensure_fits_lets_a_cancellation_through() -> None:
     await filled(store, 3)
 
     with pytest.raises(asyncio.CancelledError):
-        await safety_net(store, broken(asyncio.CancelledError())).ensure_fits(
-            DEFAULT_TENANT, SESSION
-        )
+        await safety_net(store, broken(asyncio.CancelledError())).ensure_fits(DEFAULT_TENANT, SESSION)
 
     events = await store.read(DEFAULT_TENANT, SESSION)
     assert "session.trimmed" not in [e.type for e in events]
@@ -944,9 +900,7 @@ def test_the_summary_run_only_sees_its_segment(conversation: ConfigFactory) -> N
             return await loom.export_session(SESSION)
 
     events = asyncio.run(go())
-    appels = [
-        e.payload for e in events if e.type == "model.responded" and e.agent == COMPACTION_AGENT
-    ]
+    appels = [e.payload for e in events if e.type == "model.responded" and e.agent == COMPACTION_AGENT]
 
     assert appels
     # Le modèle simulé compte ses tokens d'entrée sur la requête entière : le
@@ -1097,13 +1051,7 @@ def test_without_the_session_scope_the_role_is_refused(withrole: Callable[..., P
             return await loom.export_session(SESSION)
 
     events = asyncio.run(go())
-    refused = [
-        e
-        for e in events
-        if e.type == "tool.completed"
-        and e.facets.get("tool_name") == "rediger"
-        and e.facets.get("is_error")
-    ]
+    refused = [e for e in events if e.type == "tool.completed" and e.facets.get("tool_name") == "rediger" and e.facets.get("is_error")]
 
     assert refused, "le rôle doit être refusé faute de résultat dans le run"
     payload = refused[0].payload
@@ -1114,9 +1062,7 @@ def test_without_the_session_scope_the_role_is_refused(withrole: Callable[..., P
 # --- Le résumé de l'ouverture d'un run, montré (test F3 du 19/10) ---------------------------
 
 
-def test_the_safety_net_names_the_run_it_protects(
-    conversation: ConfigFactory, tmp_path: Path
-) -> None:
+def test_the_safety_net_names_the_run_it_protects(conversation: ConfigFactory, tmp_path: Path) -> None:
     """Le résumé du filet porte ``triggered_by``, comme le résumé bloquant : sans lui, rien
     ne le rattachait au run qui s'ouvrait."""
     path = conversation(compaction={"over_tokens": 40, "hard_tokens": 60, "keep_last": 1})
@@ -1128,17 +1074,11 @@ def test_the_safety_net_names_the_run_it_protects(
             return result.run_id, await loom.export_session(SESSION)
 
     run_id, events = asyncio.run(go())
-    summarisers = [
-        e.payload
-        for e in events
-        if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction"
-    ]
+    summarisers = [e.payload for e in events if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction"]
     assert summarisers and all(p.triggered_by == run_id for p in summarisers)
 
 
-def test_the_opening_summary_is_in_the_stream_without_the_summariser_run(
-    conversation: ConfigFactory, tmp_path: Path
-) -> None:
+def test_the_opening_summary_is_in_the_stream_without_the_summariser_run(conversation: ConfigFactory, tmp_path: Path) -> None:
     path = conversation(compaction={"over_tokens": 40, "keep_last": 1, "blocking": True})
 
     async def go() -> list[Any]:
@@ -1151,16 +1091,12 @@ def test_the_opening_summary_is_in_the_stream_without_the_summariser_run(
     compacted = [e for e in events if isinstance(e.payload, SessionCompacted)]
     assert len(compacted) == 1
     # Le run de compaction lui-même (son modèle, son contrôle de fidélité) reste hors du flux.
-    assert not [
-        e for e in events if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction"
-    ]
+    assert not [e for e in events if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction"]
     started = next(i for i, e in enumerate(events) if isinstance(e.payload, RunStarted))
     assert events.index(compacted[0]) < started
 
 
-def test_a_summary_made_after_a_run_is_not_its_opening(
-    conversation: ConfigFactory, tmp_path: Path
-) -> None:
+def test_a_summary_made_after_a_run_is_not_its_opening(conversation: ConfigFactory, tmp_path: Path) -> None:
     """Un résumé de fond que le run déclenche en finissant parle du run suivant."""
     path = conversation(compaction={"over_tokens": 40, "keep_last": 1, "blocking": False})
 
@@ -1172,20 +1108,12 @@ def test_a_summary_made_after_a_run_is_not_its_opening(
             return result.run_id, await loom.export_session(SESSION)
 
     run_id, events = asyncio.run(go())
-    later = [
-        e
-        for e in events
-        if isinstance(e.payload, RunStarted)
-        and e.payload.kind == "compaction"
-        and e.payload.triggered_by == run_id
-    ]
+    later = [e for e in events if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction" and e.payload.triggered_by == run_id]
     assert later, "le run doit avoir déclenché un résumé de fond"
     assert OpeningSummaries(run_id).select(events) == []
 
 
-def test_the_cli_says_the_session_was_summarised(
-    conversation: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_says_the_session_was_summarised(conversation: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = conversation(compaction={"over_tokens": 40, "keep_last": 1, "blocking": True})
     asyncio.run(written(tmp_path, 2))
     assert main(["--config", str(path), "run", "demo", DEVIS, "--session", SESSION]) == 0
@@ -1194,9 +1122,7 @@ def test_the_cli_says_the_session_was_summarised(
     assert "fidélité vérifiée)" in err
 
     asyncio.run(written(tmp_path, 2))
-    assert (
-        main(["--config", str(path), "run", "demo", DEVIS, "--session", SESSION, "--stream"]) == 0
-    )
+    assert main(["--config", str(path), "run", "demo", DEVIS, "--session", SESSION, "--stream"]) == 0
     err = capsys.readouterr().err
     assert "· session résumée : " in err
     assert "Compaction : " not in err  # déjà dite dans le déroulé

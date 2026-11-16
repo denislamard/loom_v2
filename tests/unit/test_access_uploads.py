@@ -81,9 +81,7 @@ async def test_multipart_attaches_images(demo: ConfigFactory) -> None:
 async def test_multipart_takes_no_free_user(demo: ConfigFactory) -> None:
     """``user_id`` laissait le corps nommer le lanceur (L-4) : le champ n'existe plus."""
     async with rest(demo()) as (_, http):
-        posted = await http.post(
-            "/v1/agents/demo/runs", data={"message": QUESTION, "user_id": "denis"}
-        )
+        posted = await http.post("/v1/agents/demo/runs", data={"message": QUESTION, "user_id": "denis"})
     assert posted.status_code == 422
 
 
@@ -104,15 +102,11 @@ async def test_multipart_refusals(demo: ConfigFactory) -> None:
             "texte": await http.post(url, data={**ask, "attachments": "photo.png"}),
             "metadata": await http.post(url, data={**ask, "metadata": "{"}, files=[part("a", PNG)]),
             "message": await http.post(url, data={"x": "1"}, files=[part("a.png", PNG)]),
-            "double": await http.post(
-                url, data={"message": [QUESTION, QUESTION]}, files=[part("a.png", PNG)]
-            ),
+            "double": await http.post(url, data={"message": [QUESTION, QUESTION]}, files=[part("a.png", PNG)]),
         }
 
     assert {name: r.status_code for name, r in cases.items()} == dict.fromkeys(cases, 422)
-    details = {
-        name: json.dumps(r.json()["detail"], ensure_ascii=False) for name, r in cases.items()
-    }
+    details = {name: json.dumps(r.json()["detail"], ensure_ascii=False) for name, r in cases.items()}
     assert "devis.pdf : format non reconnu" in details["pdf"]
     assert "annoncé image/png, mais le contenu est image/jpeg" in details["annonce"]
     assert "gros.png : 1280 octets, au-delà de la limite de 1000" in details["taille"]
@@ -129,9 +123,7 @@ async def test_an_oversized_upload_is_refused_on_its_header(demo: ConfigFactory)
     big = [("attachments", ("gros.png", PNG + b"\x00" * 300_000, "image/png"))]
     async with rest(demo(execution=limits)) as (_, http):
         response = await http.post("/v1/agents/demo/runs", data={"message": QUESTION}, files=big)
-        plain = await http.post(
-            "/v1/agents/demo/runs", content=QUESTION, headers={"content-type": "text/plain"}
-        )
+        plain = await http.post("/v1/agents/demo/runs", content=QUESTION, headers={"content-type": "text/plain"})
 
     assert response.status_code == 413 and "au-delà de la limite" in response.json()["detail"]
     assert plain.status_code == 415 and "text/plain" in plain.json()["detail"]
@@ -210,17 +202,11 @@ async def test_files_beyond_the_count_are_refused_as_they_arrive(demo: ConfigFac
         for n in range(500):
             sent += 1
             yield (
-                (
-                    f'--{boundary}\r\nContent-Disposition: form-data; name="attachments"; '
-                    f'filename="f{n}.png"\r\nContent-Type: image/png\r\n\r\n'
-                ).encode()
+                (f'--{boundary}\r\nContent-Disposition: form-data; name="attachments"; filename="f{n}.png"\r\nContent-Type: image/png\r\n\r\n').encode()
                 + PNG
                 + b"\r\n"
             )
-        yield (
-            f'--{boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\n'
-            f"{QUESTION}\r\n--{boundary}--\r\n"
-        ).encode()
+        yield (f'--{boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\n{QUESTION}\r\n--{boundary}--\r\n').encode()
 
     read = 0
 
@@ -257,9 +243,7 @@ async def test_a_form_the_parser_cannot_read_is_a_400_not_a_conflict(demo: Confi
         url = "/v1/agents/demo/runs"
         cases = {
             "garbage": await http.post(url, content=b"garbage", headers=boundary),
-            "header": await http.post(
-                url, content=b"--B\r\nnot a header\r\n\r\nx\r\n--B--\r\n", headers=boundary
-            ),
+            "header": await http.post(url, content=b"--B\r\nnot a header\r\n\r\nx\r\n--B--\r\n", headers=boundary),
             "huge": await http.post(
                 url,
                 content=b"--B\r\n" + name + b"; x=" + b"a" * 20_000 + b"\r\n\r\nhi\r\n--B--\r\n",
@@ -435,9 +419,7 @@ async def test_mcp_file_links_are_read_under_the_roots(demo: ConfigFactory, tmp_
     assert "gros.png : 3200 octets, au-delà de la limite de 1000" in messages["big"]
     assert "hôte 'serveur' non pris en charge" in messages["host"]
     assert "lien 'file' non pris en charge" in messages["relative"]
-    assert (
-        "fichier introuvable" in messages["nul"] and "fichier introuvable" in messages["nul_name"]
-    )
+    assert "fichier introuvable" in messages["nul"] and "fichier introuvable" in messages["nul_name"]
     assert "lien file:// mal formé" in messages["brackets"]
 
 
@@ -450,9 +432,7 @@ async def test_mcp_refusals(demo: ConfigFactory, tmp_path: Path) -> None:
             "base64": await ask(client, {"type": "image", "data": "pas du base64 !"}),
             "count": await ask(client, *[image(PNG)] * 3),
             "content": await ask(client, image(PDF, name="devis.pdf")),
-            "schema": await client.call_tool(
-                "demo", {"message": QUESTION, "attachments": [{"type": "image"}]}
-            ),
+            "schema": await client.call_tool("demo", {"message": QUESTION, "attachments": [{"type": "image"}]}),
         }
 
     messages = {name: error(result) for name, result in results.items()}

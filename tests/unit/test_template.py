@@ -19,9 +19,7 @@ def test_parse_separates_text_and_variables() -> None:
 
 
 def test_render_inserts_strings_as_is_and_the_rest_as_json() -> None:
-    template = Template.parse(
-        "{{ a }}|{{ b }}|{{ c }}|{{ d.0 }}|{{ d.9 }}|{{ e.f }}|{{ absent.x }}"
-    )
+    template = Template.parse("{{ a }}|{{ b }}|{{ c }}|{{ d.0 }}|{{ d.9 }}|{{ e.f }}|{{ absent.x }}")
     values: dict[str, JsonValue] = {
         "a": "texte",
         "b": 12,

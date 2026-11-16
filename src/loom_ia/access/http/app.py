@@ -210,9 +210,7 @@ TAGS: Final[tuple[dict[str, str], ...]] = (
     },
     {
         "name": "journal",
-        "description": (
-            "Recherche au journal : les runs d'un client, leurs événements, leurs traces."
-        ),
+        "description": ("Recherche au journal : les runs d'un client, leurs événements, leurs traces."),
     },
 )
 
@@ -220,9 +218,7 @@ TAGS: Final[tuple[dict[str, str], ...]] = (
 # l'autre en-tête (``identify``), et les déclarer ici la rend saisissable depuis
 # la page de l'API. Ils ne refusent rien eux-mêmes — c'est ``caller`` qui le fait.
 BEARER_SCHEME: Final = HTTPBearer(auto_error=False, description="Clé d'API de l'instance")
-HEADER_SCHEME: Final = APIKeyHeader(
-    name=API_KEY_HEADER, auto_error=False, description="Clé d'API de l'instance"
-)
+HEADER_SCHEME: Final = APIKeyHeader(name=API_KEY_HEADER, auto_error=False, description="Clé d'API de l'instance")
 
 
 def _who_calls(config: LoomConfig, host: str | None = None) -> None:
@@ -264,13 +260,9 @@ async def _payload(request: Request) -> JsonValue:
     try:
         return cast("JsonValue", json.loads(raw))
     except ValueError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, f"Charge illisible : {exc}"
-        ) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Charge illisible : {exc}") from exc
     except RecursionError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, "Charge illisible : JSON trop imbriqué"
-        ) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Charge illisible : JSON trop imbriqué") from exc
 
 
 async def caller(
@@ -434,13 +426,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         # message nomme le run et l'événement fautifs — au lieu d'un 500 muet.
         logger.error("Journal illisible sur %s : %s", request.url.path, exc)
         return JSONResponse(
-            {
-                "detail": (
-                    str(exc)
-                    if isinstance(exc, SessionUnreadable)
-                    else f"Journal de la session illisible : {exc!s}"
-                )
-            },
+            {"detail": (str(exc) if isinstance(exc, SessionUnreadable) else f"Journal de la session illisible : {exc!s}")},
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -488,9 +474,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             }
         },
     )
-    async def start(
-        name: str, request: Request, response: Response, who: Who
-    ) -> RunResult | RunAccepted:
+    async def start(name: str, request: Request, response: Response, who: Who) -> RunResult | RunAccepted:
         # Avant le corps, seule la clé se juge : avec ``as_user``, c'est
         # l'utilisateur endossé qui doit pouvoir lancer, pas la passerelle.
         if who.key is not None and not who.key.allows(name):
@@ -612,9 +596,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         )
         # Contrairement à la liste des sessions, celle des runs se filtre
         # honnêtement : chaque run dit de quel agent il est.
-        return found.model_copy(
-            update={"runs": tuple(run for run in found.runs if who.allows(run.agent))}
-        )
+        return found.model_copy(update={"runs": tuple(run for run in found.runs if who.allows(run.agent))})
 
     @router.get(
         "/events",
@@ -638,9 +620,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         until: AwareDatetime | None = None,
         # Le motif est contrôlé par ``EventQuery``, dont le refus est en français ;
         # celui de FastAPI (« String should match pattern … ») ne l'était pas (K5).
-        after: Annotated[
-            EventId | None, Query(json_schema_extra={"pattern": EVENT_ID_PATTERN})
-        ] = None,
+        after: Annotated[EventId | None, Query(json_schema_extra={"pattern": EVENT_ID_PATTERN})] = None,
         limit: Annotated[int, Query(ge=1, le=EVENTS_MAX)] = EVENTS_LIMIT,
     ) -> Response | list[Event]:
         require(who, "read")
@@ -665,9 +645,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
                 limit=limit,
             )
         except ValidationError as refused:
-            said = "; ".join(
-                str(error["msg"]).removeprefix("Value error, ") for error in refused.errors()
-            )
+            said = "; ".join(str(error["msg"]).removeprefix("Value error, ") for error in refused.errors())
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, said) from refused
         events = await loom.query(query)
         for named in dict.fromkeys(event.agent for event in events if event.agent):
@@ -682,9 +660,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     async def traced(who: Who, run_id: RunId, session_id: SessionId | None = None) -> Trace:
         require(who, "read")
         # Sans `read_content`, la trace est bâtie sans contenu : rien à retirer après.
-        found = await loom.trace(
-            run_id, session_id=session_id, tenant_id=who.tenant, content=not who.masks
-        )
+        found = await loom.trace(run_id, session_id=session_id, tenant_id=who.tenant, content=not who.masks)
         for agent in traced_agents(found):
             require(who, "read", agent)
         return found
@@ -732,12 +708,8 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         )
         return EventSourceResponse(_messages(followed, who))
 
-    @router.post(
-        "/runs/{run_id}/approve", tags=["runs"], summary="Autorise un appel que le run attend"
-    )
-    async def approve(
-        who: Who, run_id: RunId, body: Approval, session_id: SessionId | None = None
-    ) -> Decided:
+    @router.post("/runs/{run_id}/approve", tags=["runs"], summary="Autorise un appel que le run attend")
+    async def approve(who: Who, run_id: RunId, body: Approval, session_id: SessionId | None = None) -> Decided:
         # Les droits de l'approbateur — approbateurs figés, self_approve, amend —
         # dépendent de chaque demande : le SDK les vérifie, et c'est lui qui signe.
         # Sans as_user, la clé se juge d'abord, dans ses mots.
@@ -755,12 +727,8 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         )
         return Decided(run_id=run_id, calls=calls)
 
-    @router.post(
-        "/runs/{run_id}/reject", tags=["runs"], summary="Refuse un appel que le run attend"
-    )
-    async def reject(
-        who: Who, run_id: RunId, body: Decision, session_id: SessionId | None = None
-    ) -> Decided:
+    @router.post("/runs/{run_id}/reject", tags=["runs"], summary="Refuse un appel que le run attend")
+    async def reject(who: Who, run_id: RunId, body: Decision, session_id: SessionId | None = None) -> Decided:
         actor = _acting(loom, who, body.as_user)
         if body.as_user is None:
             require(who, "approve", call_id=body.call_id)
@@ -774,12 +742,8 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         )
         return Decided(run_id=run_id, calls=calls)
 
-    @router.post(
-        "/runs/{run_id}/answer", tags=["runs"], summary="Répond à une question que le run attend"
-    )
-    async def answer(
-        who: Who, run_id: RunId, body: Answer, session_id: SessionId | None = None
-    ) -> Answered:
+    @router.post("/runs/{run_id}/answer", tags=["runs"], summary="Répond à une question que le run attend")
+    async def answer(who: Who, run_id: RunId, body: Answer, session_id: SessionId | None = None) -> Answered:
         # Répondre n'autorise rien : la permission ``answer``, sur l'agent qui
         # demande (un sous-agent, s'il y en a un), que le SDK vérifie.
         actor = _acting(loom, who, body.as_user)
@@ -812,9 +776,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         stopped = await loom.cancel(run_id, session_id=session_id, tenant_id=who.tenant, user=actor)
         return Cancelled(run_id=run_id, cancelled=stopped)
 
-    @router.get(
-        "/sessions", tags=["sessions"], summary="Sessions du client, la plus récente d'abord"
-    )
+    @router.get("/sessions", tags=["sessions"], summary="Sessions du client, la plus récente d'abord")
     async def sessions(who: Who) -> list[SessionRecord]:
         require(who, "read")
         if who.key is not None and who.key.agents:
@@ -822,8 +784,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             # la filtrer honnêtement demanderait de lire chaque journal.
             raise refusal(
                 status.HTTP_403_FORBIDDEN,
-                f"La clé {who.key.id} est bornée à certains agents : la liste des sessions ne "
-                "peut pas être filtrée",
+                f"La clé {who.key.id} est bornée à certains agents : la liste des sessions ne peut pas être filtrée",
                 caller=who,
                 permission="read",
             )
@@ -889,9 +850,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             headers={"Content-Disposition": disposition},
         )
 
-    @router.delete(
-        "/sessions/{session_id}", tags=["sessions"], summary="Supprime une session (RGPD)"
-    )
+    @router.delete("/sessions/{session_id}", tags=["sessions"], summary="Supprime une session (RGPD)")
     async def forget(who: Who, session_id: SessionId) -> SessionDeletion:
         # Effacer un journal, ses fichiers et ses clés est irréversible et
         # concerne tous les agents de la session : portée ``admin``, sans
@@ -902,9 +861,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             raise UnknownSession(session_id)
         return removed
 
-    @router.get(
-        "/sessions/{session_id}/report", tags=["sessions"], summary="Consommation d'une session"
-    )
+    @router.get("/sessions/{session_id}/report", tags=["sessions"], summary="Consommation d'une session")
     async def report(who: Who, session_id: SessionId) -> UsageReport:
         require(who, "read")
         found = await loom.report(session_id=session_id, tenant_id=who.tenant)
@@ -933,9 +890,7 @@ def _mcp(loom: Loom, rates: RateWindow) -> McpHttp:
     try:
         from loom_ia.access.mcp_server.http import McpHttp
     except ImportError as manque:  # pragma: no cover - dépend de l'installation
-        raise RuntimeError(
-            "'server.mcp.http' demande l'extra 'mcp' (installer l'extra : loom-ia[http,mcp])"
-        ) from manque
+        raise RuntimeError("'server.mcp.http' demande l'extra 'mcp' (installer l'extra : loom-ia[http,mcp])") from manque
     return McpHttp(loom, rates=rates)
 
 

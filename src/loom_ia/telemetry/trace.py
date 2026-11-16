@@ -112,9 +112,7 @@ def run_trace(events: Sequence[Event], run_id: RunId, *, content: bool) -> Trace
     for run in dict.fromkeys(e.run_id for e in events):
         members = [e for e in events if e.run_id == run]
         closed = _closed(members)
-        spans += [
-            _span(record, RunId(run), by_id, closed, content) for record in run_spans(members)
-        ]
+        spans += [_span(record, RunId(run), by_id, closed, content) for record in run_spans(members)]
     spans.sort(key=lambda span: span.start)
     state = fold(own, run_id)
     first = own[0]
@@ -177,9 +175,7 @@ def _span(
         open=opening and record.span_id not in closed,
         error=record.error,
         attributes=dict(record.attributes),
-        events=tuple(
-            _event(by_id[str(e.attributes["loom.event_id"])], content) for e in record.events
-        ),
+        events=tuple(_event(by_id[str(e.attributes["loom.event_id"])], content) for e in record.events),
     )
 
 

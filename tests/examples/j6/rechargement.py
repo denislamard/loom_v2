@@ -131,11 +131,7 @@ class Controle:
 def enonce(quoi: str, texte: str, largeur: int = 96) -> None:
     """Imprime un message long sur plusieurs lignes, sans rien en couper."""
     marge = " " * len(quoi)
-    lignes = [
-        morceau
-        for bloc in texte.splitlines()
-        for morceau in textwrap.wrap(bloc, largeur - len(quoi)) or [""]
-    ]
+    lignes = [morceau for bloc in texte.splitlines() for morceau in textwrap.wrap(bloc, largeur - len(quoi)) or [""]]
     for numero, ligne in enumerate(lignes or [""]):
         print(f"{quoi if numero == 0 else marge}{ligne}")
 
@@ -152,9 +148,7 @@ def copie(dossier: Path) -> Path:
     avant = "  logging: {level: WARNING, format: console}\n"
     if avant not in texte:
         raise ConfigError(f"{shown(fichier)} : la ligne de journalisation attendue a changé")
-    fichier.write_text(
-        texte.replace(avant, f"{avant}  capture: {{raw_exchanges: true}}\n"), encoding="utf-8"
-    )
+    fichier.write_text(texte.replace(avant, f"{avant}  capture: {{raw_exchanges: true}}\n"), encoding="utf-8")
     return fichier
 
 
@@ -170,9 +164,7 @@ def port_libre() -> int:
         return int(sock.getsockname()[1])
 
 
-def lancer(
-    fichier: Path, console: Path, environ: dict[str, str], *options: str
-) -> tuple[subprocess.Popen[bytes], int]:
+def lancer(fichier: Path, console: Path, environ: dict[str, str], *options: str) -> tuple[subprocess.Popen[bytes], int]:
     """``loom serve --reload`` sur la copie, sa console dans ``console`` ; rend le process et son
     port."""
     port = port_libre()
@@ -205,9 +197,7 @@ def lue(console: Path) -> str:
 def appel(port: int, methode: str, chemin: str, corps: Any = None) -> tuple[int, Any]:
     """Une requête REST, sans passer par un proxy : le serveur est sur la machine."""
     data = None if corps is None else json.dumps(corps).encode()
-    requete = urllib.request.Request(
-        f"http://127.0.0.1:{port}/v1{chemin}", data=data, method=methode
-    )
+    requete = urllib.request.Request(f"http://127.0.0.1:{port}/v1{chemin}", data=data, method=methode)
     if data is not None:
         requete.add_header("content-type", "application/json")
     ouvreur = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -246,9 +236,7 @@ def compte(console: Path, ligne: str) -> int:
     return sum(1 for dite in lue(console).splitlines() if dite.startswith(ligne))
 
 
-def releve(
-    console: Path, process: subprocess.Popen[bytes], changer: Callable[[], object]
-) -> tuple[str, str]:
+def releve(console: Path, process: subprocess.Popen[bytes], changer: Callable[[], object]) -> tuple[str, str]:
     """Fait un changement et attend que le superviseur ait tranché ; rend son verdict et ce qu'il
     a dit.
 
@@ -258,9 +246,7 @@ def releve(
     faits, refuses = compte(console, "Rechargé"), compte(console, "Rechargement refusé")
     changer()
     tranche = attendre(
-        lambda: (
-            compte(console, "Rechargé") > faits or compte(console, "Rechargement refusé") > refuses
-        ),
+        lambda: compte(console, "Rechargé") > faits or compte(console, "Rechargement refusé") > refuses,
         process,
     )
     dit = lue(console)[avant:]
@@ -286,9 +272,7 @@ def arreter(process: subprocess.Popen[bytes], port: int, controle: Controle, cas
     titre("Ctrl+C")
     print(
         f"  le superviseur s'arrête (code {code}), et plus aucun process ne répond : "
-        + controle.tient(
-            f"{cas} : l'arrêt laisse un process ou rend {code}", code == 0 and not repond(port)
-        )
+        + controle.tient(f"{cas} : l'arrêt laisse un process ou rend {code}", code == 0 and not repond(port))
     )
 
 
@@ -303,9 +287,7 @@ def requetes(port: int, run_id: str, modele: str) -> list[str]:
     ``modele`` est le nom du modèle chez son fournisseur (``model`` dans la
     config) : c'est lui que l'échange porte.
     """
-    code, events = appel(
-        port, "GET", f"/events?run_id={run_id}&type=model.exchanged&model_id={modele}"
-    )
+    code, events = appel(port, "GET", f"/events?run_id={run_id}&type=model.exchanged&model_id={modele}")
     return [e["payload"]["request_body"] for e in events] if code == 200 else []
 
 
@@ -339,9 +321,7 @@ def cas_prompt(args: argparse.Namespace, dossier: Path, controle: Controle) -> N
         verdict, dit = releve(
             console,
             process,
-            lambda: prompt.write_text(
-                f"{prompt.read_text(encoding='utf-8')}\n{CONSIGNE}\n", encoding="utf-8"
-            ),
+            lambda: prompt.write_text(f"{prompt.read_text(encoding='utf-8')}\n{CONSIGNE}\n", encoding="utf-8"),
         )
         montre(dit)
         print(
@@ -373,10 +353,7 @@ def cas_prompt(args: argparse.Namespace, dossier: Path, controle: Controle) -> N
                 "toutes celles du second la portent : "
                 + controle.tient(
                     "prompt : la consigne n'est pas arrivée au modèle comme annoncé",
-                    bool(avant)
-                    and bool(apres)
-                    and not any(MARQUE in r for r in avant)
-                    and all(MARQUE in r for r in apres),
+                    bool(avant) and bool(apres) and not any(MARQUE in r for r in avant) and all(MARQUE in r for r in apres),
                 )
             )
         if args.reel and apres:
@@ -385,10 +362,7 @@ def cas_prompt(args: argparse.Namespace, dossier: Path, controle: Controle) -> N
                 partie=True,
             )
             suivie = MARQUE in str(second.get("text") or "")
-            print(
-                "  le modèle a suivi la consigne (montré, pas exigé) : "
-                + ("oui" if suivie else "non")
-            )
+            print("  le modèle a suivi la consigne (montré, pas exigé) : " + ("oui" if suivie else "non"))
     finally:
         arreter(process, port, controle, "prompt")
 
@@ -414,9 +388,7 @@ def cas_agent(args: argparse.Namespace, dossier: Path, controle: Controle) -> No
             console,
             process,
             lambda: ajout.write_text(
-                texte.replace(f"name: {source}\n", f"name: {nouveau}\n", 1).replace(
-                    "description: ", "description: (copie) ", 1
-                ),
+                texte.replace(f"name: {source}\n", f"name: {nouveau}\n", 1).replace("description: ", "description: (copie) ", 1),
                 encoding="utf-8",
             ),
         )
@@ -435,10 +407,7 @@ def cas_agent(args: argparse.Namespace, dossier: Path, controle: Controle) -> No
         run = lance_run(port, nouveau)
         titre(f"Un run de {nouveau}")
         _run(run, controle, "agent", exige=not args.reel)
-        print(
-            f"  le run est celui de {nouveau} : "
-            + controle.tient(f"agent : le run n'est pas de {nouveau}", run.get("agent") == nouveau)
-        )
+        print(f"  le run est celui de {nouveau} : " + controle.tient(f"agent : le run n'est pas de {nouveau}", run.get("agent") == nouveau))
 
         titre("Le fichier retiré")
         verdict, dit = releve(console, process, ajout.unlink)
@@ -448,10 +417,7 @@ def cas_agent(args: argparse.Namespace, dossier: Path, controle: Controle) -> No
             f"  rechargé, {nouveau} n'est plus servi (lancement : HTTP {code}) : "
             + controle.tient(
                 f"agent : {nouveau} est encore servi après son retrait ({verdict})",
-                verdict == "recharge"
-                and f"agents/{nouveau}.yaml supprimé" in dit
-                and set(agents(port)) == set(departs)
-                and code == 404,
+                verdict == "recharge" and f"agents/{nouveau}.yaml supprimé" in dit and set(agents(port)) == set(departs) and code == 404,
             )
         )
     finally:
@@ -520,10 +486,7 @@ def cas_casse(args: argparse.Namespace, dossier: Path, controle: Controle) -> No
                     )
                 )
             servis = agents(port)
-            print(
-                "  l'ancien process sert encore, la même config : "
-                + controle.tient(f"casse : {quoi} — l'ancien ne sert plus", servis == departs)
-            )
+            print("  l'ancien process sert encore, la même config : " + controle.tient(f"casse : {quoi} — l'ancien ne sert plus", servis == departs))
             if numero == 0:
                 run = lance_run(port, agent)
                 print("  un run pendant que c'est cassé :")
@@ -553,13 +516,7 @@ def cas_donnees(args: argparse.Namespace, dossier: Path, controle: Controle) -> 
         if not _pret(process, port, console, controle, "donnees"):
             return
         print("  la console dit ce qui est surveillé et ce qui ne l'est pas :")
-        montre(
-            "\n".join(
-                ligne
-                for ligne in lue(console).splitlines()
-                if ligne.startswith("Rechargement : surveille")
-            )
-        )
+        montre("\n".join(ligne for ligne in lue(console).splitlines() if ligne.startswith("Rechargement : surveille")))
         nombre = 1 if args.reel else 2
         titre(f"{nombre} run(s) de {agent}, puis {CALME:.0f} s d'attente")
         for _ in range(nombre):
@@ -590,16 +547,12 @@ def cas_donnees(args: argparse.Namespace, dossier: Path, controle: Controle) -> 
         verdict, dit = releve(
             console,
             process,
-            lambda: rediger.write_text(
-                f"{rediger.read_text(encoding='utf-8')}\n", encoding="utf-8"
-            ),
+            lambda: rediger.write_text(f"{rediger.read_text(encoding='utf-8')}\n", encoding="utf-8"),
         )
         montre(dit)
         print(
             "  rechargé : le guetteur était là, il a laissé passer les données : "
-            + controle.tient(
-                f"donnees : le prompt touché n'a pas rechargé ({verdict})", verdict == "recharge"
-            )
+            + controle.tient(f"donnees : le prompt touché n'a pas rechargé ({verdict})", verdict == "recharge")
         )
     finally:
         arreter(process, port, controle, "donnees")
@@ -643,27 +596,18 @@ def cas_prod(args: argparse.Namespace, dossier: Path, controle: Controle) -> Non
             return
         departs = agents(port)
         bon = fichier.read_text(encoding="utf-8")
-        verdict, dit = releve(
-            console, process, lambda: fichier.write_text(f"profile: prod\n{bon}", encoding="utf-8")
-        )
+        verdict, dit = releve(console, process, lambda: fichier.write_text(f"profile: prod\n{bon}", encoding="utf-8"))
         montre(dit)
         print(
             "  refusé, et l'ancien process sert encore : "
             + controle.tient(
                 f"prod : le passage en prod n'est pas refusé ({verdict})",
                 # Refusé avant même --reload : l'utilisateur local n'a pas sa place en prod.
-                verdict == "refuse"
-                and "refusé en profil 'prod'" in dit
-                and agents(port) == departs,
+                verdict == "refuse" and "refusé en profil 'prod'" in dit and agents(port) == departs,
             )
         )
         verdict, _ = releve(console, process, lambda: fichier.write_text(bon, encoding="utf-8"))
-        print(
-            "  la ligne retirée : rechargé : "
-            + controle.tient(
-                f"prod : la config rétablie n'est pas servie ({verdict})", verdict == "recharge"
-            )
-        )
+        print("  la ligne retirée : rechargé : " + controle.tient(f"prod : la config rétablie n'est pas servie ({verdict})", verdict == "recharge"))
     finally:
         arreter(process, port, controle, "prod")
 
@@ -676,16 +620,11 @@ def environ(args: argparse.Namespace, config: LoomConfig) -> dict[str, str]:
     return dict(os.environ) if args.reel else sans_cles(config)
 
 
-def _pret(
-    process: subprocess.Popen[bytes], port: int, console: Path, controle: Controle, cas: str
-) -> bool:
+def _pret(process: subprocess.Popen[bytes], port: int, console: Path, controle: Controle, cas: str) -> bool:
     titre("loom serve --reload")
     pret = attendre(lambda: repond(port) and "Rechargement : surveille" in lue(console), process)
     montre(lue(console))
-    print(
-        f"  le serveur répond sur le port {port} : "
-        + controle.tient(f"{cas} : le serveur n'a pas démarré", pret)
-    )
+    print(f"  le serveur répond sur le port {port} : " + controle.tient(f"{cas} : le serveur n'a pas démarré", pret))
     return pret
 
 
@@ -701,10 +640,7 @@ def _run(run: dict[str, Any], controle: Controle, cas: str, *, exige: bool) -> N
         if quoi not in controle.parties:
             controle.saute(quoi, partie=True)
         return
-    print(
-        "  le run est allé au bout : "
-        + controle.tient(f"{cas} : un run n'est pas allé au bout ({statut})", statut == "completed")
-    )
+    print("  le run est allé au bout : " + controle.tient(f"{cas} : un run n'est pas allé au bout ({statut})", statut == "completed"))
 
 
 def _ecrit(cible: Path, texte: str) -> None:
@@ -748,8 +684,7 @@ def main(argv: list[str]) -> int:
     cas = tuple(args.cas) if args.cas else CAS
     if find_spec("fastapi") is None or find_spec("watchfiles") is None:
         print(
-            "Extra manquant : l'exemple lance loom serve --reload, qui demande l'extra 'http' "
-            "(uv sync --extra http)",
+            "Extra manquant : l'exemple lance loom serve --reload, qui demande l'extra 'http' (uv sync --extra http)",
             file=sys.stderr,
         )
         return 2

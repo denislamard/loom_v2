@@ -82,9 +82,7 @@ class ToolThreads:
                 raise RuntimeError("pool des outils fermé")
             self._jobs.put((future, fn, name))
             if not self._idle.acquire(blocking=False) and len(self._workers) < self.size:
-                worker = threading.Thread(
-                    target=self._work, name=f"loom-outil-{len(self._workers) + 1}", daemon=True
-                )
+                worker = threading.Thread(target=self._work, name=f"loom-outil-{len(self._workers) + 1}", daemon=True)
                 self._workers.append(worker)
                 worker.start()
         return future
@@ -131,8 +129,7 @@ class ToolThreads:
         still = [name for name, _ in self.running]
         if still:
             logger.warning(
-                "Fermeture sans attendre %d outil(s) encore au travail (%s) : "
-                "leur effet éventuel est d'état inconnu",
+                "Fermeture sans attendre %d outil(s) encore au travail (%s) : leur effet éventuel est d'état inconnu",
                 len(still),
                 ", ".join(still),
             )
@@ -200,17 +197,14 @@ class CallThreads:
         since = time.monotonic() - (self.abandoned_at or time.monotonic())
         failed = not future.cancelled() and future.exception() is not None
         logger.warning(
-            "Outil %s : travail fini %.1f s après que l'appel a rendu la main (%s) ; "
-            "son résultat est perdu",
+            "Outil %s : travail fini %.1f s après que l'appel a rendu la main (%s) ; son résultat est perdu",
             self.name,
             since,
             "en erreur" if failed else "effet produit si l'outil en a un",
         )
 
 
-_current: contextvars.ContextVar[CallThreads | None] = contextvars.ContextVar(
-    "loom_tool_threads", default=None
-)
+_current: contextvars.ContextVar[CallThreads | None] = contextvars.ContextVar("loom_tool_threads", default=None)
 
 
 @contextmanager

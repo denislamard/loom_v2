@@ -64,9 +64,7 @@ class Caller:
     @property
     def granted(self) -> frozenset[Permission]:
         """Permissions de l'utilisateur, tous agents confondus, restreintes par la clé (D-4)."""
-        mine: frozenset[Permission] = frozenset(
-            permission for role in self.actor.roles for permission in role.permissions
-        )
+        mine: frozenset[Permission] = frozenset(permission for role in self.actor.roles for permission in role.permissions)
         if self.key is not None and self.key.scopes is not None:
             mine &= frozenset(self.key.scopes)
         return mine
@@ -83,9 +81,7 @@ class Caller:
         """
         if self.key is not None and not self.key.allows(agent):
             return False
-        return any(
-            permission in role.permissions and role.allows(agent) for role in self.actor.roles
-        )
+        return any(permission in role.permissions and role.allows(agent) for role in self.actor.roles)
 
     def lacking(self, permission: Permission, agent: str | None = None) -> str:
         """Pourquoi cet appelant n'a pas ``permission`` (sur ``agent``) : ses rôles, ou sa clé.

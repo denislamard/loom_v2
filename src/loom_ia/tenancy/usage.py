@@ -88,10 +88,7 @@ class Exceeded:
     spent: float
 
     def __str__(self) -> str:
-        return (
-            f"budget du client atteint pour {self.period} : "
-            f"{_amount(self.limit, self.spent)} (plafond {_amount(self.limit, self.value)})"
-        )
+        return f"budget du client atteint pour {self.period} : {_amount(self.limit, self.spent)} (plafond {_amount(self.limit, self.value)})"
 
 
 class BudgetExhausted(RuntimeError):
@@ -173,14 +170,10 @@ class TenantUsage:
                 used = _used(limit, spent)
                 if used >= value:
                     reached = Exceeded(period=period, limit=limit, value=value, spent=used)
-                    logger.warning(
-                        "Run refusé — client %s : %s", tenant.id, reached, extra={TOLD: True}
-                    )
+                    logger.warning("Run refusé — client %s : %s", tenant.id, reached, extra={TOLD: True})
                     raise BudgetExhausted(tenant.id, reached, period.resets_in(now))
 
-    async def record(
-        self, tenant: Tenant, run_id: RunId, spent: Spent, now: datetime | None = None
-    ) -> None:
+    async def record(self, tenant: Tenant, run_id: RunId, spent: Spent, now: datetime | None = None) -> None:
         """Enregistre ce qu'un run racine a coûté, dans les fenêtres du client.
 
         Rien n'est retenu pour un client sans budget : le compteur ne sert qu'à
@@ -225,16 +218,12 @@ class TenantUsage:
         """Lit ce que le journal a reçu depuis la dernière lecture, et le porte au compteur."""
         key = (tenant_id, period.key)
         window = self._windows.get(key) or _Window(period=period, since=period.start)
-        fresh = [
-            e for e in await self._read(tenant_id, window.since) if e.event_id not in window.seen
-        ]
+        fresh = [e for e in await self._read(tenant_id, window.since) if e.event_id not in window.seen]
         # Rien n'est retenu avant d'avoir tout lu : une lecture qui échoue laisse
         # la fenêtre telle qu'elle était.
         touched: set[RunId] = set()
         for entry in ledger(fresh):
-            window.totals[entry.root_run_id] = (
-                window.totals.get(entry.root_run_id, Spent()) + entry.spent
-            )
+            window.totals[entry.root_run_id] = window.totals.get(entry.root_run_id, Spent()) + entry.spent
             touched.add(entry.root_run_id)
         for event in fresh:
             window.seen[event.event_id] = event.ts
@@ -249,11 +238,7 @@ class TenantUsage:
     def _forget_before(self, tenant_id: TenantId, period: Period) -> None:
         """Oublie les fenêtres de ce client finies avant celle-ci (même genre)."""
         for key, window in list(self._windows.items()):
-            if (
-                key[0] == tenant_id
-                and window.period.kind == period.kind
-                and window.period.end <= period.start
-            ):
+            if key[0] == tenant_id and window.period.kind == period.kind and window.period.end <= period.start:
                 del self._windows[key]
                 self._reading.pop(key, None)
 

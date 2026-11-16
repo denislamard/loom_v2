@@ -111,10 +111,7 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
             try:
                 parsed = cast(JsonValue, json.loads(kept))
             except json.JSONDecodeError as exc:
-                problems.append(
-                    f"ce n'est pas un JSON valide ({exc.msg}, ligne {exc.lineno}, "
-                    f"colonne {exc.colno})"
-                )
+                problems.append(f"ce n'est pas un JSON valide ({exc.msg}, ligne {exc.lineno}, colonne {exc.colno})")
             except RecursionError:
                 problems.append(_TOO_NESTED)
         if parsed is not None or (data is None and not problems):
@@ -148,10 +145,7 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
             problems.append(f"must_not_match : {exc}")
         else:
             if found is not None:
-                problems.append(
-                    f"motif interdit présent : {contract.must_not_match} "
-                    f"(position {found.start()}, longueur {len(found.group())})"
-                )
+                problems.append(f"motif interdit présent : {contract.must_not_match} (position {found.start()}, longueur {len(found.group())})")
     if contract.max_chars is not None and len(kept) > contract.max_chars:
         problems.append(f"{len(kept)} caractères, au-delà de {contract.max_chars}")
     return Checked(
@@ -245,17 +239,11 @@ def refusal(
 def _kept_rules(contract: OutputContract, problems: tuple[str, ...]) -> list[str]:
     """Règles du contrat (hors schéma) que les problèmes ne citent pas."""
     rules: list[str] = []
-    if contract.must_match is not None and not any(
-        p.startswith(("motif attendu absent", "must_match :")) for p in problems
-    ):
+    if contract.must_match is not None and not any(p.startswith(("motif attendu absent", "must_match :")) for p in problems):
         rules.append(f"le motif {contract.must_match} doit figurer dans la sortie")
-    if contract.must_not_match is not None and not any(
-        p.startswith(("motif interdit présent", "must_not_match :")) for p in problems
-    ):
+    if contract.must_not_match is not None and not any(p.startswith(("motif interdit présent", "must_not_match :")) for p in problems):
         rules.append(f"aucun passage ne doit correspondre au motif {contract.must_not_match}")
-    if contract.max_chars is not None and not any(
-        " caractères, au-delà de " in p for p in problems
-    ):
+    if contract.max_chars is not None and not any(" caractères, au-delà de " in p for p in problems):
         rules.append(f"{contract.max_chars} caractères au plus")
     return rules
 
@@ -295,15 +283,11 @@ class ContractGuard:
             case _:
                 return CONTINUE
 
-    def _final(
-        self, contract: OutputContract, message: Message, context: PolicyContext
-    ) -> Decision:
+    def _final(self, contract: OutputContract, message: Message, context: PolicyContext) -> Decision:
         """Réponse finale : réparée par l'orchestrateur, puis ``on_failure``."""
         checked = check(contract, message.text)
         answer = Message.assistant(checked.text)
-        kept: Decision = (
-            Replace(answer, reason="sortie normalisée") if checked.normalized else CONTINUE
-        )
+        kept: Decision = Replace(answer, reason="sortie normalisée") if checked.normalized else CONTINUE
         if checked.ok:
             context.record(_passed("output", checked))
             return kept
@@ -315,9 +299,7 @@ class ContractGuard:
         match contract.on_failure:
             case "unverified":
                 context.record(_failed("output", checked, reason, "unverified"))
-                return (
-                    Replace(answer, reason="sortie normalisée") if checked.normalized else CONTINUE
-                )
+                return Replace(answer, reason="sortie normalisée") if checked.normalized else CONTINUE
             case "fallback":
                 context.record(_failed("output", checked, reason, "fallback"))
                 return Replace(contract.fallback_message or "", reason="message de repli")
@@ -350,15 +332,11 @@ class ContractGuard:
         match contract.on_failure:
             case "unverified":
                 context.record(_failed(target, checked, reason, "unverified"))
-                return Replace(
-                    output.model_copy(update={"unverified": True}), reason="non vérifiée"
-                )
+                return Replace(output.model_copy(update={"unverified": True}), reason="non vérifiée")
             case "fallback":
                 context.record(_failed(target, checked, reason, "fallback"))
                 return Replace(
-                    ToolOutput.text(contract.fallback_message or "").model_copy(
-                        update={"fallback": True}
-                    ),
+                    ToolOutput.text(contract.fallback_message or "").model_copy(update={"fallback": True}),
                     reason="repli",
                 )
             case "fail":
@@ -372,9 +350,7 @@ def _structured(output: ToolOutput, checked: Checked) -> ToolOutput:
     blocks = (TextBlock(text=checked.text),)
     if checked.data is not None and not output.as_text and output.data is not None:
         # Un outil qui rendait du JSON le garde en JSON.
-        return output.model_copy(
-            update={"blocks": (JsonBlock(data=checked.data),), "data": checked.data}
-        )
+        return output.model_copy(update={"blocks": (JsonBlock(data=checked.data),), "data": checked.data})
     return output.model_copy(update={"blocks": blocks, "data": checked.data})
 
 

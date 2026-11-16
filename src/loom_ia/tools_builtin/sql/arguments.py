@@ -45,9 +45,7 @@ class SqlArguments(BaseModel):
         ),
     ]
     database: Annotated[str, Field(description="Nom de la base, parmi celles décrites.")]
-    sql: Annotated[
-        str | None, Field(max_length=MAX_SQL_CHARS, description="Pour query : le SELECT.")
-    ] = None
+    sql: Annotated[str | None, Field(max_length=MAX_SQL_CHARS, description="Pour query : le SELECT.")] = None
     params: Annotated[
         tuple[ParamValue, ...] | None,
         Field(max_length=MAX_PARAMS, description="Pour query : valeurs de $1, $2…"),

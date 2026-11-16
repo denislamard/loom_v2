@@ -217,9 +217,7 @@ class AnthropicModel:
                             yield chunk
                 if not parser.stopped:
                     # ``message_stop`` clôt un flux complet ; sans lui, c'est un début de réponse.
-                    raise ModelError(
-                        "transient", "Flux interrompu : message_stop non reçu du fournisseur"
-                    )
+                    raise ModelError("transient", "Flux interrompu : message_stop non reçu du fournisseur")
                 return
         except (anthropic.APIError, httpx2.HTTPError) as exc:
             error = _hinted(to_model_error(exc), request)
@@ -229,9 +227,7 @@ class AnthropicModel:
         for chunk in chunks:
             yield chunk
 
-    def _output_config(
-        self, request: ModelRequest, params: dict[str, JsonValue]
-    ) -> sdk.OutputConfigParam | anthropic.Omit:
+    def _output_config(self, request: ModelRequest, params: dict[str, JsonValue]) -> sdk.OutputConfigParam | anthropic.Omit:
         """``output_config`` : schéma de sortie (``native_json``), ajouté à celui des ``params``."""
         schema = request.output_schema
         if schema is None or not self.spec.capabilities.native_json:
@@ -239,9 +235,7 @@ class AnthropicModel:
         try:
             transformed = anthropic.transform_schema({**schema})
         except ValueError as exc:
-            logger.warning(
-                "Modèle %s : schéma de sortie non transmis au fournisseur (%s)", self.spec.id, exc
-            )
+            logger.warning("Modèle %s : schéma de sortie non transmis au fournisseur (%s)", self.spec.id, exc)
             return anthropic.omit
         declared = params.pop("output_config", None)
         config: dict[str, Any] = {**declared} if isinstance(declared, dict) else {}
@@ -343,9 +337,7 @@ def place_cache_points(
         block["cache_control"] = dict(control)
 
 
-def _last_cacheable(
-    messages: list[sdk.MessageParam], tail: _Mark | None = None
-) -> dict[str, Any] | None:
+def _last_cacheable(messages: list[sdk.MessageParam], tail: _Mark | None = None) -> dict[str, Any] | None:
     """Dernier bloc de la conversation qui peut porter un point de cache.
 
     Sans ``tail``, dans le dernier message. Avec, avant ce bloc — le state de
@@ -381,15 +373,8 @@ def _hinted(error: ModelError, request: ModelRequest) -> ModelError:
     (400, « tool_choice: type "tool" and "any" are not supported for this
     model. ») ; le message du fournisseur ne dit pas quoi changer dans la config.
     """
-    if (
-        error.kind == "invalid_request"
-        and request.tool_choice == "required"
-        and "tool_choice" in error.message
-    ):
-        error.message = (
-            f"{error.message} — ce modèle refuse l'outil imposé : déclarer "
-            "capabilities.forced_tool_choice: false"
-        )
+    if error.kind == "invalid_request" and request.tool_choice == "required" and "tool_choice" in error.message:
+        error.message = f"{error.message} — ce modèle refuse l'outil imposé : déclarer capabilities.forced_tool_choice: false"
         error.args = (error.message,)
     return error
 
@@ -604,9 +589,7 @@ def response_to_chunks(message: sdk.Message) -> list[ModelChunk]:
             case sdk.TextBlock(text=text):
                 blocks.append(TextBlock(text=text))
             case sdk.ThinkingBlock(thinking=thinking, signature=signature):
-                blocks.append(
-                    ReasoningBlock(text=thinking, provider_meta=_meta(signature=signature))
-                )
+                blocks.append(ReasoningBlock(text=thinking, provider_meta=_meta(signature=signature)))
             case sdk.RedactedThinkingBlock(data=data):
                 blocks.append(ReasoningBlock(provider_meta=_meta(redacted_data=data)))
             case sdk.ToolUseBlock(id=call_id, name=name, input=arguments):

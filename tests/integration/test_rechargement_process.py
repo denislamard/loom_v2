@@ -170,9 +170,7 @@ def demo(tmp_path: Path) -> ConfigFactory:
             # loom serve sans clé : au nom de dev, sur la boucle locale (D-1b).
             "server": {"http": {"user": "dev"}},
             "imports": ["outils_acces"],
-            "models": [
-                {"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": SCRIPT}}
-            ],
+            "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": SCRIPT}}],
             "telemetry": {"logging": {"level": "WARNING"}},
             **root,
         }
@@ -207,18 +205,14 @@ def rewrite(path: Path, change: Callable[[dict[str, Any]], None]) -> None:
     path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
 
 
-def test_a_change_is_served_by_a_new_process_and_data_does_not_reload(
-    demo: ConfigFactory, served: Callable[[Path], Served]
-) -> None:
+def test_a_change_is_served_by_a_new_process_and_data_does_not_reload(demo: ConfigFactory, served: Callable[[Path], Served]) -> None:
     config = demo(storage={"events": {"backend": "jsonl", "path": "data"}})
     server = served(config)
     server.ready()
     assert server.agents() == {"demo": "Répond aux questions de calcul."}
 
     # Un run écrit son journal sous data/ : rien ne se recharge.
-    result = server.call(
-        "POST", "/agents/demo/runs", {"message": "Combien font 12 fois 7, plus 3 ?"}
-    )
+    result = server.call("POST", "/agents/demo/runs", {"message": "Combien font 12 fois 7, plus 3 ?"})
     assert result["status"] == "completed"
     assert any((config.parent / "data").rglob("*.jsonl"))
     # Un fichier qui apparaît et disparaît dans le même lot n'a rien changé.
@@ -247,9 +241,7 @@ def test_a_change_is_served_by_a_new_process_and_data_does_not_reload(
         server.agents()
 
 
-def test_a_broken_config_leaves_the_old_process_serving(
-    demo: ConfigFactory, served: Callable[[Path], Served]
-) -> None:
+def test_a_broken_config_leaves_the_old_process_serving(demo: ConfigFactory, served: Callable[[Path], Served]) -> None:
     config = demo()
     server = served(config)
     server.ready()
@@ -258,10 +250,7 @@ def test_a_broken_config_leaves_the_old_process_serving(
 
     rewrite(agent, lambda data: data.update(tools=[{"python": "inexistant"}]))
     server.until(lambda: "Rechargement refusé" in server.said, "pas refusé")
-    assert (
-        "Config refusée : Agent 'demo', outil 'inexistant' : Référence 'inexistant' introuvable"
-        in server.said
-    )
+    assert "Config refusée : Agent 'demo', outil 'inexistant' : Référence 'inexistant' introuvable" in server.said
     assert server.agents() == {"demo": "Répond aux questions de calcul."}
 
     agent.write_text(good.replace("Répond aux questions", "Répond enfin aux questions"))
@@ -281,9 +270,7 @@ def test_a_broken_config_leaves_the_old_process_serving(
     assert server.stop() == 0
 
 
-def test_a_folder_that_starts_being_watched_is_watched(
-    demo: ConfigFactory, served: Callable[[Path], Served], tmp_path: Path
-) -> None:
+def test_a_folder_that_starts_being_watched_is_watched(demo: ConfigFactory, served: Callable[[Path], Served], tmp_path: Path) -> None:
     """Des prompts déplacés hors du dossier de la config : le guetteur les suit."""
     config = demo()
     server = served(config)
@@ -300,9 +287,7 @@ def test_a_folder_that_starts_being_watched_is_watched(
     assert server.stop() == 0
 
 
-def test_an_env_file_outside_the_config_folder_reloads_and_is_reread(
-    demo: ConfigFactory, served: Callable[[Path], Served], tmp_path: Path
-) -> None:
+def test_an_env_file_outside_the_config_folder_reloads_and_is_reread(demo: ConfigFactory, served: Callable[[Path], Served], tmp_path: Path) -> None:
     """Rangé ailleurs, le fichier d'environnement est surveillé seul, et relu au rechargement."""
     secrets = tmp_path.parent / f"{tmp_path.name}-secrets" / "loom.env"
     secrets.parent.mkdir()
@@ -322,9 +307,7 @@ def test_an_env_file_outside_the_config_folder_reloads_and_is_reread(
     assert server.stop() == 0
 
 
-def test_a_run_in_flight_ends_in_the_old_process(
-    demo: ConfigFactory, served: Callable[[Path], Served]
-) -> None:
+def test_a_run_in_flight_ends_in_the_old_process(demo: ConfigFactory, served: Callable[[Path], Served]) -> None:
     script: list[dict[str, Any]] = [
         {"tool_calls": [{"name": "attendre", "arguments": {"secondes": 8}}]},
         {"text": "C'est fait."},
@@ -363,9 +346,7 @@ def test_a_run_in_flight_ends_in_the_old_process(
     assert server.stop() == 0
 
 
-def test_a_killed_supervisor_takes_its_processes_along(
-    demo: ConfigFactory, served: Callable[[Path], Served]
-) -> None:
+def test_a_killed_supervisor_takes_its_processes_along(demo: ConfigFactory, served: Callable[[Path], Served]) -> None:
     """Un ``kill -9`` du superviseur : ses process le voient et s'arrêtent, le port se libère."""
     server = served(demo())
     server.ready()
@@ -386,14 +367,9 @@ def test_a_killed_supervisor_takes_its_processes_along(
         sock.bind(("127.0.0.1", server.port))
 
 
-def test_a_refused_first_start_exits_with_2(
-    demo: ConfigFactory, served: Callable[[Path], Served]
-) -> None:
+def test_a_refused_first_start_exits_with_2(demo: ConfigFactory, served: Callable[[Path], Served]) -> None:
     server = served(demo(agents=[demo_agent(tools=[{"python": "inexistant"}])]))
     code = server.process.wait(timeout=DELAI)
     assert code == 2
-    assert (
-        "Config refusée : Agent 'demo', outil 'inexistant' : Référence 'inexistant' introuvable"
-        in server.said
-    )
+    assert "Config refusée : Agent 'demo', outil 'inexistant' : Référence 'inexistant' introuvable" in server.said
     assert "Le serveur n'a pas démarré." in server.said

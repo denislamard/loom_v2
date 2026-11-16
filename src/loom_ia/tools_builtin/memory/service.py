@@ -81,15 +81,11 @@ class MemoryService:
                 return
             embedder = self.models.embedder
             try:
-                await in_thread(
-                    self.store.ensure, embedder.model_name, embedder.dim, check=check_model
-                )
+                await in_thread(self.store.ensure, embedder.model_name, embedder.dim, check=check_model)
             except ModelMismatchError as exc:
                 raise ToolError(str(exc)) from exc
             except sqlite3.Error as exc:
-                raise ToolError(
-                    f"Base de mémoire illisible ({self.store.path.name}) : {exc}"
-                ) from exc
+                raise ToolError(f"Base de mémoire illisible ({self.store.path.name}) : {exc}") from exc
             self._ready = check_model
 
     # --- Lecture ----------------------------------------------------------------------
@@ -157,9 +153,7 @@ class MemoryService:
         if place is None:
             raise ToolError("'project' est obligatoire pour mémoriser.")
         await self.start()
-        replaced = (
-            None if source is None else await in_thread(self.store.find_by_source, source, place)
-        )
+        replaced = None if source is None else await in_thread(self.store.find_by_source, source, place)
         digest = content_hash(text)
         same = await in_thread(self.store.find_by_hash, digest, place)
         if same is not None:
@@ -202,10 +196,7 @@ class MemoryService:
         digest = content_hash(text)
         same = await in_thread(self.store.find_by_hash, digest, old.project)
         if same is not None and same.doc_id != old.doc_id:
-            raise ToolError(
-                f"Ce texte est déjà celui du document {same.doc_id} (« {same.title} ») : "
-                f"{old.doc_id} n'a pas été modifié."
-            )
+            raise ToolError(f"Ce texte est déjà celui du document {same.doc_id} (« {same.title} ») : {old.doc_id} n'a pas été modifié.")
         if same is not None:
             return IngestResult(
                 doc_id=old.doc_id,
@@ -214,13 +205,9 @@ class MemoryService:
                 chunks=0,
                 duplicate_of=old.doc_id,
             )
-        doc = old.model_copy(
-            update={"text": text, "content_hash": digest, "updated_at": utc_now_iso()}
-        )
+        doc = old.model_copy(update={"text": text, "content_hash": digest, "updated_at": utc_now_iso()})
         chunks = await self.index_document(doc)
-        return IngestResult(
-            doc_id=doc.doc_id, title=doc.title, project=doc.project, chunks=chunks, updated=True
-        )
+        return IngestResult(doc_id=doc.doc_id, title=doc.title, project=doc.project, chunks=chunks, updated=True)
 
     async def delete(self, doc_id: str, *, project: str | None) -> DocSummary:
         doc = await self.get(doc_id, project=project)

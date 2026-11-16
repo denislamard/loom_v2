@@ -76,15 +76,11 @@ async def test_a_structured_answer_by_the_python_and_rest_accesses(demo: ConfigF
     ]
     progress = Progress()
     lines = [line for e in events if (line := progress.line(e)) is not None]
-    assert lines[2].startswith(
-        "· contrôle contract output : non conforme, réparation demandée — ce n'est pas un JSON"
-    )
+    assert lines[2].startswith("· contrôle contract output : non conforme, réparation demandée — ce n'est pas un JSON")
     assert lines[3] == "· contrôle contract output : conforme (après normalisation)"
 
 
-def test_the_cli_streams_the_checked_answer(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_streams_the_checked_answer(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = structured(demo, on_failure="unverified")
     assert main(["--config", str(path), "validate"]) == 0
     assert f"  ├ politiques   {CONTRACT_POLICY} : after_tool, on_output" in capsys.readouterr().out
@@ -98,9 +94,7 @@ def test_schema_files_are_read_at_load(tmp_path: Path) -> None:
     (tmp_path / "agents").mkdir()
     (tmp_path / "schemas").mkdir()
     (tmp_path / "schemas" / "relance.yaml").write_text(yaml.safe_dump(SCHEMA), encoding="utf-8")
-    (tmp_path / "schemas" / "faux.json").write_text(
-        json.dumps({"type": "entier"}), encoding="utf-8"
-    )
+    (tmp_path / "schemas" / "faux.json").write_text(json.dumps({"type": "entier"}), encoding="utf-8")
     config = {
         "version": 1,
         "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1"}],
@@ -171,9 +165,7 @@ def test_contracts_reach_the_tools_and_the_stream_mode() -> None:
 
     guarded = AgentSpec.model_validate({**base, "tools": [{"python": "x", "output": {}}]})
     policies = build_policies(guarded, Registry())
-    assert [(b.name, sorted(b.points)) for b in policies.bound] == [
-        (CONTRACT_POLICY, ["after_tool"])
-    ]
+    assert [(b.name, sorted(b.points)) for b in policies.bound] == [(CONTRACT_POLICY, ["after_tool"])]
     # Un outil sous contrat ne contrôle pas la réponse finale : diffusion live.
     assert stream_output(guarded, policies) == "live"
     role: dict[str, Any] = {

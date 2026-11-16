@@ -96,9 +96,7 @@ class WordTool(DocumentTool):
 
     def _options(self) -> tuple[tuple[str, str], ...]:
         reads = any("read" in folder.rights for folder in self._space.folders)
-        reading = (
-            f"non ({self._unsafe})" if self._unsafe else "oui" if reads else "aucun dossier read"
-        )
+        reading = f"non ({self._unsafe})" if self._unsafe else "oui" if reads else "aucun dossier read"
         return (
             *super()._options(),
             ("lecture des documents", reading),
@@ -136,8 +134,7 @@ def _warn_unwritten(found: dict[str, JsonValue], blocks: tuple[str, ...]) -> Non
     notes = found.setdefault("notes", list[JsonValue]())
     if isinstance(notes, list):
         notes.append(
-            f"Lu : {said} ; cet outil n'en écrit pas : les retirer avant de réécrire le "
-            f"document (ou blocks: [{', '.join(missing)}] dans la config de l'outil)."
+            f"Lu : {said} ; cet outil n'en écrit pas : les retirer avant de réécrire le document (ou blocks: [{', '.join(missing)}] dans la config de l'outil)."
         )
 
 
@@ -163,7 +160,4 @@ def _fonts_said(styles: Sequence[Style]) -> str | None:
     fonts = sorted({font for style in styles for font in unsafe_fonts(style)})
     if not fonts:
         return None
-    return (
-        f"{', '.join(fonts)} : hors des polices de tous les postes, remplacée(s) chez qui "
-        "ne les a pas"
-    )
+    return f"{', '.join(fonts)} : hors des polices de tous les postes, remplacée(s) chez qui ne les a pas"

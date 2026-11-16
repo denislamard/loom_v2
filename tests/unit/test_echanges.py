@@ -55,10 +55,7 @@ sans_openai = pytest.mark.skipif(find_spec("openai") is None, reason="extra 'ope
 REQUEST = ModelRequest(model_id="m-1", messages=(Message.user("Bonjour"),), max_tokens=100)
 ANSWER = Message.assistant("Bonjour à vous")
 # Une image PNG d'un pixel, en base64.
-PNG = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
-    "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-)
+PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 A = TenantId("atelier-a")
 B = TenantId("atelier-b")
 
@@ -121,12 +118,8 @@ def test_rate_limit_counters_are_kept_they_hold_no_secret() -> None:
 def test_credentials_in_an_address_are_removed_and_the_host_kept() -> None:
     """Une passerelle jointe en ``https://user:mot-de-passe@hôte`` : l'hôte reste, pas eux."""
     marque = "[retir%C3%A9]"
-    assert scrubbed_url("https://loom:s3cr3t@gateway.test:8443/v1/chat") == (
-        f"https://{marque}@gateway.test:8443/v1/chat"
-    )
-    assert scrubbed_url("https://sk-proj-abc@gateway.test/v1/chat?key=k&alt=sse") == (
-        f"https://{marque}@gateway.test/v1/chat?key={marque}&alt=sse"
-    )
+    assert scrubbed_url("https://loom:s3cr3t@gateway.test:8443/v1/chat") == (f"https://{marque}@gateway.test:8443/v1/chat")
+    assert scrubbed_url("https://sk-proj-abc@gateway.test/v1/chat?key=k&alt=sse") == (f"https://{marque}@gateway.test/v1/chat?key={marque}&alt=sse")
 
 
 @pytest.mark.parametrize(
@@ -228,9 +221,7 @@ async def test_each_attempt_tells_its_exchanges_first() -> None:
 
 async def test_the_last_failed_attempt_is_told_before_the_error() -> None:
     surcharge = ModelError("overloaded", "surchargé", http_status=529)
-    call = ModelCall(
-        Recorded(Deposant(surcharge, surcharge, surcharge), 1000), SPEC, sleep=no_sleep
-    )
+    call = ModelCall(Recorded(Deposant(surcharge, surcharge, surcharge), 1000), SPEC, sleep=no_sleep)
     seen: list[object] = []
     with pytest.raises(ModelError):
         async for item in call.run(REQUEST):
@@ -286,9 +277,7 @@ async def test_the_recording_client_keeps_what_the_sdk_sent_and_read() -> None:
     client = RecordingClient(transport=httpx2.MockTransport(repond))
     log = ExchangeLog()
     with recording(log):
-        request = client.build_request(
-            "POST", "https://api.test/v1/messages", json={"q": 1}, headers={"x-api-key": "sk"}
-        )
+        request = client.build_request("POST", "https://api.test/v1/messages", json={"q": 1}, headers={"x-api-key": "sk"})
         response = await client.send(request, stream=True)
         lu = b"".join([chunk async for chunk in response.aiter_bytes()])
         await response.aclose()
@@ -509,9 +498,7 @@ async def test_an_exchange_never_leaves_its_bodies_to_a_collector(demo: ConfigFa
         assert event.attributes["loom.status_code"] == 200
         assert int(event.attributes["loom.request_bytes"]) > 0
     # Les autres événements, eux, portent leur contenu en capture `content`.
-    assert any(
-        key.startswith("loom.content.") for s in spans for e in s.events for key in e.attributes
-    )
+    assert any(key.startswith("loom.content.") for s in spans for e in s.events for key in e.attributes)
 
 
 async def test_a_resumed_run_ignores_its_exchanges(demo: ConfigFactory) -> None:
@@ -525,9 +512,7 @@ async def test_a_resumed_run_ignores_its_exchanges(demo: ConfigFactory) -> None:
 # --- Les logs ---------------------------------------------------------------------------
 
 
-async def test_one_log_line_per_call_and_no_content(
-    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_one_log_line_per_call_and_no_content(demo: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     agent = demo_agent(tools=[{"python": "calculer"}])
     config = load_config(demo(agents=[agent]))
     with caplog.at_level(logging.INFO, logger="loom_ia.engine.loop"):
@@ -543,9 +528,7 @@ async def test_one_log_line_per_call_and_no_content(
     assert QUESTION not in texte and "12*7+3" not in texte and "87" not in texte
 
 
-async def test_a_tool_error_is_said_in_its_line(
-    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_tool_error_is_said_in_its_line(demo: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     script = [
         {"text": "Je calcule.", "tool_calls": [{"name": "calculer", "arguments": {"expr": "1/0"}}]},
         {"text": "Impossible."},

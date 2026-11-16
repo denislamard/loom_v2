@@ -143,9 +143,7 @@ def test_model_spec_rules() -> None:
 
 def test_prompt_cache_is_for_anthropic_and_the_hash_ignores_an_absent_schema() -> None:
     assert spec(sdk="anthropic", cache={"system": True}).cache == PromptCache(system=True)
-    with pytest.raises(
-        ValidationError, match="'cache' pose des points de cache pour sdk: anthropic"
-    ):
+    with pytest.raises(ValidationError, match="'cache' pose des points de cache pour sdk: anthropic"):
         spec(sdk="openai", cache={"system": True})
     with pytest.raises(ValidationError):
         spec(sdk="anthropic", cache={"ttl": "2h"})
@@ -290,9 +288,7 @@ async def test_a_clean_end_without_content_is_still_an_answer() -> None:
     ],
     ids=["tronquée", "appel tronqué", "coupé", "vide"],
 )
-async def test_the_run_fails_instead_of_completing_on_a_cut_answer(
-    plan: list[ModelChunk], error_type: str
-) -> None:
+async def test_the_run_fails_instead_of_completing_on_a_cut_answer(plan: list[ModelChunk], error_type: str) -> None:
     store = InMemoryEventStore()
     model = ChunkedModel(plan, plan)
     ctx = RunContext(
@@ -459,9 +455,7 @@ class BilledModel:
 
 
 @pytest.mark.parametrize(("by_client", "level"), [(False, logging.WARNING), (True, logging.DEBUG)])
-async def test_a_failure_served_by_the_client_is_not_a_provider_warning(
-    caplog: pytest.LogCaptureFixture, by_client: bool, level: int
-) -> None:
+async def test_a_failure_served_by_the_client_is_not_a_provider_warning(caplog: pytest.LogCaptureFixture, by_client: bool, level: int) -> None:
     """Test O3 du 23/10 : la panne resservie par le rejeu s'écrivait en WARNING."""
     caplog.set_level(logging.DEBUG, logger="loom_ia")
     recorder = Recorder()
@@ -475,9 +469,7 @@ async def test_a_cut_attempt_keeps_what_the_provider_billed() -> None:
     """Test J1 du 21/10 : l'entrée d'un flux coupé était facturée, mais comptée 0."""
     recorder = Recorder()
     model = BilledModel([ModelError("transient", "coupé")], [ANSWER])
-    retried, response = await outcomes(
-        ModelCall(model, spec(**PRICED), on_chunk=recorder.on_chunk, sleep=recorder.sleep)
-    )
+    retried, response = await outcomes(ModelCall(model, spec(**PRICED), on_chunk=recorder.on_chunk, sleep=recorder.sleep))
 
     assert isinstance(retried, ModelRetried)
     assert (retried.usage, retried.final) == (BILLED, False)
@@ -489,9 +481,7 @@ async def test_a_cut_attempt_keeps_what_the_provider_billed() -> None:
 
 async def test_the_last_failed_attempt_is_announced_only_if_it_was_billed() -> None:
     items: list[ModelExchanged | ModelRetried | ModelResponse] = []
-    billed = ModelCall(
-        BilledModel([ModelError("transient", "coupé")]), spec(retry={"max_attempts": 1})
-    )
+    billed = ModelCall(BilledModel([ModelError("transient", "coupé")]), spec(retry={"max_attempts": 1}))
     with pytest.raises(ModelError, match="coupé"):
         async for item in billed.run(REQUEST):
             items.append(item)
@@ -499,9 +489,7 @@ async def test_the_last_failed_attempt_is_announced_only_if_it_was_billed() -> N
     assert isinstance(last, ModelRetried)
     assert (last.final, last.delay_s, last.usage) == (True, 0.0, BILLED)
 
-    silent = ModelCall(
-        FlakyModel([ModelError("transient", "réseau")]), spec(retry={"max_attempts": 1})
-    )
+    silent = ModelCall(FlakyModel([ModelError("transient", "réseau")]), spec(retry={"max_attempts": 1}))
     with pytest.raises(ModelError):
         assert [item async for item in silent.run(REQUEST)] == []
 
@@ -550,9 +538,7 @@ async def test_billed_attempts_count_in_the_run_but_not_as_calls() -> None:
     assert report.failed is not None
     assert (report.failed.calls, report.failed.usage) == (1, BILLED)
     assert report.failed.cost == pytest.approx(attempt_cost)
-    assert render(report)[-1] == (
-        "  Dont, facturé sans réponse : 1 tentative ratée · 1500/0 tokens · 0,00105 $"
-    )
+    assert render(report)[-1] == ("  Dont, facturé sans réponse : 1 tentative ratée · 1500/0 tokens · 0,00105 $")
 
     failed = await drive(ctx, (await begin_run(ctx, "Encore")).run_id)
     assert failed.status is RunStatus.FAILED

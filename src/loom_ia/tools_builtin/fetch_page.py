@@ -42,9 +42,7 @@ async def fetch_page(url: str) -> str:
     page = await download(url)
     # Décoder et analyser une grosse page prend jusqu'à une seconde ou deux : hors de
     # la boucle asyncio, pour ne pas figer le moteur ni les outils lancés en parallèle.
-    return await in_thread(
-        _render, page.body, page.charset, page.media_type, page.url, page.truncated
-    )
+    return await in_thread(_render, page.body, page.charset, page.media_type, page.url, page.truncated)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,9 +66,7 @@ async def download(url: str) -> Downloaded:
     lus ; seul un contenu textuel est accepté. ``ToolError`` dit ce qui a échoué.
     Partagé avec ``loom.memory`` (action ``add_url``).
     """
-    async with httpx2.AsyncClient(
-        headers=HEADERS, timeout=TIMEOUT, follow_redirects=False, transport=_PublicOnlyTransport()
-    ) as client:
+    async with httpx2.AsyncClient(headers=HEADERS, timeout=TIMEOUT, follow_redirects=False, transport=_PublicOnlyTransport()) as client:
         current = url.strip()
         for _ in range(MAX_REDIRECTS + 1):
             check_url(current)
@@ -83,10 +79,7 @@ async def download(url: str) -> Downloaded:
                         current = urljoin(current, location)
                         continue
                     if response.status_code >= 400:
-                        raise ToolError(
-                            f"La page répond {response.status_code} "
-                            f"{response.reason_phrase} : {current}"
-                        )
+                        raise ToolError(f"La page répond {response.status_code} {response.reason_phrase} : {current}")
                     media_type = response.headers.get("content-type", "").split(";")[0]
                     media_type = media_type.strip().lower() or "text/html"
                     if not _is_text(media_type):
@@ -182,9 +175,7 @@ class _PublicOnlyTransport(httpx2.AsyncBaseTransport):
             # Le client range les cookies et journalise d'après request.url : on lui rend le nom.
             request.url, request.extensions = url, extensions
 
-    async def _send(
-        self, request: httpx2.Request, url: httpx2.URL, address: str
-    ) -> httpx2.Response:
+    async def _send(self, request: httpx2.Request, url: httpx2.URL, address: str) -> httpx2.Response:
         request.url = url.copy_with(host=address)
         return await self._inner.handle_async_request(request)
 
@@ -211,9 +202,7 @@ async def _public_addresses(host: str, port: int) -> list[str]:
     for raw in addresses:
         address = ipaddress.ip_address(raw)
         if not _is_public(address):
-            raise ToolError(
-                f"Adresse refusée : {host} désigne une adresse non publique ({address})."
-            )
+            raise ToolError(f"Adresse refusée : {host} désigne une adresse non publique ({address}).")
     return addresses
 
 
@@ -240,10 +229,7 @@ async def _read_capped(response: httpx2.Response) -> tuple[bytes, bool]:
 # --- Types de contenu et décodage ------------------------------------------------
 
 _HTML: Final = frozenset({"text/html", "application/xhtml+xml"})
-_TEXT_APPLICATIONS: Final = frozenset(
-    f"application/{name}"
-    for name in "json xml javascript x-javascript yaml x-yaml x-ndjson".split()
-)
+_TEXT_APPLICATIONS: Final = frozenset(f"application/{name}" for name in "json xml javascript x-javascript yaml x-yaml x-ndjson".split())
 
 
 def _is_text(media_type: str) -> bool:
@@ -251,9 +237,7 @@ def _is_text(media_type: str) -> bool:
     if media_type == "text/event-stream":
         return False
     return (
-        media_type.startswith("text/")
-        or media_type in _TEXT_APPLICATIONS
-        or (media_type.startswith("application/") and media_type.endswith(("+json", "+xml")))
+        media_type.startswith("text/") or media_type in _TEXT_APPLICATIONS or (media_type.startswith("application/") and media_type.endswith(("+json", "+xml")))
     )
 
 
@@ -320,8 +304,7 @@ _RAW: Final = frozenset({"script", "style", "iframe", "xmp", "noembed", "noframe
 # Écartés avec tout leur contenu.
 _DROPPED: Final = frozenset({"noscript", "template", "svg", "canvas"})
 _BLOCKS: Final = frozenset(
-    "p div br hr section article main header footer nav aside ul ol blockquote form figure "
-    "figcaption dl dt dd address details summary fieldset caption".split()
+    "p div br hr section article main header footer nav aside ul ol blockquote form figure figcaption dl dt dd address details summary fieldset caption".split()
 )
 _HEADINGS: Final = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 # Repères de la page (landmarks HTML et ARIA). Le texte et les liens du contenu principal
@@ -668,11 +651,7 @@ def _absolute(base: str, href: str | None) -> str | None:
 
 def _is_compact(cell: str) -> bool:
     """Cellule assez courte pour tenir dans une ligne de tableau."""
-    return (
-        len(cell) <= _CELL_MAX
-        and "\x00" not in cell
-        and not any(line.startswith("|") for line in cell.split("\n"))
-    )
+    return len(cell) <= _CELL_MAX and "\x00" not in cell and not any(line.startswith("|") for line in cell.split("\n"))
 
 
 def _tidy(parts: list[str]) -> str:

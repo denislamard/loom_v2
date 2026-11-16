@@ -47,9 +47,7 @@ def pending_note(approvals: Sequence[PendingApproval]) -> Message | None:
 
 
 def _item(approval: PendingApproval) -> str:
-    arguments = json.dumps(
-        approval.arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    arguments = json.dumps(approval.arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if len(arguments) > ARGUMENTS_CHARS:
         arguments = f"{arguments[: ARGUMENTS_CHARS - 1]}…"
     return f"{approval.tool_name} (appel {approval.call_id}, arguments : {arguments})"

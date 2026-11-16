@@ -224,9 +224,7 @@ async def test_a_state_source_may_be_an_mcp_tool(tmp_path: Path) -> None:
         ),
     ],
 )
-async def test_an_mcp_tool_declared_always_needs_a_durable_journal(
-    tmp_path: Path, changes: dict[str, Any], tools: list[dict[str, Any]], name: str
-) -> None:
+async def test_an_mcp_tool_declared_always_needs_a_durable_journal(tmp_path: Path, changes: dict[str, Any], tools: list[dict[str, Any]], name: str) -> None:
     """Les outils d'un serveur ne sont connus qu'à la connexion : la garde lit la config (#28)."""
     from loom_ia.config.models import EventsStorage, StorageConfig
 
@@ -280,9 +278,7 @@ def test_role_can_read_results_of_a_prefixed_tool(tmp_path: Path) -> None:
 
 async def test_run_with_two_mcp_servers(tmp_path: Path) -> None:
     async with Loom(load_config(write(tmp_path, agent()))) as loom:
-        result = await loom.run(
-            "assistant", "Quelle heure, et combien font 121 fois 24 ?", user=DEV
-        )
+        result = await loom.run("assistant", "Quelle heure, et combien font 121 fois 24 ?", user=DEV)
         events = await loom.events(result.run_id)
         # Deuxième run : la connexion partagée à « time » est réutilisée.
         again = await loom.run("assistant", "Encore ?", user=DEV)
@@ -293,11 +289,7 @@ async def test_run_with_two_mcp_servers(tmp_path: Path) -> None:
         ("time__maintenant", "mcp"),
         ("m__calculer", "mcp"),
     ]
-    outputs = {
-        e.payload.tool_name: e.payload.output
-        for e in events
-        if isinstance(e.payload, ToolCompleted)
-    }
+    outputs = {e.payload.tool_name: e.payload.output for e in events if isinstance(e.payload, ToolCompleted)}
     assert outputs["time__maintenant"].as_text == "2026-09-19T10:00:00 (Europe/Paris)"
     assert outputs["m__calculer"].as_text == "2904"
 
@@ -311,11 +303,7 @@ async def test_unavailable_server_is_journaled(tmp_path: Path) -> None:
     assert [(m.source, m.required) for m in missing] == [("math", False)]
     # Le modèle a demandé m__calculer, absent du run : erreur d'outil inconnu, puis réponse.
     assert result.status is RunStatus.COMPLETED
-    unknown = [
-        e.payload.output.as_text
-        for e in events
-        if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "m__calculer"
-    ]
+    unknown = [e.payload.output.as_text for e in events if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "m__calculer"]
     assert unknown and unknown[0].startswith("Outil inconnu : 'm__calculer'")
 
     required = agent(tools=[{"mcp": "time"}, {"mcp": "math", "alias": "m", "required": True}])
@@ -364,9 +352,7 @@ mcp.run()
 '''
 
 
-def test_validate_warns_of_irreversible_mcp_tools_without_approval(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_warns_of_irreversible_mcp_tools_without_approval(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     notes = {
         "name": "notes",
         "transport": "stdio",
@@ -381,18 +367,15 @@ def test_validate_warns_of_irreversible_mcp_tools_without_approval(
     assert main(["--config", str(path), "validate"]) == 0
     captured = capsys.readouterr()
     assert "Agent assistant" in captured.out
-    assert (
-        "MCP notes__effacer : irréversible(s), sans approbation — approval: always ou "
-        "side_effects dans mcp_servers[].tools"
-    ) in " ".join(captured.out.split())
+    assert ("MCP notes__effacer : irréversible(s), sans approbation — approval: always ou side_effects dans mcp_servers[].tools") in " ".join(
+        captured.out.split()
+    )
     assert "notes__purger :" not in captured.out and "notes__lire :" not in captured.out
     # Dit par le rapport, pas redit par le journal.
     assert "sans approbation" not in captured.err
 
 
-def test_stream_shows_an_unavailable_server(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_stream_shows_an_unavailable_server(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     broken = servers(math={"args": ["absent.py"], "connect_timeout": 5})
     path = str(write(tmp_path, agent(), mcp_servers=broken))
     assert main(["--config", path, "run", "assistant", "Quelle heure ?", "--stream"]) == 0

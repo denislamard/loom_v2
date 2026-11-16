@@ -215,25 +215,16 @@ class JudgeGuard(TracingPolicy):
         return frozenset({"replace", "retry", "fail"})
 
     def __repr__(self) -> str:
-        return (
-            f"JudgeGuard({self.definition.name!r}, {self.definition.target}, "
-            f"modèle {self.model_spec.id!r})"
-        )
+        return f"JudgeGuard({self.definition.name!r}, {self.definition.target}, modèle {self.model_spec.id!r})"
 
-    async def decide_traced(
-        self, subject: PolicySubject, context: PolicyContext, trace: Trace
-    ) -> Decision:
+    async def decide_traced(self, subject: PolicySubject, context: PolicyContext, trace: Trace) -> Decision:
         judged = self._judged(subject)
         if judged is None:
             return CONTINUE
         definition, state = self.definition, subject.state
         skipped = await self._skipped(state, judged)
         if skipped is not None:
-            context.record(
-                GuardCheck(
-                    guard=JUDGE_GUARD, target=definition.target, outcome="skipped", reason=skipped
-                )
-            )
+            context.record(GuardCheck(guard=JUDGE_GUARD, target=definition.target, outcome="skipped", reason=skipped))
             return CONTINUE
         scores, spec = await self._evaluate(state, judged, trace, context)
         failed = tuple(s for s in scores if not s.passed)
@@ -254,23 +245,13 @@ class JudgeGuard(TracingPolicy):
         )
         if not blocking:
             reason = f"non bloquant : {_listed(failed)}" if failed else ""
-            context.record(
-                GuardCheck(
-                    guard=JUDGE_GUARD, target=definition.target, outcome="passed", reason=reason
-                )
-            )
+            context.record(GuardCheck(guard=JUDGE_GUARD, target=definition.target, outcome="passed", reason=reason))
             return CONTINUE
         reason = _listed(blocking)
         # Les critères bloquants déjà tenus sont rappelés : sans eux, l'auteur
         # corrige un point et en perd un autre (test E3 du 19/10).
         refused = {s.name for s in blocking}
-        kept = tuple(
-            c
-            for c in definition.criteria
-            if c.blocking
-            and c.name not in refused
-            and any(s.name == c.name and s.passed for s in scores)
-        )
+        kept = tuple(c for c in definition.criteria if c.blocking and c.name not in refused and any(s.name == c.name and s.passed for s in scores))
         feedback = diagnostic(definition.name, blocking, kept)
         if context.attempt < definition.repair.max_attempts:
             context.record(_failed(definition, reason, "retry"))
@@ -284,9 +265,7 @@ class JudgeGuard(TracingPolicy):
         match subject:
             case OnOutput(output=message) if role is None:
                 return _Judged(text=message.text, data=_json(message.text))
-            case AfterTool(spec=spec, call=call, arguments=arguments, output=output) if (
-                spec.kind == "role" and spec.name == role and not output.is_error
-            ):
+            case AfterTool(spec=spec, call=call, arguments=arguments, output=output) if spec.kind == "role" and spec.name == role and not output.is_error:
                 return _Judged(
                     text=visible_text(output),
                     data=output.data,
@@ -329,10 +308,7 @@ class JudgeGuard(TracingPolicy):
             )
             result = cast(object, await found if inspect.isawaitable(found) else found)
             if not isinstance(result, bool):
-                raise PolicyFailure(
-                    f"juge {definition.name} : la condition doit rendre un booléen, "
-                    f"reçu {type(result).__name__}"
-                )
+                raise PolicyFailure(f"juge {definition.name} : la condition doit rendre un booléen, reçu {type(result).__name__}")
             if not result:
                 return "condition_false"
         return None
@@ -349,9 +325,7 @@ class JudgeGuard(TracingPolicy):
             artifacts=self.artifacts,
         )
 
-    async def _evaluate(
-        self, state: RunState, judged: _Judged, trace: Trace, context: PolicyContext
-    ) -> tuple[tuple[CriterionScore, ...], ModelSpec]:
+    async def _evaluate(self, state: RunState, judged: _Judged, trace: Trace, context: PolicyContext) -> tuple[tuple[CriterionScore, ...], ModelSpec]:
         """Appel du juge, secours compris, journalisé ; les notes et le modèle qui a jugé."""
         definition, chain = self.definition, self.chain()
         # Adhérence (#10) : après une bascule, le run reste sur le secours du juge.
@@ -374,15 +348,9 @@ class JudgeGuard(TracingPolicy):
                     if isinstance(outcome, Answered):
                         answered = outcome
                     else:
-                        trace(
-                            outcome.model_copy(
-                                update={"judge": definition.name, "call_id": judged.call_id}
-                            )
-                        )
+                        trace(outcome.model_copy(update={"judge": definition.name, "call_id": judged.call_id}))
         except ModelError as exc:
-            raise PolicyFailure(
-                f"juge {definition.name} : model.{exc.kind} — {exc.message}"
-            ) from exc
+            raise PolicyFailure(f"juge {definition.name} : model.{exc.kind} — {exc.message}") from exc
         if answered is None:
             raise PolicyFailure(f"juge {definition.name} : appel terminé sans réponse")
         trace(
@@ -412,12 +380,7 @@ class JudgeGuard(TracingPolicy):
                     data = state.context.model_dump(mode="json")
                     sections.append(tagged("caller_context", json.dumps(data, ensure_ascii=False)))
                 case "attachments":
-                    files += [
-                        ArtifactRefBlock(
-                            uri=a.uri, media_type=a.media_type, size=a.size, name=a.name
-                        )
-                        for a in state.attachments
-                    ]
+                    files += [ArtifactRefBlock(uri=a.uri, media_type=a.media_type, size=a.size, name=a.name) for a in state.attachments]
                     listing = "\n".join(f"- {describe(block)}" for block in files)
                     sections.append(tagged("attachments", listing or "(aucune pièce jointe)"))
                 case "session_summary":
@@ -425,9 +388,7 @@ class JudgeGuard(TracingPolicy):
                     sections.append(tagged("session_summary", summary))
                 case LastTurns(count=count):
                     listing = transcript(context.turns[-count:])
-                    sections.append(
-                        tagged("last_turns", listing or "(aucun tour précédent dans la session)")
-                    )
+                    sections.append(tagged("last_turns", listing or "(aucun tour précédent dans la session)"))
                 case ToolResults(tools=names, scope=scope):
                     for name in names:
                         index = results
@@ -437,20 +398,14 @@ class JudgeGuard(TracingPolicy):
                             index = ResultIndex(session, self.artifacts)
                             records = index.results_of(name)[-1:]
                         if not records:
-                            sections.append(
-                                tagged("tool_result", "(aucun résultat dans ce run)", tool=name)
-                            )
+                            sections.append(tagged("tool_result", "(aucun résultat dans ce run)", tool=name))
                         own = index is results
                         for record in records:
                             try:
                                 text = await index.text(record)
                             except RefError as exc:
                                 text = f"(résultat illisible : {exc.message})"
-                            sections.append(
-                                tagged("tool_result", text, tool=name, ref=record.ref)
-                                if own
-                                else tagged("tool_result", text, tool=name)
-                            )
+                            sections.append(tagged("tool_result", text, tool=name, ref=record.ref) if own else tagged("tool_result", text, tool=name))
         if definition.role is not None:
             arguments = json.dumps(dict(judged.arguments), ensure_ascii=False)
             sections.append(tagged("arguments", arguments))
@@ -459,9 +414,7 @@ class JudgeGuard(TracingPolicy):
 
     def _scores(self, message: Message) -> tuple[CriterionScore, ...]:
         """Notes du verdict, contrôlées ; lève ``PolicyFailure`` si le verdict ne convient pas."""
-        return verdict_scores(
-            message, self.definition.criteria, judge=self.definition.name, validator=self._validator
-        )
+        return verdict_scores(message, self.definition.criteria, judge=self.definition.name, validator=self._validator)
 
     def _exhausted(
         self,
@@ -480,16 +433,12 @@ class JudgeGuard(TracingPolicy):
             case "unverified", None:
                 return CONTINUE
             case "unverified", ToolOutput() as output:
-                return Replace(
-                    output.model_copy(update={"unverified": True}), reason="non vérifiée"
-                )
+                return Replace(output.model_copy(update={"unverified": True}), reason="non vérifiée")
             case "fallback", None:
                 return Replace(definition.fallback_message or "", reason="message de repli")
             case "fallback", ToolOutput():
                 return Replace(
-                    ToolOutput.text(definition.fallback_message or "").model_copy(
-                        update={"fallback": True}
-                    ),
+                    ToolOutput.text(definition.fallback_message or "").model_copy(update={"fallback": True}),
                     reason="repli",
                 )
             case "fail", None:
@@ -554,18 +503,12 @@ def verdict_scores(
     if not calls:
         raise PolicyFailure(f"juge {judge} : réponse sans verdict (outil {VERDICT_TOOL})")
     arguments = calls[0].arguments
-    checker = (
-        validator
-        if validator is not None
-        else cast(Validator, Draft202012Validator(verdict_tool(criteria).input_schema))
-    )
+    checker = validator if validator is not None else cast(Validator, Draft202012Validator(verdict_tool(criteria).input_schema))
     errors = sorted(checker.iter_errors(arguments), key=lambda e: list(e.path))
     if errors:
         error = errors[0]
         location = ".".join(str(part) for part in error.absolute_path) or "(racine)"
-        raise PolicyFailure(
-            f"juge {judge} : verdict invalide — {location} : {schema_problem(error)}"
-        )
+        raise PolicyFailure(f"juge {judge} : verdict invalide — {location} : {schema_problem(error)}")
     given = cast(list[dict[str, JsonValue]], arguments["criteria"])
     by_name = {str(item["name"]): item for item in given}
     if len(by_name) != len(given):
@@ -582,9 +525,7 @@ def verdict_scores(
     )
 
 
-def diagnostic(
-    judge: str, refused: tuple[CriterionScore, ...], kept: tuple[Criterion, ...] = ()
-) -> str:
+def diagnostic(judge: str, refused: tuple[CriterionScore, ...], kept: tuple[Criterion, ...] = ()) -> str:
     """Diagnostic donné à l'auteur de la sortie pour qu'il la répare.
 
     ``kept`` : les critères bloquants que la sortie tient déjà, avec leur règle
@@ -594,10 +535,7 @@ def diagnostic(
     demande »), refusé à son tour.
     """
     lines = [f"Le juge {judge} refuse la sortie :"]
-    lines += [
-        f"- {s.name} (note {_score(s.score)}, seuil {_score(s.min_score)}) : {s.reason}"
-        for s in refused
-    ]
+    lines += [f"- {s.name} (note {_score(s.score)}, seuil {_score(s.min_score)}) : {s.reason}" for s in refused]
     if kept:
         lines.append("Critères déjà respectés, à garder dans la sortie corrigée :")
         lines += [f"- {c.name} : {c.rule}" for c in kept]
@@ -625,9 +563,7 @@ def _failed(definition: JudgeDefinition, reason: str, resolution: CheckResolutio
 
 
 def _listed(scores: tuple[CriterionScore, ...]) -> str:
-    return "; ".join(
-        f"{s.name} ({_score(s.score)} < {_score(s.min_score)}) : {s.reason}" for s in scores
-    )
+    return "; ".join(f"{s.name} ({_score(s.score)} < {_score(s.min_score)}) : {s.reason}" for s in scores)
 
 
 def _score(value: float) -> str:

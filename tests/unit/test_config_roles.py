@@ -20,11 +20,7 @@ from loom_ia.runtime import build_agent
 
 MAIN_SCRIPT: list[dict[str, Any]] = [
     {"tool_calls": [{"name": "calculer", "arguments": {"expr": "12*7+3"}}]},
-    {
-        "tool_calls": [
-            {"name": "rediger", "arguments": {"ton": "poli", "calcul": {"$ref": "result:1"}}}
-        ]
-    },
+    {"tool_calls": [{"name": "rediger", "arguments": {"ton": "poli", "calcul": {"$ref": "result:1"}}}]},
 ]
 MODELS: list[dict[str, Any]] = [
     {"id": "MAIN", "sdk": "fake", "model": "main-1", "params": {"script": MAIN_SCRIPT}},
@@ -58,10 +54,7 @@ def rediger(**changes: Any) -> dict[str, Any]:
             "required": ["ton"],
         },
         "context": ["user_input", {"tool_results": ["calculer"]}],
-        "input_template": (
-            "Ton : {{ args.ton }}\nDemande : {{ context.user_input }}\n"
-            "Calcul : {{ context.tool_results.calculer }}"
-        ),
+        "input_template": ("Ton : {{ args.ton }}\nDemande : {{ context.user_input }}\nCalcul : {{ context.tool_results.calculer }}"),
         "llm": {"max_tokens": 256, "params": {"temperature": 0}},
         "terminal": True,
     }
@@ -157,17 +150,11 @@ async def test_a_role_cites_the_state_it_receives(tmp_path: Path) -> None:
     assert (roles["tout"].state_keys, roles["certaines"].state_keys) == ((), ("client", "langue"))
 
     agent_ = build_agent(config, "demo", InMemoryEventStore())
-    definitions = {
-        name: tool.definition
-        for name in ("tout", "certaines")
-        if isinstance(tool := agent_.context.tools.get(name), RoleTool)
-    }
+    definitions = {name: tool.definition for name in ("tout", "certaines") if isinstance(tool := agent_.context.tools.get(name), RoleTool)}
     # Chaque clé reçue, avec ce qu'elle désigne : un rôle sans template les lit dans sa consigne.
     described = (("client", "Client dont on parle."), ("langue", ""))
     assert definitions["tout"].context == (SessionState(described=described),)
-    assert definitions["certaines"].context == (
-        SessionState(keys=("client", "langue"), described=described),
-    )
+    assert definitions["certaines"].context == (SessionState(keys=("client", "langue"), described=described),)
     await agent_.aclose()
 
 
@@ -186,9 +173,7 @@ async def test_a_role_of_the_config_receives_the_session_state(tmp_path: Path) -
     assert report.identical, report.divergence
 
 
-def test_cli_shows_roles_and_the_terminal_output(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_shows_roles_and_the_terminal_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = str(write(tmp_path, agent()))
     assert main(["--config", path, "validate"]) == 0
     assert "  demo · MAIN · 1 outil Python · rôle : rediger (ROLE)\n" in capsys.readouterr().out
@@ -232,8 +217,7 @@ def stateful(*roles: dict[str, Any]) -> dict[str, Any]:
         (broken(fallbacks=["ABSENT"]), "rôle 'rediger' : modèle de secours 'ABSENT' non déclaré"),
         (
             broken(context=["user_input", {"tool_results": ["calculer"]}, "attachments"]),
-            "rôle 'rediger' : il reçoit les pièces jointes, mais le modèle 'ROLE' n'a pas "
-            "la capacité vision",
+            "rôle 'rediger' : il reçoit les pièces jointes, mais le modèle 'ROLE' n'a pas la capacité vision",
         ),
         (
             broken(context=["attachments"], input_template="{{ context.attachments.x }}"),
@@ -251,15 +235,11 @@ def stateful(*roles: dict[str, Any]) -> dict[str, Any]:
         ),
         (
             stateful(rediger(context=[{"session_state": ["inconnue"]}], input_template=None)),
-            "Rôle 'rediger' : contexte session_state : 'inconnue' absente(s) de 'state' "
-            "(clés : client, langue)",
+            "Rôle 'rediger' : contexte session_state : 'inconnue' absente(s) de 'state' (clés : client, langue)",
         ),
         (
-            stateful(
-                rediger(context=["session_state"], input_template="{{ context.session_state.x }}")
-            ),
-            "Rôle 'rediger' : input_template cite 'x', absente(s) de 'state' "
-            "(clés : client, langue)",
+            stateful(rediger(context=["session_state"], input_template="{{ context.session_state.x }}")),
+            "Rôle 'rediger' : input_template cite 'x', absente(s) de 'state' (clés : client, langue)",
         ),
         (
             broken(context=["session_state", {"session_state": ["client"]}]),
@@ -332,9 +312,7 @@ def test_role_checks_at_load(tmp_path: Path, spec: dict[str, Any], message: str)
 def test_role_checks_when_mounting(tmp_path: Path) -> None:
     store = InMemoryEventStore()
     same_name = load_config(write(tmp_path, agent(roles=[rediger(name="calculer")])))
-    with pytest.raises(
-        ConfigError, match="plusieurs outils, rôles ou sous-agents s'appellent calculer"
-    ):
+    with pytest.raises(ConfigError, match="plusieurs outils, rôles ou sous-agents s'appellent calculer"):
         build_agent(same_name, "demo", store)
 
     unknown = load_config(

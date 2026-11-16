@@ -99,9 +99,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
     payload = event.payload
     if state is None:
         if not isinstance(payload, RunStarted):
-            raise ProjectionError(
-                f"Run {event.run_id} : {event.type} (seq {event.seq}) avant run.started"
-            )
+            raise ProjectionError(f"Run {event.run_id} : {event.type} (seq {event.seq}) avant run.started")
         return RunState(
             run_id=event.run_id,
             session_id=event.session_id,
@@ -133,18 +131,14 @@ def apply(state: RunState | None, event: Event) -> RunState:
         # elle ne rouvre rien et ne rend pas le journal illisible.
         claim = RunClaim(worker_id=payload.worker_id, lease_until=payload.lease_until)
         return state.model_copy(update={"last_seq": event.seq, "claim": claim})
-    if isinstance(payload, ApprovalGranted | ApprovalRejected | QuestionAnswered) and (
-        state.finished or state.status.is_terminal
-    ):
+    if isinstance(payload, ApprovalGranted | ApprovalRejected | QuestionAnswered) and (state.finished or state.status.is_terminal):
         # Décision écrite après l'état final : le run était déjà fini (annulé pendant que
         # l'approbateur décidait, ou journal d'avant ce contrôle), ou sa clôture reste à
         # écrire (plantage entre les deux écritures). Elle ne rouvre rien et ne rend pas
         # le run illisible ; seule la position lue avance.
         return state.model_copy(update={"last_seq": event.seq})
     if state.finished or (state.status.is_terminal and not _closes(state.status, event)):
-        raise ProjectionError(
-            f"Run {state.run_id} : {event.type} (seq {event.seq}) après l'état {state.status}"
-        )
+        raise ProjectionError(f"Run {state.run_id} : {event.type} (seq {event.seq}) après l'état {state.status}")
 
     update: dict[str, object] = {"last_seq": event.seq}
     match payload:
@@ -170,26 +164,18 @@ def apply(state: RunState | None, event: Event) -> RunState:
             update |= _consumed(state, usage, cost) | {
                 "messages": (*state.messages, message),
                 "iterations": state.iterations + 1,
-                "pending_calls": tuple(
-                    PendingCall(call_id=c.call_id, name=c.name, arguments=c.arguments)
-                    for c in message.tool_calls
-                ),
+                "pending_calls": tuple(PendingCall(call_id=c.call_id, name=c.name, arguments=c.arguments) for c in message.tool_calls),
                 "repair_without_tools": False,
             }
         case ToolCalled(call_id=call_id, child_run_id=child):
             started: dict[str, object] = {"started": True}
             if child is not None:
                 started["child_run_id"] = child
-            update["pending_calls"] = tuple(
-                c.model_copy(update=started) if c.call_id == call_id else c
-                for c in _require_pending(state, call_id, event)
-            )
+            update["pending_calls"] = tuple(c.model_copy(update=started) if c.call_id == call_id else c for c in _require_pending(state, call_id, event))
             update["approvals"] = _launched(state, call_id)
             update["amendments"] = _amended(state, call_id)
         case ToolCompleted(call_id=call_id, output=output, usage=usage, cost_usd=cost):
-            remaining = tuple(
-                c for c in _require_pending(state, call_id, event) if c.call_id != call_id
-            )
+            remaining = tuple(c for c in _require_pending(state, call_id, event) if c.call_id != call_id)
             # Le state écrit n'est pas montré au modèle : le résultat qu'il lit
             # reste celui d'un outil qui n'en écrit pas.
             shown = output.model_copy(update={"state": {}}) if output.state else output
@@ -231,10 +217,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
             pass
         case RunTransitioned(from_state=from_state, to_state=to_state):
             if from_state != state.status:
-                raise ProjectionError(
-                    f"Run {state.run_id} : transition depuis {from_state} "
-                    f"alors que l'état reconstruit est {state.status} (seq {event.seq})"
-                )
+                raise ProjectionError(f"Run {state.run_id} : transition depuis {from_state} alors que l'état reconstruit est {state.status} (seq {event.seq})")
             update["status"] = to_state
         case RunCompleted(output=replaced, output_event_id=str()) as completed:
             # Sortie d'un outil terminal, éventuellement remplacée par une politique.
@@ -330,9 +313,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
     return state.model_copy(update=update)
 
 
-def _restated(
-    messages: tuple[Message, ...], call_id: str, arguments: dict[str, JsonValue]
-) -> tuple[Message, ...]:
+def _restated(messages: tuple[Message, ...], call_id: str, arguments: dict[str, JsonValue]) -> tuple[Message, ...]:
     """Réécrit un appel de la conversation avec les arguments qui vont vraiment partir.
 
     Le modèle doit lire ce qui a eu lieu, et non ce qu'il avait demandé :
@@ -348,9 +329,7 @@ def _restated(
         message.model_copy(update={"blocks": blocks})
         if (
             blocks := tuple(
-                block.model_copy(update={"arguments": arguments})
-                if isinstance(block, ToolCallBlock) and block.call_id == call_id
-                else block
+                block.model_copy(update={"arguments": arguments}) if isinstance(block, ToolCallBlock) and block.call_id == call_id else block
                 for block in message.blocks
             )
         )
@@ -360,9 +339,7 @@ def _restated(
     )
 
 
-def _settled(
-    state: RunState, call_id: str, event: Event, outcome: ApprovalOutcome
-) -> tuple[PendingApproval, ...]:
+def _settled(state: RunState, call_id: str, event: Event, outcome: ApprovalOutcome) -> tuple[PendingApproval, ...]:
     """Demande refermée par sa décision ; les autres sont laissées telles quelles.
 
     Une décision qui ne désigne aucune demande est une incohérence du journal,
@@ -371,35 +348,19 @@ def _settled(
     """
     asked = state.approval(call_id)
     if asked is None:
-        raise ProjectionError(
-            f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, "
-            f"sans demande d'approbation (seq {event.seq})"
-        )
+        raise ProjectionError(f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, sans demande d'approbation (seq {event.seq})")
     if asked.outcome is not None:
-        raise ProjectionError(
-            f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, "
-            f"déjà tranché ({asked.outcome.verdict}) (seq {event.seq})"
-        )
-    return tuple(
-        a.model_copy(update={"outcome": outcome}) if a is asked else a for a in state.approvals
-    )
+        raise ProjectionError(f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, déjà tranché ({asked.outcome.verdict}) (seq {event.seq})")
+    return tuple(a.model_copy(update={"outcome": outcome}) if a is asked else a for a in state.approvals)
 
 
-def _answered(
-    state: RunState, call_id: str, event: Event, change: dict[str, object]
-) -> tuple[PendingQuestion, ...]:
+def _answered(state: RunState, call_id: str, event: Event, change: dict[str, object]) -> tuple[PendingQuestion, ...]:
     """Question refermée par sa réponse ou son expiration ; une seule fois."""
     asked = state.question(call_id)
     if asked is None:
-        raise ProjectionError(
-            f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, sans question "
-            f"(seq {event.seq})"
-        )
+        raise ProjectionError(f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, sans question (seq {event.seq})")
     if not asked.open:
-        raise ProjectionError(
-            f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, déjà close "
-            f"(seq {event.seq})"
-        )
+        raise ProjectionError(f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, déjà close (seq {event.seq})")
     return tuple(q.model_copy(update=change) if q is asked else q for q in state.questions)
 
 
@@ -410,12 +371,7 @@ def _launched(state: RunState, call_id: str) -> tuple[PendingApproval, ...]:
     ce lancement est d'état inconnu, et l'accord ne couvre pas un second : la
     reprise le lit à ce marquage, sans que le journal ait rien de plus à dire.
     """
-    return tuple(
-        a.model_copy(update={"launched": True})
-        if a.call_id == call_id and not a.launched and _granted(a)
-        else a
-        for a in state.approvals
-    )
+    return tuple(a.model_copy(update={"launched": True}) if a.call_id == call_id and not a.launched and _granted(a) else a for a in state.approvals)
 
 
 def _amended(state: RunState, call_id: str) -> tuple[Amendment, ...]:
@@ -497,11 +453,7 @@ def _decided(state: RunState, decided: PolicyDecided, event: Event) -> dict[str,
                     update={
                         "replaced_arguments": remplaces,
                         "replaced_by": (*c.replaced_by, decided.policy),
-                        "replaced_reasons": (
-                            (*c.replaced_reasons, decided.reason)
-                            if decided.reason
-                            else c.replaced_reasons
-                        ),
+                        "replaced_reasons": ((*c.replaced_reasons, decided.reason) if decided.reason else c.replaced_reasons),
                     }
                 )
                 if c.call_id == call_id
@@ -533,8 +485,7 @@ def _terminal_result(state: RunState, event: Event) -> ToolResultBlock:
     results = [b for b in last.blocks if isinstance(b, ToolResultBlock)] if last else []
     if len(results) != 1:
         raise ProjectionError(
-            f"Run {state.run_id} : run.completed désigne une sortie d'outil, mais le dernier "
-            f"message n'est pas un résultat d'outil unique (seq {event.seq})"
+            f"Run {state.run_id} : run.completed désigne une sortie d'outil, mais le dernier message n'est pas un résultat d'outil unique (seq {event.seq})"
         )
     return results[0]
 
@@ -560,9 +511,7 @@ def _written(state: RunState, call_id: str, values: dict[str, JsonValue]) -> tup
 
 def _require_pending(state: RunState, call_id: str, event: Event) -> tuple[PendingCall, ...]:
     if state.pending(call_id) is None:
-        raise ProjectionError(
-            f"Run {state.run_id} : {event.type} pour l'appel inconnu {call_id!r} (seq {event.seq})"
-        )
+        raise ProjectionError(f"Run {state.run_id} : {event.type} pour l'appel inconnu {call_id!r} (seq {event.seq})")
     return state.pending_calls
 
 
@@ -608,9 +557,7 @@ def awaiting_in_session(events: Iterable[Event]) -> tuple[PendingApproval, ...]:
     return tuple(
         approval
         for state in states.values()
-        if state.awaiting
-        and (top := root(state)).kind == "normal"
-        and not (top.finished or top.status.is_terminal)
+        if state.awaiting and (top := root(state)).kind == "normal" and not (top.finished or top.status.is_terminal)
         for approval in state.awaiting
     )
 
@@ -630,9 +577,7 @@ def asking_in_session(events: Iterable[Event]) -> tuple[PendingQuestion, ...]:
     return tuple(
         question
         for state in states.values()
-        if state.asking
-        and (top := root(state)).kind == "normal"
-        and not (top.finished or top.status.is_terminal)
+        if state.asking and (top := root(state)).kind == "normal" and not (top.finished or top.status.is_terminal)
         for question in state.asking
     )
 

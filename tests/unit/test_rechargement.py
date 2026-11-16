@@ -216,13 +216,9 @@ def test_the_state_says_what_no_event_said(tmp_path: Path) -> None:
     a, b, c, d = (tmp_path / n for n in ("loom.yaml", "agents/b.yaml", "outils.py", "notes.md"))
     before = {a: (1, 10, 1), c: (1, 10, 3), d: (1, 10, 4)}
     after = {a: (2, 10, 1), b: (2, 10, 5), d: (1, 10, 4)}
-    assert changed(set(), before, after, tmp_path) == (
-        "agents/b.yaml ajouté, loom.yaml modifié, outils.py supprimé"
-    )
+    assert changed(set(), before, after, tmp_path) == ("agents/b.yaml ajouté, loom.yaml modifié, outils.py supprimé")
     # L'événement l'emporte : un état inchangé (même taille, même tic) n'efface rien.
-    assert changed({(Change.modified, str(d))}, before, after, tmp_path).endswith(
-        "notes.md modifié, outils.py supprimé"
-    )
+    assert changed({(Change.modified, str(d))}, before, after, tmp_path).endswith("notes.md modifié, outils.py supprimé")
     assert changed(set(), after, after, tmp_path) == ""
 
 
@@ -235,9 +231,7 @@ def test_the_state_is_that_of_each_file_on_the_disk(demo: ConfigFactory) -> None
     prompt.write_text("Tu calcules, et tu le dis.", encoding="utf-8")
     second = spec.state()
     assert second[prompt] != first[prompt]
-    assert {p: v for p, v in second.items() if p != prompt} == {
-        p: v for p, v in first.items() if p != prompt
-    }
+    assert {p: v for p, v in second.items() if p != prompt} == {p: v for p, v in first.items() if p != prompt}
 
 
 # --- Ce que lit le process qui démarre ----------------------------------------------
@@ -271,9 +265,7 @@ def _description(path: Path, text: str) -> Callable[[], object]:
     return touch
 
 
-def test_the_config_that_serves_is_read_after_the_state(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_config_that_serves_is_read_after_the_state(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Changée après la première lecture, avant le relevé : c'est la nouvelle qui sert."""
     path = demo()
     reading = _Reading({1: _description(path, "Calcule, version 2.")}, after=True)
@@ -285,9 +277,7 @@ def test_the_config_that_serves_is_read_after_the_state(
     assert changed(set(), seen, spec.state(), spec.roots[0]) == ""
 
 
-def test_a_change_after_the_state_is_left_to_the_supervisor(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_change_after_the_state_is_left_to_the_supervisor(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Changée après le relevé : elle sert peut-être déjà, le superviseur la voit quand même."""
     path = demo()
     reading = _Reading({2: _description(path, "Calcule, version 3.")}, after=False)
@@ -297,9 +287,7 @@ def test_a_change_after_the_state_is_left_to_the_supervisor(
     assert changed(set(), seen, spec.state(), spec.roots[0]) == "agents/demo.yaml modifié"
 
 
-def test_the_state_covers_the_folders_of_the_config_that_serves(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_the_state_covers_the_folders_of_the_config_that_serves(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Relue, la config fait surveiller d'autres dossiers : le relevé est refait sur eux."""
     path = demo()
     shared = tmp_path.parent / f"{tmp_path.name}-prompts"
@@ -319,9 +307,7 @@ def test_the_state_covers_the_folders_of_the_config_that_serves(
     assert changed(set(), seen, spec.state(), tmp_path) == ""
 
 
-def test_the_config_is_read_three_times_at_most(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_the_config_is_read_three_times_at_most(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     path = demo()
     root = path.read_text(encoding="utf-8")
     elsewhere = [tmp_path.parent / f"{tmp_path.name}-p{i}" for i in range(4)]
@@ -381,9 +367,7 @@ async def test_the_trial_mount_refuses_a_missing_tool(demo: ConfigFactory) -> No
             await _mounted(loom)
 
 
-async def test_the_trial_mount_needs_no_api_key(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_the_trial_mount_needs_no_api_key(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un modèle réel dont la clé manque ne bloque pas le rechargement : rien ne l'appelle."""
     monkeypatch.delenv("CLE_ABSENTE_LOOM", raising=False)
     reel: dict[str, Any] = {
@@ -543,9 +527,7 @@ class _Supervised:
         return [line for line, _ in self.said]
 
 
-def test_watching_is_said_once_the_watch_is_armed(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_watching_is_said_once_the_watch_is_armed(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     path = demo()
     spec = watched(load_config(path))
     supervised = _Supervised(monkeypatch, path, [spec, None], [])
@@ -594,9 +576,7 @@ def test_a_change_made_before_the_watch_is_armed_reloads(
     assert supervised.launched == 2
 
 
-def test_a_folder_newly_watched_is_caught_up_when_its_watch_is_armed(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_a_folder_newly_watched_is_caught_up_when_its_watch_is_armed(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Entre l'ancien guetteur fermé et le nouveau armé, rien ne passe."""
     path = demo()
     shared = tmp_path.parent / f"{tmp_path.name}-prompts"
@@ -698,9 +678,7 @@ async def test_the_server_stops_listening_then_says_so_then_ends(
         said.append("finit")
 
     monkeypatch.setattr(uvicorn.Server, "shutdown", ended)
-    server = _Taking(
-        uvicorn.Config(cast(Any, None)), lambda: None, lambda: said.append("sourd"), os.getpid()
-    )
+    server = _Taking(uvicorn.Config(cast(Any, None)), lambda: None, lambda: said.append("sourd"), os.getpid())
     server.servers = [cast(Any, Listening())]
     await server.shutdown()
     assert said == ["ferme", "sourd", "finit"]
@@ -729,17 +707,13 @@ async def test_the_process_that_serves_judges_the_host_it_listens_on(
 
     monkeypatch.setattr(http_serve, "_Taking", Listening)
     with pytest.raises(ConfigError, match=r"API REST sans clé sur 0\.0\.0\.0"):
-        await _served(
-            demo(), None, "0.0.0.0", 8000, cast(Any, None), banner, cast(Any, Ready()), 0, DISABLED
-        )
+        await _served(demo(), None, "0.0.0.0", 8000, cast(Any, None), banner, cast(Any, Ready()), 0, DISABLED)
 
 
 # --- Le fichier d'environnement ---------------------------------------------------
 
 
-def test_an_env_file_outside_the_config_folder_is_watched_alone(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+def test_an_env_file_outside_the_config_folder_is_watched_alone(demo: ConfigFactory, tmp_path: Path) -> None:
     config = load_config(demo())
     base = config.base_dir
     assert base is not None
@@ -764,9 +738,7 @@ def test_an_env_file_outside_the_config_folder_is_watched_alone(
     assert changed([], known, spec.state(), base) == f"{outside} modifié"
 
 
-async def test_a_new_serving_process_rereads_the_env_file(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_new_serving_process_rereads_the_env_file(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """La clé changée dans le fichier est celle du process neuf ; celle du shell reste."""
 
     class Listening:
@@ -786,9 +758,7 @@ async def test_a_new_serving_process_rereads_the_env_file(
         pass
 
     path = demo()
-    (path.parent / ".env").write_text(
-        "LOOM_ESSAI_CLE=nouvelle\nLOOM_ESSAI_SHELL=fichier\n", encoding="utf-8"
-    )
+    (path.parent / ".env").write_text("LOOM_ESSAI_CLE=nouvelle\nLOOM_ESSAI_SHELL=fichier\n", encoding="utf-8")
     # Ce que le superviseur avait posé à son démarrage, et ce que le shell donnait.
     monkeypatch.setenv("LOOM_ESSAI_CLE", "ancienne")
     monkeypatch.setenv("LOOM_ESSAI_SHELL", "shell")
@@ -800,9 +770,7 @@ async def test_a_new_serving_process_rereads_the_env_file(
         kept=("LOOM_ESSAI_SHELL",),
     )
     monkeypatch.setattr(http_serve, "_Taking", Listening)
-    started = await _served(
-        path, None, "127.0.0.1", 8000, cast(Any, None), banner, cast(Any, Ready()), 0, before
-    )
+    started = await _served(path, None, "127.0.0.1", 8000, cast(Any, None), banner, cast(Any, Ready()), 0, before)
     assert started
     assert os.environ["LOOM_ESSAI_CLE"] == "nouvelle"
     assert os.environ["LOOM_ESSAI_SHELL"] == "shell"
@@ -811,14 +779,10 @@ async def test_a_new_serving_process_rereads_the_env_file(
 # --- La ligne de commande -----------------------------------------------------------
 
 
-def test_reload_hands_the_config_to_the_supervisor(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_reload_hands_the_config_to_the_supervisor(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     given: dict[str, Any] = {}
 
-    def fake(
-        path: Path, *, profile: str | None, host: str, port: int, banner: Any, env: Any
-    ) -> int:
+    def fake(path: Path, *, profile: str | None, host: str, port: int, banner: Any, env: Any) -> int:
         given.update(path=path, profile=profile, host=host, port=port, banner=banner, env=env)
         return 0
 
@@ -840,9 +804,7 @@ def test_reload_hands_the_config_to_the_supervisor(
     assert "API REST" not in capsys.readouterr().out
 
 
-def test_reload_is_refused_in_prod(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_reload_is_refused_in_prod(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     def never(*args: Any, **kwargs: Any) -> int:
         raise AssertionError("le superviseur ne doit pas démarrer")
 
@@ -851,9 +813,7 @@ def test_reload_is_refused_in_prod(
     assert "refusé en profil prod" in capsys.readouterr().err
 
 
-def test_reload_says_which_extra_is_missing(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_reload_says_which_extra_is_missing(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     cli = importlib.import_module("loom_ia.access.cli.main")
 
     def found(name: str) -> object | None:
@@ -864,9 +824,7 @@ def test_reload_says_which_extra_is_missing(
     assert "'loom serve --reload' demande l'extra 'http'" in capsys.readouterr().err
 
 
-def test_reload_refuses_data_around_the_config(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_reload_refuses_data_around_the_config(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     config = demo(storage={"events": {"backend": "jsonl", "path": "."}})
     assert main(["--config", str(config), "serve", "--reload"]) == 2
     assert "mettre les données dans un sous-dossier" in capsys.readouterr().err

@@ -214,12 +214,7 @@ def scripte(config: LoomConfig, acces: Any) -> LoomConfig:
     oubli = [*copy.deepcopy(relance[:2]), copy.deepcopy(relance[-1])]
     oubli[-1]["text"] = "La relance du devis D-2026-042 est prête."
     base = config.model_spec("FAKE_MAIN")
-    models = tuple(
-        m.model_copy(update={"params": {**m.params, "script": [*relance, *inconnu]}})
-        if m.id == "FAKE_MAIN"
-        else m
-        for m in config.models
-    )
+    models = tuple(m.model_copy(update={"params": {**m.params, "script": [*relance, *inconnu]}}) if m.id == "FAKE_MAIN" else m for m in config.models)
     sans_envoi = base.model_copy(
         update={
             "id": SANS_ENVOI,
@@ -415,12 +410,7 @@ def _envoi(
             all(t.fate == "double" for t in envois) and doubles == len(envois),
         )
     )
-    accords = [
-        e.payload
-        for fichier in sorted(journaux.glob("*.jsonl"))
-        for e in _journal(fichier)
-        if isinstance(e.payload, ApprovalGranted)
-    ]
+    accords = [e.payload for fichier in sorted(journaux.glob("*.jsonl")) for e in _journal(fichier) if isinstance(e.payload, ApprovalGranted)]
     print(
         f"  chaque approbation est accordée par l'éval ({len(accords)} sur {len(envois)} "
         "envoi(s)) : "
@@ -442,12 +432,7 @@ def _juge(report: EvalReport, decrite: dict[str, Any], journaux: Path, controle:
             bool(joues) and all(n == criteres for n in notes),
         )
     )
-    dans_les_runs = [
-        e
-        for fichier in sorted(journaux.glob("*.jsonl"))
-        for e in _journal(fichier)
-        if e.role is not None and e.role.endswith(":eval")
-    ]
+    dans_les_runs = [e for fichier in sorted(journaux.glob("*.jsonl")) for e in _journal(fichier) if e.role is not None and e.role.endswith(":eval")]
     fichiers = len(list(journaux.glob("*.jsonl")))
     print(
         f"  il juge hors du run : aucun de ses appels dans les {fichiers} journaux exportés, "
@@ -462,15 +447,8 @@ def _juge(report: EvalReport, decrite: dict[str, Any], journaux: Path, controle:
 
 def _detection(report: EvalReport, acces: Any, controle: Controle) -> None:
     """En simulé, on sait ce que font les scripts : la suite doit voir l'oubli, et lui seul."""
-    tombes = [
-        (run.variant, run.case, check.label)
-        for run in report.runs
-        for check in run.checks
-        if not check.passed
-    ]
-    fideles = [
-        check.passed for run in report.runs for check in run.checks if "fidele" in check.label
-    ]
+    tombes = [(run.variant, run.case, check.label) for run in report.runs for check in run.checks if not check.passed]
+    fideles = [check.passed for run in report.runs for check in run.checks if "fidele" in check.label]
     print(
         "  le juge d'éval a vu le devis — le juge scripté ne tient la réponse pour fidèle "
         f"qu'en le voyant ({sum(fideles)} note(s) de fidélité sur {len(fideles)}) : "
@@ -594,8 +572,7 @@ async def regression(args: argparse.Namespace, controle: Controle) -> None:
             "journal(aux)) : "
             + controle.tient(
                 "regression : un journal n'a pas été rejoué",
-                {r.journal for r in runs} == {f"journaux/{f.name}" for f in fichiers}
-                and len(runs) == len(fichiers),
+                {r.journal for r in runs} == {f"journaux/{f.name}" for f in fichiers} and len(runs) == len(fichiers),
             )
         )
         print(
@@ -617,12 +594,7 @@ async def regression(args: argparse.Namespace, controle: Controle) -> None:
         print("\n".join(f"  {ligne}" for ligne in render_eval(ecart)))
         runs = rejoues(ecart)
         au_prompt = [
-            r
-            for r in runs
-            if r.divergence is not None
-            and r.divergence.kind == "model"
-            and r.divergence.rank == 1
-            and r.divergence.parts == ("system",)
+            r for r in runs if r.divergence is not None and r.divergence.kind == "model" and r.divergence.rank == 1 and r.divergence.parts == ("system",)
         ]
         print(
             "\n  chaque run s'écarte dès le premier appel de modèle, et seulement par le prompt "
@@ -667,9 +639,7 @@ async def _assert(
         print(
             f"  {quoi} : il lève, et nomme chaque journal ({len(fichiers)}) : "
             + controle.tient(
-                f"regression : assert_replays, {quoi}, ne devait pas lever"
-                if not leve
-                else "regression : assert_replays ne nomme pas chaque journal",
+                f"regression : assert_replays, {quoi}, ne devait pas lever" if not leve else "regression : assert_replays ne nomme pas chaque journal",
                 leve and nommes,
             )
         )
@@ -721,9 +691,7 @@ def orchestrateur(acces: Any) -> ScriptedModel:
         )
 
     return ScriptedModel(
-        tool_call_message(
-            ("c1", "chercher_devis", {"numero": "D-2026-042"}), text="Je relis le devis."
-        ),
+        tool_call_message(("c1", "chercher_devis", {"numero": "D-2026-042"}), text="Je relis le devis."),
         tool_call_message((APPEL_ROLE, "rediger_relance", {"ton": "cordial"})),
         envoie,
         Message.assistant("La relance du devis D-2026-042 est partie à Mme Martin."),
@@ -767,9 +735,7 @@ async def banc(args: argparse.Namespace, controle: Controle) -> None:
         ) as banc_:
             result = await banc_.run(agent, acces.DEMANDE)
             titre(f"Un run au banc : {acces.DEMANDE}")
-            print(
-                f"  statut : {result.status.value}" + (f" ({result.error})" if result.error else "")
-            )
+            print(f"  statut : {result.status.value}" + (f" ({result.error})" if result.error else ""))
             enonce("  texte  : ", result.text or "(vide)")
             appels = banc_.calls(result=result)
             print(f"\n  appels d'outil ({len(appels)}) :")
@@ -792,9 +758,7 @@ async def banc(args: argparse.Namespace, controle: Controle) -> None:
             )
         )
         if not envois:
-            controle.saute(
-                "banc (aucun envoi dans le run : le faux n'est pas éprouvé)", partie=True
-            )
+            controle.saute("banc (aucun envoi dans le run : le faux n'est pas éprouvé)", partie=True)
         print(
             f"  la boîte d'envoi n'a pas bougé ({boite} avant, {len(acces.BOITE)} après) : "
             + controle.tient("banc : un e-mail est parti", len(acces.BOITE) == boite)
@@ -802,20 +766,13 @@ async def banc(args: argparse.Namespace, controle: Controle) -> None:
         await _refuse(config, outils, controle)
         titre("Le journal du run, exporté puis rejoué par assert_replays")
         try:
-            [rejoue] = await assert_replays(
-                config, fichier, register=outils, environ=sans_cles(config)
-            )
-            dit = (
-                f"{len(rejoue.reports)} run(s), identique : {'oui' if rejoue.identical else 'non'}"
-            )
+            [rejoue] = await assert_replays(config, fichier, register=outils, environ=sans_cles(config))
+            dit = f"{len(rejoue.reports)} run(s), identique : {'oui' if rejoue.identical else 'non'}"
             juste = rejoue.identical and len(rejoue.reports) == 1
         except AssertionError as erreur:
             dit, juste = str(erreur), False
         enonce("  ", dit)
-        print(
-            "  le run du banc se rejoue à l'identique, sans aucune clé : "
-            + controle.tient("banc : le journal du banc ne se rejoue pas", juste)
-        )
+        print("  le run du banc se rejoue à l'identique, sans aucune clé : " + controle.tient("banc : le journal du banc ne se rejoue pas", juste))
 
 
 def _au_banc(
@@ -867,9 +824,7 @@ def _au_banc(
     recu = envoi.arguments.get("objet") if envoi is not None else None
     print(
         f"  l'envoi a reçu l'objet que le rôle a rédigé, lu dans la requête (« {objet} ») : "
-        + controle.tient(
-            "banc : l'objet envoyé n'est pas celui du rôle", objet is not None and recu == objet
-        )
+        + controle.tient("banc : l'objet envoyé n'est pas celui du rôle", objet is not None and recu == objet)
     )
 
 
@@ -889,10 +844,7 @@ def _tombe(banc_: Bench, result: Any, controle: Controle) -> None:
         "  il lève, nomme chaque contrôle tombé et montre le texte : "
         + controle.tient(
             "banc : expect n'a pas levé, ou ne dit pas ce qui tombe",
-            message is not None
-            and "✗ contient « D-2026-999 »" in message
-            and "✗ champ objet" in message
-            and "texte :" in message,
+            message is not None and "✗ contient « D-2026-999 »" in message and "✗ champ objet" in message and "texte :" in message,
         )
     )
 
@@ -908,10 +860,7 @@ async def _refuse(config: LoomConfig, outils: dict[str, Any], controle: Controle
         "  refusé à son premier appel, sans rien dépenser, et le message dit comment l'autoriser : "
         + controle.tient(
             "banc : un modèle réel non remplacé n'a pas été refusé",
-            refuse.status == RunStatus.FAILED
-            and refuse.error_type == "model.auth"
-            and "real_models=True" in (refuse.error or "")
-            and refuse.cost_usd == 0,
+            refuse.status == RunStatus.FAILED and refuse.error_type == "model.auth" and "real_models=True" in (refuse.error or "") and refuse.cost_usd == 0,
         )
     )
 

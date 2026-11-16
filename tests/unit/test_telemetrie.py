@@ -79,9 +79,7 @@ from loom_ia.telemetry.inspect import WIDTH
 from loom_ia.testing import RunJournal, tool_call_message
 
 sans_otel = pytest.mark.skipif(find_spec("opentelemetry") is None, reason="extra 'otel' absent")
-avec_otel = pytest.mark.skipif(
-    find_spec("opentelemetry") is not None, reason="extra 'otel' présent"
-)
+avec_otel = pytest.mark.skipif(find_spec("opentelemetry") is not None, reason="extra 'otel' présent")
 
 MARTIN = TenantId("martin-chauffage")
 DUPONT = TenantId("dupont-plomberie")
@@ -131,14 +129,10 @@ def exporteur(
     def content_for(tenant: TenantId) -> bool:
         return content if isinstance(content, bool) else content.get(tenant, False)
 
-    return RunExporter(
-        store, [recueil], content_for=content_for, redactor=Redactor.of(["email", "phone", "iban"])
-    )
+    return RunExporter(store, [recueil], content_for=content_for, redactor=Redactor.of(["email", "phone", "iban"]))
 
 
-def run_complet(
-    *, tenant: TenantId = DEFAULT_TENANT, question: str = QUESTION, session: str = "atelier"
-) -> RunJournal:
+def run_complet(*, tenant: TenantId = DEFAULT_TENANT, question: str = QUESTION, session: str = "atelier") -> RunJournal:
     journal = RunJournal(session_id=SessionId(session), tenant_id=tenant)
     journal.start(question)
     journal.model_turn(tool_call_message(("c1", "calculer", {"expr": "12*7+3"})))
@@ -184,9 +178,7 @@ def test_by_default_nothing_but_metadata_and_the_four_patterns() -> None:
         ),
     ],
 )
-def test_content_with_nowhere_to_go_is_refused(
-    root: dict[str, Any], tenants: list[dict[str, Any]], named: str
-) -> None:
+def test_content_with_nowhere_to_go_is_refused(root: dict[str, Any], tenants: list[dict[str, Any]], named: str) -> None:
     with pytest.raises(ValueError, match=f"capture 'content' \\({named}.*sans collecteur"):
         LoomConfig.model_validate(secured({"version": 1, "telemetry": root, "tenants": tenants}))
 
@@ -244,8 +236,7 @@ def test_the_three_patterns_mask_what_looks_personal() -> None:
 def test_business_numbers_are_left_alone() -> None:
     masque = config_of().telemetry.redaction.redactor()
     texte = (
-        "Devis D-2026-042, 1 840 €, SIRET 732 829 320 00074, le 12/10/2026 à 14h30, 21000. "
-        "Mot de passe oublié ? Réf. sk-8, ticket gh-12, tâche task-2026-042."
+        "Devis D-2026-042, 1 840 €, SIRET 732 829 320 00074, le 12/10/2026 à 14h30, 21000. Mot de passe oublié ? Réf. sk-8, ticket gh-12, tâche task-2026-042."
     )
     assert masque.text(texte) == texte
 
@@ -279,9 +270,7 @@ def test_a_pattern_that_does_not_finish_masks_the_whole_text() -> None:
     masque = Redactor.of(["email", ("lent", "^(a|aa)+$")])
     lent = "a" * 34 + "!"  # ``regex`` y met plus de 2 s, ``re`` plus d'une
     assert masque.text(lent) == "[lent : délai dépassé, texte masqué]"
-    assert masque.json({lent: [lent, f"{COURRIEL}"]}) == {
-        "[lent : délai dépassé, texte masqué]": ["[lent : délai dépassé, texte masqué]", "[email]"]
-    }
+    assert masque.json({lent: [lent, f"{COURRIEL}"]}) == {"[lent : délai dépassé, texte masqué]": ["[lent : délai dépassé, texte masqué]", "[email]"]}
 
 
 def test_a_pattern_of_the_regex_engine_is_accepted_by_the_config() -> None:
@@ -316,9 +305,7 @@ def test_a_secret_is_masked_whole_and_before_anything_else(secret: str) -> None:
 
 def test_an_address_keeps_its_host_but_not_its_credentials() -> None:
     masque = config_of().telemetry.redaction.redactor()
-    assert masque.text("postgresql://loom:s3cr3t@localhost/loom") == (
-        "postgresql://[secret]@localhost/loom"
-    )
+    assert masque.text("postgresql://loom:s3cr3t@localhost/loom") == ("postgresql://[secret]@localhost/loom")
 
 
 def test_a_private_key_is_masked_to_its_end_or_to_the_end_of_the_text() -> None:
@@ -343,9 +330,7 @@ def test_a_french_number_is_masked_whatever_its_prefix(numero: str) -> None:
     assert Redactor.of(["phone"]).text(f"Appeler le {numero}.") == "Appeler le [phone]."
 
 
-@pytest.mark.parametrize(
-    "iban", [IBAN, IBAN.lower(), "Fr76 3000 6000 0112 3456 7890 189", "fr7630006000011234567890189"]
-)
+@pytest.mark.parametrize("iban", [IBAN, IBAN.lower(), "Fr76 3000 6000 0112 3456 7890 189", "fr7630006000011234567890189"])
 def test_an_iban_is_masked_whatever_its_case(iban: str) -> None:
     assert Redactor.of(["iban"]).text(f"IBAN {iban}.") == "IBAN [iban]."
 
@@ -363,9 +348,7 @@ def test_the_provided_patterns_always_apply_those_not_named_first() -> None:
     assert config_of().telemetry.redaction.redactor().names == BUILTIN_PATTERNS
     seul = config_of(redaction={"patterns": [devis]}).telemetry.redaction.redactor()
     assert seul.names == ("secret", "email", "phone", "iban", "devis")
-    assert seul.text(f"{SECRET} Devis D-2026-042.") == (
-        "Écrire à [email] ou au [phone], IBAN [iban]. Devis [devis]."
-    )
+    assert seul.text(f"{SECRET} Devis D-2026-042.") == ("Écrire à [email] ou au [phone], IBAN [iban]. Devis [devis].")
     place = config_of(redaction={"patterns": ["iban", devis, "email"]}).telemetry.redaction
     assert place.redactor().names == ("secret", "phone", "iban", "devis", "email")
 
@@ -567,20 +550,14 @@ async def test_the_capture_is_decided_tenant_by_tenant() -> None:
     export = exporteur(store, recueil, content={DUPONT: True})
     with store.listen(export, own=True):
         for tenant in (DUPONT, MARTIN):
-            await store.append(
-                run_complet(tenant=tenant, session=str(tenant)).take(), expected_seq=0
-            )
+            await store.append(run_complet(tenant=tenant, session=str(tenant)).take(), expected_seq=0)
         await export.aclose(5)
-    par_client = {
-        lot[0].attributes["loom.tenant_id"]: " ".join(attributs(lot)) for lot in recueil.lots
-    }
+    par_client = {lot[0].attributes["loom.tenant_id"]: " ".join(attributs(lot)) for lot in recueil.lots}
     assert QUESTION in par_client[DUPONT]
     assert QUESTION not in par_client[MARTIN]
 
 
-async def test_a_broken_collector_never_fails_a_run(
-    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_broken_collector_never_fails_a_run(demo: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     async with Loom(load_config(demo())) as loom:
         export = exporteur(loom.store, Recueil(casse=True))
         with loom.store.listen(export, own=True), caplog.at_level(logging.WARNING):
@@ -599,9 +576,7 @@ def test_without_exporters_nothing_listens(demo: ConfigFactory) -> None:
 
 
 @sans_otel
-def test_an_empty_endpoint_variable_mounts_nothing_and_says_so(
-    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_an_empty_endpoint_variable_mounts_nothing_and_says_so(demo: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     config = load_config(demo(telemetry={"exporters": [OTEL]}))
     with caplog.at_level(logging.WARNING):
         loom = Loom(config, environ={})
@@ -690,31 +665,14 @@ async def test_the_spans_reach_an_otlp_collector(demo: ConfigFactory) -> None:
         # La fermeture a vidé le processeur : tout est arrivé.
     assert recus and all(chemin == "/v1/traces" for chemin, _ in recus)
     assert entetes[0]["x-cle"] == "sésame"
-    spans = [
-        (resource, span)
-        for _, demande in recus
-        for resource in demande.resource_spans
-        for scope in resource.scope_spans
-        for span in scope.spans
-    ]
-    services = {
-        a.value.string_value
-        for resource, _ in spans
-        for a in resource.resource.attributes
-        if a.key == "service.name"
-    }
+    spans = [(resource, span) for _, demande in recus for resource in demande.resource_spans for scope in resource.scope_spans for span in scope.spans]
+    services = {a.value.string_value for resource, _ in spans for a in resource.resource.attributes if a.key == "service.name"}
     assert services == {"atelier"}
     [run] = [span for _, span in spans if span.name == "invoke_agent demo"]
     # L'identifiant de trace est celui du run : il se cherche tel quel.
     assert run.trace_id.hex() == result.run_id.replace("-", "")
     contenu = json.dumps(
-        [
-            a.value.string_value
-            for _, span in spans
-            for event in span.events
-            for a in event.attributes
-            if a.key.startswith("loom.content.")
-        ],
+        [a.value.string_value for _, span in spans for event in span.events for a in event.attributes if a.key.startswith("loom.content.")],
         ensure_ascii=False,
     )
     assert QUESTION in contenu and COURRIEL not in contenu and "[email]" in contenu
@@ -783,8 +741,7 @@ async def test_an_undelivered_batch_is_said_once_with_its_runs(
     await sink.aclose(5)
     said = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert [r.getMessage() for r in said] == [
-        "Collecteur otel essai : 2 span(s) non remis (run run-a, run-b) — "
-        "3 essai(s), dernière erreur : Connection refused"
+        "Collecteur otel essai : 2 span(s) non remis (run run-a, run-b) — 3 essai(s), dernière erreur : Connection refused"
     ]
     assert not [r for r in caplog.records if r.name.startswith("opentelemetry")]
 
@@ -935,9 +892,7 @@ async def test_closing_a_sink_whose_collector_hangs_takes_its_grace_not_more() -
 
 @sans_otel
 @pytest.mark.parametrize(("limit", "expected"), [(None, 16_384), ("1000", 1_000)])
-async def test_a_long_content_is_cut_and_says_so(
-    monkeypatch: pytest.MonkeyPatch, limit: str | None, expected: int
-) -> None:
+async def test_a_long_content_is_cut_and_says_so(monkeypatch: pytest.MonkeyPatch, limit: str | None, expected: int) -> None:
     """``loom.content.*`` partait entier : un résultat d'outil de 50 000 caractères aussi."""
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
@@ -966,11 +921,7 @@ def test_a_trace_id_keeps_a_canonical_uuid_and_separates_the_rest() -> None:
 
     canonique = "0190a5b4-1c2d-7e3f-8a9b-0c1d2e3f4a5b"
     # L'identifiant que loom tire reste la trace : on le cherche tel quel au collecteur.
-    assert (
-        trace_id(canonique, "martin")
-        == trace_id(canonique, "dupont")
-        == int(canonique.replace("-", ""), 16)
-    )
+    assert trace_id(canonique, "martin") == trace_id(canonique, "dupont") == int(canonique.replace("-", ""), 16)
     autres = [canonique.upper(), f"{{{canonique}}}", canonique.replace("-", "")]
     assert len({trace_id(value, "martin") for value in [canonique, *autres]}) == 4
     assert trace_id("devis-42", "martin") != trace_id("devis-42", "dupont")
@@ -1014,9 +965,7 @@ async def test_a_trace_holds_the_spans_of_the_run_and_its_subruns(tree: ConfigFa
     # Ce sont les spans de l'export, run par run.
     for run_id in {e.run_id for e in events}:
         mine = sorted(s.span_id for s in trace.spans if s.run_id == run_id)
-        assert mine == sorted(
-            s.span_id for s in run_spans([e for e in events if e.run_id == run_id])
-        )
+        assert mine == sorted(s.span_id for s in run_spans([e for e in events if e.run_id == run_id]))
     # Le run de l'enfant pend sous l'appel qui l'a lancé.
     enfant = next(span for span in runs if span.run_id != result.run_id)
     appel = next(span for span in trace.spans if span.span_id == enfant.parent_span_id)
@@ -1165,18 +1114,14 @@ async def test_a_trace_is_a_resource(tree: ConfigFactory) -> None:
             with pytest.raises(McpError, match="introuvable"):
                 await client.read_resource(AnyUrl(f"{TRACES}/absent"))
 
-    assert f"{TRACES}/{{run_id}}{{?session_id}}" in [
-        t.uriTemplate for t in gabarits.resourceTemplates
-    ]
+    assert f"{TRACES}/{{run_id}}{{?session_id}}" in [t.uriTemplate for t in gabarits.resourceTemplates]
     assert len(TEMPLATES) == len(gabarits.resourceTemplates)
     [contenu] = lue.contents
     assert isinstance(contenu, TextResourceContents)
     assert json.loads(contenu.text) == attendue.model_dump(mode="json")
 
 
-async def test_inspect_reads_the_tree_the_answer_and_the_tally(
-    tree: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+async def test_inspect_reads_the_tree_the_answer_and_the_tally(tree: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = tree()
     async with Loom(load_config(path)) as loom:
         result = await loom.run("demo", TREE_QUESTION, user=DEV)
@@ -1195,10 +1140,7 @@ async def test_inspect_reads_the_tree_the_answer_and_the_tally(
     assert f"Réponse finale :\n  {TREE_ANSWER}" in sortie
     chats = sum(1 for s in trace.spans if s.kind == "chat")
     outils = sum(1 for s in trace.spans if s.kind == "tool")
-    assert (
-        f"Bilan      : {chats} appel(s) de modèle, {outils} appel(s) d'outil, 1 sous-run(s)"
-        in sortie
-    )
+    assert f"Bilan      : {chats} appel(s) de modèle, {outils} appel(s) d'outil, 1 sous-run(s)" in sortie
 
     assert await _cli(["--config", str(path), "inspect", result.run_id, "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == trace.model_dump(mode="json")
@@ -1231,9 +1173,7 @@ def test_inspect_cuts_a_long_result_and_says_so_unless_whole() -> None:
 
 def test_inspect_names_the_file_a_tool_returned_alone() -> None:
     """Test K1 du 21/10 : un outil qui ne rend qu'un fichier s'affichait « résultat : null »."""
-    devis = ArtifactRefBlock(
-        uri="artifact://default/s/devis.png", media_type="image/png", name="devis.png"
-    )
+    devis = ArtifactRefBlock(uri="artifact://default/s/devis.png", media_type="image/png", name="devis.png")
     journal = RunJournal()
     journal.start(QUESTION)
     journal.model_turn(tool_call_message(("c1", "calculer", {"expr": "1+1"})))
@@ -1241,11 +1181,7 @@ def test_inspect_names_the_file_a_tool_returned_alone() -> None:
     journal.model_turn(Message.assistant("Voici le devis.")).complete()
     events = [d.to_event(i + 1) for i, d in enumerate(journal.take())]
 
-    [ligne] = [
-        ligne
-        for ligne in render_trace(run_trace(events, events[0].run_id, content=True))
-        if "résultat" in ligne
-    ]
+    [ligne] = [ligne for ligne in render_trace(run_trace(events, events[0].run_id, content=True)) if "résultat" in ligne]
     assert ligne.endswith("fichier devis.png (image/png)") and "null" not in ligne
 
 
@@ -1319,9 +1255,7 @@ async def test_inspect_says_a_call_refused_before_running(demo: ConfigFactory) -
         {"tool_calls": [{"name": "calculer", "arguments": {"expr": "1/0"}}]},
         {"text": "Raté deux fois."},
     ]
-    path = demo(
-        models=[{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": script}}]
-    )
+    path = demo(models=[{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": script}}])
     async with Loom(load_config(path)) as loom:
         result = await loom.run("demo", QUESTION, user=DEV)
         trace = await loom.trace(result.run_id)
@@ -1339,9 +1273,7 @@ async def test_inspect_says_a_call_refused_before_running(demo: ConfigFactory) -
     assert lignes[-1].endswith("2 appel(s) d'outil dont 1 refusé(s) avant exécution")
 
 
-async def test_inspect_shows_control_characters_without_obeying_them(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+async def test_inspect_shows_control_characters_without_obeying_them(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Ce que rendent le modèle et les outils se lit sans piloter le terminal, en entier ou non."""
     script: list[dict[str, Any]] = [
         {"tool_calls": [{"name": f"inconnu{HOSTILE}", "arguments": {}}]},

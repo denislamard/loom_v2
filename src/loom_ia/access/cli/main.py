@@ -264,8 +264,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return REFUSED
     except EOFError:
         print(
-            "Entrée standard fermée : une réponse était attendue "
-            "(sans terminal, --yes la donne d'avance).",
+            "Entrée standard fermée : une réponse était attendue (sans terminal, --yes la donne d'avance).",
             file=sys.stderr,
         )
         return REFUSED
@@ -290,8 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--user",
             default=None,
             metavar="UTILISATEUR",
-            help=f"utilisateur déclaré dans security.users (défaut : {USER_ENV}) ; "
-            "le client est le sien",
+            help=f"utilisateur déclaré dans security.users (défaut : {USER_ENV}) ; le client est le sien",
         )
         return command
 
@@ -310,8 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-keys",
         "--sans-cles",
         action="store_true",
-        help="monte les agents sans créer leurs clients de modèle : "
-        "une clé d'API (ou un SDK) absente ne fait pas échouer",
+        help="monte les agents sans créer leurs clients de modèle : une clé d'API (ou un SDK) absente ne fait pas échouer",
     )
     validate.set_defaults(handler=cmd_validate)
 
@@ -324,14 +321,12 @@ def build_parser() -> argparse.ArgumentParser:
         "-q",
         "--quiet",
         action="store_true",
-        help="n'affiche que la réponse : le bilan se tait, sauf une erreur ou une approbation "
-        "en attente",
+        help="n'affiche que la réponse : le bilan se tait, sauf une erreur ou une approbation en attente",
     )
     run.add_argument(
         "--onlydata",
         action="store_true",
-        help="avec --json : n'affiche que data, la réponse validée par le schéma du contrat "
-        "de sortie ; sans data, rien sur stdout et le code 1",
+        help="avec --json : n'affiche que data, la réponse validée par le schéma du contrat de sortie ; sans data, rien sur stdout et le code 1",
     )
     run.add_argument("--session", type=str, default=None, help="journal auquel rattacher le run")
     run.add_argument("--run-id", type=str, default=None, help="identifiant choisi pour le run")
@@ -355,16 +350,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         metavar="CLE=VALEUR",
-        help="state de la session posé à l'ouverture (répétable) : la valeur en JSON "
-        '(3, true, null qui efface, "texte"), sinon telle quelle',
+        help='state de la session posé à l\'ouverture (répétable) : la valeur en JSON (3, true, null qui efface, "texte"), sinon telle quelle',
     )
     run.set_defaults(handler=cmd_run)
 
-    state = tenanted(
-        commands.add_parser(
-            "state", help="state d'une session : ce que l'application et les outils y ont écrit"
-        )
-    )
+    state = tenanted(commands.add_parser("state", help="state d'une session : ce que l'application et les outils y ont écrit"))
     state.add_argument("session_id")
     state.set_defaults(handler=cmd_state)
 
@@ -377,8 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay = tenanted(
         commands.add_parser(
             "replay",
-            help="rejoue un run fini, à l'identique (sans appel) ou en variante, "
-            "et dit où il s'écarte",
+            help="rejoue un run fini, à l'identique (sans appel) ou en variante, et dit où il s'écarte",
         )
     )
     replay.add_argument("run_id", nargs="?", default=None)
@@ -388,15 +377,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="FICHIER",
-        help="rejoue depuis un journal JSONL exporté (sessions export, eval --export), "
-        "hors du journal de la config ; sans run_id, chacun de ses runs finis",
+        help="rejoue depuis un journal JSONL exporté (sessions export, eval --export), hors du journal de la config ; sans run_id, chacun de ses runs finis",
     )
     replay.add_argument(
         "--mode",
         choices=("exact", "variant"),
         default="exact",
-        help="exact : tout vient du journal ; variant : ce qu'il ne connaît pas part "
-        "pour de vrai, et les deux runs sont comparés",
+        help="exact : tout vient du journal ; variant : ce qu'il ne connaît pas part pour de vrai, et les deux runs sont comparés",
     )
     replay.add_argument(
         "--model",
@@ -410,8 +397,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="OUTIL=REF",
-        help="variante : doublure d'un outil (nom enregistré ou module:fonction), "
-        "appelée à la place d'un appel absent du journal",
+        help="variante : doublure d'un outil (nom enregistré ou module:fonction), appelée à la place d'un appel absent du journal",
     )
     replay.add_argument(
         "--export",
@@ -426,29 +412,21 @@ def build_parser() -> argparse.ArgumentParser:
     inspect = tenanted(
         commands.add_parser(
             "inspect",
-            help="relit un run : son arbre (étapes, modèles, outils, sous-runs), "
-            "sa réponse et son bilan",
+            help="relit un run : son arbre (étapes, modèles, outils, sous-runs), sa réponse et son bilan",
         )
     )
     inspect.add_argument("run_id")
     inspect.add_argument("--session", type=str, default=None, help="journal du run")
-    inspect.add_argument(
-        "--full", action="store_true", help="arguments et résultats en entier, sans coupe"
-    )
-    inspect.add_argument(
-        "--json", action="store_true", help="la trace en JSON, celle de GET /v1/traces/{run_id}"
-    )
+    inspect.add_argument("--full", action="store_true", help="arguments et résultats en entier, sans coupe")
+    inspect.add_argument("--json", action="store_true", help="la trace en JSON, celle de GET /v1/traces/{run_id}")
     inspect.set_defaults(handler=cmd_inspect)
 
     evaluation = commands.add_parser(
         "eval",
-        help="joue une suite d'évals : des cas et leurs attendus, pour chaque variante, "
-        "en mémoire (outils à effets de bord doublés ou refusés)",
+        help="joue une suite d'évals : des cas et leurs attendus, pour chaque variante, en mémoire (outils à effets de bord doublés ou refusés)",
     )
     evaluation.add_argument("suite", type=Path, help="fichier YAML de la suite")
-    evaluation.add_argument(
-        "--case", action="append", default=[], metavar="NOM", help="ne joue que ce cas (répétable)"
-    )
+    evaluation.add_argument("--case", action="append", default=[], metavar="NOM", help="ne joue que ce cas (répétable)")
     evaluation.add_argument(
         "--variant",
         action="append",
@@ -497,9 +475,7 @@ def build_parser() -> argparse.ArgumentParser:
         decision.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
         decision.set_defaults(handler=cmd_decide, verdict=verbe)
 
-    reply = acting(
-        tenanted(commands.add_parser("answer", help="répond à une question que le run attend"))
-    )
+    reply = acting(tenanted(commands.add_parser("answer", help="répond à une question que le run attend")))
     reply.add_argument("run_id")
     reply.add_argument("texte", nargs="?", default=None, help="la réponse, en message libre")
     reply.add_argument(
@@ -507,16 +483,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         metavar="RÉPONSE",
-        help=(
-            "réponse à une question, dans leur ordre : le libellé ou le numéro d'un choix, "
-            "ou un texte (répéter ; « ; » sépare plusieurs choix)"
-        ),
+        help=("réponse à une question, dans leur ordre : le libellé ou le numéro d'un choix, ou un texte (répéter ; « ; » sépare plusieurs choix)"),
     )
     reply.add_argument("--call", type=str, default=None, metavar="CALL_ID", help="question visée")
     reply.add_argument("--session", type=str, default=None, help="journal du run")
-    reply.add_argument(
-        "--no-wait", action="store_true", help="écrit la réponse et sort, sans piloter la reprise"
-    )
+    reply.add_argument("--no-wait", action="store_true", help="écrit la réponse et sort, sans piloter la reprise")
     reply.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
     reply.set_defaults(handler=cmd_answer)
 
@@ -552,8 +523,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=PERMISSIONS,
         metavar="PERMISSION",
-        help="permission que la clé garde de celles de son utilisateur "
-        "(répétable ; défaut : toutes)",
+        help="permission que la clé garde de celles de son utilisateur (répétable ; défaut : toutes)",
     )
     create.add_argument(
         "--agent",
@@ -590,37 +560,24 @@ def build_parser() -> argparse.ArgumentParser:
         type=_period,
         choices=("day", "month"),
         default=None,
-        help="consommation du client sur la journée (day) ou le mois (month) en cours ; "
-        "'jour' et 'mois', l'ancienne écriture, restent compris",
+        help="consommation du client sur la journée (day) ou le mois (month) en cours ; 'jour' et 'mois', l'ancienne écriture, restent compris",
     )
     report.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
     report.set_defaults(handler=cmd_report)
 
-    sessions = commands.add_parser(
-        "sessions", help="journaux de session : lister, exporter, supprimer"
-    )
+    sessions = commands.add_parser("sessions", help="journaux de session : lister, exporter, supprimer")
     session_actions = sessions.add_subparsers(dest="action", required=True)
 
-    listing = tenanted(
-        session_actions.add_parser("list", help="sessions du journal, la plus récente d'abord")
-    )
+    listing = tenanted(session_actions.add_parser("list", help="sessions du journal, la plus récente d'abord"))
     listing.add_argument("--json", action="store_true", help="affiche la liste en JSON")
     listing.set_defaults(handler=cmd_sessions_list)
 
-    show = tenanted(
-        session_actions.add_parser(
-            "show", help="fiche d'une session : ses runs, et les approbations en attente"
-        )
-    )
+    show = tenanted(session_actions.add_parser("show", help="fiche d'une session : ses runs, et les approbations en attente"))
     show.add_argument("session_id")
     show.add_argument("--json", action="store_true", help="affiche la fiche en JSON")
     show.set_defaults(handler=cmd_sessions_show)
 
-    files = tenanted(
-        session_actions.add_parser(
-            "files", help="fichiers d'une session ; --out les écrit sous leur vrai nom"
-        )
-    )
+    files = tenanted(session_actions.add_parser("files", help="fichiers d'une session ; --out les écrit sous leur vrai nom"))
     files.add_argument("session_id")
     files.add_argument("--json", action="store_true", help="affiche la liste en JSON")
     files.add_argument(
@@ -639,9 +596,7 @@ def build_parser() -> argparse.ArgumentParser:
     files.add_argument("--force", action="store_true", help="écrase un fichier déjà présent")
     files.set_defaults(handler=cmd_sessions_files)
 
-    export = tenanted(
-        session_actions.add_parser("export", help="écrit les événements d'une session en JSONL")
-    )
+    export = tenanted(session_actions.add_parser("export", help="écrit les événements d'une session en JSONL"))
     export.add_argument("session_id")
     export.add_argument(
         "--out",
@@ -652,18 +607,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export.set_defaults(handler=cmd_sessions_export)
 
-    remove = tenanted(
-        session_actions.add_parser(
-            "delete", help="supprime une session : journal, fichiers et clés (RGPD)"
-        )
-    )
+    remove = tenanted(session_actions.add_parser("delete", help="supprime une session : journal, fichiers et clés (RGPD)"))
     remove.add_argument("session_id")
     remove.add_argument("--yes", action="store_true", help="ne demande pas confirmation")
     remove.set_defaults(handler=cmd_sessions_delete)
 
-    worker = commands.add_parser(
-        "worker", help="consomme la file des tâches de fond (runs, reprises, résumés)"
-    )
+    worker = commands.add_parser("worker", help="consomme la file des tâches de fond (runs, reprises, résumés)")
     worker.add_argument(
         "--jobs",
         type=int,
@@ -693,14 +642,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     storage = commands.add_parser("storage", help="stockages de service : le SQL à appliquer")
     storage_actions = storage.add_subparsers(dest="action", required=True)
-    ddl = storage_actions.add_parser(
-        "sql", help="imprime le SQL du stockage Postgres déclaré (tables, rôle, politiques)"
-    )
+    ddl = storage_actions.add_parser("sql", help="imprime le SQL du stockage Postgres déclaré (tables, rôle, politiques)")
     ddl.set_defaults(handler=cmd_storage_sql)
 
-    memory = commands.add_parser(
-        "memory", help="entretient la mémoire d'un agent (loom.memory) : export, import…"
-    )
+    memory = commands.add_parser("memory", help="entretient la mémoire d'un agent (loom.memory) : export, import…")
     memory_cli.add_actions(memory, tenanted, cmd_memory)
 
     schema = commands.add_parser("schema", help="JSON Schema du fichier de configuration")
@@ -739,8 +684,7 @@ def _global_options(parser: argparse.ArgumentParser, *, after: bool = False) -> 
         "--env-file",
         type=Path,
         default=default(None),
-        help="fichier de variables à lire, au lieu de 'env_file:' de la config "
-        "ou du .env voisin de la config (une variable déjà définie l'emporte)",
+        help="fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)",
     )
     env.add_argument(
         "--no-env-file",
@@ -802,14 +746,7 @@ async def _validate(args: argparse.Namespace, *, root: Path) -> int:
     # montage (lot C du 23/10 : le collecteur non monté se lisait deux fois),
     # ni ce que son rapport reprend (``REPORTED``).
     printed: set[str] = set()
-    apply_logging(config).addFilter(
-        lambda record: (
-            not (
-                getattr(record, REPORTED, False)
-                or (getattr(record, SETUP, False) and record.getMessage() in printed)
-            )
-        )
-    )
+    apply_logging(config).addFilter(lambda record: not (getattr(record, REPORTED, False) or (getattr(record, SETUP, False) and record.getMessage() in printed)))
     registry = load_registry(config)
     report = _Report(config=args.config, root=root)
     _configuration(report, config, args, printed)
@@ -916,9 +853,7 @@ def _render(report: _Report, *, failed: bool = False) -> str:
         verdict = "✗ montage interrompu"
     else:
         # « 0 agent monté » : le pluriel ne commence qu'à deux.
-        verdict = f"✓ {report.mounted} " + (
-            "agents montés" if report.mounted > 1 else "agent monté"
-        )
+        verdict = f"✓ {report.mounted} " + ("agents montés" if report.mounted > 1 else "agent monté")
     if count := len(report.warnings):
         verdict += f" · ⚠ {count} avertissement" + ("s" if count > 1 else "")
     title = f"{PROG} validate · {report.config}"
@@ -937,12 +872,7 @@ def _render(report: _Report, *, failed: bool = False) -> str:
     if report.warnings:
         out += ["", "AVERTISSEMENTS"]
         wide = max(len(warning.subject) for warning in report.warnings)
-        out.extend(
-            f"  ⚠ {warning.subject:<{wide}}  {warning.message}"
-            if warning.subject
-            else f"  ⚠ {warning.message}"
-            for warning in report.warnings
-        )
+        out.extend(f"  ⚠ {warning.subject:<{wide}}  {warning.message}" if warning.subject else f"  ⚠ {warning.message}" for warning in report.warnings)
     return "\n".join(out)
 
 
@@ -966,9 +896,7 @@ def _packed(names: list[str], width: int) -> list[str]:
     return lines
 
 
-def _configuration(
-    report: _Report, config: LoomConfig, args: argparse.Namespace, printed: set[str]
-) -> None:
+def _configuration(report: _Report, config: LoomConfig, args: argparse.Namespace, printed: set[str]) -> None:
     section = report.section("CONFIGURATION")
     active, declared = _profile_said(config, args.profile)
     section.add("Profil", active)
@@ -997,9 +925,7 @@ def _extensions(report: _Report, config: LoomConfig, registry: Registry) -> None
     packages = _package_lines(config)
     if packages:
         section.add("Paquets", packages[0], packages[1:])
-    declared = [
-        f"{source.name} → point d'entrée {source.entry_point}" for source in config.tool_sources
-    ]
+    declared = [f"{source.name} → point d'entrée {source.entry_point}" for source in config.tool_sources]
     if declared:
         section.add("Sources", declared[0], declared[1:])
     named = [(name, registry.get(name)) for name in registry.names]
@@ -1098,9 +1024,7 @@ def _storage_said(label: str, declared: EventsStorage | IdempotencyStorage, repo
 
 def _retains_everything(config: LoomConfig) -> bool:
     """Vrai si aucune borne de rétention n'est posée, ni à la racine ni pour un client."""
-    return config.storage.retention.events_days is None and all(
-        config.retention_days(tenant) is None for tenant in config.tenant_ids
-    )
+    return config.storage.retention.events_days is None and all(config.retention_days(tenant) is None for tenant in config.tenant_ids)
 
 
 def _telemetry_lines(config: LoomConfig) -> list[str]:
@@ -1108,16 +1032,8 @@ def _telemetry_lines(config: LoomConfig) -> list[str]:
     telemetry = config.telemetry
     logs = telemetry.logging
     capture = telemetry.capture
-    exports = (
-        "exports : contenu masqué"
-        if capture.exports == "content"
-        else "exports : métadonnées seules"
-    )
-    raw = (
-        f"échanges bruts au journal (≤ {_kib(capture.raw_max_bytes)}/corps)"
-        if capture.raw_exchanges
-        else "pas d'échanges bruts"
-    )
+    exports = "exports : contenu masqué" if capture.exports == "content" else "exports : métadonnées seules"
+    raw = f"échanges bruts au journal (≤ {_kib(capture.raw_max_bytes)}/corps)" if capture.raw_exchanges else "pas d'échanges bruts"
     lines = [f"logs {logs.level.upper()} ({logs.format}) · {exports}"]
     if not telemetry.exporters:
         return [*lines, f"{raw} · collecteur : aucun"]
@@ -1135,8 +1051,7 @@ def _access(report: _Report, config: LoomConfig) -> None:
         kept = security.audit.retention_days
         section.add(
             "Refus",
-            f"{report.shown(security.audit.path)} · "
-            + (f"lignes effacées après {kept} jour(s)" if kept else "aucune rétention"),
+            f"{report.shown(security.audit.path)} · " + (f"lignes effacées après {kept} jour(s)" if kept else "aucune rétention"),
         )
     keys = [key.id for key in security.api_keys]
     if keys:
@@ -1153,10 +1068,7 @@ def _access(report: _Report, config: LoomConfig) -> None:
         section.add(
             "MCP HTTP",
             f"monté sous {config.server.http.base_path}/mcp, origines : {origines}",
-            [
-                f"ressources en lecture seule : {MCP_RUNS}, {MCP_SESSIONS}, "
-                f"et {len(MCP_TEMPLATES)} gabarits"
-            ],
+            [f"ressources en lecture seule : {MCP_RUNS}, {MCP_SESSIONS}, et {len(MCP_TEMPLATES)} gabarits"],
         )
     if config.triggers:
         base = config.server.http.base_path
@@ -1252,16 +1164,8 @@ def _retention_line(config: LoomConfig) -> str:
 
 
 def _capture_said(capture: CaptureConfig) -> str:
-    exports = (
-        "exports avec le contenu, masqué"
-        if capture.exports == "content"
-        else "exports sans contenu (metadata)"
-    )
-    raw = (
-        f"échanges bruts au journal ({_kib(capture.raw_max_bytes)} par corps au plus)"
-        if capture.raw_exchanges
-        else "pas d'échanges bruts"
-    )
+    exports = "exports avec le contenu, masqué" if capture.exports == "content" else "exports sans contenu (metadata)"
+    raw = f"échanges bruts au journal ({_kib(capture.raw_max_bytes)} par corps au plus)" if capture.raw_exchanges else "pas d'échanges bruts"
     return f"{exports} ; {raw}"
 
 
@@ -1376,8 +1280,7 @@ def _role_lines(config: LoomConfig, report: _Report) -> list[str]:
             if "approve" in security.role(endorsed).permissions:
                 report.warn(
                     subject,
-                    f"endosse {endorsed}, qui approuve : la passerelle peut faire approuver "
-                    "au nom d'un utilisateur",
+                    f"endosse {endorsed}, qui approuve : la passerelle peut faire approuver au nom d'un utilisateur",
                 )
     return lines
 
@@ -1410,8 +1313,7 @@ def _key_lines(config: LoomConfig, report: _Report) -> list[str]:
             if missing:
                 report.warn(
                     f"Clé d'API {key.id}",
-                    f"{_listed(missing)} : l'utilisateur {user.id} ne les a pas, la clé "
-                    "ne les donne pas",
+                    f"{_listed(missing)} : l'utilisateur {user.id} ne les a pas, la clé ne les donne pas",
                 )
         if key.agents:
             details.append(f"agents {_listed(key.agents)}")
@@ -1431,11 +1333,7 @@ def _key_lines(config: LoomConfig, report: _Report) -> list[str]:
         granted = security.permissions_of(user.id)
         if key.scopes is not None:
             granted &= frozenset(key.scopes)
-        if (
-            "approve" in granted
-            and "read_content" not in granted
-            and "read_content" in security.permissions_of(user.id)
-        ):
+        if "approve" in granted and "read_content" not in granted and "read_content" in security.permissions_of(user.id):
             # Le rôle lit, la clé le lui retire : elle approuverait à l'aveugle.
             report.warn(f"Clé d'API {key.id}", "peut approuver sans lire : ajouter 'read_content'")
     return lines
@@ -1516,9 +1414,7 @@ def _counted(count: int, word: str) -> str:
     return f"{count} {word}{'s' if count > 1 else ''}"
 
 
-def _agent_header(
-    spec: AgentSpec, chain: Callable[[tuple[str, ...]], str], order: str = "effects"
-) -> str:
+def _agent_header(spec: AgentSpec, chain: Callable[[tuple[str, ...]], str], order: str = "effects") -> str:
     """« agent · HAIKU · 6 outils Python · sous-agent : forgeron »."""
     parts = [
         spec.name,
@@ -1526,10 +1422,7 @@ def _agent_header(
         f"{_counted(len(spec.python_tools), 'outil')} Python",
     ]
     if spec.subagents:
-        named = [
-            ref.tool_name if ref.tool_name == ref.agent else f"{ref.tool_name} ({ref.agent})"
-            for ref in spec.subagents
-        ]
+        named = [ref.tool_name if ref.tool_name == ref.agent else f"{ref.tool_name} ({ref.agent})" for ref in spec.subagents]
         parts.append(f"sous-agent{'s' if len(named) > 1 else ''} : {', '.join(named)}")
     if spec.roles:
         roles = [f"{role.name} ({chain(role.chain)})" for role in spec.roles]
@@ -1542,9 +1435,7 @@ def _agent_header(
     return " · ".join(parts)
 
 
-async def _agent_lines(
-    loom: Loom, tenant_id: TenantId, spec: AgentSpec, report: _Report, *, indent: str
-) -> list[str]:
+async def _agent_lines(loom: Loom, tenant_id: TenantId, spec: AgentSpec, report: _Report, *, indent: str) -> list[str]:
     """L'arbre d'un agent monté pour un client : ses outils, ses réglages, ses sources."""
     config = loom.config
     context = loom.context(spec.name, tenant_id)
@@ -1555,9 +1446,7 @@ async def _agent_lines(
         return _chain(models, mapped)
 
     branches: list[_Branch] = []
-    policies = [
-        f"{bound.name} : {', '.join(sorted(bound.points))}" for bound in context.policies.bound
-    ]
+    policies = [f"{bound.name} : {', '.join(sorted(bound.points))}" for bound in context.policies.bound]
     if policies:
         branches.append(_Branch("politiques", tuple(policies)))
     # Le skill d'un outil part avec chaque appel de modèle : il se dit sous l'outil.
@@ -1577,28 +1466,17 @@ async def _agent_lines(
             lines.append(f"skill, {_skill_size(skill)}")
         branches.append(_Branch(name, tuple(lines)))
         found = innermost(context.tools.get(name))
-        if (
-            declared.side_effects is None
-            and not is_builtin(declared.python)
-            and isinstance(found, FunctionTool)
-            and not found.declares_effects
-        ):
+        if declared.side_effects is None and not is_builtin(declared.python) and isinstance(found, FunctionTool) and not found.declares_effects:
             # Sans déclaration, l'outil passe pour une lecture : s'il écrit, une lecture
             # du même tour peut le doubler, et une politique ou la reprise le croient sûr.
             report.warn(
                 f"Agent {spec.name}",
-                f"outil {name} : side_effects non déclaré, compté comme sans effet "
-                "(none s'il ne fait que lire)",
+                f"outil {name} : side_effects non déclaré, compté comme sans effet (none s'il ne fait que lire)",
             )
-    branches.extend(
-        _Branch(name, (f"skill, {_skill_size(skill)}",)) for name, skill in skills.items()
-    )
+    branches.extend(_Branch(name, (f"skill, {_skill_size(skill)}",)) for name, skill in skills.items())
     imposed: Mapping[str, Approval] = tenant.approvals if tenant is not None else {}
     branches.extend(await _source_branches(spec.name, context.tools, report, imposed))
-    contracts = [
-        f"{target} : {_contract_line(contract, repairs=repairs)}"
-        for target, contract, repairs in _contracts(spec)
-    ]
+    contracts = [f"{target} : {_contract_line(contract, repairs=repairs)}" for target, contract, repairs in _contracts(spec)]
     if contracts:
         branches.append(_Branch("contrats", tuple(contracts)))
     budgets = config.budget_of(spec.name)
@@ -1608,18 +1486,10 @@ async def _agent_lines(
     for name, role, judge in spec.judges:
         target = f"rôle {role.name}" if role is not None else "réponse finale"
         sample = f", sample {judge.when.sample:g}" if judge.when.sample < 1 else ""
-        judges.append(
-            f"{name} ({target}) : modèle {chain(judge.chain)}, "
-            f"{len(judge.criteria)} critère(s){sample}"
-        )
+        judges.append(f"{name} ({target}) : modèle {chain(judge.chain)}, {len(judge.criteria)} critère(s){sample}")
     if judges:
         branches.append(_Branch("juges", tuple(judges)))
-    asking = [
-        name
-        for name in context.tools.names
-        if (mounted := context.tools.get(name)) is not None
-        and imposed.get(name, mounted.spec.approval) == "always"
-    ]
+    asking = [name for name in context.tools.names if (mounted := context.tools.get(name)) is not None and imposed.get(name, mounted.spec.approval) == "always"]
     # Sans liste ni durcissement, ce sont les permissions des rôles qui décident :
     # rien à dire sous l'agent, mais les avertissements valent quand même.
     if access := _access_lines(config, spec, asking, report):
@@ -1644,23 +1514,17 @@ def _able(config: LoomConfig, spec: AgentSpec, permission: Permission) -> set[st
     return _holders(config, spec.name, permission, listed)
 
 
-def _holders(
-    config: LoomConfig, agent: str, permission: Permission, listed: tuple[str, ...] | None
-) -> set[str]:
+def _holders(config: LoomConfig, agent: str, permission: Permission, listed: tuple[str, ...] | None) -> set[str]:
     security = config.security
     return {
         user.id
         for user in security.users
         for role in security.roles_of(user.id)
-        if permission in role.permissions
-        and role.allows(agent)
-        and (listed is None or role.id in listed)
+        if permission in role.permissions and role.allows(agent) and (listed is None or role.id in listed)
     }
 
 
-def _access_lines(
-    config: LoomConfig, spec: AgentSpec, asking: Sequence[str], report: _Report
-) -> list[str]:
+def _access_lines(config: LoomConfig, spec: AgentSpec, asking: Sequence[str], report: _Report) -> list[str]:
     """Qui lance, répond, arrête et approuve cet agent ; ce qui bloque va aux avertissements.
 
     ``asking`` : les outils montés qui demandent une approbation à chaque appel.
@@ -1692,8 +1556,7 @@ def _access_lines(
         if not _holders(config, spec.name, "approve", access.approvers().of(tool)):
             report.warn(
                 subject,
-                f"outil {tool} : aucun utilisateur ne peut trancher ses demandes, "
-                "elles expireront toutes",
+                f"outil {tool} : aucun utilisateur ne peut trancher ses demandes, elles expireront toutes",
             )
     for tool, roles in access.approve.tools.items():
         if tool not in asking and not _holders(config, spec.name, "approve", roles):
@@ -1705,8 +1568,7 @@ def _access_lines(
         (alone,) = approvers
         report.warn(
             subject,
-            f"auto-approbation interdite, et {alone} est le seul approbateur : ses propres "
-            "runs attendront sans fin",
+            f"auto-approbation interdite, et {alone} est le seul approbateur : ses propres runs attendront sans fin",
         )
     return lines
 
@@ -1716,10 +1578,7 @@ def _internal_line(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, indent: 
     tenant = loom.tenant(tenant_id).spec
     mapped: Mapping[str, str] = tenant.models if tenant is not None else {}
     parts = [f"interne : {spec.name}", _chain(spec.main.chain, mapped)]
-    parts.extend(
-        f"{bound.name} ({', '.join(sorted(bound.points))})"
-        for bound in loom.context(spec.name, tenant_id).policies.bound
-    )
+    parts.extend(f"{bound.name} ({', '.join(sorted(bound.points))})" for bound in loom.context(spec.name, tenant_id).policies.bound)
     return f"{indent}  {' · '.join(parts)}"
 
 
@@ -1796,12 +1655,7 @@ def _chain(models: tuple[str, ...], mapped: Mapping[str, str] | None = None) -> 
     secours (test E6 du 19/10 : sous « client dupont », le juge affichait
     « modèle OPUS » alors que ce client le fait tourner sur HAIKU).
     """
-    shown = [
-        f"{model} ({mapped[model]} pour ce client)"
-        if mapped and mapped.get(model, model) != model
-        else model
-        for model in models
-    ]
+    shown = [f"{model} ({mapped[model]} pour ce client)" if mapped and mapped.get(model, model) != model else model for model in models]
     return " → ".join(shown)
 
 
@@ -1814,9 +1668,7 @@ def _contracts(spec: AgentSpec) -> list[tuple[str, OutputContract, bool]]:
     if spec.output is not None:
         found.append(("réponse finale", spec.output, True))
     found.extend((f"rôle {role.name}", role.output, True) for role in spec.roles if role.output)
-    found.extend(
-        (f"outil {tool.python}", tool.output, False) for tool in spec.python_tools if tool.output
-    )
+    found.extend((f"outil {tool.python}", tool.output, False) for tool in spec.python_tools if tool.output)
     for ref in (*spec.mcp_tools, *spec.source_tools):
         found.extend(
             (f"outil {ref.prefix}{MCP_PREFIX_SEPARATOR}{name}", overrides.output, False)
@@ -1958,9 +1810,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
 
 
-async def _budgets_reached(
-    loom: Loom, result: RunResult, tenant: TenantId | None
-) -> list[BudgetExceeded]:
+async def _budgets_reached(loom: Loom, result: RunResult, tenant: TenantId | None) -> list[BudgetExceeded]:
     """Plafonds atteints pendant le run, lus dans son journal (sous-runs compris).
 
     Au test J4 du 21/10, ni la console ni le résumé ne disaient qu'un budget
@@ -1972,9 +1822,7 @@ async def _budgets_reached(
     return [e.payload for e in events if isinstance(e.payload, BudgetExceeded)]
 
 
-async def _opening_summaries(
-    loom: Loom, result: RunResult, tenant: TenantId | None
-) -> list[SessionCompacted]:
+async def _opening_summaries(loom: Loom, result: RunResult, tenant: TenantId | None) -> list[SessionCompacted]:
     """Résumés de la session faits à l'ouverture du run, lus dans le journal.
 
     Sans compaction déclarée, il n'y en a pas : le journal n'est pas relu.
@@ -2041,8 +1889,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         where = f" --session {args.session}" if args.session else ""
         tenant_flag = f" --tenant {args.tenant}" if args.tenant else ""
         print(
-            f"Rien à reprendre : le run {args.run_id} est déjà terminé ({outcome}). "
-            f"Pour le relire : loom inspect {args.run_id}{where}{tenant_flag}",
+            f"Rien à reprendre : le run {args.run_id} est déjà terminé ({outcome}). Pour le relire : loom inspect {args.run_id}{where}{tenant_flag}",
             file=sys.stderr,
         )
         return OK
@@ -2066,10 +1913,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         if args.journal is None and args.run_id is None:
             raise ReplayError("nommer le run à rejouer, ou le journal (--journal FICHIER)")
         if args.journal is not None and (args.session or args.tenant):
-            raise ReplayError(
-                "--session et --tenant ne servent pas avec --journal : le journal porte la "
-                "session et le client de chaque run"
-            )
+            raise ReplayError("--session et --tenant ne servent pas avec --journal : le journal porte la session et le client de chaque run")
         models = _pairs(args.model, "--model", "ETAPE=MODELE")
         references = _pairs(args.double, "--double", "OUTIL=REF")
         registry = load_registry(config)
@@ -2159,14 +2003,8 @@ def _print_replay(report: ReplayReport, export: Path | None) -> int:
     _say(f"Run        : {report.run_id} (agent {report.agent}, client {report.tenant_id})")
     _say(f"Session    : {report.session_id}")
     _say(f"Issue      : {report.original_end} au journal, {report.replay_end} au rejeu")
-    _say(
-        f"Modèles    : {report.model_calls[0]} appel(s) au journal, "
-        f"{report.model_calls[1]} servi(s) au rejeu"
-    )
-    _say(
-        f"Outils     : {report.tool_calls[0]} résultat(s) au journal (rôles à part), "
-        f"{report.tool_calls[1]} servi(s) au rejeu"
-    )
+    _say(f"Modèles    : {report.model_calls[0]} appel(s) au journal, {report.model_calls[1]} servi(s) au rejeu")
+    _say(f"Outils     : {report.tool_calls[0]} résultat(s) au journal (rôles à part), {report.tool_calls[1]} servi(s) au rejeu")
     if export is not None:
         _say(f"Journal    : {export} ({len(report.events)} événement(s))")
     divergence = report.divergence
@@ -2177,10 +2015,7 @@ def _print_replay(report: ReplayReport, export: Path | None) -> int:
     if divergence.detail:
         _say(f"             {divergence.detail}")
     if divergence.expected_hash and divergence.actual_hash:
-        _say(
-            f"             empreinte {divergence.expected_hash[:12]} au journal, "
-            f"{divergence.actual_hash[:12]} au rejeu"
-        )
+        _say(f"             empreinte {divergence.expected_hash[:12]} au journal, {divergence.actual_hash[:12]} au rejeu")
     return FAILED
 
 
@@ -2216,10 +2051,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
             # était à reprendre, ni comment.
             where = f" --session {args.session}" if args.session else ""
             tenant_flag = f" --tenant {args.tenant}" if args.tenant else ""
-            _say(
-                "\nÀ reprendre : personne ne pilote ce run (si aucun worker ne s'en charge) — "
-                f"loom resume {args.run_id}{where}{tenant_flag}"
-            )
+            _say(f"\nÀ reprendre : personne ne pilote ce run (si aucun worker ne s'en charge) — loom resume {args.run_id}{where}{tenant_flag}")
     return OK
 
 
@@ -2301,31 +2133,16 @@ def _print_variant(report: ReplayReport, comparison: Comparison, export: Path | 
         f"{comparison.served_models} servi(s) par le journal, "
         f"{comparison.real_models} parti(s) pour de vrai"
     )
-    fates = ", ".join(
-        f"{comparison.tools[fate]} {fate_label(fate)}"
-        for fate in _FATE_ORDER
-        if comparison.tools.get(fate)
-    )
-    _say(
-        f"{'Outils':<11}: {f'{original.tool_calls} appel(s)':<24}{variant.tool_calls} appel(s)"
-        + (f" : {fates}" if fates else "")
-    )
+    fates = ", ".join(f"{comparison.tools[fate]} {fate_label(fate)}" for fate in _FATE_ORDER if comparison.tools.get(fate))
+    _say(f"{'Outils':<11}: {f'{original.tool_calls} appel(s)':<24}{variant.tool_calls} appel(s)" + (f" : {fates}" if fates else ""))
     _say(f"{'Tokens':<11}: {_tokens(original):<24}{_tokens(variant)} (entrée / sortie)")
-    _say(
-        f"{'Coût':<11}: {f'{original.cost_usd:.6f} $':<24}{variant.cost_usd:.6f} $ "
-        f"(dépensé pour de vrai : {comparison.spent_usd:.6f} $)"
-    )
-    _say(
-        f"{'Durée':<11}: {f'{original.active_ms / 1000:.1f} s':<24}{variant.active_ms / 1000:.1f} s"
-    )
+    _say(f"{'Coût':<11}: {f'{original.cost_usd:.6f} $':<24}{variant.cost_usd:.6f} $ (dépensé pour de vrai : {comparison.spent_usd:.6f} $)")
+    _say(f"{'Durée':<11}: {f'{original.active_ms / 1000:.1f} s':<24}{variant.active_ms / 1000:.1f} s")
     for label, side in (("origine", original), ("variante", variant)):
         for verdict in side.verdicts:
             notes = ", ".join(f"{name} {score:.2f}" for name, score in verdict.scores)
             said = "accepté" if verdict.passed else "refusé"
-            _say(
-                f"Juge       : {label}, {verdict.judge} (essai {verdict.attempt}) : "
-                f"{notes} — {said}"
-            )
+            _say(f"Juge       : {label}, {verdict.judge} (essai {verdict.attempt}) : {notes} — {said}")
     _say(f"Réponse    : {'la même' if comparison.same_answer else 'différente'}")
     if export is not None:
         _say(f"Journal    : {export} ({len(report.events)} événement(s))")
@@ -2415,8 +2232,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
         if tenant != DEFAULT_TENANT:
             follow += f" --tenant {tenant}"
         _say(
-            f"Reprise confiée au worker (file {config.storage.queue.backend}) : "
-            f"suivre avec {follow}",
+            f"Reprise confiée au worker (file {config.storage.queue.backend}) : suivre avec {follow}",
             file=sys.stderr,
         )
     if result is None:
@@ -2443,11 +2259,7 @@ def cmd_answer(args: argparse.Namespace) -> int:
     if (args.texte is None) == (args.answer is None):
         print("Donner la réponse en texte, ou une --answer par question.", file=sys.stderr)
         return REFUSED
-    answers = (
-        None
-        if args.answer is None
-        else [[part.strip() for part in given.split(";") if part.strip()] for given in args.answer]
-    )
+    answers = None if args.answer is None else [[part.strip() for part in given.split(";") if part.strip()] for given in args.answer]
     brokered = config.storage.queue.brokered
     # La question visée, lue avant de répondre : pour les numéros, le refus et l'écho.
     seen: list[_Target] = []
@@ -2530,11 +2342,7 @@ async def _target(
         result = await loom.result(run_id, session_id=session, tenant_id=tenant)
     except UnknownRun:
         return None
-    targets = [
-        pending
-        for pending in result.pending_questions
-        if call_id is None or pending.call_id == call_id
-    ]
+    targets = [pending for pending in result.pending_questions if call_id is None or pending.call_id == call_id]
     if len(targets) != 1:
         return None
     where = "" if result.session_id == result.run_id else f" --session {result.session_id}"
@@ -2604,10 +2412,7 @@ def _echo(target: _Target | None, text: str | None, call: str) -> list[str]:
     if len(questions) != len(target.sent):
         return [f"{first}{call}"]
     several = len(questions) > 1
-    names = [
-        (question.header or "").strip() or (f"question {rank}" if several else "")
-        for rank, question in enumerate(questions, start=1)
-    ]
+    names = [(question.header or "").strip() or (f"question {rank}" if several else "") for rank, question in enumerate(questions, start=1)]
     width = max(len(name) for name in names)
     lines: list[str] = []
     for rank, (name, values) in enumerate(zip(names, target.sent, strict=True)):
@@ -2628,14 +2433,7 @@ def _numbered(questions: Sequence[Question], answers: list[list[str]]) -> list[l
     numbered: list[list[str]] = []
     for question, values in zip(questions, answers, strict=True):
         labels = [option.label for option in question.options]
-        numbered.append(
-            [
-                labels[int(value) - 1]
-                if value.isdecimal() and value not in labels and 1 <= int(value) <= len(labels)
-                else value
-                for value in values
-            ]
-        )
+        numbered.append([labels[int(value) - 1] if value.isdecimal() and value not in labels and 1 <= int(value) <= len(labels) else value for value in values])
     return numbered
 
 
@@ -2721,10 +2519,7 @@ def _consumption_json(found: TenantConsumption) -> dict[str, JsonValue]:
 
 
 # Avertissement des commandes qui relisent le journal quand il est en mémoire.
-MEMORY_JOURNAL: Final = (
-    "Journal en mémoire : il ne vit que le temps d'un process ; "
-    "cette commande ne voit pas les runs des autres commandes loom."
-)
+MEMORY_JOURNAL: Final = "Journal en mémoire : il ne vit que le temps d'un process ; cette commande ne voit pas les runs des autres commandes loom."
 
 
 def _warn_memory_journal(config: LoomConfig, args: argparse.Namespace) -> None:
@@ -2751,9 +2546,7 @@ def cmd_sessions_list(args: argparse.Namespace) -> int:
 
     records = asyncio.run(go())
     if args.json:
-        print(
-            json.dumps([r.model_dump(mode="json") for r in records], ensure_ascii=False, indent=2)
-        )
+        print(json.dumps([r.model_dump(mode="json") for r in records], ensure_ascii=False, indent=2))
         return OK
     if not records:
         print("Aucune session.")
@@ -2796,10 +2589,7 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
     _say("Runs       :")
     for run in info.runs:
         child = f"   (sous-run de {run.parent_run_id})" if run.parent_run_id else ""
-        _say(
-            f"  {run.run_id}  {run.agent:<12} {run.status:<15} "
-            f"{run.iterations:>3} itération(s)  {run.cost_usd:.4f} ${child}"
-        )
+        _say(f"  {run.run_id}  {run.agent:<12} {run.status:<15} {run.iterations:>3} itération(s)  {run.cost_usd:.4f} ${child}")
     if files:
         _say("Fichiers   :")
         for line in _file_lines(files):
@@ -2825,11 +2615,7 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
         return run_id
 
     for question in info.pending_questions:
-        expiry = (
-            f"expire le {question.expire_at.astimezone().strftime('%d/%m %H:%M')}"
-            if question.expire_at is not None
-            else "sans échéance"
-        )
+        expiry = f"expire le {question.expire_at.astimezone().strftime('%d/%m %H:%M')}" if question.expire_at is not None else "sans échéance"
         # On répond sur la racine, ou en écrivant à son agent dans la session.
         root = root_of(question.run_id)
         agent = agents.get(root) if root is not None else None
@@ -2851,27 +2637,17 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
         for asked in question.questions:
             for line in _choice_lines(asked):
                 _say(f"    {line}")
-        _say(
-            f"    {message}"
-            f"  (ou loom answer {root or '<run_id>'} --call {question.call_id} "
-            f"--session {info.session_id}{tenant} …)"
-        )
+        _say(f"    {message}  (ou loom answer {root or '<run_id>'} --call {question.call_id} --session {info.session_id}{tenant} …)")
     for asked in info.pending_approvals:
         holder = asked.run_id
-        expiry = (
-            f"expire le {asked.expire_at.astimezone().strftime('%d/%m %H:%M')}"
-            if asked.expire_at is not None
-            else "sans échéance"
-        )
+        expiry = f"expire le {asked.expire_at.astimezone().strftime('%d/%m %H:%M')}" if asked.expire_at is not None else "sans échéance"
         _say(f"  {asked.tool_name} ({asked.call_id}) — run {holder}, {expiry}")
         if asked.reason:
             _say(f"    motif : {asked.reason}")
         # La décision se prend sur la racine : c'est elle qui repart et rejoue
         # l'appel qui mène au sous-run en attente.
         target = root_of(holder) or "<run_id>"
-        _say(
-            f"    loom approve {target} --call {asked.call_id} --session {info.session_id}{tenant}"
-        )
+        _say(f"    loom approve {target} --call {asked.call_id} --session {info.session_id}{tenant}")
     return OK
 
 
@@ -2900,9 +2676,7 @@ def cmd_sessions_files(args: argparse.Namespace) -> int:
         return FAILED
     if args.out is None:
         if args.json:
-            print(
-                json.dumps([f.model_dump(mode="json") for f in files], ensure_ascii=False, indent=2)
-            )
+            print(json.dumps([f.model_dump(mode="json") for f in files], ensure_ascii=False, indent=2))
         elif not files:
             _say("Aucun fichier.")
         else:
@@ -2938,10 +2712,7 @@ def _file_lines(files: Sequence[SessionFile]) -> list[str]:
     for f in files:
         source = f"outil {f.tool_name}" if f.tool_name else f"run {f.run_id}"
         times = f", rangé {f.count} fois" if f.count > 1 else ""
-        lines.append(
-            f"{f.name or f.file}  ({f.media_type}, {size_label(f.size)}, {f.origin}, "
-            f"{source}{times})  {f.file}"
-        )
+        lines.append(f"{f.name or f.file}  ({f.media_type}, {size_label(f.size)}, {f.origin}, {source}{times})  {f.file}")
     return lines
 
 
@@ -2995,10 +2766,7 @@ def cmd_sessions_delete(args: argparse.Namespace) -> int:
     # Refusé avant la question : « Supprimer la session  ? » n'a pas de sens.
     check_deletable_id("Session", session)
     if not args.yes:
-        asked = input(
-            f"Supprimer définitivement la session {session} "
-            "(journal, fichiers et clés d'idempotence) ? [o/N] "
-        )
+        asked = input(f"Supprimer définitivement la session {session} (journal, fichiers et clés d'idempotence) ? [o/N] ")
         if asked.strip().lower() not in {"o", "oui", "y", "yes"}:
             print("Rien n'a été supprimé.")
             return REFUSED
@@ -3011,10 +2779,7 @@ def cmd_sessions_delete(args: argparse.Namespace) -> int:
     if not removed.events and not removed.artifacts and not removed.keys:
         print(f"Session {session} inconnue : rien à supprimer.", file=sys.stderr)
         return FAILED
-    print(
-        f"Session {session} supprimée : {removed.events} événement(s), "
-        f"{removed.artifacts} fichier(s), {removed.keys} clé(s)."
-    )
+    print(f"Session {session} supprimée : {removed.events} événement(s), {removed.artifacts} fichier(s), {removed.keys} clé(s).")
     return OK
 
 
@@ -3046,21 +2811,12 @@ def cmd_retention(args: argparse.Namespace) -> int:
         if session.keys is not None:
             parts.append(f"{session.keys} clé(s)")
         verbe = "à effacer" if report.dry_run else "effacée"
-        print(
-            f"  {session.session_id} ({session.tenant_id}) {verbe} — dernière écriture "
-            f"{session.last_write:%Y-%m-%d %H:%M} UTC, {', '.join(parts)}"
-        )
+        print(f"  {session.session_id} ({session.tenant_id}) {verbe} — dernière écriture {session.last_write:%Y-%m-%d %H:%M} UTC, {', '.join(parts)}")
     faites = "seraient effacées" if report.dry_run else "effacées"
-    print(
-        f"{len(report.swept)} session(s) {faites}, {report.events} événement(s) ; "
-        f"{report.kept} gardée(s) sur {report.scanned} regardée(s)."
-    )
+    print(f"{len(report.swept)} session(s) {faites}, {report.events} événement(s) ; {report.kept} gardée(s) sur {report.scanned} regardée(s).")
     if report.audit is not None:
         lignes = "seraient effacées" if report.dry_run else "effacées"
-        print(
-            f"Audit : {report.audit.days} jour(s) — {report.audit.removed} ligne(s) {lignes} "
-            f"sur {report.audit.scanned}."
-        )
+        print(f"Audit : {report.audit.days} jour(s) — {report.audit.removed} ligne(s) {lignes} sur {report.audit.scanned}.")
     if report.dry_run:
         print("Essai à blanc : rien n'a été supprimé. Ajouter --yes pour effacer.")
     return OK
@@ -3088,8 +2844,7 @@ def _serve_reloading(config: LoomConfig, args: argparse.Namespace, host: str, po
     """``loom serve --reload`` : un superviseur, et un process qui sert par version de la config."""
     if config.strict:
         print(
-            "loom serve --reload est refusé en profil prod : un service ne se relance pas "
-            "sur une modification de fichier.",
+            "loom serve --reload est refusé en profil prod : un service ne se relance pas sur une modification de fichier.",
             file=sys.stderr,
         )
         return REFUSED
@@ -3122,9 +2877,7 @@ def _cache_said(usage: Usage) -> str:
     return f" · cache : lu {usage.cache_read_tokens}, écrit {usage.cache_write_tokens}"
 
 
-def serving_banner(
-    config: LoomConfig, given: str | None, host: str, port: int, env: EnvFileReport
-) -> None:
+def serving_banner(config: LoomConfig, given: str | None, host: str, port: int, env: EnvFileReport) -> None:
     """Le bandeau de ``loom serve`` : profil, fichier d'environnement, adresses, agents, portes.
 
     ``--reload`` le fait imprimer par chaque process qui prend la main : ce
@@ -3203,8 +2956,7 @@ def cmd_keys_create(args: argparse.Namespace) -> int:
         print(f"      expires: {expires.isoformat().replace('+00:00', 'Z')}")
     if scopes is not None and "approve" in scopes and "read_content" not in scopes:
         print(
-            "\nCette clé peut approuver sans pouvoir lire : sans 'read_content', "
-            "les arguments d'un appel en attente lui sont masqués.",
+            "\nCette clé peut approuver sans pouvoir lire : sans 'read_content', les arguments d'un appel en attente lui sont masqués.",
             file=sys.stderr,
         )
     return OK
@@ -3225,9 +2977,7 @@ def _deadline(given: str | None) -> datetime | None:
     try:
         moment = datetime.fromisoformat(given)
     except ValueError:
-        raise ValueError(
-            f"--expires : date ISO (2027-01-01) ou durée (90j, 12h) attendue, reçu {given!r}"
-        ) from None
+        raise ValueError(f"--expires : date ISO (2027-01-01) ou durée (90j, 12h) attendue, reçu {given!r}") from None
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
@@ -3261,14 +3011,9 @@ async def _worker(args: argparse.Namespace) -> int:
     print(f"Clients  : {_listed(config.tenant_ids)}")
     # Au-delà, le courtier ferme le canal et redélivre : la concession évite
     # deux pilotes, mais le réglage est à faire chez lui.
-    print(
-        "Délai    : un travail plus long que le consumer_timeout du courtier "
-        "(30 min par défaut) lui est redélivré — le régler au-delà du run le plus long"
-    )
+    print("Délai    : un travail plus long que le consumer_timeout du courtier (30 min par défaut) lui est redélivré — le régler au-delà du run le plus long")
     async with Loom(config) as loom:
-        repris = [
-            run for tenant in config.tenant_ids for run in await loom.recover(tenant_id=tenant)
-        ]
+        repris = [run for tenant in config.tenant_ids for run in await loom.recover(tenant_id=tenant)]
         print(f"Reprise  : {len(repris)} run(s) remis en file")
         stop = _on_signals(loom)
         print(f"En écoute, {args.jobs} tâche(s) de front. Ctrl-C pour arrêter.", flush=True)
@@ -3418,16 +3163,11 @@ def _acting(args: argparse.Namespace, config: LoomConfig) -> tuple[Actor, Tenant
     """
     user = getattr(args, "user", None) or os.environ.get(USER_ENV)
     if not user:
-        raise MissingUser(
-            f"Au nom de qui ? Donner --user UTILISATEUR, ou poser {USER_ENV} "
-            "(dans l'environnement ou le .env du projet)"
-        )
+        raise MissingUser(f"Au nom de qui ? Donner --user UTILISATEUR, ou poser {USER_ENV} (dans l'environnement ou le .env du projet)")
     actor = Actor.of(config.security, user)
     tenant = _tenant(args)
     if tenant is not None and tenant != actor.tenant:
-        raise AccessDenied(
-            f"--tenant {tenant} : {actor.user} agit pour le client {actor.tenant}", actor=actor
-        )
+        raise AccessDenied(f"--tenant {tenant} : {actor.user} agit pour le client {actor.tenant}", actor=actor)
     return actor, actor.tenant
 
 
@@ -3435,17 +3175,13 @@ def _budget_line(budgets: Budgets) -> str:
     """Limites d'un agent, en une ligne : « run max_cost 0.05, max_calls 20 ; stop »."""
     parts: list[str] = []
     for scope, limits in (("run", budgets.run), ("session", budgets.session)):
-        given = [
-            f"{name} {value:g}" for name, value in limits.model_dump().items() if value is not None
-        ]
+        given = [f"{name} {value:g}" for name, value in limits.model_dump().items() if value is not None]
         if given:
             parts.append(f"{scope} {', '.join(given)}")
     return f"{' ; '.join(parts)} ; {budgets.on_exceed}"
 
 
-async def _source_branches(
-    agent: str, tools: ToolExecutor, report: _Report, imposed: Mapping[str, Approval]
-) -> list[_Branch]:
+async def _source_branches(agent: str, tools: ToolExecutor, report: _Report, imposed: Mapping[str, Approval]) -> list[_Branch]:
     """Ouvre les sources de l'agent — serveurs MCP, sources de paquet — et liste leurs outils.
 
     Ce qu'un serveur a écrit est rendu imprimable : il ne pilote pas le terminal.
@@ -3470,15 +3206,12 @@ async def _source_branches(
             unguarded = [
                 printable(spec.name)
                 for spec in opened.tools.specs
-                if spec.kind == "mcp"
-                and spec.side_effects == "irreversible"
-                and imposed.get(spec.name, spec.approval) == "never"
+                if spec.kind == "mcp" and spec.side_effects == "irreversible" and imposed.get(spec.name, spec.approval) == "never"
             ]
             if unguarded:
                 report.warn(
                     f"Agent {agent}",
-                    f"MCP {', '.join(unguarded)} : irréversible(s), sans approbation — "
-                    "approval: always ou side_effects dans mcp_servers[].tools",
+                    f"MCP {', '.join(unguarded)} : irréversible(s), sans approbation — approval: always ou side_effects dans mcp_servers[].tools",
                 )
         for name, source in packaged.items():
             mine = f"{source.prefix}{MCP_PREFIX_SEPARATOR}"
@@ -3557,8 +3290,7 @@ def _report(
             where += f" --tenant {tenant}"
         for asked in result.pending_approvals:
             _say(
-                f"En attente : {asked.tool_name} ({asked.call_id}) — "
-                f"loom approve {result.run_id} --call {asked.call_id}{where}",
+                f"En attente : {asked.tool_name} ({asked.call_id}) — loom approve {result.run_id} --call {asked.call_id}{where}",
                 file=sys.stderr,
             )
             if asked.reason:
@@ -3580,8 +3312,7 @@ def _report(
             _say("Vérifiée   : non (gardée malgré son contrat ou son juge)", file=sys.stderr)
         if result.fallback and not brief:
             _say(
-                "Repli      : oui (réponse remplacée par le message de repli de son contrat "
-                "ou de son juge)",
+                "Repli      : oui (réponse remplacée par le message de repli de son contrat ou de son juge)",
                 file=sys.stderr,
             )
         if result.error:
@@ -3602,9 +3333,7 @@ def _questions_text(result: RunResult) -> str:
     """
     several = any(len(pending.questions) > 1 for pending in result.pending_questions)
     separator = "\n\n" if several else "\n"
-    return separator.join(
-        block for pending in result.pending_questions for block in _question_blocks(pending)
-    )
+    return separator.join(block for pending in result.pending_questions for block in _question_blocks(pending))
 
 
 def _question_blocks(pending: PendingQuestion) -> list[str]:
@@ -3630,10 +3359,7 @@ def _question_blocks(pending: PendingQuestion) -> list[str]:
 
 def _choice_lines(question: Question) -> list[str]:
     """Les choix numérotés d'une question, tels que ``--answer <n°>`` les désigne."""
-    return [
-        f"  {rank}. {option.label}" + (f" — {option.description}" if option.description else "")
-        for rank, option in enumerate(question.options, start=1)
-    ]
+    return [f"  {rank}. {option.label}" + (f" — {option.description}" if option.description else "") for rank, option in enumerate(question.options, start=1)]
 
 
 def _placeholders(questions: Sequence[Question]) -> list[str]:
@@ -3646,12 +3372,7 @@ def _placeholders(questions: Sequence[Question]) -> list[str]:
     """
     headers = [(question.header or "").strip() for question in questions]
     counts = Counter(header for header in headers if header)
-    return [
-        (f"<{header} {rank}>" if counts[header] > 1 else f"<{header}>")
-        if header
-        else f"<réponse {rank}>"
-        for rank, header in enumerate(headers, start=1)
-    ]
+    return [(f"<{header} {rank}>" if counts[header] > 1 else f"<{header}>") if header else f"<réponse {rank}>" for rank, header in enumerate(headers, start=1)]
 
 
 def _answer_hint(
@@ -3678,8 +3399,7 @@ def _answer_hint(
     if len(pending.questions) <= 1:
         return [f"Question   : {pending.call_id} — répondre : {message} (ou {command})"]
     return [
-        f"Questions  : {len(pending.questions)} en attente ({pending.call_id}) — "
-        "une réponse par question, dans l'ordre :",
+        f"Questions  : {len(pending.questions)} en attente ({pending.call_id}) — une réponse par question, dans l'ordre :",
         f"             {command}",
         "             (le numéro d'un choix, son libellé, ou un texte ; en message libre :",
         f"              {message})",
@@ -3699,9 +3419,7 @@ def _only_data(result: RunResult) -> int:
     if result.error:
         why = f"run {result.status} — {result.error} ({result.error_type})"
     elif result.pending_approvals:
-        calls = ", ".join(
-            f"{asked.tool_name} ({asked.call_id})" for asked in result.pending_approvals
-        )
+        calls = ", ".join(f"{asked.tool_name} ({asked.call_id})" for asked in result.pending_approvals)
         why = f"run en pause, en attente d'approbation : {calls}"
     elif result.unverified:
         why = "réponse non vérifiée, gardée malgré son contrat ou son juge"
@@ -3728,18 +3446,11 @@ def _verdicts(result: RunResult) -> list[str]:
                 seen.append(verdict.call_id)
             subject += f", appel {seen.index(verdict.call_id) + 1}"
         outcome = "refusée" if verdict.blocked else "acceptée"
-        lines.append(
-            f"{verdict.judge} ({subject}), tentative {verdict.attempt} — {outcome} : "
-            f"{notes(verdict.criteria)}"
-        )
+        lines.append(f"{verdict.judge} ({subject}), tentative {verdict.attempt} — {outcome} : {notes(verdict.criteria)}")
     # Un juge sauté se dit aussi : sans ligne, rien ne distinguait une réponse jugée
     # et acceptée d'une réponse que personne n'a jugée (test E3 du 19/10).
     for skipped in result.skipped_judges:
-        subject = (
-            "réponse finale"
-            if skipped.target == "output"
-            else skipped.target.replace("role:", "rôle ", 1)
-        )
+        subject = "réponse finale" if skipped.target == "output" else skipped.target.replace("role:", "rôle ", 1)
         lines.append(f"{skipped.judge} ({subject}) — non jugée : {SKIP_REASONS[skipped.reason]}")
     return lines
 

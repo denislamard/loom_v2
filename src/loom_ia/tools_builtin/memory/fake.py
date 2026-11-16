@@ -64,9 +64,7 @@ class FakeEmbedder:
             sparse=SparseVec(indices=[i for i, _ in items], values=[v for _, v in items]),
         )
 
-    def embed_documents(
-        self, texts: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[Embedding]:
+    def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
         found: list[Embedding] = []
         for text in texts:
             checkpoint(cancel)
@@ -90,9 +88,7 @@ class FakeReranker:
     def load(self) -> None:
         pass
 
-    def score(
-        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[float]:
+    def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
         checkpoint(cancel)
         asked = set(_tokens(query))
         if not asked:

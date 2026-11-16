@@ -42,12 +42,8 @@ def no_delete(reference: str) -> Callable[[object], object]:
                 continue
             folder = cast(Mapping[str, object], item)
             rights, approval = folder.get("rights"), folder.get("approval")
-            listed = isinstance(rights, list | tuple) and "delete" in cast(
-                "Sequence[object]", rights
-            )
-            approved = isinstance(approval, Mapping) and "delete" in cast(
-                Mapping[str, object], approval
-            )
+            listed = isinstance(rights, list | tuple) and "delete" in cast("Sequence[object]", rights)
+            approved = isinstance(approval, Mapping) and "delete" in cast(Mapping[str, object], approval)
             if listed or approved:
                 deleting.append(str(folder.get("name")))
         if deleting:
@@ -79,8 +75,7 @@ def checked_folders(
 
 def _refused(reference: str, names: Sequence[str]) -> ValueError:
     return ValueError(
-        f"dossier {', '.join(names)} : le droit 'delete' ne sert pas à {reference}, "
-        "qui ne supprime rien (droits permis : read, write, overwrite)"
+        f"dossier {', '.join(names)} : le droit 'delete' ne sert pas à {reference}, qui ne supprime rien (droits permis : read, write, overwrite)"
     )
 
 
@@ -89,9 +84,7 @@ def check_timezone(name: str) -> None:
     try:
         ZoneInfo(name)
     except ZoneInfoNotFoundError, ValueError:
-        raise ValueError(
-            f"fuseau inconnu : {name!r} — un nom IANA, par exemple Europe/Paris"
-        ) from None
+        raise ValueError(f"fuseau inconnu : {name!r} — un nom IANA, par exemple Europe/Paris") from None
 
 
 # --- Blocs facultatifs (loom.word, loom.pdf) -----------------------------------------
@@ -149,10 +142,7 @@ def no_old_keys(value: object) -> object:
     keys = _keys(value)
     found = [f"{key} → {OLD_KEYS[key]}" for key in OLD_KEYS if key in keys]
     if found:
-        raise ValueError(
-            f"{' ; '.join(found)} : les blocs facultatifs se nomment dans une seule liste, "
-            f"blocks ({', '.join(OPTIONAL_BLOCKS)})"
-        )
+        raise ValueError(f"{' ; '.join(found)} : les blocs facultatifs se nomment dans une seule liste, blocks ({', '.join(OPTIONAL_BLOCKS)})")
     return value
 
 
@@ -183,8 +173,7 @@ class TemplateRef(BaseModel):
             entries = cast(Mapping[object, object], value)
             if "file" in entries and "style" in entries:
                 raise ValueError(
-                    "le modèle nomme son style dans son fichier depuis 2.1.0 (style: …, à "
-                    "côté de sections) : templates.<nom> est le chemin du modèle seul"
+                    "le modèle nomme son style dans son fichier depuis 2.1.0 (style: …, à côté de sections) : templates.<nom> est le chemin du modèle seul"
                 )
             return entries
         return value
@@ -201,10 +190,7 @@ def _short_form(value: object) -> object:
     if not isinstance(value, Mapping):
         return value
     entries = cast(Mapping[object, object], value)
-    return {
-        name: {"file": given} if isinstance(given, str | Path) else given
-        for name, given in entries.items()
-    }
+    return {name: {"file": given} if isinstance(given, str | Path) else given for name, given in entries.items()}
 
 
 def _checked_templates(templates: dict[str, TemplateRef]) -> dict[str, TemplateRef]:
@@ -242,6 +228,4 @@ def check_section_styles(template: Template, style: Style, where: str) -> None:
                 raise ValueError(f"{where} : « {section.name} ».styles.{element} : {fault}")
 
 
-type Templates = Annotated[
-    dict[str, TemplateRef], BeforeValidator(_short_form), AfterValidator(_checked_templates)
-]
+type Templates = Annotated[dict[str, TemplateRef], BeforeValidator(_short_form), AfterValidator(_checked_templates)]

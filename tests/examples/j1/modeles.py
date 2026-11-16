@@ -69,9 +69,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--base-url")
     parser.add_argument("--key-env", help="variable d'environnement qui contient la clé")
     parser.add_argument("--max-tokens", type=int, default=1024)
-    parser.add_argument(
-        "--memoire", action="store_true", help="journal en mémoire, rien sur le disque"
-    )
+    parser.add_argument("--memoire", action="store_true", help="journal en mémoire, rien sur le disque")
     return parser.parse_args(argv)
 
 

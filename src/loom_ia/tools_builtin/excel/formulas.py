@@ -92,10 +92,7 @@ def check_formula(formula: str, where: str, sheets: Mapping[str, str], problems:
         problems.error(f"{where} : guillemet non fermé dans {formula!r}")
         return formula
     if ";" in bare:
-        problems.error(
-            f"{where} : séparateur « ; » dans {formula!r} — les formules s'écrivent en anglais, "
-            "arguments séparés par « , »"
-        )
+        problems.error(f"{where} : séparateur « ; » dans {formula!r} — les formules s'écrivent en anglais, arguments séparés par « , »")
     depth = 0
     for char in bare:
         depth += (char == "(") - (char == ")")
@@ -122,10 +119,7 @@ def check_formula(formula: str, where: str, sheets: Mapping[str, str], problems:
     for match in _FUNCTION.finditer(unquoted):
         name = match.group(1).upper().removeprefix("_XLFN.")
         if name in FRENCH_FUNCTIONS:
-            problems.error(
-                f"{where} : fonction française {match.group(1)} dans {formula!r} — écrire "
-                f"{FRENCH_FUNCTIONS[name]}"
-            )
+            problems.error(f"{where} : fonction française {match.group(1)} dans {formula!r} — écrire {FRENCH_FUNCTIONS[name]}")
         elif name in SPILL_FUNCTIONS:
             problems.error(
                 f"{where} : {name} n'est pas permise (fonction à débordement) — trier, filtrer "
@@ -146,10 +140,7 @@ def check_formula(formula: str, where: str, sheets: Mapping[str, str], problems:
         if len(number) > 1 and number != "100"
     ]
     if constants:
-        problems.warn(
-            f"{where} : constante {constants[0]} dans {formula!r} — une hypothèse se met dans "
-            "sa propre cellule, citée par la formule"
-        )
+        problems.warn(f"{where} : constante {constants[0]} dans {formula!r} — une hypothèse se met dans sa propre cellule, citée par la formule")
     return _prefixed(formula)
 
 

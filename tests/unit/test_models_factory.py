@@ -35,9 +35,7 @@ SCRIPT = [
 
 
 def fake_spec(**params: object) -> ModelSpec:
-    return ModelSpec.model_validate(
-        {"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": params}
-    )
+    return ModelSpec.model_validate({"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": params})
 
 
 def request(*messages: Message) -> ModelRequest:
@@ -95,18 +93,14 @@ async def test_fake_model_honours_required_tools_and_repairs() -> None:
 
     model = create_model_client(fake_spec(script=[{"text": "Sans outil."}, {"text": "Réparé."}]))
     tools = (ToolDefinition(name="calculer", description="Calcule."),)
-    required = ModelRequest(
-        model_id="fake-1", messages=(Message.user("?"),), tools=tools, tool_choice="required"
-    )
+    required = ModelRequest(model_id="fake-1", messages=(Message.user("?"),), tools=tools, tool_choice="required")
     with pytest.raises(ModelError, match="sans appel d'outil") as caught:
         await complete(model, required)
     assert caught.value.kind == "invalid_request"
 
     # Un diagnostic de réparation n'est pas une nouvelle demande : le script continue.
     repair = Message.user(f"{REPAIR_PREFIX} (p) : réessaie.")
-    again = await complete(
-        model, request(Message.user("?"), Message.assistant("Sans outil."), repair)
-    )
+    again = await complete(model, request(Message.user("?"), Message.assistant("Sans outil."), repair))
     assert again.message == Message.assistant("Réparé.")
 
 
@@ -119,9 +113,7 @@ async def test_fake_model_does_not_take_the_session_state_for_a_request() -> Non
         role="tool",
         blocks=(ToolResultBlock(call_id="fake_0_0", output=ToolOutput.text("87")),),
     )
-    second = await complete(
-        model, request(Message.user("Combien ?"), first.message, result, shown())
-    )
+    second = await complete(model, request(Message.user("Combien ?"), first.message, result, shown()))
     assert second.message == Message.assistant("12 * 7 + 3 = 87")
 
     # Le texte de la demande est celui de l'utilisateur, pas celui du state.
@@ -166,17 +158,13 @@ async def test_fake_model_answers_by_request_and_forced_answer() -> None:
     detailed = await complete(model, request(Message.user("Un texte détaillé.")))
     assert (short.message.text, detailed.message.text) == ("Version courte.", "Version détaillée.")
 
-    calls: list[dict[str, object]] = [
-        {"tool_calls": [{"name": "calculer", "arguments": {}}], "forced": "Je m'arrête là."}
-    ]
+    calls: list[dict[str, object]] = [{"tool_calls": [{"name": "calculer", "arguments": {}}], "forced": "Je m'arrête là."}]
     model = create_model_client(fake_spec(script=calls))
     tools = (ToolDefinition(name="calculer", description="Calcule."),)
     asked = (Message.user("Avec un outil."),)
     called = await complete(model, ModelRequest(model_id="fake-1", messages=asked, tools=tools))
     assert called.message.tool_calls
-    forced = await complete(
-        model, ModelRequest(model_id="fake-1", messages=asked, tools=tools, tool_choice="none")
-    )
+    forced = await complete(model, ModelRequest(model_id="fake-1", messages=asked, tools=tools, tool_choice="none"))
     assert forced.message == Message.assistant("Je m'arrête là.")
 
 
@@ -213,9 +201,7 @@ def test_the_responses_api_has_its_adapter() -> None:
         ("openai", "openai", "loom_ia.adapters.models.openai_chat"),
     ],
 )
-def test_missing_extra_is_explained(
-    sdk: str, sdk_module: str, adapter: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_missing_extra_is_explained(sdk: str, sdk_module: str, adapter: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # Simule un environnement sans l'extra : le SDK est introuvable.
     for name in list(sys.modules):
         if name in {sdk_module, adapter} or name.startswith(f"{sdk_module}."):
@@ -245,9 +231,7 @@ def test_missing_extra_is_explained(
         ("inconnu", 418, ("teapot",), "invalid_request"),
     ],
 )
-def test_error_classification(
-    message: str, status: int | None, hints: tuple[str | None, ...], kind: str
-) -> None:
+def test_error_classification(message: str, status: int | None, hints: tuple[str | None, ...], kind: str) -> None:
     error = classify_error(message, http_status=status, hints=hints, retry_after=2.0)
     assert (error.kind, error.http_status, error.retry_after, error.message) == (
         kind,

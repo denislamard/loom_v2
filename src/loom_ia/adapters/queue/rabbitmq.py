@@ -125,9 +125,7 @@ def decoded(body: bytes) -> tuple[str, Job]:
     )
 
 
-async def _settle(
-    message: AbstractIncomingMessage, *, requeue: bool | None = None, ran: float = 0.0
-) -> None:
+async def _settle(message: AbstractIncomingMessage, *, requeue: bool | None = None, ran: float = 0.0) -> None:
     """Acquitte le message (ou, avec ``requeue``, le remet en file) sans jamais lever.
 
     Un canal fermé fait échouer la réponse : le courtier redélivre alors le
@@ -207,9 +205,7 @@ class RabbitMqTaskQueue:
             type=job.kind,
             expiration=delay if delay else None,
         )
-        await self._channel.default_exchange.publish(
-            message, routing_key=DELAY_QUEUE if delay else WORK_QUEUE
-        )
+        await self._channel.default_exchange.publish(message, routing_key=DELAY_QUEUE if delay else WORK_QUEUE)
         return job_id
 
     async def state(self, job_id: str) -> JobState:

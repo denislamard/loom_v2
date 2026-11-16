@@ -92,10 +92,7 @@ class EnvFileReport:
         """
         if not self.loaded:
             return None
-        return (
-            f"variables lues dans {self.path} ({', '.join(self.loaded)}) — "
-            "en prod, préférer l'environnement du service"
-        )
+        return f"variables lues dans {self.path} ({', '.join(self.loaded)}) — en prod, préférer l'environnement du service"
 
 
 # Rapport de ``--no-env-file`` : rien n'est lu.
@@ -142,9 +139,7 @@ def reload_env_file(
     return _load(path, source, previous.loaded, target)
 
 
-def env_file_path(
-    config: str | Path, given: str | Path | None = None
-) -> tuple[Path | None, EnvSource]:
+def env_file_path(config: str | Path, given: str | Path | None = None) -> tuple[Path | None, EnvSource]:
     """Le fichier à lire et d'où il vient ; ``None`` sans loom.yaml à côté duquel chercher."""
     if given is not None:
         return Path(given).resolve(), "option"
@@ -203,9 +198,7 @@ def _load(
         else:
             environ[name] = value
             loaded.append(name)
-    return EnvFileReport(
-        path=path, source=source, found=True, loaded=tuple(loaded), kept=tuple(kept)
-    )
+    return EnvFileReport(path=path, source=source, found=True, loaded=tuple(loaded), kept=tuple(kept))
 
 
 def _read(path: Path) -> dict[str, str]:
@@ -220,10 +213,7 @@ def _read(path: Path) -> dict[str, str]:
     for binding in parse_stream(io.StringIO(text)):
         if binding.error:
             # Le numéro seulement : la ligne pourrait porter un secret.
-            raise ConfigError(
-                f"Fichier d'environnement {path}, ligne {binding.original.line} : "
-                "illisible (attendu NOM=valeur)"
-            )
+            raise ConfigError(f"Fichier d'environnement {path}, ligne {binding.original.line} : illisible (attendu NOM=valeur)")
         # Commentaire, ligne vide, ou NOM sans '=' : rien à poser.
         if binding.key is not None and binding.value is not None:
             values[binding.key] = binding.value

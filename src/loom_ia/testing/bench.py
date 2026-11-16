@@ -115,16 +115,11 @@ class Bench:
         real_models: bool = False,
         profile: str | None = None,
     ) -> None:
-        self.config = (
-            config if isinstance(config, LoomConfig) else load_config(config, profile=profile)
-        )
+        self.config = config if isinstance(config, LoomConfig) else load_config(config, profile=profile)
         declared = {spec.id: spec for spec in self.config.models}
         unknown = sorted(set(models or {}) - set(declared))
         if unknown:
-            raise ConfigError(
-                f"Banc : modèles remplacés mais non déclarés : {', '.join(unknown)} "
-                f"(modèles : {', '.join(sorted(declared)) or 'aucun'})"
-            )
+            raise ConfigError(f"Banc : modèles remplacés mais non déclarés : {', '.join(unknown)} (modèles : {', '.join(sorted(declared)) or 'aucun'})")
         self._models: dict[str, ModelClient] = dict(models or {})
         if not real_models:
             for spec in declared.values():
@@ -204,15 +199,11 @@ class Bench:
         """
         loom = self.loom
         self._check(loom, agent, tenant)
-        result = await loom.run(
-            agent, message, tenant=tenant, session_id=session_id, state=state, user=UNCHECKED
-        )
+        result = await loom.run(agent, message, tenant=tenant, session_id=session_id, state=state, user=UNCHECKED)
         tenant_id = tenant or DEFAULT_TENANT
         events = await loom.events(result.run_id, session_id=result.session_id, tenant_id=tenant_id)
         kept = await loom.session_state(result.session_id, tenant_id=tenant_id)
-        self._outcomes[result.run_id] = await run_outcome(
-            result, events, self._tools, loom.artifacts, state=kept
-        )
+        self._outcomes[result.run_id] = await run_outcome(result, events, self._tools, loom.artifacts, state=kept)
         self._tenants[result.run_id] = tenant_id
         return result
 
@@ -268,9 +259,7 @@ class Bench:
 
     async def events(self, result: RunResult) -> list[Event]:
         """Les événements du run et de ses sous-runs, dans l'ordre du journal."""
-        return await self.loom.events(
-            result.run_id, session_id=result.session_id, tenant_id=self._tenant_of(result)
-        )
+        return await self.loom.events(result.run_id, session_id=result.session_id, tenant_id=self._tenant_of(result))
 
     async def export(self, result: RunResult, path: Path | str) -> Path:
         """Écrit le journal de la session du run en JSONL — de quoi le rejouer
@@ -293,10 +282,7 @@ def _said(
     failed: Sequence[CheckResult],
 ) -> str:
     status = outcome.status.value + (f" ({outcome.error_type})" if outcome.error_type else "")
-    lines = [
-        f"Banc : {len(failed)} contrôle(s) tombé(s) sur {len(results)}, "
-        f"run {result.run_id} ({status})"
-    ]
+    lines = [f"Banc : {len(failed)} contrôle(s) tombé(s) sur {len(results)}, run {result.run_id} ({status})"]
     lines += [f"  ✗ {r.label}" + (f" — {r.detail}" if r.detail else "") for r in failed]
     if any(r.kind == "text" for r in failed):
         lines.append("  texte :")

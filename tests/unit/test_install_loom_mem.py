@@ -26,9 +26,7 @@ from typing import Final
 
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    sys.platform != "linux" or shutil.which("bash") is None, reason="bash et systemd : Linux"
-)
+pytestmark = pytest.mark.skipif(sys.platform != "linux" or shutil.which("bash") is None, reason="bash et systemd : Linux")
 
 SCRIPT: Final = Path(__file__).resolve().parents[2] / "scripts" / "bin" / "install-loom-mem"
 LOOM: Final = "2.0.19"
@@ -196,9 +194,7 @@ class Machine:
         shutil.copy(SCRIPT, bin_dir / "install-loom-mem")
         self._write(bin_dir / "loom-mem-gpu", FAKE_APP)
         (bin_dir / "python").symlink_to(sys.executable)
-        (venv / "pyvenv.cfg").write_text(
-            f"home = {Path(sys.executable).parent}\nversion_info = 3.14\n", encoding="utf-8"
-        )
+        (venv / "pyvenv.cfg").write_text(f"home = {Path(sys.executable).parent}\nversion_info = 3.14\n", encoding="utf-8")
         info = site / f"loom_ia-{LOOM}.dist-info"
         info.mkdir(parents=True)
         (info / "METADATA").write_text(f"Name: loom-ia\nVersion: {LOOM}\n", encoding="utf-8")
@@ -208,9 +204,7 @@ class Machine:
         if torch is not None:
             torch_info = site / f"torch-{torch}.dist-info"
             torch_info.mkdir()
-            (torch_info / "METADATA").write_text(
-                f"Name: torch\nVersion: {torch}\n", encoding="utf-8"
-            )
+            (torch_info / "METADATA").write_text(f"Name: torch\nVersion: {torch}\n", encoding="utf-8")
         return venv
 
     def env(self, extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -225,9 +219,7 @@ class Machine:
             **(extra or {}),
         }
 
-    def run(
-        self, *args: str, agent: Path | None = None, extra: dict[str, str] | None = None
-    ) -> Done:
+    def run(self, *args: str, agent: Path | None = None, extra: dict[str, str] | None = None) -> Done:
         script = (agent or self.agent) / "bin" / "install-loom-mem"
         done = subprocess.run(
             ["bash", str(script), *args],
@@ -341,9 +333,7 @@ def test_replaying_the_same_install_changes_nothing(machine: Machine, port: int)
     assert machine.systemd() == []
 
 
-def test_a_changed_setting_shows_the_difference_and_restarts_once(
-    machine: Machine, port: int
-) -> None:
+def test_a_changed_setting_shows_the_difference_and_restarts_once(machine: Machine, port: int) -> None:
     assert machine.run("--port", str(port)).code == 0
     machine.calls()
     done = machine.run("--port", str(port), "--max-vram-fraction", "0.3")
@@ -494,14 +484,10 @@ def test_the_environment_file_port_wins_and_is_never_written(machine: Machine, p
     assert machine.systemd() == []
 
 
-def test_an_older_unit_with_options_is_migrated_without_a_port_clash(
-    machine: Machine, port: int
-) -> None:
+def test_an_older_unit_with_options_is_migrated_without_a_port_clash(machine: Machine, port: int) -> None:
     app = machine.venv_bin / "loom-mem-gpu"
     machine.unit.parent.mkdir(parents=True)
-    machine.unit.write_text(
-        f'[Service]\nExecStart="{app}" serve --device cuda --port {port}\n', encoding="utf-8"
-    )
+    machine.unit.write_text(f'[Service]\nExecStart="{app}" serve --device cuda --port {port}\n', encoding="utf-8")
     (machine.state / "active").touch()
     with held(port):  # l'ancienne unité tourne sur son port
         done = machine.run("--port", str(port))
@@ -550,9 +536,7 @@ def uv_calls(calls: list[str]) -> list[str]:
     return [c for c in calls if c.startswith("uv ")]
 
 
-def test_the_service_gets_its_own_environment_from_the_agent_source(
-    machine: Machine, port: int
-) -> None:
+def test_the_service_gets_its_own_environment_from_the_agent_source(machine: Machine, port: int) -> None:
     done = machine.run("--port", str(port))
     assert done.code == 0, done.err
     python = machine.service_venv / "bin" / "python"
@@ -574,16 +558,12 @@ def test_the_service_gets_its_own_environment_from_the_agent_source(
         ("index", f"loom-ia[memory]=={LOOM}"),
     ],
 )
-def test_the_service_takes_the_same_source_as_the_agent(
-    tmp_path: Path, port: int, source: str, requirement: str
-) -> None:
+def test_the_service_takes_the_same_source_as_the_agent(tmp_path: Path, port: int, source: str, requirement: str) -> None:
     machine = Machine(tmp_path)
     agent = machine.make_agent(tmp_path / f"agent-{source}", source=source)
     assert machine.run("--port", str(port), agent=agent).code == 0
     python = machine.service_venv / "bin" / "python"
-    assert uv_calls(machine.calls())[1] == (
-        f"uv pip install --quiet --python {python} {requirement} torch=={TORCH}"
-    )
+    assert uv_calls(machine.calls())[1] == (f"uv pip install --quiet --python {python} {requirement} torch=={TORCH}")
 
 
 def test_a_local_torch_build_comes_from_the_pytorch_index_first(tmp_path: Path, port: int) -> None:
@@ -592,8 +572,7 @@ def test_a_local_torch_build_comes_from_the_pytorch_index_first(tmp_path: Path, 
     assert machine.run("--port", str(port), "--device", "cpu", agent=agent).code == 0
     python = machine.service_venv / "bin" / "python"
     assert uv_calls(machine.calls())[1:] == [
-        f"uv pip install --quiet --python {python} torch==2.15.0+cpu "
-        "--index-url https://download.pytorch.org/whl/cpu",
+        f"uv pip install --quiet --python {python} torch==2.15.0+cpu --index-url https://download.pytorch.org/whl/cpu",
         f"uv pip install --quiet --python {python} -e {EDITABLE}[memory] torch==2.15.0",
     ]
 
@@ -664,9 +643,7 @@ def test_the_installing_agent_is_registered_once(machine: Machine, port: int) ->
     assert machine.agents() == [[venv, loom, since]]  # pas de doublon, date gardée
 
 
-def test_a_second_agent_with_the_same_settings_is_registered_without_restart(
-    machine: Machine, port: int
-) -> None:
+def test_a_second_agent_with_the_same_settings_is_registered_without_restart(machine: Machine, port: int) -> None:
     assert machine.run("--port", str(port)).code == 0
     second = machine.make_agent(machine.root / "agent-b")
     machine.calls()
@@ -719,9 +696,7 @@ def test_a_venv_path_with_a_tab_is_refused(tmp_path: Path, port: int) -> None:
     assert not machine.registry.exists()
 
 
-def test_list_shows_the_service_and_its_agents_and_changes_nothing(
-    machine: Machine, port: int
-) -> None:
+def test_list_shows_the_service_and_its_agents_and_changes_nothing(machine: Machine, port: int) -> None:
     assert machine.run("--port", str(port)).code == 0
     gone = machine.make_agent(machine.root / "parti")
     with held(port):
@@ -809,9 +784,7 @@ def shared(machine: Machine, port: int) -> Iterator[Path]:
         yield second
 
 
-def test_an_option_not_given_keeps_the_value_in_place(
-    machine: Machine, port: int, shared: Path
-) -> None:
+def test_an_option_not_given_keeps_the_value_in_place(machine: Machine, port: int, shared: Path) -> None:
     unit = machine.unit.read_text(encoding="utf-8")
     done = machine.run(agent=shared)  # ni --port ni --offline
     assert done.code == 0, done.err
@@ -821,9 +794,7 @@ def test_an_option_not_given_keeps_the_value_in_place(
     assert machine.systemd() == []
 
 
-def test_a_shared_setting_that_changes_is_refused_then_reconfigured(
-    machine: Machine, port: int, shared: Path
-) -> None:
+def test_a_shared_setting_that_changes_is_refused_then_reconfigured(machine: Machine, port: int, shared: Path) -> None:
     unit = machine.unit.read_text(encoding="utf-8")
     done = machine.run("--max-vram-fraction", "0.3", agent=shared)
     assert done.code == 2
@@ -834,9 +805,7 @@ def test_a_shared_setting_that_changes_is_refused_then_reconfigured(
     assert machine.systemd() == []
     accepted = machine.run("--max-vram-fraction", "0.3", "--reconfigure", agent=shared)
     assert accepted.code == 0, accepted.err
-    assert "Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3\n" in machine.unit.read_text(
-        encoding="utf-8"
-    )
+    assert "Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3\n" in machine.unit.read_text(encoding="utf-8")
     assert machine.systemd() == [
         "systemctl --user daemon-reload",
         "systemctl --user enable loom-mem-gpu.service",
@@ -853,9 +822,7 @@ def test_the_only_agent_changes_settings_without_reconfigure(machine: Machine, p
     assert f"Environment=LOOM_MEM_GPU_PORT={port}\n" in machine.unit.read_text(encoding="utf-8")
 
 
-def test_the_model_cache_of_the_unit_is_kept_when_the_shell_has_none(
-    machine: Machine, port: int
-) -> None:
+def test_the_model_cache_of_the_unit_is_kept_when_the_shell_has_none(machine: Machine, port: int) -> None:
     assert machine.run("--port", str(port), extra={"HF_HOME": "/data/hf"}).code == 0
     second = machine.make_agent(machine.root / "agent-b")
     with held(port):
@@ -864,12 +831,8 @@ def test_the_model_cache_of_the_unit_is_kept_when_the_shell_has_none(
     assert "Environment=HF_HOME=/data/hf\n" in machine.unit.read_text(encoding="utf-8")
 
 
-def test_another_identity_is_refused_then_upgraded(
-    machine: Machine, port: int, shared: Path
-) -> None:
-    (machine.service_venv / "identity").write_text(
-        "loom-mem-gpu 2.0.18 (protocole 1, bge-m3/1)\n", encoding="utf-8"
-    )
+def test_another_identity_is_refused_then_upgraded(machine: Machine, port: int, shared: Path) -> None:
+    (machine.service_venv / "identity").write_text("loom-mem-gpu 2.0.18 (protocole 1, bge-m3/1)\n", encoding="utf-8")
     (machine.agent / "identity").write_text(  # le premier agent aussi, resté en 2.0.18
         "loom-mem-gpu 2.0.18 (protocole 1, bge-m3/1)\n", encoding="utf-8"
     )
@@ -890,34 +853,24 @@ def test_another_identity_is_refused_then_upgraded(
 
 def test_another_identity_with_no_other_agent_is_reinstalled(machine: Machine, port: int) -> None:
     assert machine.run("--port", str(port)).code == 0
-    (machine.service_venv / "identity").write_text(
-        "loom-mem-gpu 2.0.18 (protocole 1, bge-m3/1)\n", encoding="utf-8"
-    )
+    (machine.service_venv / "identity").write_text("loom-mem-gpu 2.0.18 (protocole 1, bge-m3/1)\n", encoding="utf-8")
     machine.calls()
     with held(port):
         done = machine.run()
     assert done.code == 0, done.err
-    assert (
-        "identité différente, aucun autre agent : environnement du service réinstallé" in done.out
-    )
+    assert "identité différente, aucun autre agent : environnement du service réinstallé" in done.out
     assert len(uv_calls(machine.calls())) == 2
 
 
-def test_the_same_identity_keeps_the_environment_whatever_the_version(
-    machine: Machine, port: int, shared: Path
-) -> None:
-    (machine.service_venv / "identity").write_text(
-        f"loom-mem-gpu 2.0.18 {identity()}\n", encoding="utf-8"
-    )
+def test_the_same_identity_keeps_the_environment_whatever_the_version(machine: Machine, port: int, shared: Path) -> None:
+    (machine.service_venv / "identity").write_text(f"loom-mem-gpu 2.0.18 {identity()}\n", encoding="utf-8")
     done = machine.run(agent=shared)
     assert done.code == 0, done.err
     assert f"environnement du service gardé : loom 2.0.18, même identité {identity()}" in done.out
     assert uv_calls(machine.calls()) == []
 
 
-def test_upgrade_at_the_same_identity_reinstalls_and_restarts(
-    machine: Machine, port: int, shared: Path
-) -> None:
+def test_upgrade_at_the_same_identity_reinstalls_and_restarts(machine: Machine, port: int, shared: Path) -> None:
     done = machine.run("--upgrade", agent=shared)
     assert done.code == 0, done.err
     calls = machine.calls()
@@ -926,9 +879,7 @@ def test_upgrade_at_the_same_identity_reinstalls_and_restarts(
     assert "autre identité" not in done.out
 
 
-def test_uninstall_all_removes_everything_and_names_the_agents(
-    machine: Machine, port: int, shared: Path
-) -> None:
+def test_uninstall_all_removes_everything_and_names_the_agents(machine: Machine, port: int, shared: Path) -> None:
     assert machine.run(agent=shared).code == 0
     done = machine.run("--uninstall", "--all")
     assert done.code == 0, done.err
@@ -947,9 +898,7 @@ def test_uninstall_all_removes_everything_and_names_the_agents(
         ("--list", "--uninstall"),
     ],
 )
-def test_options_that_do_not_go_together_are_refused(
-    machine: Machine, args: tuple[str, ...]
-) -> None:
+def test_options_that_do_not_go_together_are_refused(machine: Machine, args: tuple[str, ...]) -> None:
     assert machine.run(*args).code == 2
 
 
@@ -985,8 +934,6 @@ def test_the_commands_say_their_own_name() -> None:
     )
     assert journal.returncode == 0, journal.stderr
     assert journal.stdout.startswith("usage: view-loom-journal")
-    project = subprocess.run(
-        ["bash", str(BIN / "create-loom-project")], capture_output=True, text=True, check=False
-    )
+    project = subprocess.run(["bash", str(BIN / "create-loom-project")], capture_output=True, text=True, check=False)
     assert project.returncode == 2  # sans arguments : l'usage
     assert "create-loom-project <projet> <agent> <prompt>" in project.stdout + project.stderr

@@ -90,10 +90,7 @@ def offloaded(output: ToolOutput, *, uri: str, content: str, refs: bool) -> Tool
 def truncated(output: ToolOutput, limit: int) -> ToolOutput:
     """Résultat tronqué au seuil, faute de stockage d'artefacts."""
     text = visible_text(output)
-    note = (
-        f"\n\n[Résultat tronqué : {limit} caractères montrés sur {len(text)}, "
-        "aucun stockage d'artefacts pour conserver le reste.]"
-    )
+    note = f"\n\n[Résultat tronqué : {limit} caractères montrés sur {len(text)}, aucun stockage d'artefacts pour conserver le reste.]"
     return ToolOutput(
         blocks=(TextBlock(text=text[:limit] + note), *_files(output)),
         is_error=output.is_error,
@@ -110,9 +107,7 @@ def preview(value: JsonValue) -> str:
             return _cut(value, PREVIEW_CHARS)
         case dict():
             lines = [f"Objet JSON, {len(value)} clé(s) :"]
-            lines += [
-                f"- {key} : {_summary(item)}" for key, item in list(value.items())[:PREVIEW_KEYS]
-            ]
+            lines += [f"- {key} : {_summary(item)}" for key, item in list(value.items())[:PREVIEW_KEYS]]
             if len(value) > PREVIEW_KEYS:
                 lines.append(f"- … et {len(value) - PREVIEW_KEYS} autre(s) clé(s)")
             return _cut("\n".join(lines), PREVIEW_CHARS)
@@ -131,8 +126,7 @@ class ArtifactReadTool(DelegatedTool):
         self._spec = ToolSpec(
             name=ARTIFACT_READ,
             description=(
-                "Lit une partie d'un résultat d'outil déporté parce qu'il était trop long. "
-                "Donner la référence indiquée dans le résultat (artifact://…)."
+                "Lit une partie d'un résultat d'outil déporté parce qu'il était trop long. Donner la référence indiquée dans le résultat (artifact://…)."
             ),
             input_schema={
                 "type": "object",
@@ -175,9 +169,7 @@ class ArtifactReadTool(DelegatedTool):
         known = [a.uri for a in run.state.artifacts if a.origin == "offload"]
         return f"Référence inconnue : {ref!r}. Résultats déportés de ce run : {', '.join(known)}."
 
-    async def run(
-        self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
-    ) -> AsyncGenerator[DelegatedPayload | ToolOutput]:
+    async def run(self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView) -> AsyncGenerator[DelegatedPayload | ToolOutput]:
         ref = str(arguments["ref"])
         offset = _integer(arguments.get("offset"), 0)
         limit = _integer(arguments.get("limit"), READ_LIMIT)
@@ -191,9 +183,7 @@ class ArtifactReadTool(DelegatedTool):
         chunk = text[offset : offset + limit]
         end = offset + len(chunk)
         if not chunk:
-            yield ToolOutput.text(
-                f"[Rien à lire : offset {offset} au-delà de la fin ({len(text)}).]"
-            )
+            yield ToolOutput.text(f"[Rien à lire : offset {offset} au-delà de la fin ({len(text)}).]")
             return
         more = f"suite : offset={end}" if end < len(text) else "fin du contenu"
         yield ToolOutput.text(f"[Caractères {offset} à {end} sur {len(text)} ; {more}]\n{chunk}")

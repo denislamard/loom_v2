@@ -47,9 +47,7 @@ from loom_ia.tools_builtin.memory_params import (
 )
 
 SERVED: Final = ModelsSpec(server=ServerSpec(url="http://127.0.0.1:8765"))
-CONTEXT: Final = ToolContext(
-    tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), call_id="c", agent="a"
-)
+CONTEXT: Final = ToolContext(tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), call_id="c", agent="a")
 NOTE: Final = "Le devis D-2026-042 de Mme Martin porte sur un chauffe-eau de 200 L."
 
 # --- Des modèles factices qui se présentent comme BGE-M3 --------------------------------
@@ -73,9 +71,7 @@ class BgeLike(FakeEmbedder):
     def device(self) -> str | None:
         return self._device
 
-    def embed_documents(
-        self, texts: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[Embedding]:
+    def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
         self.batches.append(len(texts))
         if self.on_batch is not None:
             self.on_batch()
@@ -90,9 +86,7 @@ class RerankerLike(FakeReranker):
     def model_name(self) -> str:
         return "BAAI/bge-reranker-v2-m3"
 
-    def score(
-        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[float]:
+    def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
         self.batches.append(len(passages))
         return super().score(query, passages, cancel)
 
@@ -130,9 +124,7 @@ def url(running: Running) -> str:
     return f"http://{host}:{port}"
 
 
-def client(
-    running: Running, *, token: str | None = None, spec: ModelsSpec = SERVED
-) -> tuple[RemoteEmbedder, RemoteReranker]:
+def client(running: Running, *, token: str | None = None, spec: ModelsSpec = SERVED) -> tuple[RemoteEmbedder, RemoteReranker]:
     connection = Connection(Target(url(running), token, read_timeout=5.0), spec)
     return RemoteEmbedder(connection, spec), RemoteReranker(connection, spec)
 
@@ -149,9 +141,7 @@ def client(
         ({"kind": "fake"}, "kind: bge-m3"),
     ],
 )
-def test_what_the_application_sets_is_refused_beside_server(
-    given: dict[str, Any], match: str
-) -> None:
+def test_what_the_application_sets_is_refused_beside_server(given: dict[str, Any], match: str) -> None:
     with pytest.raises(ValidationError, match=match):
         ModelsSpec.model_validate({"server": {"url": "http://127.0.0.1:8765"}, **given})
 
@@ -174,9 +164,7 @@ def test_a_bad_server_is_refused_at_load(server: dict[str, Any], match: str) -> 
 
 
 def test_the_expected_models_stay_beside_server() -> None:
-    spec = ModelsSpec.model_validate(
-        {"embedder": "/modeles/bge-m3", "server": {"url": "http://localhost:9000/"}}
-    )
+    spec = ModelsSpec.model_validate({"embedder": "/modeles/bge-m3", "server": {"url": "http://localhost:9000/"}})
     assert spec.embedder == "/modeles/bge-m3" and spec.server is not None
 
 
@@ -203,9 +191,7 @@ def test_vectors_come_back_as_the_model_computed_them(serve: Callable[..., Runni
     assert [e.dense for e in found] == [array("f", e.dense).tolist() for e in expected]
     assert embedder.embed_query("devis").sparse == BgeLike().embed_query("devis").sparse
     passages = ["devis chauffe-eau neuf", "rien"]
-    assert reranker.score("devis chauffe-eau", passages) == FakeReranker().score(
-        "devis chauffe-eau", passages
-    )
+    assert reranker.score("devis chauffe-eau", passages) == FakeReranker().score("devis chauffe-eau", passages)
     assert (embedder.dim, embedder.model_name, embedder.device) == (1024, "BAAI/bge-m3", "cuda:0")
 
 
@@ -238,17 +224,13 @@ def test_a_cancelled_call_stops_between_two_batches(serve: Callable[..., Running
         (lambda: bge_host(algo="bge-m3/0"), "sert algorithme 'bge-m3/0'"),
     ],
 )
-def test_an_application_that_computes_otherwise_is_refused(
-    serve: Callable[..., Running], host: Callable[[], Host], said: str
-) -> None:
+def test_an_application_that_computes_otherwise_is_refused(serve: Callable[..., Running], host: Callable[[], Host], said: str) -> None:
     embedder, _ = client(serve(host()))
     with pytest.raises(ModelLoadError, match=said):
         embedder.embed_query("x")
 
 
-def test_another_protocol_is_refused(
-    serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_another_protocol_is_refused(serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module, "PROTOCOL", 2)
     embedder, _ = client(serve())
     with pytest.raises(ModelLoadError, match="sert protocole 2, la config attend 1"):
@@ -266,18 +248,14 @@ def test_an_absent_application_says_how_to_start_it() -> None:
         RemoteEmbedder(connection, SERVED).embed_query("x")
 
 
-def test_proxies_of_the_environment_are_ignored(
-    serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_proxies_of_the_environment_are_ignored(serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
         monkeypatch.setenv(name, "http://127.0.0.1:9")
     embedder, _ = client(serve())
     assert len(embedder.embed_query("devis").dense) == 1024
 
 
-def test_a_loading_application_is_awaited(
-    serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_loading_application_is_awaited(serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(remote_module, "READY_POLL", 0.05)
     host = bge_host()
     embedder, _ = client(serve(host, load=False))
@@ -285,9 +263,7 @@ def test_a_loading_application_is_awaited(
     assert len(embedder.embed_query("devis").dense) == 1024
 
 
-def test_an_application_loading_too_long_is_given_up(
-    serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_application_loading_too_long_is_given_up(serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(remote_module, "READY_POLL", 0.05)
     monkeypatch.setattr(remote_module, "READY_WAIT", 0.2)
     embedder, _ = client(serve(load=False))
@@ -295,9 +271,7 @@ def test_an_application_loading_too_long_is_given_up(
         embedder.embed_query("x")
 
 
-def test_waiting_for_the_load_can_be_cancelled(
-    serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_waiting_for_the_load_can_be_cancelled(serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(remote_module, "READY_POLL", 0.05)
     embedder, _ = client(serve(load=False))
     cancel = threading.Event()
@@ -328,9 +302,7 @@ def test_the_token_is_sent_and_checked(serve: Callable[..., Running]) -> None:
     assert len(client(running, token="s3cret")[0].embed_query("x").dense) == 1024
 
 
-def test_a_full_queue_is_tried_again(
-    serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_full_queue_is_tried_again(serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch) -> None:
     running = serve()
     embedder, _ = client(running)
     embedder.load()
@@ -342,9 +314,7 @@ def test_a_full_queue_is_tried_again(
 
 
 class Failing(BgeLike):
-    def embed_documents(
-        self, texts: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[Embedding]:
+    def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
         raise ModelRunError("Calcul du modèle BAAI/bge-m3 impossible : CUDA out of memory.")
 
 
@@ -382,21 +352,15 @@ def memory_params(server: dict[str, Any], **given: Any) -> MemoryParams:
     return MemoryParams.model_validate(values)
 
 
-def mounted(
-    tmp_path: Path, server: dict[str, Any], secrets: dict[str, str] | None = None
-) -> MemoryTool:
+def mounted(tmp_path: Path, server: dict[str, Any], secrets: dict[str, str] | None = None) -> MemoryTool:
     (tmp_path / "workspace").mkdir(exist_ok=True)
     context = BuiltinContext(base_dir=tmp_path, secrets=secrets)
     return build(memory_params(server), context)
 
 
-async def test_the_tool_stores_and_finds_through_the_application(
-    serve: Callable[..., Running], tmp_path: Path
-) -> None:
+async def test_the_tool_stores_and_finds_through_the_application(serve: Callable[..., Running], tmp_path: Path) -> None:
     tool = mounted(tmp_path, {"url": url(serve())})
-    added = (
-        await tool.invoke({"action": "add_text", "title": "Devis Martin", "text": NOTE}, CONTEXT)
-    ).data
+    added = (await tool.invoke({"action": "add_text", "title": "Devis Martin", "text": NOTE}, CONTEXT)).data
     assert isinstance(added, dict) and added["chunks"] == 1
     found = (await tool.invoke({"action": "search", "query": "devis chauffe-eau"}, CONTEXT)).data
     assert isinstance(found, list) and found
@@ -417,9 +381,7 @@ async def test_an_absent_application_is_a_readable_tool_error(tmp_path: Path) ->
         await tool.invoke({"action": "add_text", "title": "Devis", "text": NOTE}, CONTEXT)
 
 
-def test_the_address_and_token_are_read_in_the_tenant_secrets(
-    serve: Callable[..., Running], tmp_path: Path
-) -> None:
+def test_the_address_and_token_are_read_in_the_tenant_secrets(serve: Callable[..., Running], tmp_path: Path) -> None:
     running = serve(token="s3cret")
     server = {"url_env": "MEM_URL", "token_env": "MEM_TOKEN"}
     tool = mounted(tmp_path, server, {"MEM_URL": url(running) + "/", "MEM_TOKEN": "s3cret"})
@@ -434,21 +396,14 @@ def test_the_address_and_token_are_read_in_the_tenant_secrets(
 def test_validate_shows_the_application_instead_of_the_device(tmp_path: Path) -> None:
     tool = mounted(tmp_path, {"url": "http://127.0.0.1:8765"})
     options = dict(tool.settings().options)
-    assert options == {
-        "modèles": "BAAI/bge-m3 + BAAI/bge-reranker-v2-m3 "
-        "(loom-mem-gpu http://127.0.0.1:8765, repli : aucun)"
-    }
+    assert options == {"modèles": "BAAI/bge-m3 + BAAI/bge-reranker-v2-m3 (loom-mem-gpu http://127.0.0.1:8765, repli : aucun)"}
     by_env = mounted(tmp_path, {"url_env": "MEM_URL"}, {"MEM_URL": "http://127.0.0.1:8765"})
     assert "loom-mem-gpu $MEM_URL" in dict(by_env.settings().options)["modèles"]
 
 
-def test_the_approval_says_where_the_file_will_be_computed(
-    serve: Callable[..., Running], tmp_path: Path
-) -> None:
+def test_the_approval_says_where_the_file_will_be_computed(serve: Callable[..., Running], tmp_path: Path) -> None:
     tool = mounted(tmp_path, {"url": url(serve())})
-    (tmp_path / "workspace" / "cgv.md").write_text(
-        "# Conditions générales\n\nAcompte de 30 %.", encoding="utf-8"
-    )
+    (tmp_path / "workspace" / "cgv.md").write_text("# Conditions générales\n\nAcompte de 30 %.", encoding="utf-8")
     tool.service.models.embedder.load()
     arguments: dict[str, JsonValue] = {"action": "add_file", "file": "workspace/cgv.md"}
     reason = tool.assess_call(arguments).reason
@@ -458,9 +413,7 @@ def test_the_approval_says_where_the_file_will_be_computed(
 
 # --- Repli (server.fallback) ---------------------------------------------------------
 
-WITH_FALLBACK: Final = ModelsSpec(
-    server=ServerSpec(url="http://127.0.0.1:8765", fallback=FallbackSpec(device="cpu"))
-)
+WITH_FALLBACK: Final = ModelsSpec(server=ServerSpec(url="http://127.0.0.1:8765", fallback=FallbackSpec(device="cpu")))
 
 
 class Local:
@@ -519,22 +472,16 @@ def test_the_fallback_takes_the_local_settings() -> None:
         True,
         True,
     )
-    every_default = ModelsSpec.model_validate(
-        {"server": {"url": "http://127.0.0.1:8765", "fallback": {}}}
-    ).fallback()
+    every_default = ModelsSpec.model_validate({"server": {"url": "http://127.0.0.1:8765", "fallback": {}}}).fallback()
     assert every_default is not None and every_default.device == "auto"
     assert SERVED.fallback() is None and ModelsSpec().fallback() is None
     with pytest.raises(ValidationError, match="pattern"):
-        ModelsSpec.model_validate(
-            {"server": {"url": "http://127.0.0.1:8765", "fallback": {"device": "gpu"}}}
-        )
+        ModelsSpec.model_validate({"server": {"url": "http://127.0.0.1:8765", "fallback": {"device": "gpu"}}})
     with pytest.raises(ValidationError, match=r"les mettre dans server\.fallback"):
         ModelsSpec.model_validate({"device": "cuda", "server": {"url": "http://127.0.0.1:8765"}})
 
 
-def test_an_absent_application_is_replaced_by_the_local_models(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_an_absent_application_is_replaced_by_the_local_models(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     local = Local()
     local.install(monkeypatch)
     embedder = fallback_client(f"http://127.0.0.1:{free_port()}")
@@ -551,9 +498,7 @@ def test_an_absent_application_is_replaced_by_the_local_models(
     assert embedder.device == "cpu" and not embedder.connection.served
 
 
-def test_the_application_takes_over_again_once_it_answers(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_the_application_takes_over_again_once_it_answers(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     monkeypatch.setattr(remote_module, "REPROBE", 0.2)
     local = Local()
     local.install(monkeypatch)
@@ -584,9 +529,7 @@ def test_the_application_takes_over_again_once_it_answers(
         service.close()
 
 
-def test_an_application_without_models_is_replaced_too(
-    serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_application_without_models_is_replaced_too(serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch) -> None:
     local = Local()
     local.install(monkeypatch)
     running = serve(bge_host(embedder=Unloadable()))
@@ -630,18 +573,14 @@ def test_loading_falls_back_too(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_reranker_falls_back_with_the_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
     local = Local()
     local.install(monkeypatch)
-    connection = Connection(
-        Target(f"http://127.0.0.1:{free_port()}", connect_timeout=1.0), WITH_FALLBACK
-    )
+    connection = Connection(Target(f"http://127.0.0.1:{free_port()}", connect_timeout=1.0), WITH_FALLBACK)
     reranker = RemoteReranker(connection, WITH_FALLBACK)
     passages = ["devis chauffe-eau", "rien"]
     assert reranker.score("devis", passages) == FakeReranker().score("devis", passages)
     assert local.reranker.batches == [2]
 
 
-def test_a_fallback_needs_the_memory_extra_at_mount(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_fallback_needs_the_memory_extra_at_mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import loom_ia.tools_builtin.memory.tool as tool_module
 
     def absent(_name: str) -> None:
@@ -654,9 +593,7 @@ def test_a_fallback_needs_the_memory_extra_at_mount(
     mounted(tmp_path, {"url": "http://127.0.0.1:8765"})
 
 
-def test_validate_names_the_fallback_device(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_validate_names_the_fallback_device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import loom_ia.tools_builtin.memory.tool as tool_module
 
     real = tool_module.importlib.util.find_spec
@@ -666,9 +603,7 @@ def test_validate_names_the_fallback_device(
 
     monkeypatch.setattr(tool_module.importlib.util, "find_spec", found)
     tool = mounted(tmp_path, {"url": "http://127.0.0.1:8765", "fallback": {"device": "cuda"}})
-    assert dict(tool.settings().options)["modèles"].endswith(
-        "(loom-mem-gpu http://127.0.0.1:8765, repli : cuda)"
-    )
+    assert dict(tool.settings().options)["modèles"].endswith("(loom-mem-gpu http://127.0.0.1:8765, repli : cuda)")
 
 
 # --- Un seul calcul, deux chemins ----------------------------------------------------

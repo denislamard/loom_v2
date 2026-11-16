@@ -105,9 +105,7 @@ from loom_ia.usage import UsageReport, render
 SERVER_NAME: Final = "loom"
 # Un serveur HTTP sert tous les clients : ce qu'il publie dépend de la clé,
 # donc ses instructions ne peuvent pas nommer des agents à l'avance.
-_INSTRUCTIONS: Final = (
-    "Agents loom : ceux que la clé d'API de la requête peut lancer (outil par agent)."
-)
+_INSTRUCTIONS: Final = "Agents loom : ceux que la clé d'API de la requête peut lancer (outil par agent)."
 
 # Ce qui rend l'appelant de la requête en cours ; absent en stdio.
 type CallerSource = Callable[[], Caller]
@@ -119,13 +117,8 @@ CANCEL_TOOL: Final = "cancel"
 # Ce qu'un formulaire d'elicitation peut rendre, par champ.
 type FormValue = str | int | float | bool | list[str] | None
 
-UNVERIFIED_NOTE: Final = (
-    "Réponse non vérifiée : elle a été gardée sans respecter son contrat ou son juge."
-)
-FALLBACK_NOTE: Final = (
-    "Réponse de repli : la sortie a été refusée par son contrat ou son juge, "
-    "puis remplacée par son message de repli."
-)
+UNVERIFIED_NOTE: Final = "Réponse non vérifiée : elle a été gardée sans respecter son contrat ou son juge."
+FALLBACK_NOTE: Final = "Réponse de repli : la sortie a été refusée par son contrat ou son juge, puis remplacée par son message de repli."
 
 AGENT_INPUT: Final[dict[str, Any]] = {
     "type": "object",
@@ -358,10 +351,7 @@ def create_server(
         tools.append(
             types.Tool(
                 name=REPORT_TOOL,
-                description=(
-                    "Consommation d'un run et de ses sous-runs, ou de toute une session : "
-                    "appels, tokens et coût, par run, par rôle et par modèle"
-                ),
+                description=("Consommation d'un run et de ses sous-runs, ou de toute une session : appels, tokens et coût, par run, par rôle et par modèle"),
                 inputSchema=REPORT_INPUT,
                 outputSchema=REPORT_OUTPUT,
             )
@@ -413,13 +403,7 @@ def create_server(
         run_id = RunId(str(run)) if run else None
         # Lire et lancer ne demandent pas la même chose : relire un run est
         # une lecture, faire travailler un agent en est une autre (#39).
-        needed: Permission = (
-            "read"
-            if tool in (STATUS_TOOL, REPORT_TOOL)
-            else "cancel"
-            if tool == CANCEL_TOOL
-            else "run"
-        )
+        needed: Permission = "read" if tool in (STATUS_TOOL, REPORT_TOOL) else "cancel" if tool == CANCEL_TOOL else "run"
         if not caller.may(needed):
             return _denied(caller, caller.lacking(needed), needed)
         try:
@@ -428,9 +412,7 @@ def create_server(
             if tool == REPORT_TOOL:
                 return await _report(loom, run_id, session_id, caller)
             if tool == STATUS_TOOL:
-                found = await loom.result(
-                    RunId(str(run)), session_id=session_id, tenant_id=caller.tenant
-                )
+                found = await loom.result(RunId(str(run)), session_id=session_id, tenant_id=caller.tenant)
                 if not caller.allows(found.agent):
                     return _denied(caller, caller.lacking("read", found.agent), "read", found.agent)
                 # Relire, c'est lire le journal : sans `read_content`, le
@@ -451,9 +433,7 @@ def create_server(
         # Ce qu'une clé lance, elle le reçoit : la réponse d'un run n'est
         # jamais masquée, c'est la relecture qui demande la portée.
         try:
-            ran = await _run(
-                server, loom, tool, message, attachments, session_id, caller.tenant, caller.actor
-            )
+            ran = await _run(server, loom, tool, message, attachments, session_id, caller.tenant, caller.actor)
         except AccessDenied as exc:
             audit.refused(exc, access="mcp", action=tool)
             return _refused(str(exc))
@@ -514,9 +494,7 @@ async def _run(
             run_id = item.root_run_id
         if isinstance(item, Event) and (line := progress.line(item)) is not None:
             sent += 1
-            await ctx.session.send_progress_notification(
-                token, sent, message=line, related_request_id=str(ctx.request_id)
-            )
+            await ctx.session.send_progress_notification(token, sent, message=line, related_request_id=str(ctx.request_id))
     if run_id is None:
         raise RuntimeError("le flux du run n'a rendu aucun événement")
     return await loom.result(run_id, session_id=session_id, tenant_id=tenant)
@@ -579,12 +557,7 @@ def _question_form(
         hint = (
             "Autre réponse (prioritaire sur le choix)"
             if choice
-            else question.question
-            + (
-                " — choix : " + ", ".join(o.label for o in question.options) + " (séparés par ;)"
-                if question.options
-                else ""
-            )
+            else question.question + (" — choix : " + ", ".join(o.label for o in question.options) + " (séparés par ;)" if question.options else "")
         )
         # À côté d'une liste, le champ libre a son propre titre : sinon deux champs
         # portaient le même intitulé (« Client », « Client »).
@@ -607,9 +580,7 @@ def _elicited(ctx: RequestContext[Any, Any, Any]) -> Approver | None:
     by = f"mcp:{client.clientInfo.name}" if client is not None else "mcp"
 
     async def decide(asked: PendingApproval) -> ApprovalDecision:
-        answered = await ctx.session.elicit_form(
-            _question(asked), DECISION_SCHEMA, related_request_id=str(ctx.request_id)
-        )
+        answered = await ctx.session.elicit_form(_question(asked), DECISION_SCHEMA, related_request_id=str(ctx.request_id))
         content: dict[str, FormValue] = answered.content or {}
         motif = str(content.get("motif") or "")
         if answered.action != "accept":
@@ -665,9 +636,7 @@ def answer(result: RunResult, *, ran: bool = True) -> types.CallToolResult:
     if result.fallback:
         content.append(types.TextContent(type="text", text=FALLBACK_NOTE))
     failed = ran and result.status is RunStatus.FAILED
-    return types.CallToolResult(
-        content=content, structuredContent=structured(result), isError=failed
-    )
+    return types.CallToolResult(content=content, structuredContent=structured(result), isError=failed)
 
 
 def structured(result: RunResult) -> dict[str, Any]:
@@ -689,15 +658,9 @@ def structured(result: RunResult) -> dict[str, Any]:
         "report": result.report.model_dump(mode="json") if result.report else None,
         "verdicts": [verdict.model_dump(mode="json") for verdict in result.verdicts],
         "skipped_judges": [skip.model_dump(mode="json") for skip in result.skipped_judges],
-        "pending_approvals": [
-            approval.model_dump(mode="json") for approval in result.pending_approvals
-        ],
-        "pending_questions": [
-            question.model_dump(mode="json") for question in result.pending_questions
-        ],
-        "artifacts": [
-            artifact.model_dump(mode="json", exclude_none=True) for artifact in result.artifacts
-        ],
+        "pending_approvals": [approval.model_dump(mode="json") for approval in result.pending_approvals],
+        "pending_questions": [question.model_dump(mode="json") for question in result.pending_questions],
+        "artifacts": [artifact.model_dump(mode="json", exclude_none=True) for artifact in result.artifacts],
     }
 
 
@@ -719,10 +682,7 @@ def _text(result: RunResult) -> str:
 
 def _awaiting(result: RunResult) -> str:
     """Ce qu'un run arrêté sur une approbation dit au client : quoi, et comment reprendre."""
-    asked = ", ".join(
-        f"{a.tool_name} ({a.call_id})" + (f" — {a.reason}" if a.reason else "")
-        for a in result.pending_approvals
-    )
+    asked = ", ".join(f"{a.tool_name} ({a.call_id})" + (f" — {a.reason}" if a.reason else "") for a in result.pending_approvals)
     return (
         f"Run {result.run_id} en attente d'approbation : {asked}. "
         "Un humain doit trancher (API REST ou « loom approve »), "
@@ -751,10 +711,7 @@ def _asking(result: RunResult) -> str:
                 named = f"Question {number}/{count}" + (f" · {header}" if header else "")
                 choices = " ; ".join(o.label for o in question.options)
                 multiple = ", plusieurs possibles" if question.multiple and choices else ""
-                lines.append(
-                    f"{named} : {question.question}"
-                    + (f" (choix{multiple} : {choices})" if choices else "")
-                )
+                lines.append(f"{named} : {question.question}" + (f" (choix{multiple} : {choices})" if choices else ""))
             else:
                 choices = ", ".join(o.label for o in question.options)
                 lines.append(question.question + (f" (choix : {choices})" if choices else ""))
@@ -766,10 +723,7 @@ def _asking(result: RunResult) -> str:
             "message.]"
         )
     else:
-        tail = (
-            f"\n\n[L'agent attend la réponse de l'utilisateur : rappeler {result.agent} avec "
-            f"session_id={result.session_id} et la réponse en message.]"
-        )
+        tail = f"\n\n[L'agent attend la réponse de l'utilisateur : rappeler {result.agent} avec session_id={result.session_id} et la réponse en message.]"
     return said + "\n".join(lines) + tail
 
 
@@ -815,9 +769,7 @@ async def _cancel(
     if not caller.allows(state.agent, "cancel"):
         return _denied(caller, caller.lacking("cancel", state.agent), "cancel", state.agent)
     try:
-        stopped = await loom.cancel(
-            run_id, session_id=session_id, tenant_id=caller.tenant, user=caller.actor
-        )
+        stopped = await loom.cancel(run_id, session_id=session_id, tenant_id=caller.tenant, user=caller.actor)
     except AccessDenied as exc:
         audit.refused(exc, access="mcp", action=CANCEL_TOOL)
         return _refused(str(exc))
@@ -833,9 +785,7 @@ def _always(caller: Caller) -> CallerSource:
     return lambda: caller
 
 
-def _denied(
-    caller: Caller, message: str, permission: Permission, agent: str | None = None
-) -> types.CallToolResult:
+def _denied(caller: Caller, message: str, permission: Permission, agent: str | None = None) -> types.CallToolResult:
     """Un refus d'accès : écrit au journal d'audit (D-9), puis rendu comme une erreur d'outil."""
     audit.denied(
         message,
@@ -851,9 +801,7 @@ def _denied(
 
 
 def _refused(message: str) -> types.CallToolResult:
-    return types.CallToolResult(
-        content=[types.TextContent(type="text", text=message)], isError=True
-    )
+    return types.CallToolResult(content=[types.TextContent(type="text", text=message)], isError=True)
 
 
 def _instructions(loom: Loom, tenant: TenantId = DEFAULT_TENANT) -> str:

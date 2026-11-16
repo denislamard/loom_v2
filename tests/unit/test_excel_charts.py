@@ -139,9 +139,7 @@ async def test_without_charts_a_chart_is_refused(tool: ExcelTool, charted: Excel
     await refused(tool, "Arguments invalides", **arguments)
 
 
-async def test_a_workbook_without_chart_does_not_change(
-    tool: ExcelTool, charted: ExcelTool, disk: Path
-) -> None:
+async def test_a_workbook_without_chart_does_not_change(tool: ExcelTool, charted: ExcelTool, disk: Path) -> None:
     plain = await call(tool, path="sortie/a.xlsx", sheets=[CLIENTS, MONTHS])
     same = await call(charted, path="sortie/b.xlsx", sheets=[CLIENTS, sheet(MONTHS)])
     assert plain["sha256"] == same["sha256"]
@@ -149,9 +147,7 @@ async def test_a_workbook_without_chart_does_not_change(
     assert all("charts" not in found for found in same["sheets"])
 
 
-def test_validate_shows_charts(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_charts(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "sortie").mkdir()
     folders = [{"name": "sortie", "path": "sortie", "rights": ["write"]}]
     agent = demo_agent(tools=[{"python": "loom.excel", "folders": folders, "charts": True}])
@@ -190,9 +186,7 @@ async def test_a_chart_is_linked_to_its_cells(charted: ExcelTool, disk: Path) ->
     assert anchors == [("3", "1"), ("3", "14")]
 
 
-async def test_a_chart_on_formulas_lets_excel_choose_its_axis(
-    charted: ExcelTool, disk: Path
-) -> None:
+async def test_a_chart_on_formulas_lets_excel_choose_its_axis(charted: ExcelTool, disk: Path) -> None:
     line = {"kind": "line", "categories": "Mois", "values": ["Facturé", "Encaissé"]}
     gaps = {"kind": "bar", "categories": "Mois", "values": ["Écart"]}
     await call(charted, path="sortie/m.xlsx", sheets=[sheet(MONTHS, line, gaps)])
@@ -224,9 +218,7 @@ async def test_same_call_same_bytes(charted: ExcelTool) -> None:
         ({**PIE, "values": ["Total TTC", "Total TTC"]}, "une colonne citée deux fois"),
     ],
 )  # fmt: skip
-async def test_bad_columns_are_refused(
-    charted: ExcelTool, chart: dict[str, Any], said: str
-) -> None:
+async def test_bad_columns_are_refused(charted: ExcelTool, chart: dict[str, Any], said: str) -> None:
     await refused(charted, said, path="sortie/x.xlsx", sheets=[sheet(CLIENTS, chart)])
 
 
@@ -246,13 +238,9 @@ async def test_pie_rules(charted: ExcelTool) -> None:
     negative = {**CLIENTS, "rows": [{"cells": ["Barre", -5]}, {"cells": ["Lemaire", 3]}]}
     await refused(charted, "négative", path="sortie/x.xlsx", sheets=[sheet(negative, PIE)])
     many = {**CLIENTS, "rows": [{"cells": [f"C{n}", n]} for n in range(1, 14)]}
-    await refused(
-        charted, "13 secteurs, au-delà de 12", path="sortie/x.xlsx", sheets=[sheet(many, PIE)]
-    )
+    await refused(charted, "13 secteurs, au-delà de 12", path="sortie/x.xlsx", sheets=[sheet(many, PIE)])
     zero = {**CLIENTS, "rows": [{"cells": ["Barre", 0]}, {"cells": ["Lemaire", 0]}]}
-    await refused(
-        charted, "toutes les valeurs sont nulles", path="sortie/x.xlsx", sheets=[sheet(zero, PIE)]
-    )
+    await refused(charted, "toutes les valeurs sont nulles", path="sortie/x.xlsx", sheets=[sheet(zero, PIE)])
 
 
 async def test_data_rows_are_contiguous(charted: ExcelTool) -> None:
@@ -268,9 +256,7 @@ async def test_data_rows_are_contiguous(charted: ExcelTool) -> None:
         sheets=[sheet({**CLIENTS, "rows": rows}, BARS)],
     )
     empty = {**CLIENTS, "rows": [{"cells": ["Total", 1], "role": "total"}]}
-    await refused(
-        charted, "aucune ligne de données", path="sortie/x.xlsx", sheets=[sheet(empty, BARS)]
-    )
+    await refused(charted, "aucune ligne de données", path="sortie/x.xlsx", sheets=[sheet(empty, BARS)])
 
 
 async def test_faults_are_said_together(charted: ExcelTool) -> None:
@@ -338,17 +324,11 @@ def to_ods(soffice: str, source: Path, out: Path) -> None:
 
 async def test_libreoffice_reads_the_charts(charted: ExcelTool, disk: Path, soffice: str) -> None:
     line = {"kind": "line", "categories": "Mois", "values": ["Facturé"]}
-    await call(
-        charted, path="sortie/c.xlsx", sheets=[sheet(CLIENTS, BARS, PIE), sheet(MONTHS, line)]
-    )
+    await call(charted, path="sortie/c.xlsx", sheets=[sheet(CLIENTS, BARS, PIE), sheet(MONTHS, line)])
     out = disk / "ods"
     to_ods(soffice, disk / "sortie" / "c.xlsx", out)
     with zipfile.ZipFile(out / "c.ods") as archive:
-        objects = "".join(
-            archive.read(name).decode()
-            for name in archive.namelist()
-            if name.startswith("Object") and name.endswith("content.xml")
-        )
+        objects = "".join(archive.read(name).decode() for name in archive.namelist() if name.startswith("Object") and name.endswith("content.xml"))
     assert sorted(set(re.findall(r'chart:class="chart:(\w+)"', objects))) == [
         "bar",
         "circle",

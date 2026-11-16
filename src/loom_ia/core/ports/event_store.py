@@ -30,9 +30,7 @@ class SequenceConflict(Exception):
     """Le journal a avancé depuis la dernière lecture (verrou optimiste)."""
 
     def __init__(self, session_id: SessionId, expected: int, actual: int) -> None:
-        super().__init__(
-            f"Journal {session_id!r} : dernier seq attendu {expected}, trouvé {actual}"
-        )
+        super().__init__(f"Journal {session_id!r} : dernier seq attendu {expected}, trouvé {actual}")
         self.session_id = session_id
         self.expected = expected
         self.actual = actual
@@ -74,16 +72,12 @@ def journal_key(drafts: Sequence[EventDraft]) -> tuple[TenantId, SessionId]:
     """
     keys = {(d.tenant_id, d.session_id) for d in drafts}
     if len(keys) != 1:
-        raise ValueError(
-            "Un lot d'événements doit viser un seul journal (même client, même session)"
-        )
+        raise ValueError("Un lot d'événements doit viser un seul journal (même client, même session)")
     return keys.pop()
 
 
 class EventStore(Protocol):
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         """Écrit le lot à la suite du journal et renvoie les événements numérotés.
 
         ``expected_seq`` est le dernier ``seq`` connu de l'appelant : si le

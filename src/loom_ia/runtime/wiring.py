@@ -243,18 +243,12 @@ def _dsn(declared: EventsStorage | IdempotencyStorage, what: str) -> str:
     variable = declared.dsn_env or ""
     dsn = os.environ.get(variable, "")
     if not dsn:
-        raise ConfigError(
-            f"{what} {declared.backend!r} : la variable {variable!r} est vide ou absente — "
-            "c'est elle qui porte le DSN"
-        )
+        raise ConfigError(f"{what} {declared.backend!r} : la variable {variable!r} est vide ou absente — c'est elle qui porte le DSN")
     return dsn
 
 
 def _missing_asyncpg(what: str) -> ConfigError:
-    return ConfigError(
-        f"{what} 'postgres' : le paquet 'asyncpg' n'est pas installé "
-        "(installer l'extra : loom-ia[postgres])"
-    )
+    return ConfigError(f"{what} 'postgres' : le paquet 'asyncpg' n'est pas installé (installer l'extra : loom-ia[postgres])")
 
 
 def create_keyring(config: LoomConfig, secrets: SecretProvider | None = None) -> Keyring | None:
@@ -270,10 +264,7 @@ def create_keyring(config: LoomConfig, secrets: SecretProvider | None = None) ->
     try:
         from loom_ia.adapters.crypto import SecretKeyring
     except ImportError as exc:
-        raise ConfigError(
-            "Chiffrement : le paquet 'cryptography' n'est pas installé "
-            "(installer l'extra : loom-ia[crypto])"
-        ) from exc
+        raise ConfigError("Chiffrement : le paquet 'cryptography' n'est pas installé (installer l'extra : loom-ia[crypto])") from exc
     table = secrets if secrets is not None else EnvironmentSecrets(config)
     return SecretKeyring(table, declared.keys)
 
@@ -284,9 +275,7 @@ def create_journal_codec(config: LoomConfig, secrets: SecretProvider | None = No
     return PLAIN if keyring is None else SealingCodec(keyring)
 
 
-def create_event_store(
-    config: LoomConfig | StorageConfig, *, codec: JournalCodec | None = None
-) -> EventStore:
+def create_event_store(config: LoomConfig | StorageConfig, *, codec: JournalCodec | None = None) -> EventStore:
     """Journal déclaré dans ``storage.events``, d'une config ou d'un client.
 
     ``codec`` dit comment une ligne est rangée : en clair, ou la charge
@@ -315,10 +304,7 @@ def create_event_store(
             try:
                 from loom_ia.adapters.stores.sqlite import SqliteEventStore
             except ImportError as exc:
-                raise ConfigError(
-                    "Journal 'sqlite' : le paquet 'aiosqlite' n'est pas installé "
-                    "(installer l'extra : loom-ia[sqlite])"
-                ) from exc
+                raise ConfigError("Journal 'sqlite' : le paquet 'aiosqlite' n'est pas installé (installer l'extra : loom-ia[sqlite])") from exc
             return SqliteEventStore(events.path, codec=chosen)
     return InMemoryEventStore()
 
@@ -348,17 +334,11 @@ def create_task_queue(config: LoomConfig, handlers: Mapping[JobKind, Handler]) -
         try:
             from loom_ia.adapters.queue.rabbitmq import RabbitMqTaskQueue
         except ImportError as exc:
-            raise ConfigError(
-                "File 'rabbitmq' : le paquet 'aio-pika' n'est pas installé "
-                "(installer l'extra : loom-ia[rabbitmq])"
-            ) from exc
+            raise ConfigError("File 'rabbitmq' : le paquet 'aio-pika' n'est pas installé (installer l'extra : loom-ia[rabbitmq])") from exc
         variable = declared.url_env or ""
         url = os.environ.get(variable, "")
         if not url:
-            raise ConfigError(
-                f"File 'rabbitmq' : la variable {variable!r} est vide ou absente — "
-                "c'est elle qui porte l'URL du courtier"
-            )
+            raise ConfigError(f"File 'rabbitmq' : la variable {variable!r} est vide ou absente — c'est elle qui porte l'URL du courtier")
         return RabbitMqTaskQueue(url, handlers)
     return AsyncioTaskQueue(
         handlers,
@@ -394,16 +374,11 @@ def _variable(declared: BusStorage, what: str, porte: str) -> str:
     name = declared.variable or ""
     value = os.environ.get(name, "")
     if not value:
-        raise ConfigError(
-            f"{what} {declared.backend!r} : la variable {name!r} est vide ou absente — "
-            f"c'est elle qui porte {porte}"
-        )
+        raise ConfigError(f"{what} {declared.backend!r} : la variable {name!r} est vide ou absente — c'est elle qui porte {porte}")
     return value
 
 
-def create_run_exporter(
-    config: LoomConfig, store: EventStore, environ: Mapping[str, str] | None = None
-) -> tuple[RunExporter | None, list[str]]:
+def create_run_exporter(config: LoomConfig, store: EventStore, environ: Mapping[str, str] | None = None) -> tuple[RunExporter | None, list[str]]:
     """Les collecteurs de ``telemetry.exporters``, et ce qui empêche d'en monter (6.1a).
 
     Un collecteur dont la variable d'adresse est vide n'est **pas monté**, et
@@ -417,10 +392,7 @@ def create_run_exporter(
     try:
         from loom_ia.adapters.telemetry.otel import OtelSpanSink, parse_headers
     except ImportError as exc:
-        raise ConfigError(
-            "Télémétrie : 'telemetry.exporters' demande OpenTelemetry, qui n'est pas installé "
-            "(installer l'extra : loom-ia[otel])"
-        ) from exc
+        raise ConfigError("Télémétrie : 'telemetry.exporters' demande OpenTelemetry, qui n'est pas installé (installer l'extra : loom-ia[otel])") from exc
     variables = os.environ if environ is None else environ
     sinks: list[SpanSink] = []
     warnings: list[str] = []
@@ -429,11 +401,7 @@ def create_run_exporter(
         if not endpoint:
             warnings.append(_unmounted(exporter.endpoint_env))
             continue
-        headers = (
-            parse_headers(variables.get(exporter.headers_env))
-            if exporter.headers_env is not None
-            else {}
-        )
+        headers = parse_headers(variables.get(exporter.headers_env)) if exporter.headers_env is not None else {}
         sinks.append(
             OtelSpanSink.otlp(
                 endpoint,
@@ -455,10 +423,7 @@ def create_run_exporter(
 
 
 def _missing_redis(what: str) -> ConfigError:
-    return ConfigError(
-        f"{what} 'redis' : le paquet 'redis' n'est pas installé "
-        "(installer l'extra : loom-ia[redis])"
-    )
+    return ConfigError(f"{what} 'redis' : le paquet 'redis' n'est pas installé (installer l'extra : loom-ia[redis])")
 
 
 def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
@@ -503,9 +468,7 @@ def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
     return "\n".join(blocks) + "\n"
 
 
-def create_artifact_store(
-    config: LoomConfig | StorageConfig, *, keyring: Keyring | None = None
-) -> ArtifactStore:
+def create_artifact_store(config: LoomConfig | StorageConfig, *, keyring: Keyring | None = None) -> ArtifactStore:
     """Stockage d'artefacts déclaré dans ``storage.artifacts``, ou celui qui suit le journal.
 
     Avec un trousseau, les octets sont scellés comme les charges du journal :
@@ -514,11 +477,7 @@ def create_artifact_store(
     """
     storage = _storage(config)
     path = storage.artifacts_path
-    inner: ArtifactStore = (
-        LocalArtifactStore(path)
-        if storage.artifacts_backend == "local" and path is not None
-        else InMemoryArtifactStore()
-    )
+    inner: ArtifactStore = LocalArtifactStore(path) if storage.artifacts_backend == "local" and path is not None else InMemoryArtifactStore()
     ring = keyring if keyring is not None else _own_keyring(config)
     return inner if ring is None else SealingArtifactStore(inner, ring)
 
@@ -555,19 +514,13 @@ def create_idempotency_store(config: LoomConfig) -> IdempotencyStore | None:
             raise _missing_redis("Magasin d'idempotence") from exc
         url = os.environ.get(declared.url_env or "", "")
         if not url:
-            raise ConfigError(
-                f"Magasin d'idempotence 'redis' : la variable {declared.url_env!r} est vide "
-                "ou absente — c'est elle qui porte l'URL"
-            )
+            raise ConfigError(f"Magasin d'idempotence 'redis' : la variable {declared.url_env!r} est vide ou absente — c'est elle qui porte l'URL")
         return RedisIdempotency(url)
     if declared.backend == "sqlite" and declared.path is not None:
         try:
             from loom_ia.adapters.idempotency.sqlite import SqliteIdempotency
         except ImportError as exc:
-            raise ConfigError(
-                "Magasin d'idempotence 'sqlite' : le paquet 'aiosqlite' n'est pas "
-                "installé (installer l'extra : loom-ia[sqlite])"
-            ) from exc
+            raise ConfigError("Magasin d'idempotence 'sqlite' : le paquet 'aiosqlite' n'est pas installé (installer l'extra : loom-ia[sqlite])") from exc
         return SqliteIdempotency(declared.path)
     return None
 
@@ -640,10 +593,7 @@ def build_agent(
         state_max_value_bytes=config.sessions.state.max_value_bytes,
     )
     _check_skills_read(config, spec)
-    tools = [
-        _tool(declared, known, config.base_dir, spec.name, provided=provided_context)
-        for declared in spec.python_tools
-    ]
+    tools = [_tool(declared, known, config.base_dir, spec.name, provided=provided_context) for declared in spec.python_tools]
     # Un outil fourni qui ouvre des connexions (loom.sql) les ferme avec l'agent.
     closing = _builtin_closables(spec.python_tools, tools)
     roles = [role_definition(role, variables, state=spec.state) for role in spec.roles]
@@ -653,11 +603,7 @@ def build_agent(
     clients: dict[str, ModelClient] = {}
     breakers = breakers if breakers is not None else CircuitBreakers()
     # Sans pool de l'instance, l'agent a le sien, qu'il ferme avec lui.
-    own_threads = (
-        ToolThreads(config.execution.tools.threads, grace=config.execution.tools.grace)
-        if threads is None
-        else None
-    )
+    own_threads = ToolThreads(config.execution.tools.threads, grace=config.execution.tools.grace) if threads is None else None
     threads = threads if threads is not None else own_threads
 
     # Échanges bruts (6.1b) : ceux de ce client de loom, pour tous ses modèles.
@@ -682,9 +628,7 @@ def build_agent(
                 if said is None and vaulted and _absent(read, spec.api_key_env):
                     # Au test M3 du 22/10, un secret absent du gestionnaire se disait
                     # « variable d'environnement » : il ne vient pas de là.
-                    raise ModelConfigError(
-                        f"Modèle {model_id!r} : {_unprovided(tenant_id, [spec.api_key_env])}"
-                    ) from exc
+                    raise ModelConfigError(f"Modèle {model_id!r} : {_unprovided(tenant_id, [spec.api_key_env])}") from exc
                 if said is None:
                     raise
                 model = f"{spec.model} pour ce client" if model_id in mapped else spec.model
@@ -717,11 +661,7 @@ def build_agent(
     # Un skill long coûte à chaque appel : un conseil, jamais un refus, même en prod.
     announce(config, skill_warnings(config, spec), refuse=False)
     budgets = config.budget_of(spec.name)
-    shared = any(
-        ref.agent == spec.name and ref.budget_share is not None
-        for agent in config.agents
-        for ref in agent.subagents
-    )
+    shared = any(ref.agent == spec.name and ref.budget_share is not None for agent in config.agents for ref in agent.subagents)
     compaction = config.sessions.compaction
     policies = build_policies(
         spec,
@@ -730,13 +670,7 @@ def build_agent(
         contracts=_has_contracts(config, spec),
         judges=judges,
         budget=BudgetGuard(budgets) if budgets.limited or shared else None,
-        fidelity=(
-            FidelityGuard()
-            if spec.name == COMPACTION_AGENT
-            and compaction is not None
-            and compaction.fidelity_check
-            else None
-        ),
+        fidelity=(FidelityGuard() if spec.name == COMPACTION_AGENT and compaction is not None and compaction.fidelity_check else None),
     )
     owned: tuple[_Closable, ...] = () if own_threads is None else (own_threads,)
     if spec.subagents and agents is None:
@@ -766,15 +700,11 @@ def build_agent(
         for role, definition in zip(spec.roles, roles, strict=True)
     ]
     if agents is not None:
-        delegated += [
-            AgentTool(_subagent_definition(config, spec, ref), agents) for ref in spec.subagents
-        ]
+        delegated += [AgentTool(_subagent_definition(config, spec, ref), agents) for ref in spec.subagents]
     _check_durable_journal(config, spec, [*tools, *delegated], policies, imposed, tenant)
     _check_shared_idempotency(config, spec, [*tools, *delegated])
     # Les sources et le pool MCP se créent après les contrôles : un montage refusé n'en laisse pas.
-    sources, opened = _mcp_sources(
-        config, spec, secrets, mcp_pool, tenant_id, redirects, vaulted=vaulted
-    )
+    sources, opened = _mcp_sources(config, spec, secrets, mcp_pool, tenant_id, redirects, vaulted=vaulted)
     packaged = _packaged_sources(config, spec, secrets)
     sources = [*sources, *packaged]
     owned = (*opened, *packaged, *closing, *owned)
@@ -860,9 +790,7 @@ def build_policies(
     if contracts if contracts is not None else spec.contracts:
         guard = ContractGuard(spec.output)
         # Le guard borne lui-même ses réparations (repair.max_attempts du contrat).
-        bound.append(
-            BoundPolicy(policy=guard, name=CONTRACT_POLICY, points=guard.points, max_attempts=None)
-        )
+        bound.append(BoundPolicy(policy=guard, name=CONTRACT_POLICY, points=guard.points, max_attempts=None))
     for judge in judges:
         definition = judge.definition
         # Un juge borne lui-même ses réparations (repair.max_attempts du juge).
@@ -886,20 +814,13 @@ def build_policies(
         label = f"Agent {spec.name!r}, politique {name!r}"
         outside = sorted(points - found.points)
         if outside:
-            raise ConfigError(
-                f"{label} : ne s'applique pas à {', '.join(outside)} "
-                f"(points déclarés : {', '.join(sorted(found.points))})"
-            )
+            raise ConfigError(f"{label} : ne s'applique pas à {', '.join(outside)} (points déclarés : {', '.join(sorted(found.points))})")
         for point in sorted(points):
             refused = sorted(found.decisions - ALLOWED_DECISIONS[point])
             if refused:
-                raise ConfigError(
-                    f"{label} : décision(s) {', '.join(refused)} non permise(s) au point {point}"
-                )
+                raise ConfigError(f"{label} : décision(s) {', '.join(refused)} non permise(s) au point {point}")
         if any(existing.name == name for existing in bound):
-            raise ConfigError(
-                f"{label} : déclarée deux fois (donner un 'name' à l'une des références)"
-            )
+            raise ConfigError(f"{label} : déclarée deux fois (donner un 'name' à l'une des références)")
         bound.append(
             BoundPolicy(
                 policy=found,
@@ -943,9 +864,7 @@ def _model_tool(spec: AgentSpec, tools: Sequence[Tool]) -> str | None:
     return None
 
 
-def state_rules(
-    config: LoomConfig, spec: AgentSpec, *, model_tool: str | None = None
-) -> StateRules:
+def state_rules(config: LoomConfig, spec: AgentSpec, *, model_tool: str | None = None) -> StateRules:
     """Clés du state que déclare l'agent, telles que le moteur les applique, et leurs limites.
 
     ``model_tool`` : le nom sous lequel ``loom.state`` est monté (S1, B4).
@@ -956,12 +875,7 @@ def state_rules(
             name: StateKeyRule(
                 schema=key.json_schema,
                 description=key.description,
-                sources={
-                    source.tool: StateSourceRule(
-                        path=source.path, value=source.value, on_missing=source.on_missing
-                    )
-                    for source in key.sources
-                },
+                sources={source.tool: StateSourceRule(path=source.path, value=source.value, on_missing=source.on_missing) for source in key.sources},
                 required=key.required,
                 default=key.default,
                 writers=frozenset(key.writers),
@@ -978,9 +892,7 @@ def stream_output(spec: AgentSpec, policies: Policies) -> StreamOutput:
     """Diffusion de la réponse finale : celle déclarée, sinon selon ses contrôles (#11)."""
     if spec.stream_output is not None:
         return spec.stream_output
-    guarded = bool(policies.at("on_output")) or any(
-        role.terminal and (role.output is not None or role.judge is not None) for role in spec.roles
-    )
+    guarded = bool(policies.at("on_output")) or any(role.terminal and (role.output is not None or role.judge is not None) for role in spec.roles)
     return "after_guards" if guarded else "live"
 
 
@@ -1000,17 +912,11 @@ def _policy(spec: AgentSpec, ref: PolicyRef, registry: Registry, base_dir: Path 
     if ref.hook.startswith(RESERVED_PREFIX):
         builtin = BUILTIN_POLICIES.get(ref.hook)
         if builtin is None:
-            raise ConfigError(
-                f"Agent {spec.name!r} : politique fournie {ref.hook!r} inconnue "
-                f"(fournies : {', '.join(BUILTIN_POLICIES)})"
-            )
+            raise ConfigError(f"Agent {spec.name!r} : politique fournie {ref.hook!r} inconnue (fournies : {', '.join(BUILTIN_POLICIES)})")
         return builtin
     found = resolve(ref.hook, registry, base_dir=base_dir)
     if isinstance(found, type) or not isinstance(found, Policy):
-        raise ConfigError(
-            f"Agent {spec.name!r} : {ref.hook!r} n'est pas une politique "
-            "(décorer la fonction avec @policy)"
-        )
+        raise ConfigError(f"Agent {spec.name!r} : {ref.hook!r} n'est pas une politique (décorer la fonction avec @policy)")
     return found
 
 
@@ -1071,10 +977,7 @@ def judge_definition(
     if reference is not None:
         found = resolve(reference, registry, base_dir=base_dir)
         if isinstance(found, type) or not callable(found):
-            raise ConfigError(
-                f"Agent {spec.name!r}, juge {name!r} : la condition {reference!r} "
-                "n'est pas une fonction"
-            )
+            raise ConfigError(f"Agent {spec.name!r}, juge {name!r} : la condition {reference!r} n'est pas une fonction")
         condition = cast(Condition, found)
     tenants = judge.when.tenants
     profiles = judge.when.profiles
@@ -1128,14 +1031,8 @@ def _check_durable_journal(
     backend = storage.events.backend
     if backend not in DURABLE_BACKENDS:
         forced = imposed or {}
-        obligatoires = [
-            t.spec.name for t in tools if forced.get(t.spec.name, t.spec.approval) == "always"
-        ]
-        obligatoires += [
-            name
-            for name in _sources_asking_approval(config, spec, forced)
-            if name not in obligatoires
-        ]
+        obligatoires = [t.spec.name for t in tools if forced.get(t.spec.name, t.spec.approval) == "always"]
+        obligatoires += [name for name in _sources_asking_approval(config, spec, forced) if name not in obligatoires]
         pausing = sorted({b.name for b in policies.bound if "pause" in b.policy.decisions})
         # Un outil à ``on_unknown: pause`` qui dépasse son délai fait attendre un humain
         # (B-2) : il faut un délai, le sien ou celui de l'exécution.
@@ -1148,40 +1045,22 @@ def _check_durable_journal(
             and t.spec.name not in obligatoires
         ]
         # Un outil qui évalue ses appels n'en approuve que certains : le dire.
-        by_call = {
-            t.spec.name for t in tools if _assesses_approval(t) and t.spec.name not in forced
-        }
+        by_call = {t.spec.name for t in tools if _assesses_approval(t) and t.spec.name not in forced}
         causes = [
-            *(
-                f"outil {name!r} "
-                + (
-                    "dont certains appels attendent une approbation"
-                    if name in by_call
-                    else "en approval: always"
-                )
-                for name in obligatoires
-            ),
+            *(f"outil {name!r} " + ("dont certains appels attendent une approbation" if name in by_call else "en approval: always") for name in obligatoires),
             *(f"politique {name!r} qui peut rendre Pause" for name in pausing),
             *(f"outil {name!r} en on_unknown: pause, avec un délai" for name in unknown),
         ]
         if causes:
             # Assoupli en dev seulement : sur une machine, perdre un run en
             # pause à la fermeture est le prix d'un essai (M4).
-            whose = (
-                f", celui du client {tenant.id!r}" if tenant is not None and own is not None else ""
-            )
+            whose = f", celui du client {tenant.id!r}" if tenant is not None and own is not None else ""
             # Dit une fois par client monté : au test M4 du 23/10, la même ligne
             # revenait sans dire pour quel client.
-            agent = f"Agent {spec.name!r}" + (
-                f" (client {tenant.id!r})" if tenant is not None else ""
-            )
+            agent = f"Agent {spec.name!r}" + (f" (client {tenant.id!r})" if tenant is not None else "")
             announce(
                 config,
-                [
-                    f"{agent} : {', '.join(causes)} — une approbation exige un "
-                    f"journal durable ({' ou '.join(DURABLE_BACKENDS)}), "
-                    f"pas {backend!r}{whose} (#28)"
-                ],
+                [f"{agent} : {', '.join(causes)} — une approbation exige un journal durable ({' ou '.join(DURABLE_BACKENDS)}), pas {backend!r}{whose} (#28)"],
                 refuse=not config.lax,
             )
 
@@ -1193,9 +1072,7 @@ def _assesses_approval(tool: object) -> bool:
     return isinstance(tool, AssessedTool)
 
 
-def _sources_asking_approval(
-    config: LoomConfig, spec: AgentSpec, imposed: Mapping[str, Approval]
-) -> list[str]:
+def _sources_asking_approval(config: LoomConfig, spec: AgentSpec, imposed: Mapping[str, Approval]) -> list[str]:
     """Outils MCP ou de paquet que la configuration met en ``approval: always``.
 
     Sans connexion : la liste des outils d'un serveur ou d'une source n'est
@@ -1216,11 +1093,7 @@ def _sources_asking_approval(
         named = [*declared, *(short for short in ref.tools if short not in declared)]
         for short in named:
             approval = next(
-                (
-                    found.approval
-                    for found in (ref.tools.get(short), declared.get(short))
-                    if found is not None and found.approval is not None
-                ),
+                (found.approval for found in (ref.tools.get(short), declared.get(short)) if found is not None and found.approval is not None),
                 None,
             )
             name = f"{prefix}{short}"
@@ -1229,24 +1102,17 @@ def _sources_asking_approval(
         asking += [
             name
             for name, approval in imposed.items()
-            if approval == "always"
-            and name.startswith(prefix)
-            and name[len(prefix) :] not in named
-            and _selects(ref, name[len(prefix) :])
+            if approval == "always" and name.startswith(prefix) and name[len(prefix) :] not in named and _selects(ref, name[len(prefix) :])
         ]
     return asking
 
 
 def _selects(ref: McpTools | SourceTools, short: str) -> bool:
     """Vrai si la référence expose l'outil ``short`` (``include`` ou ``exclude``)."""
-    return (ref.include is None or short in ref.include) and (
-        ref.exclude is None or short not in ref.exclude
-    )
+    return (ref.include is None or short in ref.include) and (ref.exclude is None or short not in ref.exclude)
 
 
-def _check_shared_idempotency(
-    config: LoomConfig, spec: AgentSpec, tools: Sequence[AnyTool]
-) -> None:
+def _check_shared_idempotency(config: LoomConfig, spec: AgentSpec, tools: Sequence[AnyTool]) -> None:
     """Une clé métier exige un magasin partagé et durable (#49).
 
     Une clé métier dit « cette relance est déjà partie » à qui la demande,
@@ -1290,18 +1156,11 @@ def exporter_warnings(config: LoomConfig, environ: Mapping[str, str] | None = No
     l'affiche à sa place.
     """
     variables = os.environ if environ is None else environ
-    return [
-        _unmounted(exporter.endpoint_env)
-        for exporter in config.telemetry.exporters
-        if not variables.get(exporter.endpoint_env, "")
-    ]
+    return [_unmounted(exporter.endpoint_env) for exporter in config.telemetry.exporters if not variables.get(exporter.endpoint_env, "")]
 
 
 def _unmounted(variable: str) -> str:
-    return (
-        f"Télémétrie : la variable {variable!r} est vide ou absente — "
-        "ce collecteur n'est pas monté, aucune trace n'en partira"
-    )
+    return f"Télémétrie : la variable {variable!r} est vide ou absente — ce collecteur n'est pas monté, aucune trace n'en partira"
 
 
 def storage_warnings(config: LoomConfig) -> list[str]:
@@ -1321,9 +1180,7 @@ def storage_warnings(config: LoomConfig) -> list[str]:
     storage = config.storage
     if not (storage.queue.brokered or storage.bus.shared):
         return []
-    eparpille = (
-        "file servie par un courtier" if storage.queue.brokered else "bus partagé entre process"
-    )
+    eparpille = "file servie par un courtier" if storage.queue.brokered else "bus partagé entre process"
     if storage.artifacts_backend == "local":
         return [
             f"Stockage : {eparpille} et artefacts 'local' ({storage.artifacts_path}) — les "
@@ -1358,10 +1215,7 @@ def model_warnings(config: LoomConfig) -> list[str]:
         "message utilisateur à part ; l'API Anthropic les accepte dans le résultat de l'outil "
         "(déclarer tool_result_media: true)"
         for spec in config.models
-        if spec.sdk == "anthropic"
-        and spec.base_url is None
-        and spec.capabilities.vision
-        and not spec.capabilities.tool_result_media
+        if spec.sdk == "anthropic" and spec.base_url is None and spec.capabilities.vision and not spec.capabilities.tool_result_media
     ]
 
 
@@ -1433,15 +1287,10 @@ def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     unpriced = [m for m in dict.fromkeys(used) if not config.model_spec(m).pricing.priced]
     if not unpriced:
         return []
-    return [
-        f"Agent {spec.name!r} : budget en dollars, mais sans tarif pour "
-        f"{', '.join(unpriced)} : leurs appels comptent 0 $"
-    ]
+    return [f"Agent {spec.name!r} : budget en dollars, mais sans tarif pour {', '.join(unpriced)} : leurs appels comptent 0 $"]
 
 
-def judge_warnings(
-    config: LoomConfig, spec: AgentSpec, *, tenant: Tenant | None = None
-) -> list[str]:
+def judge_warnings(config: LoomConfig, spec: AgentSpec, *, tenant: Tenant | None = None) -> list[str]:
     """Avertissements sur les juges de l'agent (E6, #21) ; des erreurs en profil prod (5.5a).
 
     ``tenant`` : le client pour qui l'agent est monté, sa correspondance des
@@ -1464,31 +1313,16 @@ def judge_warnings(
             label = f"Client {tenant.id!r}, agent {spec.name!r}, juge {name!r}"
         # Chaînes de secours comprises (#10) : un secours peut rendre le juge corrélé.
         evaluated = role.chain if role is not None else spec.main.chain
-        pairs = [
-            (mine, theirs)
-            for mine in judge.chain
-            for theirs in evaluated
-            if correlated(config.model_spec(mine), config.model_spec(theirs))
-        ]
+        pairs = [(mine, theirs) for mine in judge.chain for theirs in evaluated if correlated(config.model_spec(mine), config.model_spec(theirs))]
         if pairs:
-            same = " ; ".join(
-                said(mine) if mine == theirs else f"juge {said(mine)}, sortie {said(theirs)}"
-                for mine, theirs in pairs
-            )
-            warnings.append(
-                f"{label} : même modèle que la sortie qu'il évalue ({same}) : juge corrélé"
-            )
+            same = " ; ".join(said(mine) if mine == theirs else f"juge {said(mine)}, sortie {said(theirs)}" for mine, theirs in pairs)
+            warnings.append(f"{label} : même modèle que la sortie qu'il évalue ({same}) : juge corrélé")
         if judge.blocking and judge.when.sample < 1:
-            warnings.append(
-                f"{label} : bloquant, mais ne juge qu'une partie des runs "
-                f"(sample {judge.when.sample:g})"
-            )
+            warnings.append(f"{label} : bloquant, mais ne juge qu'une partie des runs (sample {judge.when.sample:g})")
     return warnings
 
 
-def _source_refs(
-    config: LoomConfig, spec: AgentSpec
-) -> list[tuple[McpTools | SourceTools, Mapping[str, ToolOverrides]]]:
+def _source_refs(config: LoomConfig, spec: AgentSpec) -> list[tuple[McpTools | SourceTools, Mapping[str, ToolOverrides]]]:
     """Chaque référence MCP ou de paquet de l'agent, avec les surcharges de son serveur."""
     return [
         *((ref, config.mcp_server(ref.mcp).tools) for ref in spec.mcp_tools),
@@ -1509,11 +1343,7 @@ def declared_skills(config: LoomConfig, spec: AgentSpec) -> list[tuple[str, str]
         named = [*declared, *(short for short in ref.tools if short not in declared)]
         for short in named:
             skill = next(
-                (
-                    overrides.skill
-                    for overrides in (ref.tools.get(short), declared.get(short))
-                    if overrides is not None and overrides.skill is not None
-                ),
+                (overrides.skill for overrides in (ref.tools.get(short), declared.get(short)) if overrides is not None and overrides.skill is not None),
                 None,
             )
             if skill is not None and _selects(ref, short):
@@ -1536,19 +1366,12 @@ def _check_skills_read(config: LoomConfig, spec: AgentSpec) -> None:
         }
     )
     if unread:
-        raise ConfigError(
-            f"Agent {spec.name!r} : skill_file non lu — outil {', '.join(unread)} ; "
-            "un skill se lit au chargement (load_config)"
-        )
+        raise ConfigError(f"Agent {spec.name!r} : skill_file non lu — outil {', '.join(unread)} ; un skill se lit au chargement (load_config)")
 
 
 def skill_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     """Les skills plus longs que ``SKILL_WARN_CHARS`` : ils partent à chaque appel de modèle."""
-    sized = [
-        (tool.python.removeprefix(RESERVED_PREFIX), tool.skill)
-        for tool in spec.python_tools
-        if tool.skill
-    ]
+    sized = [(tool.python.removeprefix(RESERVED_PREFIX), tool.skill) for tool in spec.python_tools if tool.skill]
     sized += declared_skills(config, spec)
     return [
         f"Agent {spec.name!r}, outil {name!r} : skill de {len(text)} caractères (environ "
@@ -1577,12 +1400,7 @@ def overlap_warnings(spec: AgentSpec) -> list[str]:
         refs.setdefault(key, []).append(ref)
     warnings: list[str] = []
     for (kind, name), found in refs.items():
-        overlapping = [
-            (a, b)
-            for i, a in enumerate(found)
-            for b in found[i + 1 :]
-            if a.include is None or b.include is None or set(a.include) & set(b.include)
-        ]
+        overlapping = [(a, b) for i, a in enumerate(found) for b in found[i + 1 :] if a.include is None or b.include is None or set(a.include) & set(b.include)]
         for a, b in overlapping:
             warnings.append(
                 f"Agent {spec.name!r} : {kind} {name!r} référencé deux fois "
@@ -1601,9 +1419,7 @@ def fallback_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     """
     chains = [(f"Agent {spec.name!r}", spec.main.chain)]
     chains += [(f"Agent {spec.name!r}, rôle {role.name!r}", role.chain) for role in spec.roles]
-    chains += [
-        (f"Agent {spec.name!r}, juge {name!r}", judge.chain) for name, _, judge in spec.judges
-    ]
+    chains += [(f"Agent {spec.name!r}, juge {name!r}", judge.chain) for name, _, judge in spec.judges]
     warnings: list[str] = []
     for label, (model, *fallbacks) in chains:
         window = config.model_spec(model).capabilities.context_window
@@ -1612,10 +1428,7 @@ def fallback_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
         for fallback in fallbacks:
             smaller = config.model_spec(fallback).capabilities.context_window
             if smaller is not None and smaller < window:
-                warnings.append(
-                    f"{label} : le secours {fallback} a une fenêtre de contexte plus petite "
-                    f"que {model} ({smaller} < {window} tokens)"
-                )
+                warnings.append(f"{label} : le secours {fallback} a une fenêtre de contexte plus petite que {model} ({smaller} < {window} tokens)")
     return warnings
 
 
@@ -1640,9 +1453,7 @@ def _context_item(item: DeclaredContext) -> ContextItem:
             return item
 
 
-def _subagent_definition(
-    config: LoomConfig, spec: AgentSpec, ref: SubAgentRef
-) -> SubAgentDefinition:
+def _subagent_definition(config: LoomConfig, spec: AgentSpec, ref: SubAgentRef) -> SubAgentDefinition:
     """Sous-agent tel que le moteur l'appelle : nom et description de l'agent par défaut."""
     target = AgentRegistry.from_config(config).get(ref.agent)
     return SubAgentDefinition(
@@ -1727,10 +1538,7 @@ def _check_names(spec: AgentSpec, python_tools: list[str]) -> None:
     ]
     doubles = sorted({name for name in names if names.count(name) > 1})
     if doubles:
-        raise ConfigError(
-            f"Agent {spec.name!r} : plusieurs outils, rôles ou sous-agents s'appellent "
-            f"{', '.join(doubles)}"
-        )
+        raise ConfigError(f"Agent {spec.name!r} : plusieurs outils, rôles ou sous-agents s'appellent {', '.join(doubles)}")
     for role in spec.roles:
         for tool in role.tool_results:
             if tool in names or any(ref.owns(tool) for ref in spec.mcp_tools):
@@ -1739,10 +1547,7 @@ def _check_names(spec: AgentSpec, python_tools: list[str]) -> None:
                 continue
             prefixes = [f"{ref.prefix}__…" for ref in (*spec.mcp_tools, *spec.source_tools)]
             known = ", ".join([*names, *prefixes]) or "aucun"
-            raise ConfigError(
-                f"Agent {spec.name!r}, rôle {role.name!r} : tool_results désigne {tool!r}, "
-                f"qui n'est pas un outil de l'agent (outils : {known})"
-            )
+            raise ConfigError(f"Agent {spec.name!r}, rôle {role.name!r} : tool_results désigne {tool!r}, qui n'est pas un outil de l'agent (outils : {known})")
 
 
 def _check_state(spec: AgentSpec, tools: Sequence[Tool]) -> None:
@@ -1756,10 +1561,7 @@ def _check_state(spec: AgentSpec, tools: Sequence[Tool]) -> None:
     """
     python = {tool.spec.name: tool for tool in tools}
     # Outil fourni derrière chaque nom monté (``loom.sql``…), pour l'avertissement E3.
-    provided = {
-        tool.spec.name: declared.python
-        for declared, tool in zip(spec.python_tools, tools, strict=True)
-    }
+    provided = {tool.spec.name: declared.python for declared, tool in zip(spec.python_tools, tools, strict=True)}
     roles = {role.name: role for role in spec.roles}
     subagents = {ref.tool_name for ref in spec.subagents}
     prefixed = (*spec.mcp_tools, *spec.source_tools)
@@ -1787,24 +1589,15 @@ def _check_state(spec: AgentSpec, tools: Sequence[Tool]) -> None:
                     )
             elif name in roles:
                 if wants_data and not _has_schema(roles[name].output):
-                    raise ConfigError(
-                        f"{label} : le rôle {name!r} rend du texte : 'path' impossible, "
-                        "donner une 'value' ou un contrat de sortie avec schéma"
-                    )
+                    raise ConfigError(f"{label} : le rôle {name!r} rend du texte : 'path' impossible, donner une 'value' ou un contrat de sortie avec schéma")
             elif name in subagents:
                 if wants_data:
-                    raise ConfigError(
-                        f"{label} : le sous-agent {name!r} rend du texte : 'path' impossible, "
-                        "donner une 'value'"
-                    )
+                    raise ConfigError(f"{label} : le sous-agent {name!r} rend du texte : 'path' impossible, donner une 'value'")
             elif not any(ref.owns(name) for ref in prefixed):
                 names = [*python, *roles, *subagents]
                 prefixes = [f"{ref.prefix}__…" for ref in prefixed]
                 known = ", ".join([*names, *prefixes]) or "aucun"
-                raise ConfigError(
-                    f"{label} : from désigne {name!r}, qui n'est pas un outil de l'agent "
-                    f"(outils : {known})"
-                )
+                raise ConfigError(f"{label} : from désigne {name!r}, qui n'est pas un outil de l'agent (outils : {known})")
 
 
 def _returns_data(tool: Tool) -> bool:
@@ -1831,11 +1624,7 @@ def _absent(secrets: Mapping[str, str], variable: str | None) -> bool:
 def _unprovided(tenant_id: TenantId, names: Iterable[str | None]) -> str:
     """Le refus d'un secret que le gestionnaire de l'application ne rend pas (M3)."""
     named = [name for name in dict.fromkeys(names) if name is not None]
-    which = (
-        f"le secret {named[0]} est absent ou vide"
-        if len(named) == 1
-        else f"les secrets {', '.join(named)} sont absents ou vides"
-    )
+    which = f"le secret {named[0]} est absent ou vide" if len(named) == 1 else f"les secrets {', '.join(named)} sont absents ou vides"
     return f"{which} dans le gestionnaire de secrets (client {tenant_id!r})"
 
 
@@ -1854,9 +1643,7 @@ def _missing_secret(
     aucune variable redirigée ne manque : le message d'origine dit juste.
     """
     missing = [
-        (name, redirects[name])
-        for name in dict.fromkeys(v for v in variables if v is not None)
-        if name in redirects and not secrets.get(name, "").strip()
+        (name, redirects[name]) for name in dict.fromkeys(v for v in variables if v is not None) if name in redirects and not secrets.get(name, "").strip()
     ]
     if not missing:
         return None
@@ -1910,9 +1697,7 @@ def _mcp_sources(
                 absent = [name for name in named if _absent(env, name)]
                 said = _unprovided(tenant_id, absent) if absent else None
             if said is not None:
-                raise ConfigError(
-                    f"Agent {spec.name!r} : {said} — serveur MCP {server.name!r}"
-                ) from exc
+                raise ConfigError(f"Agent {spec.name!r} : {said} — serveur MCP {server.name!r}") from exc
             raise ConfigError(f"Agent {spec.name!r} : {exc}") from exc
         selection = McpSelection(
             prefix=ref.prefix,
@@ -1926,9 +1711,7 @@ def _mcp_sources(
     return sources, owned
 
 
-def _packaged_sources(
-    config: LoomConfig, spec: AgentSpec, environ: Mapping[str, str] | None
-) -> list[PackagedSource]:
+def _packaged_sources(config: LoomConfig, spec: AgentSpec, environ: Mapping[str, str] | None) -> list[PackagedSource]:
     """Sources d'outils des paquets que l'agent référence (J6.4b).
 
     Le paquet de chaque source est importé ici, et sa fabrique appelée avec
@@ -1945,16 +1728,11 @@ def _packaged_sources(
         make = source_factory(declared.entry_point)
         told = f"Agent {spec.name!r}, source {declared.name!r} ({described(declared.entry_point)})"
         try:
-            made: object = make(
-                name=declared.name, params=declared.params, secrets=secrets, base_dir=base_dir
-            )
+            made: object = make(name=declared.name, params=declared.params, secrets=secrets, base_dir=base_dir)
         except Exception as exc:
             raise ConfigError(f"{told} : refusée par sa fabrique — {exc}") from exc
         if not callable(getattr(made, "open", None)):
-            raise ConfigError(
-                f"{told} : la fabrique n'a pas rendu une source d'outils ({type(made).__name__}, "
-                "sans méthode open)"
-            )
+            raise ConfigError(f"{told} : la fabrique n'a pas rendu une source d'outils ({type(made).__name__}, sans méthode open)")
         sources.append(
             PackagedSource(
                 made,
@@ -1971,10 +1749,7 @@ def _packaged_sources(
 
 
 def _missing_mcp(reason: str) -> ConfigError:
-    return ConfigError(
-        f"Client MCP indisponible alors que {reason} : le SDK 'mcp' n'est pas "
-        "installé (installer l'extra : loom-ia[mcp])"
-    )
+    return ConfigError(f"Client MCP indisponible alors que {reason} : le SDK 'mcp' n'est pas installé (installer l'extra : loom-ia[mcp])")
 
 
 def _tool(
@@ -1987,10 +1762,7 @@ def _tool(
 ) -> Tool:
     if declared.skill_file is not None:
         # Une spec construite en Python n'est pas passée par le chargement.
-        raise ConfigError(
-            f"Agent {agent!r}, outil {declared.python!r} : skill_file {declared.skill_file} "
-            "non lu — un skill se lit au chargement (load_config)"
-        )
+        raise ConfigError(f"Agent {agent!r}, outil {declared.python!r} : skill_file {declared.skill_file} non lu — un skill se lit au chargement (load_config)")
     try:
         if is_builtin(declared.python):
             found: object = _builtin_tool(declared, provided or BuiltinContext(base_dir=base_dir))
@@ -2040,17 +1812,13 @@ def _builtin_tool(declared: PythonTool, context: BuiltinContext) -> Tool:
         missing = exc.name or str(exc)
         extra = builtin_entry(reference).extra
         hint = f" (installer l'extra : loom-ia[{extra}])" if extra else ""
-        raise ConfigError(
-            f"Outil fourni {reference!r} : dépendance {missing!r} absente{hint}"
-        ) from exc
+        raise ConfigError(f"Outil fourni {reference!r} : dépendance {missing!r} absente{hint}") from exc
     except ValueError as exc:
         # La fabrique refuse ses paramètres : un dossier absent, un chemin protégé…
         raise ConfigError(str(exc)) from exc
 
 
-def _builtin_closables(
-    declared: Sequence[PythonTool], tools: Sequence[Tool]
-) -> tuple[_Closable, ...]:
+def _builtin_closables(declared: Sequence[PythonTool], tools: Sequence[Tool]) -> tuple[_Closable, ...]:
     """Les outils fournis qui ont un ``aclose`` : ceux qu'un agent ferme avec lui.
 
     Seulement les outils fournis : un outil à soi qui aurait un ``aclose`` n'était
@@ -2111,18 +1879,14 @@ def _protected_paths(config: LoomConfig) -> tuple[Protected, ...]:
         if events.path is not None:
             found.append(Protected(events.path, "le journal", subtree=events.backend == "jsonl"))
         if storage.artifacts_path is not None:
-            found.append(
-                Protected(storage.artifacts_path, "le dossier des artefacts", subtree=True)
-            )
+            found.append(Protected(storage.artifacts_path, "le dossier des artefacts", subtree=True))
         if storage.idempotency.path is not None:
             found.append(Protected(storage.idempotency.path, "le magasin d'idempotence"))
     return tuple(found)
 
 
 # Ce qu'un serveur MCP exécute : un script, pas une donnée qu'il sert.
-_SCRIPT_SUFFIXES: Final = frozenset(
-    {".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".sh", ".bash", ".rb", ".pl", ".php"}
-)
+_SCRIPT_SUFFIXES: Final = frozenset({".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".sh", ".bash", ".rb", ".pl", ".php"})
 
 
 def _code_names(config: LoomConfig) -> set[str]:
@@ -2205,9 +1969,7 @@ def _mcp_code(config: LoomConfig, base: Path | None) -> list[Protected]:
 
 def _from_function(declared: PythonTool, found: object) -> Tool:
     if not callable(found):
-        raise ConfigError(
-            f"Référence {declared.python!r} : ni un outil ni une fonction ({type(found).__name__})"
-        )
+        raise ConfigError(f"Référence {declared.python!r} : ni un outil ni une fonction ({type(found).__name__})")
     try:
         return FunctionTool(found)
     except (TypeError, ValueError) as exc:

@@ -29,9 +29,7 @@ def test_message_round_trip_keeps_every_block_type() -> None:
     assistant = Message(
         role="assistant",
         blocks=(
-            ReasoningBlock(
-                text="je calcule", provider_meta={"anthropic": AnthropicMeta(signature="s")}
-            ),
+            ReasoningBlock(text="je calcule", provider_meta={"anthropic": AnthropicMeta(signature="s")}),
             TextBlock(text="Je lance le calcul.", cache_breakpoint=True),
             JsonBlock(data={"a": [1, 2]}),
             ArtifactRefBlock(uri="file://devis.pdf", media_type="application/pdf", size=10),
@@ -71,9 +69,7 @@ def test_provider_meta_key_must_match_provider() -> None:
         ("tool", ReasoningBlock(text="x")),
     ],
 )
-def test_message_rejects_blocks_in_wrong_role(
-    role: str, block: TextBlock | ToolCallBlock | ToolResultBlock | ReasoningBlock
-) -> None:
+def test_message_rejects_blocks_in_wrong_role(role: str, block: TextBlock | ToolCallBlock | ToolResultBlock | ReasoningBlock) -> None:
     with pytest.raises(ValidationError):
         Message.model_validate({"role": role, "blocks": [block.model_dump()]})
 
@@ -133,9 +129,7 @@ def test_an_empty_state_is_not_serialized() -> None:
 
 
 def test_usage_addition_and_total() -> None:
-    total = Usage(input_tokens=10, output_tokens=5, cache_read_tokens=2) + Usage(
-        input_tokens=1, cache_write_tokens=3, reasoning_tokens=4
-    )
+    total = Usage(input_tokens=10, output_tokens=5, cache_read_tokens=2) + Usage(input_tokens=1, cache_write_tokens=3, reasoning_tokens=4)
     assert total == Usage(
         input_tokens=11,
         output_tokens=5,

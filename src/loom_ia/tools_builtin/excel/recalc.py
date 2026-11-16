@@ -44,9 +44,7 @@ def recalculate(data: bytes, formulas: Sequence[str], soffice: Path, timeout: fl
             str(source),
         ]
         try:
-            done = subprocess.run(
-                command, capture_output=True, text=True, timeout=timeout, check=False
-            )
+            done = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
         except subprocess.TimeoutExpired:
             raise ToolError(f"Recalcul interrompu après {timeout:g} s.") from None
         except OSError as exc:
@@ -64,9 +62,7 @@ def recalculate(data: bytes, formulas: Sequence[str], soffice: Path, timeout: fl
                 errors.setdefault(value, []).append(address)
     count = sum(len(cells) for cells in errors.values())
     if count:
-        said = "; ".join(
-            f"{kind} : {', '.join(cells[:MAX_ERRORS_SAID])}" for kind, cells in errors.items()
-        )
+        said = "; ".join(f"{kind} : {', '.join(cells[:MAX_ERRORS_SAID])}" for kind, cells in errors.items())
         raise ToolError(
             f"Recalcul : {count} formule(s) en erreur sur {len(formulas)} — {said}. "
             "Le classeur n'est pas écrit ; corriger ces formules (IFERROR pour un dénominateur "

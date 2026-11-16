@@ -96,9 +96,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     PRIMARY KEY (doc_id, idx)
 );
 """
-_DOCUMENT_COLUMNS: Final = (
-    "doc_id, project, title, source_kind, source, added_at, updated_at, content_hash, text"
-)
+_DOCUMENT_COLUMNS: Final = "doc_id, project, title, source_kind, source, added_at, updated_at, content_hash, text"
 
 
 class ModelMismatchError(Exception):
@@ -184,9 +182,7 @@ class MemoryStore:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 yield connection
-                connection.execute(
-                    "UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'generation'"
-                )
+                connection.execute("UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'generation'")
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")
@@ -208,22 +204,16 @@ class MemoryStore:
                         connection.execute(statement)
                 meta = dict(connection.execute("SELECT key, value FROM meta").fetchall())
                 if "schema" in meta and meta["schema"] != SCHEMA_VERSION:
-                    raise ModelMismatchError(
-                        f"{self.path} : schéma de mémoire {meta['schema']}, cette version de "
-                        f"loom-ia lit le schéma {SCHEMA_VERSION}"
-                    )
+                    raise ModelMismatchError(f"{self.path} : schéma de mémoire {meta['schema']}, cette version de loom-ia lit le schéma {SCHEMA_VERSION}")
                 indexed = (meta.get("embedder"), meta.get("dim"))
                 if check and indexed[0] is not None and indexed != (model, str(dim)):
                     raise ModelMismatchError(
-                        f"{self.path} a été indexée avec {indexed[0]} ({indexed[1]}), la config "
-                        f"demande {model} ({dim}) : lancer « loom memory reindex »"
+                        f"{self.path} a été indexée avec {indexed[0]} ({indexed[1]}), la config demande {model} ({dim}) : lancer « loom memory reindex »"
                     )
                 defaults = {"schema": SCHEMA_VERSION, "generation": "0"}
                 if indexed[0] is None:
                     defaults |= {"embedder": model, "dim": str(dim)}
-                connection.executemany(
-                    "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)", defaults.items()
-                )
+                connection.executemany("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)", defaults.items())
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")
@@ -255,9 +245,7 @@ class MemoryStore:
 
     def project_counts(self) -> dict[str, int]:
         with self._connection() as connection:
-            rows = connection.execute(
-                "SELECT project, count(*) FROM documents GROUP BY project ORDER BY project"
-            ).fetchall()
+            rows = connection.execute("SELECT project, count(*) FROM documents GROUP BY project ORDER BY project").fetchall()
         return {str(project): int(count) for project, count in rows}
 
     def count(self) -> tuple[int, int]:
@@ -272,9 +260,7 @@ class MemoryStore:
         with self._connection() as connection:
             connection.execute("BEGIN")
             try:
-                row = connection.execute(
-                    "SELECT value FROM meta WHERE key = 'generation'"
-                ).fetchone()
+                row = connection.execute("SELECT value FROM meta WHERE key = 'generation'").fetchone()
                 generation = int(row[0]) if row else 0
                 tags: dict[str, set[str]] = {}
                 for doc_id, tag in connection.execute("SELECT doc_id, tag FROM doc_tags"):
@@ -355,9 +341,7 @@ class MemoryStore:
         if not self.path.exists():
             return Peeked(doc=None)
         try:
-            connection = sqlite3.connect(
-                f"{self.path.resolve().as_uri()}?mode=ro", uri=True, timeout=PEEK_TIMEOUT_S
-            )
+            connection = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True, timeout=PEEK_TIMEOUT_S)
         except sqlite3.Error:
             return None
         try:
@@ -369,9 +353,7 @@ class MemoryStore:
 
     # --- Écriture -------------------------------------------------------------------
 
-    def write(
-        self, doc: Document, chunks: Sequence[Chunk], embeddings: Sequence[Embedding]
-    ) -> None:
+    def write(self, doc: Document, chunks: Sequence[Chunk], embeddings: Sequence[Embedding]) -> None:
         """Écrit le document et ses passages (ceux d'avant remplacés), en une transaction."""
         if len(chunks) != len(embeddings):
             raise ValueError("passages et vecteurs de longueurs différentes")
@@ -402,8 +384,7 @@ class MemoryStore:
             )
             connection.execute("DELETE FROM chunks WHERE doc_id = ?", (doc.doc_id,))
             connection.executemany(
-                "INSERT INTO chunks (doc_id, idx, heading_path, text, dense, sparse) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO chunks (doc_id, idx, heading_path, text, dense, sparse) VALUES (?, ?, ?, ?, ?, ?)",
                 [
                     (
                         doc.doc_id,
@@ -428,44 +409,28 @@ class MemoryStore:
         with self._writing() as connection:
             connection.execute("DELETE FROM chunks")
             connection.executemany(
-                "INSERT INTO meta (key, value) VALUES (?, ?) "
-                "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
                 [("embedder", model), ("dim", str(dim))],
             )
 
 
-def _documents(
-    connection: sqlite3.Connection, where: str, args: tuple[object, ...]
-) -> list[Document]:
-    rows = connection.execute(
-        f"SELECT {_DOCUMENT_COLUMNS} FROM documents WHERE {where}", args
-    ).fetchall()
+def _documents(connection: sqlite3.Connection, where: str, args: tuple[object, ...]) -> list[Document]:
+    rows = connection.execute(f"SELECT {_DOCUMENT_COLUMNS} FROM documents WHERE {where}", args).fetchall()
     documents: list[Document] = []
     for row in rows:
-        tags = [
-            str(tag)
-            for (tag,) in connection.execute(
-                "SELECT tag FROM doc_tags WHERE doc_id = ? ORDER BY position", (row[0],)
-            )
-        ]
+        tags = [str(tag) for (tag,) in connection.execute("SELECT tag FROM doc_tags WHERE doc_id = ? ORDER BY position", (row[0],))]
         documents.append(_document(row, tags))
     return documents
 
 
-def _with_content(
-    connection: sqlite3.Connection, content_hash: str, project: str
-) -> Document | None:
-    found = _documents(
-        connection, "content_hash = ? AND project = ? LIMIT 1", (content_hash, project)
-    )
+def _with_content(connection: sqlite3.Connection, content_hash: str, project: str) -> Document | None:
+    found = _documents(connection, "content_hash = ? AND project = ? LIMIT 1", (content_hash, project))
     return found[0] if found else None
 
 
 def _document(row: Sequence[object], tags: list[str]) -> Document:
     doc_id, project, title, source_kind, source, added_at, updated_at, digest, text = row
-    kind: SourceKind = (
-        "url" if source_kind == "url" else "file" if source_kind == "file" else "text"
-    )
+    kind: SourceKind = "url" if source_kind == "url" else "file" if source_kind == "file" else "text"
     return Document(
         doc_id=str(doc_id),
         title=str(title),

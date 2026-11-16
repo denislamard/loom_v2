@@ -236,9 +236,7 @@ async def test_allowed_errors_are_journaled_and_skipped() -> None:
     def suivante(subject: BeforeTool) -> Decision:
         return Deny("refusé")
 
-    verdict = await Policies([bound(fautive, on_error="allow"), bound(suivante)]).run(
-        before_tool(), call_id="c1"
-    )
+    verdict = await Policies([bound(fautive, on_error="allow"), bound(suivante)]).run(before_tool(), call_id="c1")
     assert verdict.decision == Deny("refusé")
     allowed, denied = verdict.decided
     assert (allowed.decision, allowed.error, allowed.event_status) == ("continue", True, "warning")
@@ -261,9 +259,7 @@ async def test_retry_is_bounded_by_max_attempts() -> None:
     [event] = first.decided
     assert (event.attempt, event.tools, event.reason) == (1, False, "Cite le devis.")
 
-    tired = OnOutput(
-        state=STATE.model_copy(update={"retries": {"exigeante": 2}}), output=subject.output
-    )
+    tired = OnOutput(state=STATE.model_copy(update={"retries": {"exigeante": 2}}), output=subject.output)
     last = await policies.run(tired)
     assert isinstance(last.decision, Fail)
     assert "2 réparation(s)" in last.decision.error and "Cite le devis." in last.decision.error
@@ -275,9 +271,7 @@ async def test_ignored_decisions_are_neither_applied_nor_journaled() -> None:
     def plafond(subject: BeforeModel) -> Decision:
         return Stop("plafond")
 
-    verdict = await Policies([bound(plafond)]).run(
-        BeforeModel(state=STATE, request=REQUEST, finalizing=True), ignore=frozenset({"stop"})
-    )
+    verdict = await Policies([bound(plafond)]).run(BeforeModel(state=STATE, request=REQUEST, finalizing=True), ignore=frozenset({"stop"}))
     assert verdict.decision == CONTINUE and not verdict.decided
 
 
@@ -309,9 +303,7 @@ async def test_ignored_decisions_are_neither_applied_nor_journaled() -> None:
         ),
     ],
 )
-async def test_replacement_values_are_checked(
-    subject: BeforeModel | AfterTool | OnOutput | AfterModel, value: object, expected: str | None
-) -> None:
+async def test_replacement_values_are_checked(subject: BeforeModel | AfterTool | OnOutput | AfterModel, value: object, expected: str | None) -> None:
     point = subject.point
 
     @policy(points=[point], decisions=["replace"])
@@ -331,9 +323,7 @@ async def test_replaced_output_is_journaled() -> None:
     def signe(subject: OnOutput) -> Decision:
         return Replace(f"{subject.output.text}\n-- Dupont")
 
-    verdict = await Policies([bound(signe)]).run(
-        OnOutput(state=STATE, output=Message.assistant("Bonjour"))
-    )
+    verdict = await Policies([bound(signe)]).run(OnOutput(state=STATE, output=Message.assistant("Bonjour")))
     [event] = verdict.decided
     assert event.output == Message.assistant("Bonjour\n-- Dupont")
 
@@ -347,9 +337,7 @@ async def test_require_tool_until_a_tool_is_called() -> None:
     assert isinstance(first, Replace)
     assert isinstance(first.value, ModelRequest) and first.value.tool_choice == "required"
 
-    called = STATE.model_copy(
-        update={"messages": (*STATE.messages, tool_call_message(("c1", "calculer", {})))}
-    )
+    called = STATE.model_copy(update={"messages": (*STATE.messages, tool_call_message(("c1", "calculer", {})))})
     quiet = [
         BeforeModel(state=called, request=REQUEST),
         BeforeModel(state=STATE, request=REQUEST, finalizing=True),
@@ -451,17 +439,11 @@ def test_decisions_must_be_allowed_at_each_point() -> None:
     def mal_placee(subject: object) -> Decision:
         return CONTINUE
 
-    spec = AgentSpec.model_validate(
-        {"name": "demo", "main": {"model": "FAKE"}, "policies": [{"hook": "mal_placee"}]}
-    )
+    spec = AgentSpec.model_validate({"name": "demo", "main": {"model": "FAKE"}, "policies": [{"hook": "mal_placee"}]})
     with pytest.raises(ConfigError, match="deny non permise\\(s\\) au point after_model"):
         build_policies(spec, Registry({"mal_placee": mal_placee}))
-    placed = spec.model_copy(
-        update={"policies": (spec.policies[0].model_copy(update={"points": ("before_tool",)}),)}
-    )
-    assert [b.name for b in build_policies(placed, Registry({"mal_placee": mal_placee})).bound] == [
-        "mal_placee"
-    ]
+    placed = spec.model_copy(update={"policies": (spec.policies[0].model_copy(update={"points": ("before_tool",)}),)})
+    assert [b.name for b in build_policies(placed, Registry({"mal_placee": mal_placee})).bound] == ["mal_placee"]
 
 
 def test_policy_names_are_unique_and_not_reserved(tmp_path: Path) -> None:
@@ -479,9 +461,7 @@ def test_policy_names_are_unique_and_not_reserved(tmp_path: Path) -> None:
 
 
 def test_imports_register_policies_but_not_classes(tmp_path: Path) -> None:
-    (tmp_path / "politiques_import.py").write_text(
-        POLITIQUES + "\nfrom loom_ia.policies import FunctionPolicy\n", encoding="utf-8"
-    )
+    (tmp_path / "politiques_import.py").write_text(POLITIQUES + "\nfrom loom_ia.policies import FunctionPolicy\n", encoding="utf-8")
     registry = import_modules(["politiques_import"], base_dir=tmp_path)
     assert {"prudente", "partout", "attente"} <= set(registry.names)
     assert "FunctionPolicy" not in registry.names

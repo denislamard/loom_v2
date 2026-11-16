@@ -105,9 +105,7 @@ class MediaResolver:
 
     def images(self, request: ModelRequest) -> int:
         """Nombre d'images que le modèle recevra (estimation de la fenêtre)."""
-        return sum(
-            1 for message in request.messages for block in _refs(message.blocks) if self.sees(block)
-        )
+        return sum(1 for message in request.messages for block in _refs(message.blocks) if self.sees(block))
 
     async def resolve(self, request: ModelRequest) -> ModelRequest:
         """Requête prête à partir ; lève ``ModelError`` si une image est inutilisable."""
@@ -146,36 +144,25 @@ class MediaResolver:
             return TextBlock(text=f"[image {describe(block)} : dans le message qui suit]")
         return resolved
 
-    async def _resolved(
-        self, block: ArtifactRefBlock, verb: str, *, refused_as_text: bool = False
-    ) -> TextBlock | InlineDataBlock:
+    async def _resolved(self, block: ArtifactRefBlock, verb: str, *, refused_as_text: bool = False) -> TextBlock | InlineDataBlock:
         if not self.sees(block):
             if is_image(block.media_type):
-                return TextBlock(
-                    text=f"[image {verb} {describe(block)} : non visible par ce modèle]"
-                )
+                return TextBlock(text=f"[image {verb} {describe(block)} : non visible par ce modèle]")
             return TextBlock(text=f"[fichier {describe(block)}]")
         capabilities = self.spec.capabilities
         label = describe(block)
         image_format = IMAGE_TYPES[block.media_type]
         if image_format not in capabilities.image_formats:
-            reason = (
-                f"format {image_format} refusé par le modèle {self.spec.id} "
-                f"(formats acceptés : {', '.join(capabilities.image_formats)})"
-            )
+            reason = f"format {image_format} refusé par le modèle {self.spec.id} (formats acceptés : {', '.join(capabilities.image_formats)})"
             return self._refused(label, verb, reason, refused_as_text)
         limit = capabilities.max_image_bytes
         if limit is not None and block.size is not None and block.size > limit:
             # La taille connue suffit : l'image n'est pas lue pour rien.
-            reason = (
-                f"{block.size} octets, au-delà des {limit} acceptés par le modèle {self.spec.id}"
-            )
+            reason = f"{block.size} octets, au-delà des {limit} acceptés par le modèle {self.spec.id}"
             return self._refused(label, verb, reason, refused_as_text)
         data = await self._load(block, label)
         if limit is not None and len(data) > limit:
-            reason = (
-                f"{len(data)} octets, au-delà des {limit} acceptés par le modèle {self.spec.id}"
-            )
+            reason = f"{len(data)} octets, au-delà des {limit} acceptés par le modèle {self.spec.id}"
             return self._refused(label, verb, reason, refused_as_text)
         return InlineDataBlock(media_type=block.media_type, data=data, name=block.name)
 
@@ -187,15 +174,11 @@ class MediaResolver:
 
     async def _load(self, block: ArtifactRefBlock, label: str) -> bytes:
         if self.store is None:
-            raise ModelError(
-                "invalid_request", f"Image {label} : aucun stockage d'artefacts pour la lire"
-            )
+            raise ModelError("invalid_request", f"Image {label} : aucun stockage d'artefacts pour la lire")
         try:
             return await self.store.get(block.uri)
         except ArtifactNotFound as exc:
-            raise ModelError(
-                "invalid_request", f"Image {label} introuvable dans le stockage : {block.uri}"
-            ) from exc
+            raise ModelError("invalid_request", f"Image {label} introuvable dans le stockage : {block.uri}") from exc
 
 
 def _earlier(block: ArtifactRefBlock, holder: str, origin: str = "") -> TextBlock:
@@ -220,9 +203,7 @@ def _without_images(message: Message) -> Message:
                 blocks.append(_earlier(block, "ce message contenait", ", jointe par l'utilisateur"))
             case ToolResultBlock(output=output):
                 outputs = tuple(
-                    _earlier(item, "ce résultat contenait")
-                    if isinstance(item, ArtifactRefBlock) and is_image(item.media_type)
-                    else item
+                    _earlier(item, "ce résultat contenait") if isinstance(item, ArtifactRefBlock) and is_image(item.media_type) else item
                     for item in output.blocks
                 )
                 resolved = output.model_copy(update={"blocks": outputs})
@@ -242,9 +223,7 @@ class ConversationFiles:
     session (un message construit par l'application, par exemple) est ignorée.
     """
 
-    def __init__(
-        self, messages: Sequence[Message], store: ArtifactStore, *, tenant: str, session: str
-    ) -> None:
+    def __init__(self, messages: Sequence[Message], store: ArtifactStore, *, tenant: str, session: str) -> None:
         self._messages = messages
         self._store = store
         self._place = (tenant, session)
@@ -252,12 +231,7 @@ class ConversationFiles:
 
     def _all(self) -> list[ArtifactRefBlock]:
         if self._found is None:
-            self._found = [
-                ref
-                for message in self._messages
-                for ref in _refs(message.blocks)
-                if self._here(ref.uri)
-            ]
+            self._found = [ref for message in self._messages for ref in _refs(message.blocks) if self._here(ref.uri)]
         return self._found
 
     def _here(self, uri: str) -> bool:

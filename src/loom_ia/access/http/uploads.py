@@ -83,9 +83,7 @@ RUN_BODY: Final[dict[str, Any]] = {
 }
 
 
-async def run_request(
-    request: Request, policy: AttachmentPolicy
-) -> tuple[RunRequest, list[Attachment]]:
+async def run_request(request: Request, policy: AttachmentPolicy) -> tuple[RunRequest, list[Attachment]]:
     """Demande de run et pièces jointes, lues selon le type du corps.
 
     Un corps invalide donne 422, un type de corps inconnu 415, un envoi trop
@@ -141,13 +139,9 @@ async def _form(request: Request, policy: AttachmentPolicy) -> AsyncGenerator[Fo
         detail = str(exc.detail)
         if exc.status_code == status.HTTP_400_BAD_REQUEST and detail.startswith("Too many files"):
             policy.check_count(policy.max_files + 1)
-        if exc.status_code == status.HTTP_400_BAD_REQUEST and detail.startswith(
-            "Invalid multipart"
-        ):
+        if exc.status_code == status.HTTP_400_BAD_REQUEST and detail.startswith("Invalid multipart"):
             # Starlette 1.7 convertit lui-même l'erreur de l'analyseur : même refus qu'avant.
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, f"Formulaire illisible : {detail}"
-            ) from exc
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Formulaire illisible : {detail}") from exc
         raise
 
 
@@ -179,9 +173,7 @@ def _metadata(value: str) -> object:
 
 
 def _refuse(field: str, reason: str) -> NoReturn:
-    raise RequestValidationError(
-        [{"type": "value_error", "loc": ("body", field), "msg": reason, "input": None}]
-    )
+    raise RequestValidationError([{"type": "value_error", "loc": ("body", field), "msg": reason, "input": None}])
 
 
 def _ceiling(policy: AttachmentPolicy) -> int:

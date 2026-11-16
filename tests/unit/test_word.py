@@ -209,11 +209,7 @@ async def test_writes_a_document_in_the_house_style(tool: WordTool, disk: Path) 
     assert "1\u00a0430,50\u00a0€" in texts and "— M. Martin" in texts
     # L'emphase et le saut de ligne.
     runs = body.findall(f".//{W}r")
-    assert any(
-        r.find(f"{W}rPr/{W}b") is not None
-        and "Dupont" in "".join(t.text or "" for t in r.iter(f"{W}t"))
-        for r in runs
-    )
+    assert any(r.find(f"{W}rPr/{W}b") is not None and "Dupont" in "".join(t.text or "" for t in r.iter(f"{W}t")) for r in runs)
     assert body.find(f".//{W}br") is not None
     # L'en-tête du tableau se répète d'une page à l'autre ; le total est en gras.
     rows = body.findall(f".//{W}tr")
@@ -265,8 +261,7 @@ def test_assess_asks_only_where_the_folder_asks(tool: WordTool) -> None:
     replacing = tool.assess_call({"path": "sortie/a.docx", "overwrite": True, **DEVIS})
     assert (replacing.approval, replacing.side_effects) == ("always", "irreversible")
     assert replacing.reason == (
-        "écrire le fichier sortie/a.docx, en remplaçant le fichier s'il existe — la config "
-        "exige une approbation pour remplacer un fichier existant dans sortie"
+        "écrire le fichier sortie/a.docx, en remplaçant le fichier s'il existe — la config exige une approbation pour remplacer un fichier existant dans sortie"
     )
     asked = tool.assess_call({"path": "valide/a.docx", **DEVIS})
     assert asked.approval == "always"
@@ -312,21 +307,13 @@ async def test_what_it_writes_reads_back_in_the_same_vocabulary(tool: WordTool) 
     assert blocks[-1] == {"type": "heading", "level": 2, "text": "Conditions"}
 
 
-def docx(
-    body: str, *, styles: str = "", numbering: str = "", extra: dict[str, str] | None = None
-) -> bytes:
+def docx(body: str, *, styles: str = "", numbering: str = "", extra: dict[str, str] | None = None) -> bytes:
     """Un .docx fait main : le corps, et au besoin des styles et une numérotation."""
     relations = ""
     if styles:
-        relations += (
-            '<Relationship Id="rS" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-            'relationships/styles" Target="styles.xml"/>'
-        )
+        relations += '<Relationship Id="rS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
     if numbering:
-        relations += (
-            '<Relationship Id="rN" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-            'relationships/numbering" Target="numbering.xml"/>'
-        )
+        relations += '<Relationship Id="rN" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>'
     parts = {
         "[Content_Types].xml": "<Types/>",
         "_rels/.rels": (
@@ -335,16 +322,9 @@ def docx(
             'relationships/officeDocument" Target="word/document.xml"/></Relationships>'
         ),
         "word/document.xml": f"<w:document {NS}><w:body>{body}</w:body></w:document>",
-        "word/_rels/document.xml.rels": (
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            f"{relations}</Relationships>"
-        ),
+        "word/_rels/document.xml.rels": (f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{relations}</Relationships>'),
         **({"word/styles.xml": f"<w:styles {NS}>{styles}</w:styles>"} if styles else {}),
-        **(
-            {"word/numbering.xml": f"<w:numbering {NS}>{numbering}</w:numbering>"}
-            if numbering
-            else {}
-        ),
+        **({"word/numbering.xml": f"<w:numbering {NS}>{numbering}</w:numbering>"} if numbering else {}),
         **(extra or {}),
     }
     raw = io.BytesIO()
@@ -392,9 +372,7 @@ async def test_reads_what_word_writes_and_this_tool_does_not(tool: WordTool, dis
         + "</w:tc></w:tr></w:tbl>"
         + p("   ")
     )  # fmt: skip
-    (disk / "modeles" / "fait-main.docx").write_bytes(
-        docx(body, styles=styles, numbering=numbering, extra={"word/comments.xml": "<c/>"})
-    )
+    (disk / "modeles" / "fait-main.docx").write_bytes(docx(body, styles=styles, numbering=numbering, extra={"word/comments.xml": "<c/>"}))
     found = await call(tool, action="read", path="modeles/fait-main.docx")
     assert found["blocks"] == [
         {"type": "heading", "level": 1, "text": "Chapitre"},
@@ -455,9 +433,7 @@ async def test_a_long_document_is_read_in_parts(tool: WordTool, disk: Path) -> N
         ("renomme.docx", b"pas un zip", "pas un document .docx lisible"),
     ],
 )
-async def test_unreadable_files(
-    tool: WordTool, disk: Path, name: str, data: bytes, said: str
-) -> None:
+async def test_unreadable_files(tool: WordTool, disk: Path, name: str, data: bytes, said: str) -> None:
     (disk / "modeles" / name).write_bytes(data)
     await refused(tool, said, action="read", path=f"modeles/{name}")
 
@@ -471,9 +447,7 @@ async def test_a_zip_without_a_body_is_refused(tool: WordTool, disk: Path) -> No
                   path="modeles/classeur.docx")  # fmt: skip
 
 
-async def test_a_zip_bomb_is_refused_unopened(
-    tool: WordTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_zip_bomb_is_refused_unopened(tool: WordTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(reader_module, "MAX_UNCOMPRESSED", 1_000_000)
     body = p("0" * 2_000_000)
     (disk / "modeles" / "bombe.docx").write_bytes(docx(body))
@@ -498,9 +472,7 @@ async def test_xml_entities_are_neither_expanded_nor_loaded(tool: WordTool, disk
         f'<?xml version="1.0"?><!DOCTYPE d [<!ENTITY x SYSTEM "{secret.as_uri()}">]>'
         f"<w:document {NS}><w:body><w:p><w:r><w:t>&x;</w:t></w:r></w:p></w:body></w:document>"
     )
-    (disk / "modeles" / "externe.docx").write_bytes(
-        _replace(docx(""), "word/document.xml", external)
-    )
+    (disk / "modeles" / "externe.docx").write_bytes(_replace(docx(""), "word/document.xml", external))
     with pytest.raises(ToolError) as caught:
         await tool.invoke({"action": "read", "path": "modeles/externe.docx"}, CONTEXT)
     assert "MOT-DE-PASSE" not in str(caught.value)
@@ -521,9 +493,7 @@ def _replace(data: bytes, name: str, text: str) -> bytes:
     return raw.getvalue()
 
 
-def test_reading_is_refused_where_expat_is_too_old(
-    disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_reading_is_refused_where_expat_is_too_old(disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import pyexpat
 
     monkeypatch.setattr(pyexpat, "version_info", (2, 2, 0))
@@ -560,8 +530,7 @@ def test_the_keys_of_2_0_say_the_new_form(demo: ConfigFactory, old: str, said: s
         (["chart", "chart"], "bloc nommé deux fois : chart"),
         (
             ["graphique"],
-            "Input should be 'chart', 'image', 'signature', 'toc', 'checkboxes', 'fields', "
-            "'code', 'invoice_totals' or 'attendance'",
+            "Input should be 'chart', 'image', 'signature', 'toc', 'checkboxes', 'fields', 'code', 'invoice_totals' or 'attendance'",
         ),
     ],
 )
@@ -573,9 +542,7 @@ def test_blocks_are_known_and_named_once(demo: ConfigFactory, blocks: list[str],
 
 def test_delete_is_refused_when_the_config_loads(demo: ConfigFactory) -> None:
     folders = [{"name": "s", "path": "/tmp", "rights": ["write"], "approval": {"delete": "never"}}]
-    with pytest.raises(
-        ConfigError, match=r"dossier s : le droit 'delete' ne sert pas à loom\.word"
-    ):
+    with pytest.raises(ConfigError, match=r"dossier s : le droit 'delete' ne sert pas à loom\.word"):
         load_config(demo(agents=[word_agent(folders=folders)]))
 
 
@@ -610,19 +577,14 @@ async def test_a_run_writes_the_document(demo: ConfigFactory, tmp_path: Path) ->
     assert (tmp_path / "sortie" / "d.docx").is_file()
 
 
-def test_validate_shows_the_folders(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_folders(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "sortie").mkdir()
     folders = [{"name": "sortie", "path": "sortie", "rights": ["read", "write"]}]
     path = demo(agents=[word_agent(folders=folders)], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
     assert "loom.word" in out
-    assert (
-        "fuseau : Europe/Paris · blocs : aucun · modèles : aucun · "
-        "lecture des documents : oui" in out
-    )
+    assert "fuseau : Europe/Paris · blocs : aucun · modèles : aucun · lecture des documents : oui" in out
 
 
 async def test_overwrite_needs_its_right(disk: Path) -> None:
@@ -702,9 +664,7 @@ async def test_reading_charts_without_charts_says_so(tool: WordTool, charted: Wo
     assert "chart" not in " ".join(again.get("notes", []))
 
 
-def test_validate_shows_charts(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_charts(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "sortie").mkdir()
     folders = [{"name": "sortie", "path": "sortie", "rights": ["write"]}]
     path = demo(agents=[word_agent(folders=folders, blocks=["chart"])], storage=JSONL)
@@ -767,14 +727,10 @@ _R: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationships
         ({"kind": "line", "series": [{"name": "CA", "values": [10, 20]}]}, []),
     ],
 )
-async def test_the_value_axis_leaves_room_for_the_labels(
-    charted: WordTool, disk: Path, chart: dict[str, Any], bounds: list[str]
-) -> None:
+async def test_the_value_axis_leaves_room_for_the_labels(charted: WordTool, disk: Path, chart: dict[str, Any], bounds: list[str]) -> None:
     block = {"type": "chart", "categories": ["a", "b"], **chart}
     await call(charted, path="sortie/axe.docx", blocks=[block], overwrite=True)
-    scaling = part(disk / "sortie" / "axe.docx", "word/charts/chart1.xml").find(
-        f".//{C}valAx/{C}scaling"
-    )
+    scaling = part(disk / "sortie" / "axe.docx", "word/charts/chart1.xml").find(f".//{C}valAx/{C}scaling")
     assert scaling is not None
     found = [child.get("val") for child in scaling if child.tag != f"{C}orientation"]
     assert found == bounds
@@ -819,11 +775,7 @@ async def test_libreoffice_reads_the_chart(charted: WordTool, disk: Path, soffic
     await call(tool, path="sortie/rapport.docx", **RAPPORT)
     convert(soffice, disk / "sortie" / "rapport.docx", disk / "odt", "odt")
     with zipfile.ZipFile(disk / "odt" / "rapport.odt") as archive:
-        objects = [
-            archive.read(name).decode()
-            for name in archive.namelist()
-            if name.startswith("Object") and name.endswith("content.xml")
-        ]
+        objects = [archive.read(name).decode() for name in archive.namelist() if name.startswith("Object") and name.endswith("content.xml")]
     classes = sorted(set(re.findall(r'chart:class="chart:(\w+)"', "".join(objects))))
     assert classes == ["bar", "circle"]
     assert "18034.17" in "".join(objects)
@@ -914,9 +866,7 @@ async def test_images_are_parts_of_the_archive(imaged: WordTool, disk: Path) -> 
         "word/media/image2.png",
         "word/media/image3.jpeg",
     ]
-    defaults = {
-        d.get("Extension"): d.get("ContentType") for d in types if d.tag.endswith("Default")
-    }
+    defaults = {d.get("Extension"): d.get("ContentType") for d in types if d.tag.endswith("Default")}
     assert (defaults["png"], defaults["jpeg"]) == ("image/png", "image/jpeg")
     targets = {r.get("Id"): r.get("Target") for r in relations}
     body = part(path, "word/document.xml")
@@ -979,12 +929,10 @@ async def test_image_faults_are_said_together(imaged: WordTool, disk: Path) -> N
     assert str(caught.value).splitlines() == [
         "Document refusé :",
         "- bloc 1 (image) : Droit read refusé sur valide/b.png (dossier valide : write)",
-        "- bloc 2 (image) : Dossier inconnu : 'inconnu'. Dossiers permis : maquettes, sortie, "
-        "valide, secret",
+        "- bloc 2 (image) : Dossier inconnu : 'inconnu'. Dossiers permis : maquettes, sortie, valide, secret",
         "- bloc 3 (image) : maquettes/absente.png : fichier introuvable",
         "- bloc 4 (image) : Chemin refusé : maquettes/dehors.png mène hors des dossiers permis",
-        "- bloc 5 (image) : maquettes/note.png : format non reconnu : PNG ou JPEG attendu (le "
-        "format se lit dans le fichier, pas dans son nom)",
+        "- bloc 5 (image) : maquettes/note.png : format non reconnu : PNG ou JPEG attendu (le format se lit dans le fichier, pas dans son nom)",
         "- bloc 6 (image) : maquettes/coupee.png : PNG tronqué (fichier incomplet)",
         f"- bloc 7 (image) : maquettes/lourde.jpg dépasse {MAX_IMAGE_BYTES} octets",
     ]
@@ -1001,13 +949,10 @@ def test_assess_counts_the_reads_of_images(imaged: WordTool) -> None:
     asked = imaged.assess_call({"path": "sortie/a.docx", "blocks": blocks})
     assert (asked.approval, asked.side_effects) == ("always", "reversible")
     assert asked.reason == (
-        "écrire le fichier sortie/a.docx, avec 4 image(s) lue(s) dans maquettes, secret — la "
-        "config exige une approbation pour lire dans secret"
+        "écrire le fichier sortie/a.docx, avec 4 image(s) lue(s) dans maquettes, secret — la config exige une approbation pour lire dans secret"
     )
     # Une image d'un dossier sans read : l'appel sera refusé, il n'a aucun effet.
-    refused_call = imaged.assess_call(
-        {"path": "sortie/a.docx", "blocks": [{"type": "image", "path": "valide/b.png"}]}
-    )
+    refused_call = imaged.assess_call({"path": "sortie/a.docx", "blocks": [{"type": "image", "path": "valide/b.png"}]})
     assert refused_call.side_effects == "none"
 
 
@@ -1033,9 +978,7 @@ async def test_underline_is_written_read_back_and_rewritten(tool: WordTool, disk
     assert again["sha256"] == written["sha256"]
 
 
-async def test_any_underline_of_a_document_from_elsewhere_reads_back(
-    tool: WordTool, disk: Path
-) -> None:
+async def test_any_underline_of_a_document_from_elsewhere_reads_back(tool: WordTool, disk: Path) -> None:
     body = (
         '<w:p><w:r><w:t xml:space="preserve">Voir </w:t></w:r>'
         '<w:r><w:rPr><w:u w:val="double"/></w:rPr><w:t>double</w:t></w:r>'
@@ -1045,9 +988,7 @@ async def test_any_underline_of_a_document_from_elsewhere_reads_back(
     )
     (disk / "modeles" / "souligne.docx").write_bytes(docx(body))
     found = await call(tool, action="read", path="modeles/souligne.docx")
-    assert {"type": "paragraph", "text": "Voir <u>double</u> et non **<u>ici</u>**"} in found[
-        "blocks"
-    ]
+    assert {"type": "paragraph", "text": "Voir <u>double</u> et non **<u>ici</u>**"} in found["blocks"]
 
 
 async def test_images_read_back_and_rewrite_the_same_file(imaged: WordTool) -> None:
@@ -1112,9 +1053,7 @@ async def test_libreoffice_shows_the_images(imaged: WordTool, disk: Path, soffic
     assert len(re.findall(r'draw:name="maquettes/', content)) == 3
 
 
-def test_validate_shows_images(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_images(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "sortie").mkdir()
     folders = [{"name": "sortie", "path": "sortie", "rights": ["read", "write"]}]
     path = demo(agents=[word_agent(folders=folders, blocks=["image", "chart"])], storage=JSONL)
@@ -1201,8 +1140,7 @@ async def test_a_document_follows_its_template(modeled: WordTool, disk: Path) ->
         "Document refusé :",
         "- modèle rapport : section inconnue « Bilan »",
         "- modèle rapport : section(s) absente(s) : « Contexte »",
-        "- modèle rapport, sections attendues : Contexte · Photos (optional) · Travaux réalisés "
-        "· Garantie (fixed)",
+        "- modèle rapport, sections attendues : Contexte · Photos (optional) · Travaux réalisés · Garantie (fixed)",
     ]
     assert not (disk / "sortie" / "r.docx").exists()
     written = await call(
@@ -1239,9 +1177,7 @@ async def test_a_document_follows_its_template(modeled: WordTool, disk: Path) ->
     assert again["sha256"] == written["sha256"]
 
 
-async def test_a_free_document_has_no_template(
-    modeled: WordTool, tool: WordTool, disk: Path
-) -> None:
+async def test_a_free_document_has_no_template(modeled: WordTool, tool: WordTool, disk: Path) -> None:
     free = await call(modeled, path="sortie/libre.docx", template="none", **DEVIS)
     plain = await call(tool, path="sortie/devis.docx", **DEVIS)
     # Un document libre est le même fichier qu'un document écrit sans modèles.
@@ -1251,9 +1187,7 @@ async def test_a_free_document_has_no_template(
     assert "template" not in found and "sections" not in found
 
 
-async def test_reading_a_template_the_tool_does_not_know(
-    modeled: WordTool, tool: WordTool, disk: Path
-) -> None:
+async def test_reading_a_template_the_tool_does_not_know(modeled: WordTool, tool: WordTool, disk: Path) -> None:
     other = make(
         disk,
         {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
@@ -1262,10 +1196,7 @@ async def test_reading_a_template_the_tool_does_not_know(
     await call(other, path="sortie/o.docx", template="offre", sections=rapport("Besoin"))
     found = await call(modeled, action="read", path="sortie/o.docx")
     assert found["template"] == "offre"
-    assert (
-        "Le document dit suivre le modèle « offre », que cet outil ne déclare pas"
-        in found["notes"][0]
-    )
+    assert "Le document dit suivre le modèle « offre », que cet outil ne déclare pas" in found["notes"][0]
     # Relu à plat : le titre de la section est un titre de niveau 1.
     assert found["blocks"][0] == {"type": "heading", "level": 1, "text": "Besoin"}
     # Un outil sans modèles ne dit rien des modèles.
@@ -1285,9 +1216,7 @@ async def test_a_document_whose_sections_are_lost(modeled: WordTool, disk: Path)
     path = disk / "sortie" / "r.docx"
     with zipfile.ZipFile(path) as archive:
         parts = {name: archive.read(name) for name in archive.namelist()}
-    parts["word/document.xml"] = re.sub(
-        rb"<w:bookmark(Start|End) [^>]*/>", b"", parts["word/document.xml"]
-    )
+    parts["word/document.xml"] = re.sub(rb"<w:bookmark(Start|End) [^>]*/>", b"", parts["word/document.xml"])
     with zipfile.ZipFile(path, "w") as archive:
         for name, data in parts.items():
             archive.writestr(name, data)
@@ -1312,31 +1241,23 @@ def test_templates_need_a_folder_to_write(disk: Path) -> None:
         )
 
 
-def test_templates_are_read_when_the_config_loads(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_templates_are_read_when_the_config_loads(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "sortie").mkdir()
     folders = [{"name": "sortie", "path": "sortie", "rights": ["read", "write"]}]
-    path = demo(
-        agents=[word_agent(folders=folders, templates={"rapport": "rapport.yaml"})], storage=JSONL
-    )
+    path = demo(agents=[word_agent(folders=folders, templates={"rapport": "rapport.yaml"})], storage=JSONL)
     with pytest.raises(ConfigError, match=r"templates\[rapport\] — modèle introuvable"):
         load_config(path)
     prompts = tmp_path / "prompts"
     (prompts / "rapport.yaml").write_text(RAPPORT_YAML, encoding="utf-8")
     load_config(path)
     assert main(["--config", str(path), "validate"]) == 0
-    assert (
-        "blocs : aucun · modèles : rapport · lecture des documents : oui" in capsys.readouterr().out
-    )
+    assert "blocs : aucun · modèles : rapport · lecture des documents : oui" in capsys.readouterr().out
     for given, said in (
         ("../secret.yaml", "le fichier doit être dans le dossier des ressources"),
         ("prompts/rapport.yaml", "le chemin est relatif à resources_dir : écrire rapport.yaml"),
         ({"file": "rapport.yaml", "style": "s.yaml"}, "le modèle nomme son style dans son fichier"),
     ):
-        path = demo(
-            agents=[word_agent(folders=folders, templates={"rapport": given})], storage=JSONL
-        )
+        path = demo(agents=[word_agent(folders=folders, templates={"rapport": given})], storage=JSONL)
         with pytest.raises(ConfigError, match=re.escape(said)):
             load_config(path)
     for written, said in (
@@ -1359,14 +1280,8 @@ def test_a_shape_and_its_fallback_count_once() -> None:
     """B-2 : Word range une forme deux fois, en dessin (``mc:Choice``) et en VML de secours
     (``mc:Fallback``) ; la relecture ne la compte qu'une fois."""
     mc = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
-    shape = (
-        f'<w:r><mc:AlternateContent {mc}><mc:Choice Requires="wps"><w:drawing/></mc:Choice>'
-        "<mc:Fallback><w:pict/></mc:Fallback></mc:AlternateContent></w:r>"
-    )
-    body = (
-        f"<w:p>{shape}<w:r><w:t>Une zone de texte, puis une image.</w:t></w:r></w:p>"
-        f"<w:p><w:r><w:drawing/></w:r></w:p><w:p>{shape}</w:p>"
-    )
+    shape = f'<w:r><mc:AlternateContent {mc}><mc:Choice Requires="wps"><w:drawing/></mc:Choice><mc:Fallback><w:pict/></mc:Fallback></mc:AlternateContent></w:r>'
+    body = f"<w:p>{shape}<w:r><w:t>Une zone de texte, puis une image.</w:t></w:r></w:p><w:p><w:r><w:drawing/></w:r></w:p><w:p>{shape}</w:p>"
     found = reader_module.read(docx(body), "d.docx", 0)
     assert found["blocks"] == [{"type": "paragraph", "text": "Une zone de texte, puis une image."}]
     assert found["notes"] == ["3 image(s) ou forme(s) non lue(s)."]
@@ -1474,16 +1389,8 @@ async def test_rich_text_is_written_read_back_and_rewritten(disk: Path) -> None:
     assert document.count('<w:pStyle w:val="LoomCode"/>') == 1
     found = await call(tool, action="read", path="sortie/riche.docx")
     blocks = [b for b in found["blocks"] if b.get("level") != 0]
-    expected = [
-        {**block, "ordered": block.get("ordered", False)} if block["type"] == "list" else block
-        for block in RICH
-    ]
-    expected = [
-        {"type": "heading", "level": block.get("level", 1), "text": block["text"]}
-        if block["type"] == "heading"
-        else block
-        for block in expected
-    ]
+    expected = [{**block, "ordered": block.get("ordered", False)} if block["type"] == "list" else block for block in RICH]
+    expected = [{"type": "heading", "level": block.get("level", 1), "text": block["text"]} if block["type"] == "heading" else block for block in expected]
     assert blocks == expected
     again = await call(tool, path="sortie/riche2.docx", title="Devis", blocks=blocks)
     assert again["sha256"] == written["sha256"]
@@ -1494,21 +1401,17 @@ async def test_rich_text_is_written_read_back_and_rewritten(disk: Path) -> None:
     [
         (
             "decimal",
-            '<w:fldSimple w:instr=" REF _Ref_loom_3 \\n \\t \\h "><w:r>'
-            '<w:t xml:space="preserve">2.1</w:t></w:r></w:fldSimple>',
+            '<w:fldSimple w:instr=" REF _Ref_loom_3 \\n \\t \\h "><w:r><w:t xml:space="preserve">2.1</w:t></w:r></w:fldSimple>',
         ),
         # Un article : son numéro en lien (LibreOffice récrirait le champ « Article 2 » et son
         # tiret).
         (
             "article",
-            '<w:hyperlink w:anchor="_Ref_loom_2" w:history="1"><w:r>'
-            '<w:t xml:space="preserve">2</w:t></w:r></w:hyperlink>',
+            '<w:hyperlink w:anchor="_Ref_loom_2" w:history="1"><w:r><w:t xml:space="preserve">2</w:t></w:r></w:hyperlink>',
         ),
     ],
 )
-async def test_a_reference_to_a_numbered_heading_is_its_number(
-    disk: Path, numbering: str, said: str
-) -> None:
+async def test_a_reference_to_a_numbered_heading_is_its_number(disk: Path, numbering: str, said: str) -> None:
     tool = rich_tool(disk, style={"spec": {"numbering": numbering}})
     target = "Détail" if numbering == "decimal" else "Travaux"
     await call(
@@ -1591,8 +1494,7 @@ async def test_reads_links_notes_and_references_from_elsewhere(disk: Path) -> No
     found = await call(rich_tool(disk), action="read", path="modeles/ailleurs.docx")
     assert found["blocks"][1] == {
         "type": "paragraph",
-        "text": "Voir §[Garantie], §[Garantie], là, [le site](https://a.fr), le fichier"
-        "^[Une note de fin.].",
+        "text": "Voir §[Garantie], §[Garantie], là, [le site](https://a.fr), le fichier^[Une note de fin.].",
     }
 
 
@@ -1688,9 +1590,7 @@ async def test_an_invoice_is_calculated_read_back_and_rewritten(disk: Path) -> N
     ):
         assert said in texts, said
     # Le récapitulatif garde ses colonnes et l'acompte, pour la relecture.
-    assert (
-        '<w:tblDescription w:val=\'{"amount":"Montant HT","rate":"TVA","paid":500}\'/>'
-    ) in document
+    assert ('<w:tblDescription w:val=\'{"amount":"Montant HT","rate":"TVA","paid":500}\'/>') in document
     found = await call(tool, action="read", path="sortie/f.docx")
     table, invoice = found["blocks"][1:]
     # Les groupes reviennent, sans leurs sous-totaux, que l'outil recalcule.
@@ -1712,10 +1612,7 @@ async def test_an_invoice_is_calculated_read_back_and_rewritten(disk: Path) -> N
     ]  # fmt: skip
     assert invoice == INVOICE[1]
     # Réécrit : les lignes relues, sans la colonne calculée ; le même fichier.
-    rows = [
-        {"group": group["group"], "rows": [row[:4] for row in group["rows"]]}
-        for group in table["rows"][1:-1]
-    ]
+    rows = [{"group": group["group"], "rows": [row[:4] for row in group["rows"]]} for group in table["rows"][1:-1]]
     again = await call(
         tool,
         path="sortie/f2.docx",

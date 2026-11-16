@@ -143,9 +143,7 @@ class FromTable(_Model):
     """Les données du tableau qui précède le graphique : ses colonnes, par en-tête."""
 
     categories: Annotated[str, Field(description="En-tête de la colonne des libellés.")]
-    values: Annotated[
-        list[str], Field(min_length=1, description="En-têtes des colonnes de nombres.")
-    ]
+    values: Annotated[list[str], Field(min_length=1, description="En-têtes des colonnes de nombres.")]
 
 
 class Chart(_Model):
@@ -162,17 +160,11 @@ class Chart(_Model):
     def _one_source(self) -> Self:
         inline = self.categories is not None or self.series is not None
         if inline == (self.from_table is not None):
-            raise ValueError(
-                "un graphique prend ses données soit de 'categories' et 'series', soit de "
-                "'from_table' (le tableau qui le précède)"
-            )
+            raise ValueError("un graphique prend ses données soit de 'categories' et 'series', soit de 'from_table' (le tableau qui le précède)")
         if inline and (self.categories is None or self.series is None):
             raise ValueError("'categories' et 'series' vont ensemble")
         if self.from_table is not None and self.value_type is not None:
-            raise ValueError(
-                "'value_type' ne sert qu'aux données en ligne : from_table prend le type "
-                "des colonnes"
-            )
+            raise ValueError("'value_type' ne sert qu'aux données en ligne : from_table prend le type des colonnes")
         return self
 
 
@@ -263,20 +255,7 @@ type Block = Annotated[
 # Tous les blocs : ce qu'une écriture porte, quel que soit l'outil. Une liste à cocher
 # (``CheckList``) y passe comme liste : elle en est une.
 type WrittenBlock = Annotated[
-    Heading
-    | Paragraph
-    | ListBlock
-    | Table
-    | Note
-    | Quote
-    | Chart
-    | Image
-    | Signature
-    | Contents
-    | Fields
-    | Code
-    | InvoiceTotals
-    | Attendance,
+    Heading | Paragraph | ListBlock | Table | Note | Quote | Chart | Image | Signature | Contents | Fields | Code | InvoiceTotals | Attendance,
     Field(discriminator="type"),
 ]
 
@@ -313,10 +292,7 @@ def block_union(blocks: Iterable[str], styles: Proposed = ()) -> object:
         Note,
         Quote,
     ]
-    kinds = [
-        _styled(kind, proposed[name]) if (name := _TYPES[kind]) in proposed else kind
-        for kind in kinds
-    ]
+    kinds = [_styled(kind, proposed[name]) if (name := _TYPES[kind]) in proposed else kind for kind in kinds]
     kinds += [
         kind
         for name, kind in (
@@ -411,16 +387,12 @@ class DocumentCall(_Model):
         Field(description="write (par défaut) : écrire ; read : lire un fichier (droit read)."),
     ] = "write"
     path: Annotated[str, Field(description="« <dossier>/<chemin> »")]
-    title: Annotated[
-        str | None, Field(description="Pour write : le titre, en tête et dans les propriétés.")
-    ] = None
+    title: Annotated[str | None, Field(description="Pour write : le titre, en tête et dans les propriétés.")] = None
     blocks: Annotated[
         list[Block] | None,
         Field(max_length=MAX_BLOCKS, description=BLOCKS_SAID),
     ] = None
-    overwrite: Annotated[
-        bool | None, Field(description="Pour write : remplacer un fichier existant.")
-    ] = None
+    overwrite: Annotated[bool | None, Field(description="Pour write : remplacer un fichier existant.")] = None
 
     @model_validator(mode="after")
     def _fields_of_the_action(self) -> Self:
@@ -429,8 +401,7 @@ class DocumentCall(_Model):
             name
             for name in (*writing, *self.READ_FIELDS)
             # « overwrite: false » sur une lecture ne dit rien : pas une faute.
-            if (name in writing) != (self.action == "write")
-            and getattr(self, name) not in (None, False)
+            if (name in writing) != (self.action == "write") and getattr(self, name) not in (None, False)
         )
         if stray:
             raise ValueError(f"{', '.join(stray)} ne sert pas à {self.action}")
@@ -460,17 +431,9 @@ class DocumentCall(_Model):
         )
 
 
-ACTION_SAID: Final = (
-    "write (par défaut) : écrire ; read : lire un fichier (droit read) ; template : lire "
-    "un modèle de document."
-)
-TEMPLATE_SAID: Final = (
-    "Pour write : le modèle suivi, ou none (document libre) ; pour template : le modèle à lire."
-)
-SECTIONS_SAID: Final = (
-    "Pour write avec un modèle : le contenu de chaque section, par son nom (voir action "
-    "template) ; l'outil écrit les titres de section."
-)
+ACTION_SAID: Final = "write (par défaut) : écrire ; read : lire un fichier (droit read) ; template : lire un modèle de document."
+TEMPLATE_SAID: Final = "Pour write : le modèle suivi, ou none (document libre) ; pour template : le modèle à lire."
+SECTIONS_SAID: Final = "Pour write avec un modèle : le contenu de chaque section, par son nom (voir action template) ; l'outil écrit les titres de section."
 # Le nom de l'appel selon ses blocs facultatifs : ``WordChartImageCall``…
 _SUFFIXES: Final[Mapping[str, str]] = {
     "chart": "Chart",
@@ -502,11 +465,7 @@ def variant(
     (``input_schema``).
     """
     chosen = tuple(name for name in OPTIONAL_BLOCKS if name in blocks)
-    proposed: Proposed = tuple(
-        (kind, tuple(sorted(set(names))))
-        for kind, names in sorted((styles or {}).items())
-        if kind in STYLED_BLOCKS and names
-    )
+    proposed: Proposed = tuple((kind, tuple(sorted(set(names)))) for kind, names in sorted((styles or {}).items()) if kind in STYLED_BLOCKS and names)
     return _variant(base, chosen, templates, proposed)
 
 
@@ -555,11 +514,7 @@ def _variant(
             None,
         )
         validators["_template_of_the_action"] = model_validator(mode="after")(_template_rule)
-    suffix = (
-        "".join(_SUFFIXES[name] for name in chosen)
-        + ("Template" if templates else "")
-        + ("Styled" if proposed else "")
-    )
+    suffix = "".join(_SUFFIXES[name] for name in chosen) + ("Template" if templates else "") + ("Styled" if proposed else "")
     return create_model(
         f"{base.__name__.removesuffix('Call')}{suffix}Call",
         __base__=base,
@@ -579,23 +534,15 @@ def _template_rule[M: DocumentCall](self: M) -> M:
     if action == "template" and path is not None:
         raise ValueError("path ne sert pas à template")
     if action == "write" and template is None:
-        raise ValueError(
-            "write attend 'template' : le modèle suivi, ou none pour un document libre"
-        )
+        raise ValueError("write attend 'template' : le modèle suivi, ou none pour un document libre")
     sections = getattr(self, "sections", None)
     if action == "write" and template == NO_TEMPLATE and sections is not None:
         raise ValueError("un document libre (template none) s'écrit par 'blocks', pas 'sections'")
     if action == "write" and template not in (None, NO_TEMPLATE):
         if self.blocks is not None:
-            raise ValueError(
-                f"un document qui suit le modèle {template} s'écrit par 'sections' (le contenu "
-                "de chaque section, par son nom), pas 'blocks'"
-            )
+            raise ValueError(f"un document qui suit le modèle {template} s'écrit par 'sections' (le contenu de chaque section, par son nom), pas 'blocks'")
         if sections is None:
-            raise ValueError(
-                f"write avec le modèle {template} attend 'sections' : le contenu de chaque "
-                "section, par son nom (action template pour les lire)"
-            )
+            raise ValueError(f"write avec le modèle {template} attend 'sections' : le contenu de chaque section, par son nom (action template pour les lire)")
     if action == "read" and template is not None:
         raise ValueError("template ne sert pas à read")
     if action == "read" and sections is not None:
@@ -603,11 +550,7 @@ def _template_rule[M: DocumentCall](self: M) -> M:
     if action == "template":
         if template is None or template == NO_TEMPLATE:
             raise ValueError("action template attend 'template' : le nom du modèle à lire")
-        stray = sorted(
-            name
-            for name in (*self.READ_FIELDS, "title", "blocks", "overwrite", "sections")
-            if getattr(self, name, None) not in (None, False)
-        )
+        stray = sorted(name for name in (*self.READ_FIELDS, "title", "blocks", "overwrite", "sections") if getattr(self, name, None) not in (None, False))
         if stray:
             raise ValueError(f"{', '.join(stray)} ne sert pas à template")
     return self
@@ -617,9 +560,7 @@ def _template_rule[M: DocumentCall](self: M) -> M:
 WithCharts: Final = variant(DocumentCall, blocks=("chart",))
 
 
-def parse(
-    model: type[DocumentCall], arguments: Mapping[str, JsonValue]
-) -> WriteArguments | ReadArguments | TemplateArguments:
+def parse(model: type[DocumentCall], arguments: Mapping[str, JsonValue]) -> WriteArguments | ReadArguments | TemplateArguments:
     """Les arguments validés ; ``ToolError`` qui dit chaque champ fautif (10 au plus)."""
     try:
         return model.model_validate(dict(arguments)).request()
@@ -648,11 +589,7 @@ def _light(node: object, *, names: bool = False) -> object:
         mapping = cast(dict[str, object], node)
         for key, value in mapping.items():
             # Retirés comme mots-clés seulement, jamais comme noms de propriété.
-            if not names and (
-                key == "title"
-                or (key == "description" and "properties" in mapping)
-                or (key == "default" and value is None)
-            ):
+            if not names and (key == "title" or (key == "description" and "properties" in mapping) or (key == "default" and value is None)):
                 continue
             found[key] = _light(value, names=key == "properties" and not names)
         return found

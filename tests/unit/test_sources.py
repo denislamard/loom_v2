@@ -114,9 +114,7 @@ async def test_source_tools_join_the_run_and_the_source_is_closed() -> None:
     [opened] = time.opened
     assert (opened.run_id, opened.agent, opened.session_id) == (run.run_id, "demo", run.session_id)
     assert time.closed == 1
-    [done] = [
-        e.payload for e in await events_of(ctx, run.run_id) if isinstance(e.payload, ToolCompleted)
-    ]
+    [done] = [e.payload for e in await events_of(ctx, run.run_id) if isinstance(e.payload, ToolCompleted)]
     assert done.output == ToolOutput.text("time__maintenant : Paris")
     # L'exécuteur de l'agent n'a pas bougé : les outils de source valent pour un run.
     assert [s.name for s in ctx.tools.specs] == ["calculer"]
@@ -136,11 +134,7 @@ async def test_unavailable_source_is_journaled_and_the_run_goes_on(
     assert state.status is RunStatus.COMPLETED
     assert [d.name for d in model.requests[0].tools] == ["calculer"]
     events = await events_of(ctx, run.run_id)
-    missing = [
-        (e.payload.source, e.payload.error, e.status)
-        for e in events
-        if isinstance(e.payload, ToolSourceUnavailable)
-    ]
+    missing = [(e.payload.source, e.payload.error, e.status) for e in events if isinstance(e.payload, ToolSourceUnavailable)]
     assert missing == [
         ("crm", "pas de réponse en 10 s", "warning"),
         ("bug", "RuntimeError('bogue')", "warning"),
@@ -239,9 +233,7 @@ async def test_unusable_source_tools_are_skipped(caplog: pytest.LogCaptureFixtur
 
 async def test_executor_without_sources_is_used_as_is() -> None:
     tools = ToolExecutor([calculer])
-    context_ = SourceContext(
-        tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), agent="demo"
-    )
+    context_ = SourceContext(tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), agent="demo")
     async with tools.opened(context_) as opened:
         assert opened.tools is tools
         assert opened.unavailable == ()

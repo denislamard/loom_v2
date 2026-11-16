@@ -48,8 +48,7 @@ CONFIG = HERE / "assistant" / "loom.yaml"
 PHOTO = HERE / "files" / "photo.jpg"
 AGENT = "assistant"
 QUESTION = (
-    "Que montre la photo jointe ? Et au passage : quelle heure est-il à Paris, et "
-    "combien d'heures y a-t-il entre le 1er septembre et le 31 décembre 2026 ?"
+    "Que montre la photo jointe ? Et au passage : quelle heure est-il à Paris, et combien d'heures y a-t-il entre le 1er septembre et le 31 décembre 2026 ?"
 )
 # Les appels vont sur la boucle locale : pas de proxy.
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -82,10 +81,7 @@ async def main(argv: list[str]) -> int:
     kinds = {name: [event.type for event in events] for name, events in trees.items()}
     for name, events in trees.items():
         agents = list(dict.fromkeys(event.agent for event in events))
-        print(
-            f"{name:<7}: {len(events)} événements, {len(agents)} runs "
-            f"({', '.join(filter(None, agents))}), {runs[name]}"
-        )
+        print(f"{name:<7}: {len(events)} événements, {len(agents)} runs ({', '.join(filter(None, agents))}), {runs[name]}")
     same = len({tuple(types) for types in kinds.values()}) == 1
     same_answer = len(set(answers.values())) == 1
     print("\nMême arbre de runs par les trois accès." if same else "\nJournaux différents !")
@@ -124,9 +120,7 @@ def by_rest(config: Path, photo: Attachment) -> RunId:
 
     port = free_port()
     loom = Loom.from_config(config)
-    settings = uvicorn.Config(
-        create_app(loom, own=True), host="127.0.0.1", port=port, log_level="warning"
-    )
+    settings = uvicorn.Config(create_app(loom, own=True), host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(settings)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -190,10 +184,7 @@ def post_form(url: str, fields: dict[str, str], files: list[Attachment]) -> Any:
         head = f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
         parts.append(head.encode() + value.encode() + b"\r\n")
     for file in files:
-        head = (
-            f'Content-Disposition: form-data; name="attachments"; filename="{file.name}"\r\n'
-            "Content-Type: application/octet-stream\r\n\r\n"
-        )
+        head = f'Content-Disposition: form-data; name="attachments"; filename="{file.name}"\r\nContent-Type: application/octet-stream\r\n\r\n'
         parts.append(head.encode() + file.data + b"\r\n")
     body = b"".join(f"--{boundary}\r\n".encode() + part for part in parts)
     body += f"--{boundary}--\r\n".encode()

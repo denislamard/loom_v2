@@ -23,13 +23,8 @@ def test_null_handler_is_installed() -> None:
 
 def test_library_is_silent_without_configuration() -> None:
     # Process séparé : pytest installe ses propres handlers sur le logger racine.
-    code = (
-        "import logging, loom_ia; "
-        "logging.getLogger('loom_ia.engine').warning('ne doit pas apparaître')"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
-    )
+    code = "import logging, loom_ia; logging.getLogger('loom_ia.engine').warning('ne doit pas apparaître')"
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert result.stdout == ""
     assert result.stderr == ""
 
@@ -38,9 +33,7 @@ def test_console_format_includes_present_context_only() -> None:
     stream = io.StringIO()
     configure_logging("INFO", format="console", stream=stream)
 
-    logging.getLogger("loom_ia.engine").info(
-        "appel modèle", extra={"run_id": "r-1", "tenant_id": "dupont"}
-    )
+    logging.getLogger("loom_ia.engine").info("appel modèle", extra={"run_id": "r-1", "tenant_id": "dupont"})
 
     line = stream.getvalue().strip()
     assert "INFO" in line
@@ -63,9 +56,7 @@ def test_console_format_shows_control_characters_without_obeying_them() -> None:
     stream = io.StringIO()
     configure_logging(format="console", stream=stream)
 
-    logging.getLogger("loom_ia.engine").warning(
-        "outil inconnu : %s", HOSTILE, extra={"run_id": "r\x1b-1"}
-    )
+    logging.getLogger("loom_ia.engine").warning("outil inconnu : %s", HOSTILE, extra={"run_id": "r\x1b-1"})
 
     assert stream.getvalue().endswith(f"outil inconnu : {HOSTILE_SHOWN} [run_id=r\\x1b-1]\n")
 
@@ -119,9 +110,7 @@ def test_a_refusal_keeps_its_detail_in_both_formats() -> None:
     configure_logging(format="console", stream=stream)
     denied("Clé d'API refusée", access="mcp", key="crm", tenant="default", run_id="r-7")
     [line] = stream.getvalue().splitlines()
-    assert line.endswith(
-        "Accès refusé — Clé d'API refusée [access=mcp key=crm tenant_id=default run_id=r-7]"
-    )
+    assert line.endswith("Accès refusé — Clé d'API refusée [access=mcp key=crm tenant_id=default run_id=r-7]")
 
 
 def test_json_format_includes_exception() -> None:

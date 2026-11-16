@@ -184,10 +184,7 @@ class Watched:
             return False
         if any(path.is_relative_to(d) for d in self.dirs):
             return False
-        return not any(
-            path.parent == f.parent and (path.name == f.name or path.name.startswith(f"{f.name}-"))
-            for f in self.files
-        )
+        return not any(path.parent == f.parent and (path.name == f.name or path.name.startswith(f"{f.name}-")) for f in self.files)
 
     def filter(self, change: Change, raw: str) -> bool:
         """Le filtre donné à ``watchfiles`` : ``counts`` sur le chemin reçu."""
@@ -203,12 +200,7 @@ class Watched:
         for root in self.roots:
             for folder, subdirs, names in os.walk(root):
                 here = Path(folder)
-                subdirs[:] = [
-                    name
-                    for name in subdirs
-                    if name not in NOISE_DIRS
-                    and not any((here / name).is_relative_to(d) for d in self.dirs)
-                ]
+                subdirs[:] = [name for name in subdirs if name not in NOISE_DIRS and not any((here / name).is_relative_to(d) for d in self.dirs)]
                 for name in names:
                     path = here / name
                     if not self.counts(path):
@@ -247,11 +239,7 @@ class Watched:
         roots = ", ".join(str(root) for root in (*self.roots, *self.extra))
         excluded = [
             *(shown(d, folder=True) for d in self.dirs if _under(d, self.roots) and not covered(d)),
-            *(
-                shown(f, folder=False)
-                for f in self.files
-                if _under(f, self.roots) and not covered(f)
-            ),
+            *(shown(f, folder=False) for f in self.files if _under(f, self.roots) and not covered(f)),
         ]
         return f"{roots} (sauf {', '.join(excluded)})" if excluded else roots
 
@@ -284,8 +272,7 @@ def watched(config: LoomConfig, env_file: Path | None = None) -> Watched:
         for root in roots:
             if root.is_relative_to(folder):
                 raise ConfigError(
-                    f"--reload : {folder} est écrit par loom (journal ou fichiers) et contient "
-                    f"{root}, surveillé — mettre les données dans un sous-dossier"
+                    f"--reload : {folder} est écrit par loom (journal ou fichiers) et contient {root}, surveillé — mettre les données dans un sous-dossier"
                 )
     extra = (env_file,) if env_file is not None and not _under(env_file, roots) else ()
     return Watched(roots=tuple(roots), dirs=tuple(dirs), files=tuple(files), extra=extra)
@@ -352,10 +339,7 @@ def changed(
             told[path] = "ajouté"
         elif before[path] != after[path]:
             told[path] = "modifié"
-    items = [
-        f"{path.relative_to(base) if path.is_relative_to(base) else path} {verb}"
-        for path, verb in sorted(told.items())
-    ]
+    items = [f"{path.relative_to(base) if path.is_relative_to(base) else path} {verb}" for path, verb in sorted(told.items())]
     if len(items) > SHOWN_CHANGES:
         rest = len(items) - SHOWN_CHANGES
         items = [*items[:SHOWN_CHANGES], f"et {rest} autre(s)"]
@@ -515,9 +499,7 @@ class _Launcher:
 
     def __call__(self) -> tuple[_Serving, Watched, dict[Path, FileState]] | None:
         reader, writer = self.context.Pipe(duplex=False)
-        process = self.context.Process(
-            target=_serving, args=(*self.args, writer), name="loom-serve"
-        )
+        process = self.context.Process(target=_serving, args=(*self.args, writer), name="loom-serve")
         process.start()
         # Seul le process neuf écrit : sa sortie ferme le tube, ce qui se lit.
         writer.close()
@@ -586,9 +568,7 @@ def _serving(
     # Le superviseur, tant qu'il est là : un process qui lui survit s'arrête.
     supervisor = os.getppid()
     try:
-        started = asyncio.run(
-            _served(path, profile, host, port, sock, banner, ready, supervisor, env)
-        )
+        started = asyncio.run(_served(path, profile, host, port, sock, banner, ready, supervisor, env))
     except KeyboardInterrupt:
         return
     except ConfigError as exc:
@@ -634,10 +614,7 @@ async def _served(
     config, spec, seen = _read(path, profile, env.path)
     apply_logging(config)
     if config.strict:
-        raise ConfigError(
-            "--reload est refusé en profil prod : un service ne se relance pas sur une "
-            "modification de fichier"
-        )
+        raise ConfigError("--reload est refusé en profil prod : un service ne se relance pas sur une modification de fichier")
     loom = Loom(config)
     try:
         await _mounted(loom)
@@ -656,9 +633,7 @@ async def _served(
         with suppress(OSError):
             ready.send(DEAF)
 
-    server = _Taking(
-        uvicorn.Config(app, host=host, port=port, log_config=None), taken, deaf, supervisor
-    )
+    server = _Taking(uvicorn.Config(app, host=host, port=port, log_config=None), taken, deaf, supervisor)
     try:
         await server.serve(sockets=[sock])
     finally:
@@ -666,9 +641,7 @@ async def _served(
     return server.started
 
 
-def _read(
-    path: Path, profile: str | None, env_file: Path | None = None
-) -> tuple[LoomConfig, Watched, dict[Path, FileState]]:
+def _read(path: Path, profile: str | None, env_file: Path | None = None) -> tuple[LoomConfig, Watched, dict[Path, FileState]]:
     """La config qui sert, ce qu'elle fait surveiller, et l'état des fichiers relevé avant elle.
 
     Une première lecture dit quoi relever ; la config qui sert est lue après
@@ -720,9 +693,7 @@ class _Taking(uvicorn.Server):
         while not self.should_exit:
             await asyncio.sleep(ORPHANED_EVERY)
             if os.getppid() != self.supervisor:
-                print(
-                    "Le superviseur a disparu : ce process s'arrête.", file=sys.stderr, flush=True
-                )
+                print("Le superviseur a disparu : ce process s'arrête.", file=sys.stderr, flush=True)
                 self.should_exit = True
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:

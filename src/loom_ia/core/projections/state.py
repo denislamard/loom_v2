@@ -68,9 +68,7 @@ def session_state(
     return copy.deepcopy({**(defaults or {}), **values})
 
 
-def state_of_run(
-    base: Mapping[str, JsonValue], run: RunState, *, before: int | None = None
-) -> dict[str, JsonValue]:
+def state_of_run(base: Mapping[str, JsonValue], run: RunState, *, before: int | None = None) -> dict[str, JsonValue]:
     """State que voit un run en cours : la session avant lui, ce qui est posé, ce qu'il a écrit.
 
     ``base`` : le state de la session avant le run (``session_state`` des

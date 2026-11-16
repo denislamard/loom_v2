@@ -12,9 +12,7 @@ from loom_ia.tools_builtin.excel.arguments import RowSpec, Scalar, SheetSpec
 # --- Sources de données ----------------------------------------------------------------
 
 
-def read_rows(
-    data: bytes, suffix: str, sheet: SheetSpec, where: str, tab: str | None = None
-) -> list[RowSpec]:
+def read_rows(data: bytes, suffix: str, sheet: SheetSpec, where: str, tab: str | None = None) -> list[RowSpec]:
     """Les lignes d'un CSV, d'un JSON ou d'un onglet .xlsx, dans l'ordre des colonnes."""
     headers = [column.header for column in sheet.columns]
     match suffix:
@@ -37,10 +35,7 @@ def read_rows(
         present.update(record)
     missing = [header for header in headers if header not in present]
     if missing:
-        raise ToolError(
-            f"{where} : colonne(s) absente(s) du fichier : {', '.join(missing)} "
-            f"(trouvées : {', '.join(sorted(present))})"
-        )
+        raise ToolError(f"{where} : colonne(s) absente(s) du fichier : {', '.join(missing)} (trouvées : {', '.join(sorted(present))})")
     return [RowSpec(cells=[record.get(header) for header in headers]) for record in records]
 
 
@@ -53,9 +48,7 @@ def _csv_records(data: bytes, where: str) -> list[dict[str, Scalar]]:
     delimiter = ";" if first.count(";") > first.count(",") else ","
     reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=delimiter)
     try:
-        return [
-            {str(key): value for key, value in row.items() if key is not None} for row in reader
-        ]
+        return [{str(key): value for key, value in row.items() if key is not None} for row in reader]
     except csv.Error as exc:
         raise ToolError(f"{where} : CSV illisible ({exc}).") from exc
 

@@ -134,9 +134,7 @@ class StateRules:
         self.model_tool = model_tool
         self.max_value_bytes = max_value_bytes
         self.max_total_bytes = max_total_bytes
-        self._validators: dict[str, Validator] = {
-            name: bounded_validator(rule.schema) for name, rule in self.keys.items()
-        }
+        self._validators: dict[str, Validator] = {name: bounded_validator(rule.schema) for name, rule in self.keys.items()}
         # Sources par outil, dans l'ordre de déclaration des clés.
         self._sources: dict[str, list[tuple[str, StateSourceRule]]] = {}
         for name, rule in self.keys.items():
@@ -180,9 +178,7 @@ class StateRules:
                 shown[name] = rule.default
         return MappingProxyType(copy.deepcopy(shown))
 
-    def opening(
-        self, posed: Mapping[str, JsonValue], session: Mapping[str, JsonValue]
-    ) -> list[str]:
+    def opening(self, posed: Mapping[str, JsonValue], session: Mapping[str, JsonValue]) -> list[str]:
         """Ce qui empêche d'ouvrir un run avec ce state posé par l'application ; vide sinon.
 
         Chaque écriture est contrôlée comme celle d'un outil (D6, D7), ``None``
@@ -205,17 +201,10 @@ class StateRules:
         merged = _merged(session, accepted)
         total = state_size(merged)
         if total > self.max_total_bytes and total > state_size(dict(session)):
-            problems.append(
-                f"le state de la session ferait {total} octets, au-delà de "
-                f"sessions.state.max_total_bytes ({self.max_total_bytes})"
-            )
+            problems.append(f"le state de la session ferait {total} octets, au-delà de sessions.state.max_total_bytes ({self.max_total_bytes})")
         if self.requires:
             shown = self.visible(merged)
-            problems += [
-                f"{name} : clé obligatoire sans valeur"
-                for name, rule in self.keys.items()
-                if rule.required and name not in shown
-            ]
+            problems += [f"{name} : clé obligatoire sans valeur" for name, rule in self.keys.items() if rule.required and name not in shown]
         return problems
 
     def shown(self, keys: Sequence[str]) -> tuple[str, ...]:
@@ -247,9 +236,7 @@ class StateRules:
             )
         return "\n".join(lines)
 
-    def posed(
-        self, tool: str, output: ToolOutput, tally: BatchTally, call_id: str = ""
-    ) -> ToolOutput:
+    def posed(self, tool: str, output: ToolOutput, tally: BatchTally, call_id: str = "") -> ToolOutput:
         """Le résultat réussi d'un outil, avec les écritures qu'il pose et celles qui sont refusées.
 
         ``tally`` : le state que le lot laissera, compté dans l'ordre des appels ;
@@ -295,14 +282,9 @@ class StateRules:
             # abaissée) peut encore remplacer une valeur par une plus petite, et
             # une clé qu'un appel suivant du lot écrit aussi ne compte pas — c'est
             # sa valeur à lui que la session gardera (D9).
-            grown = [
-                name
-                for name, value in accepted.items()
-                if value is not None and not tally.overridden(call_id, name)
-            ]
+            grown = [name for name, value in accepted.items() if value is not None and not tally.overridden(call_id, name)]
             refused += [
-                f"{name} non posé : le state de la session ferait {total} octets, au-delà "
-                f"de sessions.state.max_total_bytes ({self.max_total_bytes})"
+                f"{name} non posé : le state de la session ferait {total} octets, au-delà de sessions.state.max_total_bytes ({self.max_total_bytes})"
                 for name in grown
             ]
             accepted = {name: value for name, value in accepted.items() if name not in grown}
@@ -343,9 +325,7 @@ class StateRules:
             return f"ne suit pas son schéma — {_said(errors[0])}"
         size = state_size(value)
         if size > self.max_value_bytes:
-            return (
-                f"{size} octets, au-delà de sessions.state.max_value_bytes ({self.max_value_bytes})"
-            )
+            return f"{size} octets, au-delà de sessions.state.max_value_bytes ({self.max_value_bytes})"
         return None
 
 
@@ -379,9 +359,7 @@ class BatchTally:
     dans l'ordre où il est reporté.
     """
 
-    def __init__(
-        self, base: Mapping[str, JsonValue] | None = None, ranks: Mapping[str, int] | None = None
-    ) -> None:
+    def __init__(self, base: Mapping[str, JsonValue] | None = None, ranks: Mapping[str, int] | None = None) -> None:
         self._base = dict(base or {})
         self._ranks = dict(ranks or {})
         self._writes: dict[str, dict[str, JsonValue]] = {}
@@ -390,9 +368,7 @@ class BatchTally:
         """Les écritures retenues de l'appel ``call_id``."""
         self._writes[call_id] = dict(writes)
 
-    def state(
-        self, call_id: str | None = None, writes: Mapping[str, JsonValue] | None = None
-    ) -> dict[str, JsonValue]:
+    def state(self, call_id: str | None = None, writes: Mapping[str, JsonValue] | None = None) -> dict[str, JsonValue]:
         """Le state du lot ; avec ``call_id``, comme si cet appel écrivait aussi ``writes``."""
         recorded = dict(self._writes)
         if call_id is not None:
@@ -405,11 +381,7 @@ class BatchTally:
     def overridden(self, call_id: str, name: str) -> bool:
         """Vrai si un appel suivant du lot, déjà soldé, écrit aussi ``name`` : il l'emporte."""
         mine = self._rank(call_id, self._writes)
-        return any(
-            name in writes and self._rank(other, self._writes) > mine
-            for other, writes in self._writes.items()
-            if other != call_id
-        )
+        return any(name in writes and self._rank(other, self._writes) > mine for other, writes in self._writes.items() if other != call_id)
 
     def _rank(self, call_id: str, recorded: Mapping[str, object]) -> int:
         if call_id in self._ranks:
@@ -419,9 +391,7 @@ class BatchTally:
         return len(self._ranks) + position
 
 
-def _merged(
-    values: Mapping[str, JsonValue], writes: Mapping[str, JsonValue]
-) -> dict[str, JsonValue]:
+def _merged(values: Mapping[str, JsonValue], writes: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
     """Le state après ces écritures : ``None`` efface la clé (D10)."""
     result = dict(values)
     for name, value in writes.items():

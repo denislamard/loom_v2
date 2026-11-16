@@ -42,10 +42,7 @@ def describe(event: Event) -> str | None:
     """Une ligne par étape marquante du run."""
     match event.payload:
         case ModelResponded(model_id=model, usage=usage, cost_usd=cost):
-            return (
-                f"  modèle   [{event.role}] {model} · {usage.input_tokens}/"
-                f"{usage.output_tokens} tokens · {cost:.5f} $"
-            )
+            return f"  modèle   [{event.role}] {model} · {usage.input_tokens}/{usage.output_tokens} tokens · {cost:.5f} $"
         case ModelRetried(error_kind=kind, attempt=attempt):
             return f"  retry    [{event.role}] tentative {attempt} ratée ({kind})"
         case ToolCalled(tool_name=name, tool_kind=kind, refs=refs):
@@ -84,10 +81,7 @@ async def main(argv: list[str]) -> int:
     print("\nDéroulé :")
     for line in filter(None, map(describe, events)):
         print(line)
-    print(
-        f"\nStatut     : {result.status} · itérations de l'orchestrateur : {result.iterations}"
-        f" · coût total : {result.cost_usd:.5f} $"
-    )
+    print(f"\nStatut     : {result.status} · itérations de l'orchestrateur : {result.iterations} · coût total : {result.cost_usd:.5f} $")
     store = loom.store.inner
     if isinstance(store, JsonlEventStore):
         print(f"Journal    : {store.path(DEFAULT_TENANT, result.session_id)}")

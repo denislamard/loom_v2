@@ -196,9 +196,7 @@ def test_a_postgres_journal_demands_that_artifacts_be_declared() -> None:
 
 
 def test_the_idempotency_store_can_share_the_journals_variable() -> None:
-    storage = StorageConfig.model_validate(
-        {**PG_STORAGE, "idempotency": {"backend": "postgres", "dsn_env": VARIABLE}}
-    )
+    storage = StorageConfig.model_validate({**PG_STORAGE, "idempotency": {"backend": "postgres", "dsn_env": VARIABLE}})
     assert storage.idempotency.shared
     assert storage.idempotency.dsn_env == storage.events.dsn_env
 
@@ -215,9 +213,7 @@ def test_an_empty_variable_is_named_in_the_error(monkeypatch: pytest.MonkeyPatch
 
 
 @sans_extra
-def test_the_journal_is_built_from_the_variable(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_journal_is_built_from_the_variable(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(VARIABLE, DSN)
     config = load_config(demo(storage=PG_STORAGE))
     store = create_event_store(config)
@@ -228,17 +224,13 @@ def test_the_journal_is_built_from_the_variable(
 @sans_extra
 def test_the_idempotency_store_too(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(VARIABLE, DSN)
-    config = load_config(
-        demo(storage={**PG_STORAGE, "idempotency": {"backend": "postgres", "dsn_env": VARIABLE}})
-    )
+    config = load_config(demo(storage={**PG_STORAGE, "idempotency": {"backend": "postgres", "dsn_env": VARIABLE}}))
     store = create_idempotency_store(config)
     assert repr(store) == f"PostgresIdempotency({IDEMPOTENCY_TABLE!r})"
 
 
 @sans_extra
-def test_the_pool_settings_reach_the_stores(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_pool_settings_reach_the_stores(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     from loom_ia.adapters.postgres.pool import PoolLimits
 
     monkeypatch.setenv(VARIABLE, DSN)
@@ -287,9 +279,7 @@ def test_a_pool_means_nothing_without_postgres() -> None:
 
 
 @avec_extra
-def test_without_the_extra_the_refusal_names_it(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_without_the_extra_the_refusal_names_it(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Ce que voit qui déclare un journal postgres sans avoir installé l'extra."""
     monkeypatch.setenv(VARIABLE, DSN)
     with pytest.raises(ConfigError, match=r"loom-ia\[postgres\]"):
@@ -369,9 +359,7 @@ def test_one_role_for_both_is_created_once() -> None:
 # --- La ligne de commande ----------------------------------------------------
 
 
-def test_storage_sql_prints_what_there_is_to_apply(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_storage_sql_prints_what_there_is_to_apply(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo(storage=PG_STORAGE)), "storage", "sql"]) == 0
     out = capsys.readouterr().out
     assert f"CREATE TABLE IF NOT EXISTS {EVENTS_TABLE}" in out
@@ -380,9 +368,7 @@ def test_storage_sql_prints_what_there_is_to_apply(
     assert "loom_owner" not in out
 
 
-def test_a_storage_not_ready_is_said_without_a_trace(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_storage_not_ready_is_said_without_a_trace(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """Test F5 du 19/10 : ``PostgresNotPrepared`` sortait en trace Python brute."""
     import sys
 
@@ -400,9 +386,7 @@ def test_a_storage_not_ready_is_said_without_a_trace(
 
 
 @sans_extra
-def test_validate_says_whether_the_variable_is_filled(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_whether_the_variable_is_filled(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """La variable manquante est dite, puis elle fait échouer le montage.
 
     Dite, parce que c'est ce qui manque le plus souvent ; et ``validate`` sort
@@ -412,10 +396,7 @@ def test_validate_says_whether_the_variable_is_filled(
     path = demo(storage=PG_STORAGE)
     assert main(["--config", str(path), "validate"]) == 2
     absente = capsys.readouterr()
-    assert (
-        f"  Journal      postgres (DSN dans {VARIABLE} : ABSENTE, rôle : {DEFAULT_ROLE})"
-        in absente.out
-    )
+    assert f"  Journal      postgres (DSN dans {VARIABLE} : ABSENTE, rôle : {DEFAULT_ROLE})" in absente.out
     assert f"variable {VARIABLE} absente" in absente.out
     assert f"la variable {VARIABLE!r} est vide ou absente" in absente.err
 
@@ -543,9 +524,7 @@ class _Sent:
 
 @sans_extra
 @pytest.mark.parametrize("present", [True, False], ids=["table-d-avant", "table-neuve"])
-async def test_opening_an_old_table_adds_the_holder_column_not_the_whole_ddl(
-    monkeypatch: pytest.MonkeyPatch, present: bool
-) -> None:
+async def test_opening_an_old_table_adds_the_holder_column_not_the_whole_ddl(monkeypatch: pytest.MonkeyPatch, present: bool) -> None:
     """Le schéma n'est posé qu'une fois : une table d'avant ne recevrait jamais la colonne."""
     import asyncpg
 
@@ -577,9 +556,7 @@ async def test_opening_an_old_table_adds_the_holder_column_not_the_whole_ddl(
     assert applied == [IDEMPOTENCY_UPGRADE if present else ddl(role=None, events=False)]
 
 
-async def _idempotency(
-    monkeypatch: pytest.MonkeyPatch, connection: _Sent
-) -> Any:  # PostgresIdempotency, importé au besoin
+async def _idempotency(monkeypatch: pytest.MonkeyPatch, connection: _Sent) -> Any:  # PostgresIdempotency, importé au besoin
     from loom_ia.adapters.idempotency.postgres import PostgresIdempotency
     from loom_ia.adapters.postgres.pool import PostgresPool
 

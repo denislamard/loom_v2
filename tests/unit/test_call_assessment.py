@@ -43,9 +43,7 @@ from loom_ia.tools_builtin.local_files import build
 from loom_ia.tools_builtin.local_files_params import LocalFilesParams
 
 # L'outil d'essai : ``x`` pair se lit, ``x`` impair supprime et demande un humain.
-DELETE = CallAssessment(
-    approval="always", side_effects="irreversible", reason="suppression : à approuver"
-)
+DELETE = CallAssessment(approval="always", side_effects="irreversible", reason="suppression : à approuver")
 READ = CallAssessment(side_effects="none")
 # Tous les droits, sans aucune approbation.
 ALL_NEVER: Final = {
@@ -61,9 +59,7 @@ def spec(name: str = "fichiers", **options: object) -> ToolSpec:
         "additionalProperties": False,
     }
     # La déclaration fixe dit le contraire de l'évaluation : on voit laquelle compte.
-    return ToolSpec.model_validate(
-        {"name": name, "description": name, "kind": "python", "input_schema": schema, **options}
-    )
+    return ToolSpec.model_validate({"name": name, "description": name, "kind": "python", "input_schema": schema, **options})
 
 
 @dataclass
@@ -87,9 +83,7 @@ def awaiting(*calls: PendingCall) -> RunState:
     journal = RunJournal(agent="demo", tenant_id=TenantId("default"))
     journal.start("?", context=CallerContext(tenant_id=TenantId("default"), user_id="u1"))
     events = [draft.to_event(seq) for seq, draft in enumerate(journal.take(), start=1)]
-    return fold(events, journal.run_id).model_copy(
-        update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls}
-    )
+    return fold(events, journal.run_id).model_copy(update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls})
 
 
 def call(call_id: str, x: int, *, started: bool = False, name: str = "fichiers") -> PendingCall:
@@ -148,13 +142,9 @@ def test_what_the_config_fixes_wins_field_by_field() -> None:
         reason="la config exige une approbation pour chaque appel de cet outil",
     )
     # ``policy`` laisse décider les politiques : pas d'approbation d'office.
-    assert assessed(configure(AssessingTool(), approval="policy"), {"x": 1}) == CallAssessment(
-        side_effects="irreversible"
-    )
+    assert assessed(configure(AssessingTool(), approval="policy"), {"x": 1}) == CallAssessment(side_effects="irreversible")
     sure = configure(AssessingTool(), idempotent=True)
-    assert assessed(sure, {"x": 1}) == CallAssessment(
-        approval="always", side_effects="irreversible", idempotent=True, reason=DELETE.reason
-    )
+    assert assessed(sure, {"x": 1}) == CallAssessment(approval="always", side_effects="irreversible", idempotent=True, reason=DELETE.reason)
 
 
 def test_an_envelope_around_a_plain_tool_assesses_nothing() -> None:
@@ -201,9 +191,7 @@ async def test_the_tenant_keeps_the_last_word(imposed: Approval, waiting: set[st
 async def test_an_interrupted_call_is_judged_by_its_own_assessment() -> None:
     """Une lecture interrompue repart ; une suppression interrompue est d'état inconnu."""
     fichiers = AssessingTool(spec=spec(side_effects="irreversible"))
-    events = await collect(
-        ToolExecutor([fichiers]), awaiting(call("c1", 2, started=True), call("c2", 1, started=True))
-    )
+    events = await collect(ToolExecutor([fichiers]), awaiting(call("c1", 2, started=True), call("c2", 1, started=True)))
     assert not completed(events)["c1"].is_error
     assert completed(events)["c2"] == ToolOutput.error(UNKNOWN_STATE)
     assert fichiers.calls == [{"x": 2}]
@@ -256,14 +244,10 @@ def test_in_replay_the_assessment_only_tightens(replay: str) -> None:
 def test_in_an_eval_a_local_files_call_never_runs(tmp_path: Path) -> None:
     """Même un chemin qui n'est qu'une référence, en objet ou en chaîne, résolue plus tard."""
     (tmp_path / "work").mkdir()
-    params = LocalFilesParams.model_validate(
-        {"folders": [{"name": "work", "path": "work", **ALL_NEVER}]}
-    )
+    params = LocalFilesParams.model_validate({"folders": [{"name": "work", "path": "work", **ALL_NEVER}]})
     files = build(params, BuiltinContext(base_dir=tmp_path))
     tools = EvalTools()
     paths: list[JsonValue] = ["work/a.txt", {"$ref": "result:1"}, '{"$ref": "result:1"}']
     for number, path in enumerate(paths, start=1):
-        delete = PendingCall(
-            call_id=f"c{number}", name="local_files", arguments={"action": "delete", "path": path}
-        )
+        delete = PendingCall(call_id=f"c{number}", name="local_files", arguments={"action": "delete", "path": path})
         assert tools.serves(files, delete, RunId("r")) is True

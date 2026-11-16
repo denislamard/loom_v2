@@ -47,8 +47,7 @@ class ColumnSpec(_Model):
         str,
         Field(
             min_length=1,
-            description="L'unité seulement si le format ne l'affiche pas : « Surface (m²) », "
-            "mais « Montant HT », pas « Montant HT (€) ».",
+            description="L'unité seulement si le format ne l'affiche pas : « Surface (m²) », mais « Montant HT », pas « Montant HT (€) ».",
         ),
     ]
     type: ColumnType = "text"
@@ -63,9 +62,7 @@ class CellSpec(_Model):
 
 
 class RowSpec(_Model):
-    cells: Annotated[
-        list[Scalar | CellSpec], Field(description="Dans l'ordre des colonnes ; « =… » : formule.")
-    ]
+    cells: Annotated[list[Scalar | CellSpec], Field(description="Dans l'ordre des colonnes ; « =… » : formule.")]
     role: Role | None = None
     note: Annotated[str | None, Field(description="Commentaire de la ligne (source…).")] = None
 
@@ -78,9 +75,7 @@ class DataSource(_Model):
             "d'objets dont les clés sont les en-têtes) ou un .xlsx (en-têtes en ligne 1)."
         ),
     ]
-    sheet: Annotated[
-        str | None, Field(description="Pour un .xlsx : l'onglet lu ; le premier si absent.")
-    ] = None
+    sheet: Annotated[str | None, Field(description="Pour un .xlsx : l'onglet lu ; le premier si absent.")] = None
 
     @model_validator(mode="after")
     def _sheet_of_a_workbook(self) -> Self:
@@ -166,19 +161,14 @@ class ExcelCall(_Model):
 
     action: Annotated[
         Action,
-        Field(
-            description="write (par défaut) : écrire un classeur ; read : lire un classeur "
-            "existant (droit read)."
-        ),
+        Field(description="write (par défaut) : écrire un classeur ; read : lire un classeur existant (droit read)."),
     ] = "write"
     path: Annotated[str, Field(description="« <dossier>/<chemin>.xlsx »")]
     sheets: Annotated[
         list[SheetSpec] | None,
         Field(min_length=1, max_length=MAX_SHEETS, description="Pour write : les onglets."),
     ] = None
-    overwrite: Annotated[
-        bool | None, Field(description="Pour write : remplacer un classeur existant.")
-    ] = None
+    overwrite: Annotated[bool | None, Field(description="Pour write : remplacer un classeur existant.")] = None
     sheet: Annotated[
         str | None,
         Field(description="Pour read : l'onglet ; sans lui, la liste des onglets et leur début."),
@@ -237,9 +227,7 @@ class ExcelChartCall(ExcelCall):
     ] = None
 
 
-def parse(
-    arguments: Mapping[str, JsonValue], model: type[ExcelCall] = ExcelCall
-) -> ExcelArguments | ReadArguments:
+def parse(arguments: Mapping[str, JsonValue], model: type[ExcelCall] = ExcelCall) -> ExcelArguments | ReadArguments:
     """Les arguments validés ; ``ToolError`` qui dit chaque champ fautif (10 au plus)."""
     try:
         return model.model_validate(dict(arguments)).request()
@@ -261,11 +249,7 @@ def _untitled(node: object, *, names: bool = False) -> object:
     if isinstance(node, dict):
         items = cast(dict[str, object], node).items()
         # « title » n'est retiré que comme mot-clé, jamais comme nom de propriété.
-        return {
-            key: _untitled(value, names=key == "properties" and not names)
-            for key, value in items
-            if names or key != "title"
-        }
+        return {key: _untitled(value, names=key == "properties" and not names) for key, value in items if names or key != "title"}
     if isinstance(node, list):
         return [_untitled(value) for value in cast(list[object], node)]
     return node

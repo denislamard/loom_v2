@@ -122,9 +122,7 @@ def poste(tmp_path: Path) -> Path:
                     "script": [
                         {
                             "text": "J'envoie.",
-                            "tool_calls": [
-                                {"name": "envoyer", "arguments": {"destinataire": CLIENTE}}
-                            ],
+                            "tool_calls": [{"name": "envoyer", "arguments": {"destinataire": CLIENTE}}],
                         },
                         {"text": "C'est fait."},
                     ]

@@ -140,9 +140,7 @@ def enonce(quoi: str, texte: str, largeur: int = 96) -> None:
 # --- La config de l'exemple : la même, ailleurs, scellée ----------------------
 
 
-def scellee(
-    dossier: Path, *, keys: Sequence[str] = (CLE,), offload: int | None = None
-) -> LoomConfig:
+def scellee(dossier: Path, *, keys: Sequence[str] = (CLE,), offload: int | None = None) -> LoomConfig:
     """La config de ``relance/``, journal et fichiers dans un dossier à part, scellés.
 
     Le sceau se déclare à la racine ; ce qui est propre à un client, c'est sa
@@ -169,15 +167,7 @@ def scellee(
     )
     tenants = tuple(
         tenant.model_copy(
-            update={
-                "storage": tenant.storage.model_copy(
-                    update={
-                        "events": tenant.storage.events.model_copy(
-                            update={"path": dossier / "events" / tenant.id}
-                        )
-                    }
-                )
-            }
+            update={"storage": tenant.storage.model_copy(update={"events": tenant.storage.events.model_copy(update={"path": dossier / "events" / tenant.id})})}
         )
         if tenant.storage is not None
         else tenant
@@ -220,9 +210,7 @@ async def scelle(args: argparse.Namespace, controle: Controle) -> None:
         print(f"  journal                 : {Path(dossier) / 'events'} (temporaire)")
         ou = session("scelle")
         async with Loom(config, environ=environ) as loom:
-            result = await loom.run(
-                agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN
-            )
+            result = await loom.run(agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN)
             print(f"\n  run {result.status}, {result.usage.total_tokens} tokens")
             # Avec la clé, rien ne change : l'instance relit son journal comme
             # elle l'a toujours fait.
@@ -230,9 +218,7 @@ async def scelle(args: argparse.Namespace, controle: Controle) -> None:
             etat = await loom.state(result.run_id, session_id=ou, tenant_id=MARTIN)
             rendue = "oui" if etat.output else "NON"
             print(f"  relu par l'instance : {len(relu)} événements, sortie {rendue}")
-            trouves = await loom.query(
-                EventQuery(tenant_id=MARTIN, session_id=ou, tool_name="rediger_relance")
-            )
+            trouves = await loom.query(EventQuery(tenant_id=MARTIN, session_id=ou, tool_name="rediger_relance"))
             # Le détail par type, et non le seul compte : le nombre d'appels
             # d'un rôle dépend des modèles (une réparation demandée par un
             # juge en ajoute), et un compte nu laisserait deviner lequel.
@@ -269,9 +255,7 @@ async def scelle(args: argparse.Namespace, controle: Controle) -> None:
             "\n  le contenu est fermé, l'enveloppe est ouverte : "
             + controle.tient(
                 "le contenu ou l'enveloppe n'est pas dans l'état annoncé",
-                cherche not in brut
-                and all(set(_charge(ligne)) == {SEALED, "key_id"} for ligne in rangees)
-                and all(ligne["type"] for ligne in rangees),
+                cherche not in brut and all(set(_charge(ligne)) == {SEALED, "key_id"} for ligne in rangees) and all(ligne["type"] for ligne in rangees),
             )
         )
 
@@ -279,9 +263,7 @@ async def scelle(args: argparse.Namespace, controle: Controle) -> None:
         print(f"  execution.tools.offload_over : {config.execution.tools.offload_over} octets")
         print("    abaissé par l'exemple, pour qu'un résultat d'outil parte au stockage de")
         print("    fichiers — c'est là que vit le plus volumineux de ce qu'un run manipule.")
-        fichiers = sorted(
-            chemin for chemin in (Path(dossier) / "files").rglob("*") if chemin.is_file()
-        )
+        fichiers = sorted(chemin for chemin in (Path(dossier) / "files").rglob("*") if chemin.is_file())
         for chemin in fichiers[:3]:
             octets = chemin.read_bytes()
             print(f"\n  {chemin.name}")
@@ -317,9 +299,7 @@ async def efface(args: argparse.Namespace, controle: Controle) -> None:
         ou = session("efface")
         titre("Un run écrit, puis la clé s'en va")
         async with Loom(config, environ=avec) as loom:
-            result = await loom.run(
-                agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN
-            )
+            result = await loom.run(agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN)
             print(f"  run {result.status}, journal scellé par la clé {empreinte}")
 
         # La même config, le même journal, sans la variable : c'est tout ce que
@@ -329,10 +309,7 @@ async def efface(args: argparse.Namespace, controle: Controle) -> None:
             dit = await _refus(lambda: perdu.events(result.run_id, session_id=ou, tenant_id=MARTIN))
             print()
             enonce("  relire       → ", dit)
-            print(
-                "  l'empreinte de la clé qui manque est nommée : "
-                + controle.tient("le refus ne nomme pas la clé attendue", empreinte in dit)
-            )
+            print("  l'empreinte de la clé qui manque est nommée : " + controle.tient("le refus ne nomme pas la clé attendue", empreinte in dit))
             listees = await perdu.sessions(tenant_id=MARTIN)
             print(f"\n  lister       → {len(listees)} session(s) ; {ou} présente")
             print("    la marque d'une ligne (session, rang, date) reste en clair : lister")
@@ -344,9 +321,7 @@ async def efface(args: argparse.Namespace, controle: Controle) -> None:
                 "\n  un journal sans sa clé se voit et s'efface, sans se lire : "
                 + controle.tient(
                     "un journal scellé ne se liste plus ou ne s'efface plus",
-                    any(record.session_id == ou for record in listees)
-                    and retire.events > 0
-                    and all(record.session_id != ou for record in restantes),
+                    any(record.session_id == ou for record in listees) and retire.events > 0 and all(record.session_id != ou for record in restantes),
                 )
             )
 
@@ -358,18 +333,12 @@ async def efface(args: argparse.Namespace, controle: Controle) -> None:
         neuve = fingerprint(decode_key(neuve_b64, what="exemple"))
         suite = session("tournee")
         async with Loom(config, environ=avec) as avant:
-            premier = await avant.run(
-                agent, demande(MARTIN), session_id=suite, tenant=MARTIN, user=MARTIN
-            )
+            premier = await avant.run(agent, demande(MARTIN), session_id=suite, tenant=MARTIN, user=MARTIN)
         async with Loom(deux, environ=tournee) as apres:
-            second = await apres.run(
-                agent, demande(MARTIN), session_id=suite, tenant=MARTIN, user=MARTIN
-            )
+            second = await apres.run(agent, demande(MARTIN), session_id=suite, tenant=MARTIN, user=MARTIN)
             tout = await apres.events(second.run_id, session_id=suite, tenant_id=MARTIN)
             avant_tout = await apres.events(premier.run_id, session_id=suite, tenant_id=MARTIN)
-        empreintes = {
-            str(_charge(ligne)["key_id"]) for ligne in lignes(journal(deux, MARTIN, suite))
-        }
+        empreintes = {str(_charge(ligne)["key_id"]) for ligne in lignes(journal(deux, MARTIN, suite))}
         print(f"  clés déclarées : ['LOOM_JOURNAL_KEY_2' ({neuve}), '{CLE}' ({ancienne})]")
         print(f"  le journal porte les deux empreintes : {', '.join(sorted(empreintes))}")
         print(f"  et se relit en entier : {len(avant_tout)} + {len(tout)} événements")
@@ -424,9 +393,7 @@ async def clients(args: argparse.Namespace, controle: Controle) -> None:
             for tenant in (DUPONT, MARTIN):
                 ou = session(str(tenant).split("-")[0])
                 places[tenant] = ou
-                result = await loom.run(
-                    agent, demande(tenant), session_id=ou, tenant=tenant, user=tenant
-                )
+                result = await loom.run(agent, demande(tenant), session_id=ou, tenant=tenant, user=tenant)
                 runs[tenant] = result.run_id
                 fichier = journal(config, tenant, ou)
                 scellants[tenant] = {str(_charge(ligne)["key_id"]) for ligne in lignes(fichier)}
@@ -450,11 +417,7 @@ async def clients(args: argparse.Namespace, controle: Controle) -> None:
             dit = await _refus(lambda: boiteux.export_session(places[MARTIN], tenant_id=MARTIN))
             print(f"  Dupont, avec sa clé   → {len(lisible)} événements")
             enonce("  Martin, sans la sienne → ", dit)
-            refuse = await _refus(
-                lambda: boiteux.run(
-                    agent, demande(MARTIN), session_id=session("refus"), tenant=MARTIN, user=MARTIN
-                )
-            )
+            refuse = await _refus(lambda: boiteux.run(agent, demande(MARTIN), session_id=session("refus"), tenant=MARTIN, user=MARTIN))
             enonce("  Martin, un nouveau run → ", refuse)
         print(
             "\n  effacer la clé d'un client ne touche pas l'autre : "
@@ -465,18 +428,14 @@ async def clients(args: argparse.Namespace, controle: Controle) -> None:
         )
 
         titre("Ce que le chargement dit, avant le premier run")
-        manquante = encryption_warnings(
-            config, create_keyring(config, EnvironmentSecrets(config, dupont_seul))
-        )
+        manquante = encryption_warnings(config, create_keyring(config, EnvironmentSecrets(config, dupont_seul)))
         for avertissement in manquante:
             enonce("  sans la clé de Martin : ", avertissement)
         # La même config, sans les redirections : les deux clients lisent alors
         # la même variable, donc scellent avec la même clé.
         commune = scellee(Path(dossier))
         environ_commun = {**os.environ, CLE: clef(b"C")}
-        partagee = encryption_warnings(
-            commune, create_keyring(commune, EnvironmentSecrets(commune, environ_commun))
-        )
+        partagee = encryption_warnings(commune, create_keyring(commune, EnvironmentSecrets(commune, environ_commun)))
         for avertissement in partagee:
             enonce("  sans redirection      : ", avertissement)
         print(
@@ -494,12 +453,7 @@ async def clients(args: argparse.Namespace, controle: Controle) -> None:
 def _par_client(config: LoomConfig) -> LoomConfig:
     """Donne à chaque client sa redirection du secret de la clé."""
     variables = {DUPONT: CLE_DUPONT, MARTIN: CLE_MARTIN}
-    tenants = tuple(
-        tenant.model_copy(
-            update={"secrets": {**tenant.secrets, CLE: variables.get(tenant.id, CLE)}}
-        )
-        for tenant in config.tenants
-    )
+    tenants = tuple(tenant.model_copy(update={"secrets": {**tenant.secrets, CLE: variables.get(tenant.id, CLE)}}) for tenant in config.tenants)
     return config.model_copy(update={"tenants": tenants})
 
 
@@ -517,9 +471,7 @@ async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="Le sceau : contenus illisibles au repos, une clé par client"
-    )
+    parser = argparse.ArgumentParser(description="Le sceau : contenus illisibles au repos, une clé par client")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     args = parser.parse_args(argv)

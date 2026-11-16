@@ -64,9 +64,7 @@ from pydantic import (
 from loom_ia.tools_builtin.local_files_params import FOLDER_NAME_PATTERN
 from loom_ia.tools_builtin.sql_params import ENV_NAME_PATTERN
 
-type MemoryAction = Literal[
-    "search", "get", "list_docs", "projects", "add_text", "add_url", "add_file", "update", "delete"
-]
+type MemoryAction = Literal["search", "get", "list_docs", "projects", "add_text", "add_url", "add_file", "update", "delete"]
 type ActionApproval = Literal["never", "always"]
 
 # Dans l'ordre où on les dit.
@@ -82,9 +80,7 @@ ACTIONS: Final[tuple[MemoryAction, ...]] = (
     "delete",
 )
 READS: Final[frozenset[MemoryAction]] = frozenset({"search", "get", "list_docs", "projects"})
-DEFAULT_APPROVAL: Final[Mapping[MemoryAction, ActionApproval]] = {
-    action: "never" if action in READS else "always" for action in ACTIONS
-}
+DEFAULT_APPROVAL: Final[Mapping[MemoryAction, ActionApproval]] = {action: "never" if action in READS else "always" for action in ACTIONS}
 # Un projet s'écrit en minuscules : l'outil range et cherche les projets ainsi.
 PROJECT_PATTERN: Final = r"^[a-z0-9][a-z0-9_.-]{0,63}$"
 # L'extra de loom-ia qui apporte les vrais modèles.
@@ -160,10 +156,7 @@ def server_url_problem(url: str) -> str | None:
     if parts.path not in ("", "/") or parts.query or parts.fragment or parts.username:
         return "seulement http://<hôte>:<port>, sans chemin ni paramètres"
     if not is_loopback(parts.hostname):
-        return (
-            f"{parts.hostname} n'est pas la boucle locale (127.0.0.1, localhost, ::1) : "
-            "l'accès par le réseau viendra plus tard"
-        )
+        return f"{parts.hostname} n'est pas la boucle locale (127.0.0.1, localhost, ::1) : l'accès par le réseau viendra plus tard"
     if port is None:
         return "le port est attendu (http://127.0.0.1:8765)"
     return None
@@ -259,10 +252,7 @@ class ModelsSpec(BaseModel):
                 "(ses options) ; pour le repli dans loom, les mettre dans server.fallback"
             )
         if "preload" in self.model_fields_set:
-            raise ValueError(
-                "models : avec server, les modèles sont chargés par loom-mem-gpu à son "
-                "démarrage ; preload ne sert qu'au calcul dans loom"
-            )
+            raise ValueError("models : avec server, les modèles sont chargés par loom-mem-gpu à son démarrage ; preload ne sert qu'au calcul dans loom")
         return self
 
     def fallback(self) -> ModelsSpec | None:
@@ -397,9 +387,7 @@ class MemoryParams(BaseModel):
         if self.folders and "add_file" not in self.actions:
             raise ValueError("'folders' ne sert qu'à add_file, qui n'est pas dans 'actions'")
         if self.project is not None and "projects" in self.actions:
-            raise ValueError(
-                "'projects' liste les projets de la base : sans objet quand 'project' est fixé"
-            )
+            raise ValueError("'projects' liste les projets de la base : sans objet quand 'project' est fixé")
         return self
 
     def declared(self) -> tuple[MemoryAction, ...]:

@@ -293,9 +293,7 @@ async def test_redirect_to_another_scheme_is_refused(web: Web) -> None:
 
 async def test_too_many_redirects(web: Web) -> None:
     web.page("https://exemple.fr/boucle", status=302, headers={"location": "/boucle"})
-    with pytest.raises(
-        ToolError, match=r"Plus de 5 redirections depuis https://exemple\.fr/boucle"
-    ):
+    with pytest.raises(ToolError, match=r"Plus de 5 redirections depuis https://exemple\.fr/boucle"):
         await fetch_page("https://exemple.fr/boucle")
     assert len(web.requests) == 6
 
@@ -430,20 +428,7 @@ async def test_page_structure(web: Web) -> None:
     <p>Fin\x00.</p></body></html>"""
     out = await read(web, html)
     assert out == (
-        "URL : https://exemple.fr/\n"
-        "Titre : Plombier Dupont\n"
-        "\n"
-        "# Tarifs\n"
-        "\n"
-        "Déplacement offert\n"
-        "dans Dijon.\n"
-        "\n"
-        "## Prestations\n"
-        "\n"
-        "- Fuite\n"
-        "- Chauffe-eau\n"
-        "\n"
-        "Fin."
+        "URL : https://exemple.fr/\nTitre : Plombier Dupont\n\n# Tarifs\n\nDéplacement offert\ndans Dijon.\n\n## Prestations\n\n- Fuite\n- Chauffe-eau\n\nFin."
     )
 
 
@@ -484,9 +469,7 @@ async def test_unclosed_table(web: Web) -> None:
 
 
 async def test_unclosed_code_block(web: Web) -> None:
-    assert (await read(web, "<p>Début</p><pre>reste\n  du code")).endswith(
-        "```\nreste\n  du code\n```"
-    )
+    assert (await read(web, "<p>Début</p><pre>reste\n  du code")).endswith("```\nreste\n  du code\n```")
 
 
 async def test_dropped_elements_take_their_links_with_them(web: Web) -> None:
@@ -517,9 +500,7 @@ async def test_decorative_elements(web: Web) -> None:
 
 
 async def test_unclosed_hidden_element_keeps_its_text(web: Web) -> None:
-    assert (await read(web, '<p>Début</p><div aria-hidden="true">jamais fermé')).endswith(
-        "jamais fermé"
-    )
+    assert (await read(web, '<p>Début</p><div aria-hidden="true">jamais fermé')).endswith("jamais fermé")
 
 
 async def test_links(web: Web) -> None:

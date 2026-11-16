@@ -92,9 +92,7 @@ class Hit(BaseModel):
     title: str
     project: str
     score: float
-    snippet: str = Field(
-        description="Le passage entier s'il est court, sinon un extrait (voir `truncated`)."
-    )
+    snippet: str = Field(description="Le passage entier s'il est court, sinon un extrait (voir `truncated`).")
     truncated: bool = Field(description="Vrai si `snippet` est un extrait ; `get` donne le reste.")
     heading_path: str
     source: str | None
@@ -109,6 +107,4 @@ class IngestResult(BaseModel):
     project: str
     chunks: int
     updated: bool = Field(default=False, description="Vrai si un document existant a été remplacé.")
-    duplicate_of: str | None = Field(
-        default=None, description="doc_id d'un document au contenu identique ; rien n'a été écrit."
-    )
+    duplicate_of: str | None = Field(default=None, description="doc_id d'un document au contenu identique ; rien n'a été écrit.")

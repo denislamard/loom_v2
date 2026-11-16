@@ -58,9 +58,7 @@ async def assert_replays(
                 problems += _problems(journal, result)
     if problems:
         lines = "\n".join(f"  {problem}" for problem in problems)
-        raise AssertionError(
-            f"Rejeu : {len(problems)} écart(s) sur {len(journals)} journal(aux)\n{lines}"
-        )
+        raise AssertionError(f"Rejeu : {len(problems)} écart(s) sur {len(journals)} journal(aux)\n{lines}")
     return replayed
 
 
@@ -72,8 +70,5 @@ def _problems(journal: Path | str, result: JournalReplay) -> list[str]:
             continue
         said = divergence.where + (f" ; {divergence.detail}" if divergence.detail else "")
         problems.append(f"{journal}, run {report.run_id} : {said}")
-    problems += [
-        f"{journal}, run {run_id} : inachevé au journal — un rejeu compare un run fini"
-        for run_id in result.unfinished
-    ]
+    problems += [f"{journal}, run {run_id} : inachevé au journal — un rejeu compare un run fini" for run_id in result.unfinished]
     return problems

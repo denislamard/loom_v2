@@ -60,9 +60,7 @@ class BudgetGuard(TracingPolicy):
     def __repr__(self) -> str:
         return f"BudgetGuard({self.budgets!r})"
 
-    async def decide_traced(
-        self, subject: PolicySubject, context: PolicyContext, trace: Trace
-    ) -> Decision:
+    async def decide_traced(self, subject: PolicySubject, context: PolicyContext, trace: Trace) -> Decision:
         if not isinstance(subject, BeforeModel) or subject.finalizing:
             return CONTINUE
         reached = self.reached(subject)
@@ -105,11 +103,7 @@ class BudgetGuard(TracingPolicy):
                     ("session", "max_tokens", limits.max_tokens, session.tokens),
                 ]
             )
-        return [
-            (scope, limit, value, used)
-            for scope, limit, value, used in checks
-            if value is not None and used >= value
-        ]
+        return [(scope, limit, value, used) for scope, limit, value, used in checks if value is not None and used >= value]
 
 
 def describe(scope: BudgetScope, limit: BudgetLimit, value: float, used: float) -> str:

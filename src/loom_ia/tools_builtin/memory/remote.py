@@ -162,9 +162,7 @@ class Connection:
             if found.state == "ready":
                 break
             if found.state == "failed":
-                raise ServerUnavailable(
-                    f"{APP} ({self.target.url}) n'a pas chargé ses modèles : {found.error}"
-                )
+                raise ServerUnavailable(f"{APP} ({self.target.url}) n'a pas chargé ses modèles : {found.error}")
             if time.monotonic() >= deadline:
                 raise ServerUnavailable(
                     f"{APP} ({self.target.url}) charge encore ses modèles après "
@@ -196,9 +194,7 @@ class Connection:
                 try:
                     return answer.model_validate_json(response.content)
                 except ValidationError as exc:
-                    raise ModelRunError(
-                        f"{APP} : réponse illisible à {path} ({first_line(exc)})"
-                    ) from exc
+                    raise ModelRunError(f"{APP} : réponse illisible à {path} ({first_line(exc)})") from exc
             error = _error(response)
             message = error.error
             if response.status_code == 401:
@@ -253,15 +249,11 @@ class Connection:
             message = _error(response).error
             raise ModelLoadError(f"{APP} ({self.target.url}) : {message} (token_env)")
         if response.status_code not in (200, 503):
-            raise ModelLoadError(
-                f"{APP} ({self.target.url}) : /v1/health a répondu {response.status_code}"
-            )
+            raise ModelLoadError(f"{APP} ({self.target.url}) : /v1/health a répondu {response.status_code}")
         try:
             return Health.model_validate_json(response.content)
         except ValidationError as exc:
-            raise ModelLoadError(
-                f"{self.target.url} ne répond pas comme {APP} ({first_line(exc)})"
-            ) from exc
+            raise ModelLoadError(f"{self.target.url} ne répond pas comme {APP} ({first_line(exc)})") from exc
 
     def _check(self, health: Health) -> None:
         """L'application doit calculer comme ce process le ferait : sinon, rien ne passe."""
@@ -286,9 +278,7 @@ class Connection:
         if self.target.token is not None:
             headers["Authorization"] = f"Bearer {self.target.token}"
         try:
-            return self._http().request(
-                method, self.target.url.rstrip("/") + path, content=body, headers=headers
-            )
+            return self._http().request(method, self.target.url.rstrip("/") + path, content=body, headers=headers)
         except httpx2.TransportError as exc:
             raise _Unreachable(first_line(exc) or type(exc).__name__) from exc
 
@@ -356,9 +346,7 @@ class RemoteEmbedder:
     def load(self) -> None:
         self.connection.run(self.connection.ensure, lambda local: local.embedder.load())
 
-    def embed_documents(
-        self, texts: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[Embedding]:
+    def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
         found: list[Embedding] = []
         for batch in bge_m3.batches(list(texts)):
             checkpoint(cancel)
@@ -400,9 +388,7 @@ class RemoteReranker:
     def load(self) -> None:
         self.connection.run(self.connection.ensure, lambda local: local.reranker.load())
 
-    def score(
-        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[float]:
+    def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
         found: list[float] = []
         for batch in bge_m3.batches(list(passages)):
             checkpoint(cancel)
@@ -414,12 +400,8 @@ class RemoteReranker:
             )
         return found
 
-    def _remote(
-        self, query: str, batch: Sequence[str], cancel: threading.Event | None
-    ) -> list[float]:
-        request = ScoreRequest(
-            query=bge_m3.clipped(query), passages=[bge_m3.clipped(p) for p in batch]
-        )
+    def _remote(self, query: str, batch: Sequence[str], cancel: threading.Event | None) -> list[float]:
+        request = ScoreRequest(query=bge_m3.clipped(query), passages=[bge_m3.clipped(p) for p in batch])
         answer = self.connection.post("/v1/score", request, ScoreResponse, cancel)
         if len(answer.scores) != len(batch):
             raise ModelRunError(f"{APP} : {len(answer.scores)} scores pour {len(batch)}")

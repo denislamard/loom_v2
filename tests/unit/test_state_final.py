@@ -69,18 +69,14 @@ def state_tool(max_value_bytes: int = 1024) -> StateTool:
     return StateTool((key,), max_value_bytes)
 
 
-def context(
-    store: EventStore, model: ScriptedModel, *, max_total: int = 4096, **options: Any
-) -> RunContext:
+def context(store: EventStore, model: ScriptedModel, *, max_total: int = 4096, **options: Any) -> RunContext:
     rules = StateRules(
         {"client": StateKeyRule(schema=CLIENT, writers=frozenset({"model"}))},
         max_total_bytes=max_total,
         model_tool="state",
     )
     executor = ToolExecutor([chercher, calculer, state_tool()], state_rules=rules)
-    return RunContext(
-        agent="demo", store=store, model=model, model_spec=SPEC, tools=executor, **options
-    )
+    return RunContext(agent="demo", store=store, model=model, model_spec=SPEC, tools=executor, **options)
 
 
 async def run(ctx: RunContext, prompt: str = "Fiche de Renard ?") -> RunState:
@@ -93,9 +89,7 @@ SET: dict[str, JsonValue] = {"set": "client", "result": "result:1"}
 ANSWER = "Léa Renard est la cliente C-261."
 
 
-def answered_with_state(
-    text: str = ANSWER, arguments: dict[str, JsonValue] | None = None
-) -> Message:
+def answered_with_state(text: str = ANSWER, arguments: dict[str, JsonValue] | None = None) -> Message:
     return tool_call_message(("c2", "state", {**SET, **(arguments or {})}), text=text)
 
 
@@ -120,14 +114,10 @@ async def test_without_text_the_model_is_called_again() -> None:
     assert len(model.requests) == 3
 
 
-@pytest.mark.parametrize(
-    "arguments", [{"result": "result:9"}, {"set": "inconnue"}], ids=["ref", "clé"]
-)
+@pytest.mark.parametrize("arguments", [{"result": "result:9"}, {"set": "inconnue"}], ids=["ref", "clé"])
 async def test_a_failed_state_call_goes_back_to_the_model(arguments: dict[str, JsonValue]) -> None:
     store = InMemoryEventStore()
-    model = ScriptedModel(
-        SEARCH, answered_with_state(arguments=arguments), Message.assistant("Corrigé.")
-    )
+    model = ScriptedModel(SEARCH, answered_with_state(arguments=arguments), Message.assistant("Corrigé."))
     done = await run(context(store, model))
     assert done.output == Message.assistant("Corrigé.")
     assert len(model.requests) == 3
@@ -190,13 +180,9 @@ async def test_a_structured_answer_is_checked_like_any_final_answer() -> None:
             "on_failure": "fail",
         }
     )
-    model = ScriptedModel(
-        SEARCH, answered_with_state(text="pas du JSON"), Message.assistant('{"code": "C-261"}')
-    )
+    model = ScriptedModel(SEARCH, answered_with_state(text="pas du JSON"), Message.assistant('{"code": "C-261"}'))
     guard = ContractGuard(contract)
-    policies = Policies(
-        [BoundPolicy(policy=guard, name=CONTRACT_POLICY, points=guard.points, max_attempts=None)]
-    )
+    policies = Policies([BoundPolicy(policy=guard, name=CONTRACT_POLICY, points=guard.points, max_attempts=None)])
     ctx = context(store, model, output=contract, policies=policies)
     done = await run(ctx)
     assert done.output == Message.assistant('{"code": "C-261"}')
@@ -228,12 +214,8 @@ async def test_a_run_without_loom_state_is_untouched() -> None:
         tool_call_message(("c1", "calculer", {"x": 2}), text="Je calcule."),
         Message.assistant("4."),
     )
-    ctx = RunContext(
-        agent="demo", store=store, model=model, model_spec=SPEC, tools=ToolExecutor([calculer])
-    )
+    ctx = RunContext(agent="demo", store=store, model=model, model_spec=SPEC, tools=ToolExecutor([calculer]))
     done = await run(ctx)
     assert done.output == Message.assistant("4.")
     assert len(model.requests) == 2
-    assert [
-        type(e.payload) for e in await store.read(done.context.tenant_id, done.session_id)
-    ].count(ModelResponded) == 2
+    assert [type(e.payload) for e in await store.read(done.context.tenant_id, done.session_id)].count(ModelResponded) == 2

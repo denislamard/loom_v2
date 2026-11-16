@@ -111,9 +111,7 @@ class Server:
 
 
 def request(*messages: Message, **options: Any) -> ModelRequest:
-    return ModelRequest.model_validate(
-        {"model_id": "oss-120b", "messages": messages or (Message.user("?"),), **options}
-    )
+    return ModelRequest.model_validate({"model_id": "oss-120b", "messages": messages or (Message.user("?"),), **options})
 
 
 async def test_stream_is_read_in_order() -> None:
@@ -165,9 +163,7 @@ async def test_stream_is_read_in_order() -> None:
     assert response.stop_reason == "tool_use"
     assert response.model_id == "oss-120b-v2"
     assert response.provider == "openai"
-    assert response.usage == Usage(
-        input_tokens=200, output_tokens=90, cache_read_tokens=1000, reasoning_tokens=40
-    )
+    assert response.usage == Usage(input_tokens=200, output_tokens=90, cache_read_tokens=1000, reasoning_tokens=40)
     sent = server.requests[0]
     assert sent.url == "https://together.test/v1/chat/completions"
     assert sent.headers["authorization"] == "Bearer sk-test"
@@ -350,20 +346,14 @@ async def test_other_choices_and_reasoning_field() -> None:
 
 
 def without_streaming(spec: ModelSpec) -> ModelSpec:
-    return spec.model_copy(
-        update={"capabilities": spec.capabilities.model_copy(update={"streaming": False})}
-    )
+    return spec.model_copy(update={"capabilities": spec.capabilities.model_copy(update={"streaming": False})})
 
 
 async def test_an_unreadable_event_or_answer_is_a_transient_model_error() -> None:
     """Un JSON illisible du fournisseur est un échec d'appel, pas une panne du moteur."""
     started = chunk({"role": "assistant", "content": "Le"})
-    stream = httpx2.Response(
-        200, text=started + "data: {pas du json\n\n", headers={"content-type": "text/event-stream"}
-    )
-    answer = httpx2.Response(
-        200, text='{"id": "c1", "object"', headers={"content-type": "application/json"}
-    )
+    stream = httpx2.Response(200, text=started + "data: {pas du json\n\n", headers={"content-type": "text/event-stream"})
+    answer = httpx2.Response(200, text='{"id": "c1", "object"', headers={"content-type": "application/json"})
     for response, spec in ((stream, SPEC), (answer, without_streaming(SPEC))):
         with pytest.raises(ModelError, match="JSON invalide") as caught:
             await complete(Server(response).model(spec), request())
@@ -405,9 +395,7 @@ async def test_non_streaming_models() -> None:
     response = await complete(server.model(spec), request())
     assert "stream" not in server.body
     assert response.message.blocks == (
-        ReasoningBlock(
-            text="réflexion", provider_meta=origin("reasoning_content"), model_id="oss-120b"
-        ),
+        ReasoningBlock(text="réflexion", provider_meta=origin("reasoning_content"), model_id="oss-120b"),
         TextBlock(text="Je calcule."),
         ToolCallBlock(call_id="call_z", name="calculer", arguments={"expr": "3"}),
     )
@@ -452,9 +440,7 @@ def api_error(status: int, code: str | None, message: str, **headers: str) -> ht
         ),
     ],
 )
-async def test_errors_are_classified(
-    response: httpx2.Response, kind: str, status: int | None, retry: float | None
-) -> None:
+async def test_errors_are_classified(response: httpx2.Response, kind: str, status: int | None, retry: float | None) -> None:
     with pytest.raises(ModelError) as caught:
         await complete(Server(response).model(), request())
     error = caught.value
@@ -505,9 +491,7 @@ async def test_images_go_in_user_content_parts() -> None:
     server = Server(streamed(chunk({"content": "ok"}, finish="stop")))
     await complete(
         server.model(),
-        request(
-            Message(role="user", blocks=(TextBlock(text="Regarde"), TextBlock(text=""), image))
-        ),
+        request(Message(role="user", blocks=(TextBlock(text="Regarde"), TextBlock(text=""), image))),
     )
     url = f"data:image/png;base64,{base64.b64encode(png).decode()}"
     assert server.body["messages"] == [
@@ -535,16 +519,12 @@ async def test_images_go_in_user_content_parts() -> None:
 
 
 def with_capabilities(**capabilities: bool) -> ModelSpec:
-    return SPEC.model_copy(
-        update={"capabilities": SPEC.capabilities.model_copy(update=capabilities)}
-    )
+    return SPEC.model_copy(update={"capabilities": SPEC.capabilities.model_copy(update=capabilities)})
 
 
 def reasoned(text: str, field: str | None = None, *, calls: bool = True) -> Message:
     meta: dict[str, ProviderMeta] = origin(field) if field else {}
-    blocks: list[ReasoningBlock | TextBlock | ToolCallBlock] = [
-        ReasoningBlock(text=text, provider_meta=meta)
-    ]
+    blocks: list[ReasoningBlock | TextBlock | ToolCallBlock] = [ReasoningBlock(text=text, provider_meta=meta)]
     if calls:
         blocks.append(ToolCallBlock(call_id=f"c_{text}", name="calculer"))
     else:
@@ -553,9 +533,7 @@ def reasoned(text: str, field: str | None = None, *, calls: bool = True) -> Mess
 
 
 def result(call_id: str) -> Message:
-    return Message(
-        role="tool", blocks=(ToolResultBlock(call_id=call_id, output=ToolOutput.text("1")),)
-    )
+    return Message(role="tool", blocks=(ToolResultBlock(call_id=call_id, output=ToolOutput.text("1")),))
 
 
 HISTORY = (
@@ -625,9 +603,7 @@ def refused_result() -> list[Message]:
 
 def test_refused_state_writes_follow_the_tool_result() -> None:
     """Le modèle lit, à la suite du résultat, les écritures du state qui n'ont pas été posées."""
-    assert to_openai_messages("", refused_result()) == [
-        {"role": "tool", "tool_call_id": "t1", "content": NOTED}
-    ]
+    assert to_openai_messages("", refused_result()) == [{"role": "tool", "tool_call_id": "t1", "content": NOTED}]
 
 
 async def test_a_refusal_without_key_says_no_key_was_sent() -> None:
@@ -637,6 +613,5 @@ async def test_a_refusal_without_key_says_no_key_was_sent() -> None:
         await complete(server.model(keyless), request())
     assert caught.value.kind == "auth"
     assert str(caught.value).endswith(
-        " — aucune clé d'API envoyée : le modèle "
-        f"{SPEC.id} n'a pas d'api_key_env (déclarer par exemple api_key_env: OPENAI_API_KEY)"
+        f" — aucune clé d'API envoyée : le modèle {SPEC.id} n'a pas d'api_key_env (déclarer par exemple api_key_env: OPENAI_API_KEY)"
     )

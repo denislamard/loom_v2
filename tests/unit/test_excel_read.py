@@ -139,9 +139,7 @@ def lines(path: Path, count: int) -> Path:
         ({"action": "read", "path": "donnees/a.xlsx", "max_rows": 5000}, "max_rows"),
     ],
 )
-async def test_each_action_takes_its_own_fields(
-    tool: ExcelTool, arguments: dict[str, Any], message: str
-) -> None:
+async def test_each_action_takes_its_own_fields(tool: ExcelTool, arguments: dict[str, Any], message: str) -> None:
     await refused(tool, message, **arguments)
 
 
@@ -177,9 +175,7 @@ def test_a_read_has_no_effect_and_asks_only_where_the_folder_asks(tool: ExcelToo
     assert (free.side_effects, free.approval, free.idempotent) == ("none", "never", True)
     asked = tool.assess_call({"action": "read", "path": "valide/a.xlsx"})
     assert asked.approval == "always" and asked.side_effects == "none"
-    assert asked.reason == (
-        "lire le classeur valide/a.xlsx — la config exige une approbation pour lire dans valide"
-    )
+    assert asked.reason == ("lire le classeur valide/a.xlsx — la config exige une approbation pour lire dans valide")
 
 
 @pytest.mark.parametrize(
@@ -233,9 +229,7 @@ async def test_a_range_says_where_it_starts(tool: ExcelTool, disk: Path) -> None
     found = await call(tool, action="read", path="donnees/a.xlsx", sheet="Données", range="B3:C4")
     assert found["start"] == "B3"
     assert found["rows"] == [[200, "2026-10-02T09:30:00"], [300, "2026-10-03T09:30:00"]]
-    await refused(
-        tool, "plage illisible", action="read", path="donnees/a.xlsx", sheet="Données", range="1A:B"
-    )
+    await refused(tool, "plage illisible", action="read", path="donnees/a.xlsx", sheet="Données", range="1A:B")
 
 
 async def test_a_long_sheet_is_cut_and_says_how_to_go_on(tool: ExcelTool, disk: Path) -> None:
@@ -243,12 +237,8 @@ async def test_a_long_sheet_is_cut_and_says_how_to_go_on(tool: ExcelTool, disk: 
     found = await call(tool, action="read", path="donnees/long.xlsx", sheet="Sheet")
     assert found["row_count"] == 200 and found["truncated"]
     assert found["next_start"] == "A201"
-    assert any(
-        "Lecture coupée par 200 lignes : la suite commence en A201" in n for n in found["notes"]
-    )
-    rest = await call(
-        tool, action="read", path="donnees/long.xlsx", sheet="Sheet", range="A201:A400"
-    )
+    assert any("Lecture coupée par 200 lignes : la suite commence en A201" in n for n in found["notes"])
+    rest = await call(tool, action="read", path="donnees/long.xlsx", sheet="Sheet", range="A201:A400")
     assert rest["row_count"] == 101 and not rest["truncated"]
 
 
@@ -275,9 +265,7 @@ async def test_a_hidden_sheet_says_it(tool: ExcelTool, disk: Path) -> None:
         ("Graphique", "onglet graphique"),
     ],
 )
-async def test_unknown_or_chart_sheets(
-    tool: ExcelTool, disk: Path, sheet: str, message: str
-) -> None:
+async def test_unknown_or_chart_sheets(tool: ExcelTool, disk: Path, sheet: str, message: str) -> None:
     sample(disk / "donnees" / "a.xlsx")
     await refused(tool, message, action="read", path="donnees/a.xlsx", sheet=sheet)
 
@@ -288,11 +276,7 @@ async def test_a_lying_dimension_does_not_cut_the_sheet(tool: ExcelTool, disk: P
     rewrite(
         source,
         disk / "donnees" / "faux.xlsx",
-        lambda name, data: (
-            data.replace(b'<dimension ref="A1:K5" />', b'<dimension ref="A1" />')
-            if name == SHEET
-            else data
-        ),
+        lambda name, data: data.replace(b'<dimension ref="A1:K5" />', b'<dimension ref="A1" />') if name == SHEET else data,
     )
     found = await call(tool, action="read", path="donnees/faux.xlsx", sheet="Données")
     assert found["row_count"] == 5
@@ -366,26 +350,18 @@ LOL: Final = (
         (b'<!DOCTYPE w [<!ENTITY x SYSTEM "file:///etc/hostname">]>', b"&x;", "XML refusé"),
     ],
 )
-async def test_xml_entities_are_refused(
-    tool: ExcelTool, disk: Path, prologue: bytes, entity: bytes, message: str
-) -> None:
+async def test_xml_entities_are_refused(tool: ExcelTool, disk: Path, prologue: bytes, entity: bytes, message: str) -> None:
     """« Billion laughs » : expat refuse l'amplification ; entité externe : jamais chargée."""
     source = sample(disk / "donnees" / "a.xlsx")
     rewrite(
         source,
         disk / "donnees" / "x.xlsx",
-        lambda name, data: (
-            prologue + data.replace(b"<t>Client</t>", b"<t>" + entity + b"</t>")
-            if name == SHEET
-            else data
-        ),
+        lambda name, data: prologue + data.replace(b"<t>Client</t>", b"<t>" + entity + b"</t>") if name == SHEET else data,
     )
     await refused(tool, message, action="read", path="donnees/x.xlsx", sheet="Données")
 
 
-async def test_a_decompression_bomb_is_refused_before_openpyxl(
-    tool: ExcelTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_decompression_bomb_is_refused_before_openpyxl(tool: ExcelTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = sample(disk / "donnees" / "a.xlsx")
 
     def bomb(name: str, data: bytes) -> bytes:
@@ -402,22 +378,14 @@ async def test_a_decompression_bomb_is_refused_before_openpyxl(
     await refused(tool, "une fois décompressé", action="read", path="donnees/bombe.xlsx")
 
 
-async def test_the_uncompressed_size_is_bounded(
-    tool: ExcelTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_the_uncompressed_size_is_bounded(tool: ExcelTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample(disk / "donnees" / "a.xlsx")
     monkeypatch.setattr(reader_module, "MAX_UNCOMPRESSED", 1_000)
-    await refused(
-        tool, "une fois décompressé, au-delà de 1000", action="read", path="donnees/a.xlsx"
-    )
+    await refused(tool, "une fois décompressé, au-delà de 1000", action="read", path="donnees/a.xlsx")
 
 
-@pytest.mark.parametrize(
-    ("content", "message"), [(b"", "pas un classeur .xlsx lisible"), (b"a;b\n1;2\n", "renommé")]
-)
-async def test_a_file_that_is_not_a_workbook(
-    tool: ExcelTool, disk: Path, content: bytes, message: str
-) -> None:
+@pytest.mark.parametrize(("content", "message"), [(b"", "pas un classeur .xlsx lisible"), (b"a;b\n1;2\n", "renommé")])
+async def test_a_file_that_is_not_a_workbook(tool: ExcelTool, disk: Path, content: bytes, message: str) -> None:
     (disk / "donnees" / "faux.xlsx").write_bytes(content)
     await refused(tool, message, action="read", path="donnees/faux.xlsx")
 
@@ -435,17 +403,13 @@ async def test_a_range_after_empty_rows_lands_on_the_right_row(tool: ExcelTool, 
     assert ws is not None
     ws["A1"], ws["A50"], ws["B60"] = "haut", "loin", "=1+1"
     wb.save(disk / "donnees" / "trou.xlsx")
-    found = await call(
-        tool, action="read", path="donnees/trou.xlsx", sheet="Sheet", range="A50:B60"
-    )
+    found = await call(tool, action="read", path="donnees/trou.xlsx", sheet="Sheet", range="A50:B60")
     # La colonne B garde sa formule sans valeur : les lignes ont deux colonnes.
     assert found["start"] == "A50" and found["rows"][0] == ["loin", None]
     assert found["formulas"] == {"B60": "=1+1"}
 
 
-async def test_a_long_read_stops_by_itself(
-    tool: ExcelTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_long_read_stops_by_itself(tool: ExcelTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un fil ne s'annule pas : sans échéance, il lirait encore après le délai de l'outil."""
     lines(disk / "donnees" / "long.xlsx", 3_000)
     monkeypatch.setattr(reader_module, "READ_DEADLINE", -1.0)
@@ -463,9 +427,7 @@ async def test_a_long_read_stops_by_itself(
 
 
 def edited(source: Path, target: Path, old: bytes, new: bytes) -> Path:
-    return rewrite(
-        source, target, lambda name, data: data.replace(old, new) if name == SHEET else data
-    )
+    return rewrite(source, target, lambda name, data: data.replace(old, new) if name == SHEET else data)
 
 
 @pytest.mark.parametrize(
@@ -477,9 +439,7 @@ def edited(source: Path, target: Path, old: bytes, new: bytes) -> Path:
         (b'<c r="B2" t="n"><v>100</v></c>', b'<c r="B2" t="d"><v>2026-13-45</v></c>'),
     ],
 )
-async def test_a_broken_cell_is_a_tool_error_not_an_internal_one(
-    tool: ExcelTool, disk: Path, old: bytes, new: bytes
-) -> None:
+async def test_a_broken_cell_is_a_tool_error_not_an_internal_one(tool: ExcelTool, disk: Path, old: bytes, new: bytes) -> None:
     source = sample(disk / "donnees" / "a.xlsx")
     assert old in zipfile.ZipFile(source).read(SHEET)
     edited(source, disk / "donnees" / "x.xlsx", old, new)
@@ -507,9 +467,7 @@ async def test_the_result_has_a_size_budget(tool: ExcelTool, disk: Path) -> None
     for _ in range(1_000):
         ws.append(["x" * 900] * 20)
     wb.save(disk / "donnees" / "large.xlsx")
-    found = await call(
-        tool, action="read", path="donnees/large.xlsx", sheet="Sheet", max_rows=1_000
-    )
+    found = await call(tool, action="read", path="donnees/large.xlsx", sheet="Sheet", max_rows=1_000)
     assert len(str(found["rows"])) < 60_000
     assert found["truncated"] and found["next_start"] == f"A{found['row_count'] + 1}"
     assert any("la taille du résultat (40000 caractères)" in note for note in found["notes"])
@@ -524,15 +482,11 @@ async def test_columns_beyond_the_bound_are_said(tool: ExcelTool, disk: Path) ->
     wb.save(disk / "donnees" / "large.xlsx")
     found = await call(tool, action="read", path="donnees/large.xlsx", sheet="Sheet")
     assert any("Colonnes coupées après GR (200 au plus)" in note for note in found["notes"])
-    right = await call(
-        tool, action="read", path="donnees/large.xlsx", sheet="Sheet", range="IP1:IP5"
-    )
+    right = await call(tool, action="read", path="donnees/large.xlsx", sheet="Sheet", range="IP1:IP5")
     assert right["rows"] == [[None], ["loin à droite"]] and right["start"] == "IP1"
 
 
-async def test_a_source_keeps_long_texts_and_refuses_uncomputed_formulas(
-    tool: ExcelTool, disk: Path
-) -> None:
+async def test_a_source_keeps_long_texts_and_refuses_uncomputed_formulas(tool: ExcelTool, disk: Path) -> None:
     wb = Workbook()
     ws = wb.active
     assert ws is not None
@@ -540,9 +494,7 @@ async def test_a_source_keeps_long_texts_and_refuses_uncomputed_formulas(
     ws.append(["y" * 1_500, 12])
     wb.save(disk / "donnees" / "texte.xlsx")
     sheet = {"name": "S", "columns": [{"header": "Libellé"}, {"header": "TTC", "type": "decimal"}]}
-    done = await call(
-        tool, path="sortie/s.xlsx", sheets=[{**sheet, "data": {"path": "donnees/texte.xlsx"}}]
-    )
+    done = await call(tool, path="sortie/s.xlsx", sheets=[{**sheet, "data": {"path": "donnees/texte.xlsx"}}])
     assert done["sheets"][0]["rows"] == 1
     ws["B2"] = "=10*1.2"
     wb.save(disk / "donnees" / "formule.xlsx")
@@ -570,9 +522,7 @@ async def test_a_source_keeps_long_texts_and_refuses_uncomputed_formulas(
         ("XFE1", None, "une colonne va de A à XFD"),
     ],
 )
-async def test_ranges_are_put_in_order_or_refused(
-    tool: ExcelTool, disk: Path, given: str, start: str | None, message: str | None
-) -> None:
+async def test_ranges_are_put_in_order_or_refused(tool: ExcelTool, disk: Path, given: str, start: str | None, message: str | None) -> None:
     sample(disk / "donnees" / "a.xlsx")
     arguments = {"action": "read", "path": "donnees/a.xlsx", "sheet": "Données", "range": given}
     if message is not None:
@@ -714,8 +664,7 @@ def padded(source: Path, target: Path, member: str, *, head: bytes = b"", tail: 
             b"",
             (
                 b'<dimension ref="A1:K5" />',
-                b'<x:dimension xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/'
-                b'main" ref="A1:K5" />',
+                b'<x:dimension xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ref="A1:K5" />',
             ),
             True,
         ),
@@ -742,9 +691,7 @@ async def test_what_openpyxl_would_read_whole_is_bounded(
     await refused(tool, f"{member} fait .* au-delà de 30000, et serait lu en entier", **arguments)
 
 
-async def test_a_broken_member_during_the_check_is_a_tool_error(
-    tool: ExcelTool, disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_broken_member_during_the_check_is_a_tool_error(tool: ExcelTool, disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Relecture 2 : zlib.error ou membre chiffré pendant le contrôle du zip."""
     import zlib
 
@@ -754,14 +701,10 @@ async def test_a_broken_member_during_the_check_is_a_tool_error(
     sample(disk / "donnees" / "a.xlsx")
     monkeypatch.setattr(reader_module, "MAX_WHOLE_MEMBER", 0)
     monkeypatch.setattr(reader_module, "_sized_sheet", broken)
-    await refused(
-        tool, "classeur illisible \\(error: Error -3", action="read", path="donnees/a.xlsx"
-    )
+    await refused(tool, "classeur illisible \\(error: Error -3", action="read", path="donnees/a.xlsx")
 
 
-async def test_a_source_workbook_is_refused_when_reading_is_unsafe(
-    disk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_source_workbook_is_refused_when_reading_is_unsafe(disk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import pyexpat
 
     monkeypatch.setattr(pyexpat, "version_info", (2, 2, 10))
@@ -775,9 +718,7 @@ async def test_a_source_workbook_is_refused_when_reading_is_unsafe(
     await refused(tool, "lecture des classeurs désactivée ici", path="sortie/s.xlsx", sheets=sheets)
 
 
-async def test_a_row_that_does_not_fit_the_budget_starts_the_next_read(
-    tool: ExcelTool, disk: Path
-) -> None:
+async def test_a_row_that_does_not_fit_the_budget_starts_the_next_read(tool: ExcelTool, disk: Path) -> None:
     """Relecture 2 : la ligne qui ferait dépasser le budget n'est pas ajoutée."""
     wb = Workbook()
     ws = wb.active
@@ -807,9 +748,7 @@ async def test_local_files_points_to_excel_for_a_workbook(disk: Path) -> None:
     from loom_ia.tools_builtin.local_files_params import LocalFilesParams
 
     files = build_files(
-        LocalFilesParams.model_validate(
-            {"folders": [{"name": "donnees", "path": "donnees", "rights": ["read"]}]}
-        ),
+        LocalFilesParams.model_validate({"folders": [{"name": "donnees", "path": "donnees", "rights": ["read"]}]}),
         BuiltinContext(base_dir=disk),
     )
     sample(disk / "donnees" / "a.xlsx")

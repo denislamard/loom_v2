@@ -31,10 +31,7 @@ CHARGE: dict[str, Any] = {"devis": {"numero": "D-2026-042"}, "client": "Mme Mart
 
 def cles(**kinds: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     jetons = {nom: new_api_key() for nom in kinds}
-    keys = [
-        {"id": nom, "user": DEV, "hash": fingerprint(jetons[nom]), **spec}
-        for nom, spec in kinds.items()
-    ]
+    keys = [{"id": nom, "user": DEV, "hash": fingerprint(jetons[nom]), **spec} for nom, spec in kinds.items()]
     return {"api_keys": keys}, jetons
 
 
@@ -137,9 +134,7 @@ async def test_the_same_delivery_twice_opens_one_run(demo: ConfigFactory) -> Non
 
 
 @pytest.mark.parametrize("session", [None, "devis-{{ payload.devis.numero }}"])
-async def test_two_simultaneous_deliveries_open_one_run(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, session: str | None
-) -> None:
+async def test_two_simultaneous_deliveries_open_one_run(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, session: str | None) -> None:
     """Deux livraisons simultanées du même identifiant : un seul run, l'autre est « repeated »."""
     declared = RELANCE if session is None else {**RELANCE, "session": session}
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[declared])) as loom:
@@ -264,9 +259,7 @@ async def test_a_hook_answers_202_then_200_on_a_repeat(demo: ConfigFactory) -> N
         first = await http.post("/v1/hooks/relance-quotidienne", json=CHARGE, headers=entete)
         second = await http.post("/v1/hooks/relance-quotidienne", json=CHARGE, headers=entete)
         absent = await http.post("/v1/hooks/ailleurs", json=CHARGE, headers=entete)
-        casse = await http.post(
-            "/v1/hooks/relance-quotidienne", content=b"{pas du json", headers=entete
-        )
+        casse = await http.post("/v1/hooks/relance-quotidienne", content=b"{pas du json", headers=entete)
         await loom.drain()
         events = await loom.events(RunId("evt-7"))
 
@@ -328,9 +321,7 @@ async def test_a_delivery_id_reused_with_another_session_is_a_422(demo: ConfigFa
 
 async def test_a_payload_nested_too_deep_is_a_422_not_a_500(demo: ConfigFactory) -> None:
     """``json.loads`` lève ``RecursionError`` (pas une ``ValueError``) sur un JSON trop imbriqué."""
-    modeste = (
-        b'{"devis": {"numero": "D-1"}, "client": ' + b'{"a": ' * 100 + b"1" + b"}" * 100 + b"}"
-    )
+    modeste = b'{"devis": {"numero": "D-1"}, "client": ' + b'{"a": ' * 100 + b"1" + b"}" * 100 + b"}"
     async with servie(demo(storage=JOURNAL, triggers=[RELANCE])) as (loom, http):
         profonde = await http.post("/v1/hooks/relance-quotidienne", content=b"[" * 1_000_000)
         ouverte = await http.post("/v1/hooks/relance-quotidienne", content=modeste)
@@ -420,12 +411,8 @@ async def test_a_trigger_closed_to_the_client_is_unknown_and_the_list_is_the_cli
     closed, unknown = sent["dupont", "cloture-du-mois"], sent["dupont", "ailleurs"]
     assert closed.status_code == unknown.status_code == 404
     # Même réponse : un déclencheur fermé ne se distingue d'un inconnu que par le nom demandé.
-    assert closed.json()["detail"] == (
-        "Déclencheur 'cloture-du-mois' non déclaré (déclencheurs : relance-quotidienne)"
-    )
-    assert unknown.json()["detail"] == (
-        "Déclencheur 'ailleurs' non déclaré (déclencheurs : relance-quotidienne)"
-    )
+    assert closed.json()["detail"] == ("Déclencheur 'cloture-du-mois' non déclaré (déclencheurs : relance-quotidienne)")
+    assert unknown.json()["detail"] == ("Déclencheur 'ailleurs' non déclaré (déclencheurs : relance-quotidienne)")
     assert "comptabilite" not in closed.text + unknown.text
     # Un autre client, à qui l'agent est ouvert, passe.
     assert sent["martin", "cloture-du-mois"].status_code == 202

@@ -121,11 +121,7 @@ def _readings(token: str) -> list[Reading]:
     if not separators:
         return [(token,)]
     last, tail = separators[-1], parts[-1]
-    decimal = last in ",." and (
-        len(tail) != 3
-        or (len(parts) == 2 and parts[0] == "0")
-        or any(s in ",." and s != last for s in separators[:-1])
-    )
+    decimal = last in ",." and (len(tail) != 3 or (len(parts) == 2 and parts[0] == "0") or any(s in ",." and s != last for s in separators[:-1]))
     if decimal and _grouped(parts[:-1], separators[:-1]):
         fraction = tail.rstrip("0")
         suffix = f",{fraction}" if fraction else ""
@@ -142,11 +138,7 @@ def _grouped(parts: list[str], separators: list[str]) -> bool:
     """Ces chiffres sont-ils un seul nombre, en groupes de milliers réguliers ?"""
     if len(parts) == 1:
         return True
-    return (
-        len(set(separators)) == 1
-        and 1 <= len(parts[0]) <= 3
-        and all(len(p) == 3 for p in parts[1:])
-    )
+    return len(set(separators)) == 1 and 1 <= len(parts[0]) <= 3 and all(len(p) == 3 for p in parts[1:])
 
 
 class FidelityGuard:
@@ -214,8 +206,7 @@ class FidelityGuard:
             )
         )
         return Retry(
-            f"le résumé perd des repères du segment : {shown}{rest}. Reprends-le en les "
-            "conservant tels quels.",
+            f"le résumé perd des repères du segment : {shown}{rest}. Reprends-le en les conservant tels quels.",
             tools=False,
         )
 

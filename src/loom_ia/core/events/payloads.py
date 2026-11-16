@@ -174,9 +174,7 @@ class RunStarted(Payload):
     # valeur}``, ``None`` efface la clé. Écrit avant la demande, il est copié
     # avec elle au rejeu. Du contenu, jamais une facette : un lecteur plus
     # ancien ignore un champ ajouté, pas une facette. Omis quand il est vide.
-    state: dict[str, JsonValue] = Field(
-        default_factory=dict[str, JsonValue], exclude_if=lambda value: not value
-    )
+    state: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue], exclude_if=lambda value: not value)
 
     def facets(self) -> dict[str, FacetValue]:
         facets = super().facets()

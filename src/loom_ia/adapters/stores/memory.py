@@ -22,9 +22,7 @@ class InMemoryEventStore:
         self._rank: dict[tuple[TenantId, EventId], int] = {}
         self._written = 0
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         if not drafts:
             return []
         key = journal_key(drafts)
@@ -61,9 +59,7 @@ class InMemoryEventStore:
                 if not query.matches(event):
                     continue
                 rank = self._rank[(tenant, event.event_id)]
-                if query.after is not None and (
-                    rank <= cursor if cursor is not None else event.event_id <= query.after
-                ):
+                if query.after is not None and (rank <= cursor if cursor is not None else event.event_id <= query.after):
                     continue
                 found.append((rank, event))
         found.sort(key=lambda item: item[0])
@@ -75,9 +71,7 @@ class InMemoryEventStore:
 
     async def sessions(self, tenant_id: TenantId) -> list[SessionRecord]:
         records = [
-            SessionRecord(
-                session_id=session_id, last_seq=journal[-1].seq, updated_at=journal[-1].ts
-            )
+            SessionRecord(session_id=session_id, last_seq=journal[-1].seq, updated_at=journal[-1].ts)
             for (owner, session_id), journal in self._journals.items()
             if owner == tenant_id and journal
         ]

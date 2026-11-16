@@ -355,9 +355,7 @@ async def test_a_job_over_its_wall_limit_is_stopped(execd: Path) -> None:
 async def test_limits_over_the_ceiling_are_capped(execd: Path) -> None:
     async with await _open(execd) as session:
         await session.put_code("essai.py", SCRIPT)
-        done = await session.exec(
-            "essai:principal", args={"n": 1}, limits={"wall_ms": 10**9}, wait=60
-        )
+        done = await session.exec("essai:principal", args={"n": 1}, limits={"wall_ms": 10**9}, wait=60)
         assert done.ok
         assert done.limits_applied["wall_ms"] == session.hello.ceilings["wall_ms"]
 
@@ -445,9 +443,7 @@ async def test_closing_during_a_job_stops_it_and_erases_the_session(execd: Path)
     jobs = execd.with_name("jobs")
     session = await _open(execd)
     await session.put_code("essai.py", SCRIPT)
-    running = asyncio.create_task(
-        session.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000})
-    )
+    running = asyncio.create_task(session.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000}))
     await asyncio.sleep(0.5)
     assert _sessions(jobs) == [session.hello.session_id]
     await session.close()
@@ -460,9 +456,7 @@ async def test_a_job_left_by_a_closed_session_gives_its_place_back(execd: Path) 
     """Un job à la fois (``EXECD_MAX_CONCURRENT_EXEC``, 1 par défaut) : le suivant n'attend pas."""
     left = await _open(execd)
     await left.put_code("essai.py", SCRIPT)
-    running = asyncio.create_task(
-        left.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000})
-    )
+    running = asyncio.create_task(left.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000}))
     await asyncio.sleep(0.5)
     await left.close()
     with pytest.raises(ProtocolError):
@@ -482,9 +476,7 @@ async def test_a_request_sent_during_a_job_waits_its_turn(execd: Path) -> None:
     """Le protocole est séquentiel : une requête envoyée en avance est servie après le job."""
     reader, writer = await asyncio.open_unix_connection(execd)
     try:
-        writer.write(
-            encode_frame({"method": "code.put", "seq": 1, "path": "essai.py", "eof": True}, SCRIPT)
-        )
+        writer.write(encode_frame({"method": "code.put", "seq": 1, "path": "essai.py", "eof": True}, SCRIPT))
         writer.write(
             encode_frame(
                 {
@@ -511,9 +503,7 @@ async def test_a_host_wait_shorter_than_the_job_closes_the_session(execd: Path) 
     session = await _open(execd)
     await session.put_code("essai.py", SCRIPT)
     with pytest.raises(TimeoutError):
-        await session.exec(
-            "essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000}, wait=0.5
-        )
+        await session.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000}, wait=0.5)
     assert session.closed
     await _erased(jobs, wait=1.5)
 
@@ -589,9 +579,7 @@ def _guest_session(service: ModuleType, jobs: Path) -> Any:
     return service.Session(conn=None, cfg=cfg, exec_sem=None)
 
 
-def test_the_session_root_stays_root_s_and_the_sandbox_gets_its_folders(
-    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_session_root_stays_root_s_and_the_sandbox_gets_its_folders(service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """La racine reste à root (0711) ; le sandbox reçoit ses dossiers (0700), pas la racine."""
     chowns = _Chowns(monkeypatch)
     session = _guest_session(service, tmp_path / "jobs")
@@ -605,9 +593,7 @@ def test_the_session_root_stays_root_s_and_the_sandbox_gets_its_folders(
     assert _file_id(root) not in chowns.reached
 
 
-def test_owning_a_tree_never_follows_a_link_planted_in_it(
-    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_owning_a_tree_never_follows_a_link_planted_in_it(service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Le sandbox reçoit l'arbre et ses liens, jamais les fichiers de root où ils mènent."""
     victim = tmp_path / "victime"
     victim.write_text("a root")
@@ -637,9 +623,7 @@ def test_owning_a_tree_never_follows_a_link_planted_in_it(
     assert _file_id(tree / "d" / "vers_fichier", follow=False) in chowns.reached
 
 
-async def test_reset_does_not_follow_a_link_left_in_the_session_root(
-    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_reset_does_not_follow_a_link_left_in_the_session_root(service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un lien posé à côté des dossiers ne mène pas le reset à donner sa cible au sandbox."""
     victim = tmp_path / "victime"
     victim.write_text("a root")
@@ -654,9 +638,7 @@ async def test_reset_does_not_follow_a_link_left_in_the_session_root(
     assert _file_id(session.root / "work") in chowns.reached
 
 
-def test_job_json_is_recreated_without_writing_through_a_link(
-    service: ModuleType, tmp_path: Path
-) -> None:
+def test_job_json_is_recreated_without_writing_through_a_link(service: ModuleType, tmp_path: Path) -> None:
     """job.json est recréé : un lien à sa place n'est pas traversé, et le mode reste 0644."""
     victim = tmp_path / "victime.conf"
     victim.write_text("CONFIG\n")
@@ -682,9 +664,7 @@ def test_job_json_is_recreated_without_writing_through_a_link(
     assert not result_path.exists()
 
 
-async def test_the_end_of_a_put_sets_the_file_it_wrote_not_the_name(
-    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_the_end_of_a_put_sets_the_file_it_wrote_not_the_name(service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un lien posé à la place du fichier au moment du mode et du propriétaire n'est pas suivi."""
     victim = tmp_path / "victime"
     victim.write_text("a root")
@@ -724,9 +704,7 @@ async def test_the_end_of_a_put_sets_the_file_it_wrote_not_the_name(
     assert written[0] in chowns.reached
 
 
-async def test_a_put_refuses_a_folder_replaced_by_a_link(
-    service: ModuleType, tmp_path: Path
-) -> None:
+async def test_a_put_refuses_a_folder_replaced_by_a_link(service: ModuleType, tmp_path: Path) -> None:
     """Un dossier de la session devenu lien : rien n'est écrit au-delà, tout chemin y passait."""
     outside = tmp_path / "dehors"
     outside.mkdir()
@@ -771,9 +749,7 @@ def _tasks_of(uid: int) -> int:
     count = 0
     for entry in Path("/proc").glob("[0-9]*"):
         try:
-            fields = dict(
-                line.split(":", 1) for line in (entry / "status").read_text().splitlines()
-            )
+            fields = dict(line.split(":", 1) for line in (entry / "status").read_text().splitlines())
             if int(fields["Uid"].split()[0]) == uid:
                 count += int(fields["Threads"])
         except OSError, KeyError, ValueError:
@@ -817,9 +793,7 @@ def _kill(pidfile: Path) -> None:
 
 
 @pytest.mark.usefixtures("room_to_fork")
-async def test_the_group_of_a_job_ends_with_it_and_holds_nothing_back(
-    execd: Path, tmp_path: Path
-) -> None:
+async def test_the_group_of_a_job_ends_with_it_and_holds_nothing_back(execd: Path, tmp_path: Path) -> None:
     """Un descendant du job qui garde ses tuyaux est tué à sa fin : la réponse ne l'attend pas."""
     pidfile = tmp_path / "pid"
     try:
@@ -833,9 +807,7 @@ async def test_the_group_of_a_job_ends_with_it_and_holds_nothing_back(
 
 
 @pytest.mark.usefixtures("room_to_fork")
-async def test_a_descendant_out_of_the_group_cannot_hold_the_reply_or_the_place(
-    execd: Path, tmp_path: Path
-) -> None:
+async def test_a_descendant_out_of_the_group_cannot_hold_the_reply_or_the_place(execd: Path, tmp_path: Path) -> None:
     """Sorti du groupe, il garde les tuyaux : la lecture s'arrête après un court délai, et la
     place d'exécution est rendue au job suivant."""
     pidfile = tmp_path / "pid"
@@ -843,9 +815,7 @@ async def test_a_descendant_out_of_the_group_cannot_hold_the_reply_or_the_place(
         async with await _open(execd) as session, await _open(execd) as other:
             await session.put_code("desc.py", DESCENDANTS)
             await other.put_code("essai.py", SCRIPT)
-            done = await session.exec(
-                "desc:leaves", args={"pidfile": str(pidfile), "apart": True}, wait=10
-            )
+            done = await session.exec("desc:leaves", args={"pidfile": str(pidfile), "apart": True}, wait=10)
             assert done.ok, done.error
             assert done.stdout_truncated and done.stderr_truncated
             assert (await other.exec("essai:principal", args={"n": 2}, wait=5)).ok
@@ -870,9 +840,7 @@ async def test_a_result_over_its_bound_is_refused_and_the_session_serves_on(exec
         assert (await session.exec("desc:big", args={"n": 1_000})).ok
 
 
-def test_result_json_is_read_up_to_its_bound_and_not_beyond(
-    service: ModuleType, tmp_path: Path
-) -> None:
+def test_result_json_is_read_up_to_its_bound_and_not_beyond(service: ModuleType, tmp_path: Path) -> None:
     """Au plafond il passe ; au-delà, même énorme et creux, il est refusé sans être lu en entier."""
     session = _guest_session(service, tmp_path / "jobs")
     session.setup()
@@ -897,9 +865,7 @@ def test_result_json_is_read_up_to_its_bound_and_not_beyond(
     assert caught.value.detail["value"] == 1 << 30
 
 
-def test_a_result_json_that_is_not_text_is_an_unusable_result(
-    service: ModuleType, tmp_path: Path
-) -> None:
+def test_a_result_json_that_is_not_text_is_an_unusable_result(service: ModuleType, tmp_path: Path) -> None:
     """Des octets qui ne sont pas de l'UTF-8 donnent « pas de résultat », pas une erreur interne."""
     session = _guest_session(service, tmp_path / "jobs")
     session.setup()
@@ -970,9 +936,7 @@ def test_only_an_ordinary_file_is_opened(service: ModuleType, tmp_path: Path) ->
             service._open_regular(tmp_path / refused)
 
 
-def test_out_lists_what_it_cannot_carry_instead_of_reading_it(
-    service: ModuleType, tmp_path: Path
-) -> None:
+def test_out_lists_what_it_cannot_carry_instead_of_reading_it(service: ModuleType, tmp_path: Path) -> None:
     """Tube, lien et nom qui n'est pas de l'UTF-8 sont signalés ; le reste est empreint."""
     session = _guest_session(service, tmp_path / "jobs")
     session.setup()
@@ -1014,9 +978,7 @@ async def test_a_reply_that_fits_is_sent_as_it_is(service: ModuleType, tmp_path:
     assert await _sent(service, tmp_path, reply) == reply
 
 
-async def test_a_reply_over_a_frame_is_shortened_and_keeps_its_place_in_the_sequence(
-    service: ModuleType, tmp_path: Path
-) -> None:
+async def test_a_reply_over_a_frame_is_shortened_and_keeps_its_place_in_the_sequence(service: ModuleType, tmp_path: Path) -> None:
     reply = {"ok": True, "result": "r", "stdout": "\x01" * 200_000, "stderr": "ok", "seq": 7}
     sent = await _sent(service, tmp_path, reply)
     assert sent["seq"] == 7 and sent["ok"] is True and sent["result"] == "r"
@@ -1126,9 +1088,7 @@ async def _listening(socket_path: Path, server: asyncio.Future[None]) -> None:
         await asyncio.sleep(0.02)
 
 
-async def test_an_accept_error_does_not_stop_the_listening(
-    execd_main: ModuleType, execd_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_an_accept_error_does_not_stop_the_listening(execd_main: ModuleType, execd_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """EMFILE, ENFILE… : l'accept échoue une fois, puis l'écoute reprend (SBX-2).
 
     Avant, la tâche d'accept mourait sur la première ``OSError`` : le processus restait
@@ -1160,9 +1120,7 @@ async def test_an_accept_error_does_not_stop_the_listening(
             loop.remove_signal_handler(signum)
 
 
-async def test_a_dead_accept_loop_stops_execd_with_an_error(
-    execd_main: ModuleType, execd_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_dead_accept_loop_stops_execd_with_an_error(execd_main: ModuleType, execd_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Si la boucle d'accept s'arrête quand même, execd sort en erreur : systemd le relance."""
     cfg = _execd_config(execd_main, execd_root)
     execd_main.prepare_jobs_dir(cfg)
@@ -1182,9 +1140,7 @@ async def test_a_dead_accept_loop_stops_execd_with_an_error(
     assert "cassé" in str(stopped.value.__cause__)
 
 
-def test_main_exits_in_error_when_serving_stops_on_one(
-    execd_main: ModuleType, execd_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_main_exits_in_error_when_serving_stops_on_one(execd_main: ModuleType, execd_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def dead(cfg: object) -> None:
         raise RuntimeError("boucle d'accept arrêtée")
 
@@ -1207,9 +1163,7 @@ class _Spawned(Exception):
     """Levée par le faux ``create_subprocess_exec`` : le job n'est jamais lancé."""
 
 
-def _spawn_options(
-    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, euid: int
-) -> dict[str, Any]:
+def _spawn_options(service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, euid: int) -> dict[str, Any]:
     """Les options que ``Session._run`` passe au lancement du job, pour un execd d'uid ``euid``."""
     cfg = SimpleNamespace(
         jobs_dir=str(tmp_path / "jobs"),
@@ -1235,9 +1189,7 @@ def _spawn_options(
     return seen
 
 
-def test_run_as_root_the_job_is_started_under_the_sandbox_ids_and_no_extra_group(
-    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_as_root_the_job_is_started_under_the_sandbox_ids_and_no_extra_group(service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     options = _spawn_options(service, tmp_path, monkeypatch, euid=0)
     assert options["user"] == 1500
     assert options["group"] == 1500
@@ -1245,9 +1197,7 @@ def test_run_as_root_the_job_is_started_under_the_sandbox_ids_and_no_extra_group
     assert options["start_new_session"] is True
 
 
-def test_run_without_root_the_job_keeps_the_callers_ids(
-    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_without_root_the_job_keeps_the_callers_ids(service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Sur l'hôte, changer d'uid échouerait : le processus est déjà le propriétaire."""
     options = _spawn_options(service, tmp_path, monkeypatch, euid=1000)
     assert not {"user", "group", "extra_groups"} & options.keys()

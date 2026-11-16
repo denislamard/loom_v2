@@ -56,9 +56,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import SourceContext, SourceUnavailable, ToolContext, ToolError
 
-RUN = SourceContext(
-    tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r1"), agent="demo"
-)
+RUN = SourceContext(tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r1"), agent="demo")
 CALL = ToolContext(
     tenant_id=DEFAULT_TENANT,
     session_id=SessionId("s"),
@@ -70,9 +68,7 @@ READ_ONLY = types.ToolAnnotations(readOnlyHint=True)
 
 
 def spec(name: str = "math", **changes: Any) -> McpServerSpec:
-    return McpServerSpec.model_validate(
-        {"name": name, "transport": "stdio", "command": "x", **changes}
-    )
+    return McpServerSpec.model_validate({"name": name, "transport": "stdio", "command": "x", **changes})
 
 
 def memory(server: FastMCP) -> SessionFactory:
@@ -133,9 +129,7 @@ def source(server: FastMCP, selection: McpSelection | None = None, **changes: An
         (types.ToolAnnotations(destructiveHint=True, idempotentHint=True), ("irreversible", True)),
     ],
 )
-def test_annotations_give_default_declarations(
-    hints: types.ToolAnnotations | None, expected: tuple[str, bool]
-) -> None:
+def test_annotations_give_default_declarations(hints: types.ToolAnnotations | None, expected: tuple[str, bool]) -> None:
     assert declared(hints) == expected
 
 
@@ -178,12 +172,8 @@ def test_results_are_translated() -> None:
         TextBlock(text="contenu"),
         InlineDataBlock(media_type="application/octet-stream", data=b"\x00" * 3, name="b.bin"),
     )
-    broken = types.CallToolResult(
-        content=[types.ImageContent(type="image", mimeType="image/png", data="%%%")]
-    )
-    assert to_output(broken).blocks == (
-        TextBlock(text="[contenu image/png illisible : base64 invalide]"),
-    )
+    broken = types.CallToolResult(content=[types.ImageContent(type="image", mimeType="image/png", data="%%%")])
+    assert to_output(broken).blocks == (TextBlock(text="[contenu image/png illisible : base64 invalide]"),)
 
 
 def test_connection_errors_are_told_apart() -> None:
@@ -314,9 +304,7 @@ async def test_irreversible_tools_without_approval_are_said_once(
     assert specs["notes__effacer"].side_effects == "irreversible"
     assert specs["notes__effacer"].approval == "never"
     [record] = [r for r in caplog.records if "sans approbation" in r.getMessage()]
-    assert record.getMessage().startswith(
-        "Serveur MCP math : purger, effacer exécuté(s) sans approbation alors qu'irréversible(s)"
-    )
+    assert record.getMessage().startswith("Serveur MCP math : purger, effacer exécuté(s) sans approbation alors qu'irréversible(s)")
     assert "approval: always" in record.getMessage()
     # Un avertissement de montage, que ``loom validate`` reprend dans son rapport.
     assert getattr(record, SETUP) and getattr(record, REPORTED)
@@ -335,9 +323,7 @@ async def test_nothing_is_said_when_every_irreversible_tool_is_approved(
 
 async def test_the_config_rewrites_what_the_model_reads() -> None:
     """``description`` remplace celle du serveur ; celle de l'agent l'emporte."""
-    selection = McpSelection(
-        prefix="math", tools={"noter": ToolOverrides(description="Note pour l'atelier.")}
-    )
+    selection = McpSelection(prefix="math", tools={"noter": ToolOverrides(description="Note pour l'atelier.")})
     chosen = source(
         math_server(),
         selection,
@@ -432,9 +418,7 @@ def bare_factory(server: Server[Any, Any]) -> SessionFactory:
 
 
 async def test_protocol_errors() -> None:
-    chosen = McpSource(
-        spec("nu", scope="run"), McpSelection(prefix="nu"), factory=bare_factory(bare(listing=True))
-    )
+    chosen = McpSource(spec("nu", scope="run"), McpSelection(prefix="nu"), factory=bare_factory(bare(listing=True)))
     async with chosen.open(RUN) as tools:
         [only] = tools
         with pytest.raises(ToolError, match="Erreur du serveur MCP nu : Method not found"):
@@ -646,9 +630,7 @@ async def test_a_late_failure_does_not_close_the_connection_that_replaced_it() -
         async def list_tools(self, params: Any = None) -> types.ListToolsResult:
             return types.ListToolsResult(tools=[])
 
-        async def call_tool(
-            self, name: str, arguments: Any, meta: Any = None
-        ) -> types.CallToolResult:
+        async def call_tool(self, name: str, arguments: Any, meta: Any = None) -> types.CallToolResult:
             if self.number == 1:
                 # La connexion 1 est tombée : « rapide » le voit aussitôt, « lent » plus tard.
                 if name == "lent":
@@ -706,16 +688,12 @@ async def test_an_expired_session_is_a_lost_connection(retry: bool) -> None:
         assert log == ["ecrire sur 1"]
         assert sessions[0].closed and not server.connected
         # ... et l'appel suivant repart sur une session neuve.
-        assert to_output(await server.call("ecrire", {}, meta={}, retry=False)).as_text == (
-            "ecrire sur 2"
-        )
+        assert to_output(await server.call("ecrire", {}, meta={}, retry=False)).as_text == ("ecrire sur 2")
     assert len(sessions) == 2
     await server.aclose()
 
 
-def slow_to_close(
-    log: list[str], cleaning: asyncio.Event, cleaned: asyncio.Event
-) -> SessionFactory:
+def slow_to_close(log: list[str], cleaning: asyncio.Event, cleaned: asyncio.Event) -> SessionFactory:
     """Connexion 1 perdue au premier appel ; sa fermeture traîne, même une fois annulée.
 
     Comme un process qu'on attend : la tâche qui tient la session, annulée, met encore
@@ -743,9 +721,7 @@ def slow_to_close(
 
 
 @pytest.mark.parametrize("stop", ["cancel", "timeout"])
-async def test_the_callers_cancellation_is_not_swallowed_while_a_connection_closes(
-    stop: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_the_callers_cancellation_is_not_swallowed_while_a_connection_closes(stop: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Le run est annulé, ou son délai tombe, pendant la fermeture d'une connexion perdue.
 
     L'appel doit s'arrêter là : pas de reconnexion, pas de second appel au serveur.
@@ -907,9 +883,7 @@ async def test_health_check_reopens_a_dead_shared_connection(stdio_spec: McpServ
 def test_missing_secret_is_a_config_error(stdio_spec: McpServerSpec) -> None:
     with pytest.raises(McpConfigError, match="LOOM_JETON_TEST est absente ou vide"):
         session_factory(stdio_spec, environ={})
-    http = McpServerSpec(
-        name="h", transport="http", url="http://x/mcp", headers_env={"Authorization": "TOKEN"}
-    )
+    http = McpServerSpec(name="h", transport="http", url="http://x/mcp", headers_env={"Authorization": "TOKEN"})
     with pytest.raises(McpConfigError, match="TOKEN est absente ou vide"):
         session_factory(http, environ={"TOKEN": " "})
 
@@ -1044,9 +1018,7 @@ def _broken(tmp_path: Path, script: str) -> McpServerSpec:
     )
 
 
-async def test_a_stdio_server_that_dies_at_start_says_what_it_wrote(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+async def test_a_stdio_server_that_dies_at_start_says_what_it_wrote(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Vu au test D3 du 18/10 : « BrokenResourceError », sans rien pour comprendre."""
     spec = _broken(tmp_path, STDIO_BROKEN)
     server = McpServer(spec, session_factory(spec, environ={}))
@@ -1059,8 +1031,7 @@ async def test_a_stdio_server_that_dies_at_start_says_what_it_wrote(
     assert "le serveur s'est arrêté ou a refusé l'ouverture" in message
     # Les 3 dernières lignes utiles : les repères ~~~^^ de la trace ne comptent pas.
     assert message.endswith(
-        'fin de son stderr : File "config.py", line 171, in load_config | '
-        "raw = tomllib.loads(path.read_text()) | FileNotFoundError: roots.toml introuvable"
+        'fin de son stderr : File "config.py", line 171, in load_config | raw = tomllib.loads(path.read_text()) | FileNotFoundError: roots.toml introuvable'
     )
     # Le stderr du serveur passe toujours par le nôtre, chaque ligne au nom du serveur
     # (test F6 du 19/10 : sans le nom, on ne savait pas qui parlait).
@@ -1080,9 +1051,7 @@ async def test_a_silent_stdio_server_is_said_to_be_silent(tmp_path: Path) -> Non
         await server.aclose()
 
 
-async def test_a_working_stdio_server_keeps_its_stderr_on_ours(
-    stdio_spec: McpServerSpec, capsys: pytest.CaptureFixture[str]
-) -> None:
+async def test_a_working_stdio_server_keeps_its_stderr_on_ours(stdio_spec: McpServerSpec, capsys: pytest.CaptureFixture[str]) -> None:
     """Le tuyau ne change rien pour un serveur qui marche : il répond, et ses logs passent."""
     server = McpServer(stdio_spec, session_factory(stdio_spec, environ={"LOOM_JETON_TEST": "x"}))
     try:

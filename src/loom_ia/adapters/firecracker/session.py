@@ -234,9 +234,7 @@ class Session:
     si plusieurs tâches appellent la même session.
     """
 
-    def __init__(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, hello: Hello
-    ) -> None:
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, hello: Hello) -> None:
         self._reader = reader
         self._writer = writer
         self.hello = hello
@@ -354,9 +352,7 @@ class Session:
         data = bytearray()
         while True:
             want = min(CHUNK, max_bytes - len(data) + 1)
-            reply, body = await self._call(
-                "file.get", {"path": path, "offset": len(data), "len": want}
-            )
+            reply, body = await self._call("file.get", {"path": path, "offset": len(data), "len": want})
             if reply.get("ok") is not True:
                 raise _error(reply)
             data += body
@@ -402,9 +398,7 @@ class Session:
                     reply, data = await read_frame(self._reader)
             except TimeoutError:
                 await self.close()
-                raise TimeoutError(
-                    f"execd : pas de réponse à {method} en {wait:g} s — session fermée"
-                ) from None
+                raise TimeoutError(f"execd : pas de réponse à {method} en {wait:g} s — session fermée") from None
             except ProtocolError:
                 await self.close()
                 raise
@@ -420,9 +414,7 @@ class Session:
                 raise
             if reply.get("seq") != seq:
                 await self.close()
-                raise ProtocolError(
-                    f"{method} : réponse désynchronisée (seq {reply.get('seq')!r}, attendu {seq})"
-                )
+                raise ProtocolError(f"{method} : réponse désynchronisée (seq {reply.get('seq')!r}, attendu {seq})")
             return reply, data
 
 

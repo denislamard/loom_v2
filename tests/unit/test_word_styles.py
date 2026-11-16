@@ -210,9 +210,7 @@ async def write(tool: WordTool, name: str, blocks: list[dict[str, Any]], **more:
     return OUTPUTS[id(tool)] / f"{name}.docx"
 
 
-async def write_sections(
-    tool: WordTool, name: str, template: str, sections: dict[str, Any], **more: Any
-) -> Path:
+async def write_sections(tool: WordTool, name: str, template: str, sections: dict[str, Any], **more: Any) -> Path:
     await call(
         tool,
         path=f"sortie/{name}.docx",
@@ -375,11 +373,7 @@ def test_no_visual_length_in_the_code() -> None:
     writers = [folder / name for name in ("writer.py", "style.py", "chart.py", "image.py")]
     assert set().union(*(numeric_constants(source) for source in writers)) == set(WORD_NUMBERS)
     attribute = re.compile(r'\bw:(space|before|after|left|right|hanging|line|header|footer|firstLine)="([1-9][0-9]*)"')
-    found = {
-        (source.name, name, value)
-        for source in writers
-        for name, value in attribute.findall(source.read_text(encoding="utf-8"))
-    }
+    found = {(source.name, name, value) for source in writers for name, value in attribute.findall(source.read_text(encoding="utf-8"))}
     assert found == set(WORD_INLINE)
 
 
@@ -701,16 +695,12 @@ async def test_numbered_headings_and_captions(tmp_path: Path) -> None:
     path = await write_sections(tool, "rapport", "rapport", RAPPORT_SECTIONS, title="Rapport")
     numbering = part(path, "word/numbering.xml")
     check_order(numbering)
-    assert (
-        '<w:pStyle w:val="Heading1"/><w:suff w:val="space"/><w:lvlText w:val="%1."/>' in numbering
-    )
+    assert '<w:pStyle w:val="Heading1"/><w:suff w:val="space"/><w:lvlText w:val="%1."/>' in numbering
     assert '<w:num w:numId="900"><w:abstractNumId w:val="2"/></w:num>' in numbering
     document = part(path, "word/document.xml")
     # La page de garde n'imprime pas son titre (show_title: false) : pas de titre masqué.
     assert "Page de garde" not in document and "HeadingHidden" not in part(path, "word/styles.xml")
-    assert re.search(
-        r'Figure </w:t></w:r><w:fldSimple w:instr=" SEQ Figure \\\* ARABIC ">', document
-    )
+    assert re.search(r'Figure </w:t></w:r><w:fldSimple w:instr=" SEQ Figure \\\* ARABIC ">', document)
     assert ">2</w:t></w:r></w:fldSimple>" in document
     assert 'w:instr=" SEQ Tableau \\* ARABIC "' in document
     read = await call(tool, action="read", path="sortie/rapport.docx")
@@ -726,10 +716,7 @@ async def test_numbered_headings_and_captions(tmp_path: Path) -> None:
 
 async def test_section_names_are_compared_loosely(tmp_path: Path) -> None:
     """« <u>Client</u> », « 2. client » : la section Client ; l'outil écrit son nom."""
-    sections = {
-        f"<u>{name}</u>" if name == "Client" else name.upper(): blocks
-        for name, blocks in FACTURE_SECTIONS.items()
-    }
+    sections = {f"<u>{name}</u>" if name == "Client" else name.upper(): blocks for name, blocks in FACTURE_SECTIONS.items()}
     path = await write_sections(styled(tmp_path), "facture", "facture", sections)
     document = part(path, "word/document.xml")
     assert ">Informations de paiement<" in document and "INFORMATIONS" not in document
@@ -822,9 +809,7 @@ async def test_a_facture_laid_out(tmp_path: Path) -> None:
     # Réécrit tel que relu (les tableaux relus sont des lignes, repris de l'original).
     again = {name: blocks for name, blocks in read["sections"].items()}
     again["Description"] = FACTURE_SECTIONS["Description"]
-    rewritten = await call(
-        tool, path="sortie/f2.docx", template="facture", title="Facture", sections=again
-    )
+    rewritten = await call(tool, path="sortie/f2.docx", template="facture", title="Facture", sections=again)
     assert rewritten["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -938,10 +923,7 @@ async def test_proposed_styles(tmp_path: Path) -> None:
             "border_left": "3pt C0392B",
         }
     }
-    note = (
-        "style:\n  key_figure:\n    base: paragraph\n    description: Un chiffre clé, seul.\n"
-        "    size: 16\n    bold: true\nsections:\n  Message:\n"
-    )
+    note = "style:\n  key_figure:\n    base: paragraph\n    description: Un chiffre clé, seul.\n    size: 16\n    bold: true\nsections:\n  Message:\n"
     tool = make(tmp_path, style={"spec": charte}, templates={"note": {"text": note}})
     assert "Styles proposés ('style' d'un bloc" in tool.spec.description
     assert "note : important_note (Une mise en garde" in tool.spec.description
@@ -963,9 +945,7 @@ async def test_proposed_styles(tmp_path: Path) -> None:
     read = await call(tool, action="read", path="sortie/n.docx")
     assert read["sections"]["Message"] == message
     # Le style d'un modèle ne vaut que pour ses documents.
-    with pytest.raises(
-        ToolError, match="style « key_figure » : pas proposé pour un bloc paragraph"
-    ):
+    with pytest.raises(ToolError, match="style « key_figure » : pas proposé pour un bloc paragraph"):
         await call(tool, path="sortie/libre.docx", template="none", blocks=message[:1])
 
 
@@ -1036,11 +1016,7 @@ def _rows(text: str, section: str) -> list[list[str]]:
     """Les lignes des tableaux d'une section (« ## 8. ») de ``docs/style_format.md``,
     cellule par cellule, celles qui commencent par un nom."""
     part = text.split(f"\n## {section}. ", 1)[1].split("\n## ", 1)[0]
-    return [
-        [cell.strip() for cell in line.strip()[1:-1].split("|")]
-        for line in part.splitlines()
-        if line.startswith("| `")
-    ]
+    return [[cell.strip() for cell in line.strip()[1:-1].split("|")] for line in part.splitlines() if line.startswith("| `")]
 
 
 def _named(cell: str) -> list[str]:
@@ -1070,9 +1046,7 @@ def test_the_format_document_matches_the_registry() -> None:
             assert found.name in _named(styles[owner][4]), (owner, found.name)
     settings = {name for cells in _rows(text, "5") for name in _named(cells[0])}
     blocks = {"page": PageSpec, "image": ImageSpec, "chart": ChartSpec}
-    expected = {name for name in SETTINGS if name not in blocks} | {
-        f"{name}.{key}" for name, spec in blocks.items() for key in spec.model_fields
-    }
+    expected = {name for name in SETTINGS if name not in blocks} | {f"{name}.{key}" for name, spec in blocks.items() for key in spec.model_fields}
     assert settings == expected
     # La doc des outils : les styles, les propriétés et les réglages, de « Les styles prévus »
     # à « La relecture ».
@@ -1394,9 +1368,7 @@ def test_pdf_takes_the_style_of_word() -> None:
     params = PdfParams.model_validate({"folders": folders, "style": "charte.yaml"})
     assert params.style is not None and params.style.file == Path("charte.yaml")
     with pytest.raises(ValidationError, match="le modèle nomme son style dans son fichier"):
-        PdfParams.model_validate(
-            {"folders": folders, "templates": {"r": {"file": "r.yaml", "style": "r.yaml"}}}
-        )
+        PdfParams.model_validate({"folders": folders, "templates": {"r": {"file": "r.yaml", "style": "r.yaml"}}})
 
 
 # --- Le chargement de la config --------------------------------------------------------------
@@ -1406,9 +1378,7 @@ def word_agent(**reference: Any) -> dict[str, Any]:
     return demo_agent(tools=[{"python": "loom.word", **reference}])
 
 
-def test_styles_are_read_when_the_config_loads(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_styles_are_read_when_the_config_loads(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "sortie").mkdir()
     folders = [{"name": "sortie", "path": "sortie", "rights": ["read", "write"]}]
     reference = {
@@ -1467,8 +1437,7 @@ def test_styles_are_read_when_the_config_loads(
         load_config(path)
     # Un style écrit dans le modèle.
     (prompts / "facture.yaml").write_text(
-        "style:\n  title_x: {base: heading1, color: brand}\n"
-        "sections:\n  A: {styles: {heading1: title_x}}\n",
+        "style:\n  title_x: {base: heading1, color: brand}\nsections:\n  A: {styles: {heading1: title_x}}\n",
         encoding="utf-8",
     )
     load_config(path)
@@ -1493,9 +1462,7 @@ def test_a_style_written_in_the_config(demo: ConfigFactory, tmp_path: Path) -> N
     assert resolve(params.style.spec).look("heading1").color == "0B5D3B"
 
 
-async def test_a_style_written_in_yaml_writes_the_facture(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_a_style_written_in_yaml_writes_the_facture(demo: ConfigFactory, tmp_path: Path) -> None:
     """Le chemin réel : les fichiers lus par load_config, l'outil monté par sa fabrique."""
     (tmp_path / "sortie").mkdir()
     prompts = tmp_path / "prompts"
@@ -1532,8 +1499,7 @@ def test_a_cancelled_numbering_is_not_a_list() -> None:
         "</w:styles>"
     )
     body = (
-        '<w:p><w:pPr><w:pStyle w:val="Num"/></w:pPr><w:r><w:t>Un</w:t></w:r></w:p>'
-        '<w:p><w:pPr><w:pStyle w:val="Plain"/></w:pPr><w:r><w:t>Deux</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:pStyle w:val="Num"/></w:pPr><w:r><w:t>Un</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Plain"/></w:pPr><w:r><w:t>Deux</w:t></w:r></w:p>'
     )
     found = reader_module.read(docx(body, styles), "d.docx", 0)
     assert found["blocks"] == [
@@ -1559,9 +1525,7 @@ def docx(body: str, styles: str | None = None) -> bytes:
     ns = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
     raw = io.BytesIO()
     with zipfile.ZipFile(raw, "w") as archive:
-        archive.writestr(
-            "word/document.xml", f"<w:document {ns}><w:body>{body}</w:body></w:document>"
-        )
+        archive.writestr("word/document.xml", f"<w:document {ns}><w:body>{body}</w:body></w:document>")
         if styles is not None:
             archive.writestr("word/styles.xml", styles)
             archive.writestr(
@@ -1723,9 +1687,7 @@ async def test_a_checklist_and_a_signature(tmp_path: Path) -> None:
         },
     ]
     # Relu puis réécrit tel quel : le même fichier.
-    again = await call(
-        tool, path="sortie/encore.docx", title="PV de livraison", blocks=read["blocks"][1:]
-    )
+    again = await call(tool, path="sortie/encore.docx", title="PV de livraison", blocks=read["blocks"][1:])
     assert again["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -1753,10 +1715,7 @@ async def test_what_the_extra_blocks_refuse(tmp_path: Path) -> None:
 
 
 async def test_the_contents_lists_the_headings(tmp_path: Path) -> None:
-    rapport = (
-        "sections:\n  Page de garde: {show_title: false, cover: true}\n  Contexte:\n"
-        "  Mesures:\n  Conditions générales:\n"
-    )
+    rapport = "sections:\n  Page de garde: {show_title: false, cover: true}\n  Contexte:\n  Mesures:\n  Conditions générales:\n"
     tool = extra(
         tmp_path,
         style={"spec": {"numbering": "decimal"}},
@@ -1833,10 +1792,7 @@ async def test_libreoffice_prints_the_extra_blocks(tmp_path: Path, soffice: str)
     pypdf = pytest.importorskip("pypdf")
     tool = extra(tmp_path, style={"spec": {"numbering": "decimal"}})
     path = await write(tool, "d", [*SOMMAIRE[1:], *LIVRAISON], title="Rapport")
-    text = "".join(
-        page.extract_text()
-        for page in pypdf.PdfReader(convert(soffice, path, tmp_path / "pdf", "pdf")).pages
-    )
+    text = "".join(page.extract_text() for page in pypdf.PdfReader(convert(soffice, path, tmp_path / "pdf", "pdf")).pages)
     assert "Sommaire" in text and "2. Mesures" in text
     assert "Coupure d'eau faite" in text and "Canalisation" in text
     assert text.count("Bon pour accord") == 2 and "Signature :" in text
@@ -1916,8 +1872,7 @@ async def test_fields_and_code_cost_only_when_declared(tmp_path: Path) -> None:
     await write(tool, "fc", RICH_BLOCKS[4:])
     read = await call(read_with, action="read", path="sortie/fc.docx")
     assert read["notes"] == [
-        "Lu : code (1) ; cet outil n'en écrit pas : les retirer avant de réécrire le document "
-        "(ou blocks: [code] dans la config de l'outil)."
+        "Lu : code (1) ; cet outil n'en écrit pas : les retirer avant de réécrire le document (ou blocks: [code] dans la config de l'outil)."
     ]
 
 

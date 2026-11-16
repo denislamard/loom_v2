@@ -36,8 +36,7 @@ DECISIONS = [
     ("signature", "on_output", "replace"),
 ]
 LINES = [
-    "· politique loom.require_tool (before_model) : remplacé — aucun outil appelé dans le run : "
-    "appel d'outil imposé",
+    "· politique loom.require_tool (before_model) : remplacé — aucun outil appelé dans le run : appel d'outil imposé",
     "· calculer(expr='12*7+3')",
     "· calculer : fait",
     "· politique signature (on_output) : remplacé — signature ajoutée",
@@ -56,11 +55,7 @@ def config(demo: ConfigFactory, tmp_path: Path) -> Path:
 
 
 def decisions(events: list[Event]) -> list[tuple[str, str, str]]:
-    return [
-        (e.payload.policy, e.payload.point, e.payload.decision)
-        for e in events
-        if isinstance(e.payload, PolicyDecided)
-    ]
+    return [(e.payload.policy, e.payload.point, e.payload.decision) for e in events if isinstance(e.payload, PolicyDecided)]
 
 
 async def test_the_three_accesses_journal_the_same_decisions(config: Path) -> None:
@@ -88,9 +83,7 @@ async def test_the_three_accesses_journal_the_same_decisions(config: Path) -> No
             assert posted.json()["text"] == SIGNED
             runs["rest"] = RunId(posted.json()["run_id"])
         async with connected(create_server(loom, user=DEV)) as client:
-            called = await client.call_tool(
-                "demo", {"message": QUESTION}, progress_callback=on_progress
-            )
+            called = await client.call_tool("demo", {"message": QUESTION}, progress_callback=on_progress)
             assert called.structuredContent is not None
             assert called.structuredContent["text"] == SIGNED
             runs["mcp"] = RunId(called.structuredContent["run_id"])
@@ -102,17 +95,11 @@ async def test_the_three_accesses_journal_the_same_decisions(config: Path) -> No
     assert notes == LINES
 
 
-def test_the_cli_shows_policies_and_decisions(
-    config: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_shows_policies_and_decisions(config: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(config), "validate"]) == 0
     out = capsys.readouterr().out
     assert "  Outils       calculer\n  Politiques   signature\n" in out
-    assert (
-        "  ├ politiques   loom.require_tool : before_model\n"
-        "  │              signature : on_output\n"
-        "  └ calculer\n"
-    ) in out
+    assert ("  ├ politiques   loom.require_tool : before_model\n  │              signature : on_output\n  └ calculer\n") in out
 
     assert main(["--config", str(config), "run", "demo", QUESTION, "--stream"]) == 0
     captured = capsys.readouterr()

@@ -30,9 +30,7 @@ HTML = """<html><head><title>Ma page</title></head><body>
 <p>Premier paragraphe assez long pour être considéré comme du contenu principal.</p>
 <p>Deuxième paragraphe, tout aussi long, qui parle de plomberie et de devis pour les artisans.</p>
 </main><footer>© 2026</footer></body></html>"""
-CONTEXT = ToolContext(
-    tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), call_id="c", agent="a"
-)
+CONTEXT = ToolContext(tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), call_id="c", agent="a")
 
 
 def serve(monkeypatch: pytest.MonkeyPatch, body: str, media_type: str = "text/html") -> list[str]:
@@ -95,12 +93,8 @@ def test_faq_questions_become_headings_under_the_previous_one() -> None:
 
 
 def test_a_faq_without_heading_before_it_starts_at_level_two() -> None:
-    html = (
-        "<html><body><details><summary>Une question ?</summary>Sa réponse.</details></body></html>"
-    )
-    assert (
-        extract_from_html(html, "https://example.org/").text == "## Une question ?\n\nSa réponse."
-    )
+    html = "<html><body><details><summary>Une question ?</summary>Sa réponse.</details></body></html>"
+    assert extract_from_html(html, "https://example.org/").text == "## Une question ?\n\nSa réponse."
 
 
 def test_details_without_summary_keep_their_content() -> None:
@@ -110,16 +104,11 @@ def test_details_without_summary_keep_their_content() -> None:
 
 def test_each_faq_answer_is_chunked_with_its_question() -> None:
     answer = "Une réponse assez longue pour faire un passage à elle seule, avec des mots. " * 4
-    items = "".join(
-        f"<details><summary>Question numéro {i} ?</summary><div>{answer}</div></details>"
-        for i in range(8)
-    )
+    items = "".join(f"<details><summary>Question numéro {i} ?</summary><div>{answer}</div></details>" for i in range(8))
     html = f"<html><body><main><h2>FAQ</h2>{items}</main></body></html>"
     page = extract_from_html(html, "https://example.org/faq")
     chunks = chunk_document("d", page.title, page.text, ChunkingSpec())
-    assert [c.heading_path for c in chunks] == [
-        f"https://example.org/faq > FAQ > Question numéro {i} ?" for i in range(8)
-    ]
+    assert [c.heading_path for c in chunks] == [f"https://example.org/faq > FAQ > Question numéro {i} ?" for i in range(8)]
     assert all(c.text.startswith("Une réponse") for c in chunks)
 
 
@@ -175,9 +164,7 @@ async def test_a_text_page_is_kept_as_is(monkeypatch: pytest.MonkeyPatch) -> Non
     assert page.text == "Tarifs 2026 : déplacement 45 €."
 
 
-async def test_add_url_stores_the_page_under_the_given_address(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_add_url_stores_the_page_under_the_given_address(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     asked = serve(monkeypatch, HTML)
     params = MemoryParams.model_validate(
         {
@@ -188,14 +175,10 @@ async def test_add_url_stores_the_page_under_the_given_address(
         }
     )
     tool = build(params, BuiltinContext(base_dir=tmp_path))
-    added: Any = (
-        await tool.invoke({"action": "add_url", "url": " https://example.org/page "}, CONTEXT)
-    ).data
+    added: Any = (await tool.invoke({"action": "add_url", "url": " https://example.org/page "}, CONTEXT)).data
     assert asked == ["https://example.org/page"]
     assert added["title"] == "Ma page"
     doc: Any = (await tool.invoke({"action": "get", "doc_id": added["doc_id"]}, CONTEXT)).data
     assert doc["source"] == "https://example.org/page" and doc["source_kind"] == "url"
-    again: Any = (
-        await tool.invoke({"action": "add_url", "url": "https://example.org/page"}, CONTEXT)
-    ).data
+    again: Any = (await tool.invoke({"action": "add_url", "url": "https://example.org/page"}, CONTEXT)).data
     assert again["duplicate_of"] == added["doc_id"]

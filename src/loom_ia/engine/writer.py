@@ -107,10 +107,7 @@ class ClaimConflict(RuntimeError):
         self.run_id = run_id
         self.worker_id = worker_id
         self.lease_until = until
-        super().__init__(
-            f"Run {run_id} : piloté par {worker_id}, concession valable jusqu'à "
-            f"{until.isoformat(timespec='seconds')}"
-        )
+        super().__init__(f"Run {run_id} : piloté par {worker_id}, concession valable jusqu'à {until.isoformat(timespec='seconds')}")
 
 
 @dataclass(eq=False, slots=True)
@@ -175,9 +172,7 @@ class RunExists(ValueError):
 class SessionWriter:
     """Écritures ordonnées dans le journal d'une session."""
 
-    def __init__(
-        self, store: EventStore, tenant_id: TenantId, session_id: SessionId, last_seq: int
-    ) -> None:
+    def __init__(self, store: EventStore, tenant_id: TenantId, session_id: SessionId, last_seq: int) -> None:
         self.store = store
         self.tenant_id = tenant_id
         self.session_id = session_id
@@ -257,9 +252,7 @@ class SessionWriter:
         batch = list(drafts)
         async with self._shared.lock:
             self._still_held()
-            if opens is not None and await self.store.read(
-                self.tenant_id, self.session_id, run_id=opens
-            ):
+            if opens is not None and await self.store.read(self.tenant_id, self.session_id, run_id=opens):
                 raise RunExists(opens)
             if since is not None and guard is not None:
                 guard(await self.store.read(self.tenant_id, self.session_id, after_seq=since))
@@ -267,9 +260,7 @@ class SessionWriter:
             while True:
                 attempt += 1
                 try:
-                    events = await self.store.append(
-                        batch, expected_seq=self.last_seq if checked else None
-                    )
+                    events = await self.store.append(batch, expected_seq=self.last_seq if checked else None)
                 except SequenceConflict as conflict:
                     if attempt >= MAX_ATTEMPTS:
                         raise
@@ -355,9 +346,7 @@ class SessionWriters:
         self._lock = asyncio.Lock()
         self._max = max_writers
 
-    async def open(
-        self, store: EventStore, tenant_id: TenantId, session_id: SessionId
-    ) -> SessionWriter:
+    async def open(self, store: EventStore, tenant_id: TenantId, session_id: SessionId) -> SessionWriter:
         """Écrivain de cette session, créé au premier appel."""
         key = (tenant_id, session_id)
         async with self._lock:

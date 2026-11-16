@@ -74,9 +74,7 @@ class UsageReport(DomainModel):
     failed: UsageLine | None = None
 
 
-def usage_report(
-    events: Sequence[Event], session_id: SessionId, run_id: RunId | None = None
-) -> UsageReport:
+def usage_report(events: Sequence[Event], session_id: SessionId, run_id: RunId | None = None) -> UsageReport:
     """Rapport des événements d'une session ; avec ``run_id``, de ce run et de ses sous-runs."""
     selected = RunTree(run_id).select(events) if run_id is not None else list(events)
     entries = ledger(selected)
@@ -109,10 +107,7 @@ def usage_report(
         total=_line("total", entries),
         runs=tuple(runs.values()),
         roles=_grouped(entries, role),
-        models=tuple(
-            ModelUsage(**_line(name, mine).model_dump(), model_id=mine[0].model_id)
-            for name, mine in _by(entries, lambda e: e.model_key).items()
-        ),
+        models=tuple(ModelUsage(**_line(name, mine).model_dump(), model_id=mine[0].model_id) for name, mine in _by(entries, lambda e: e.model_key).items()),
         failed=_attempts([entry for entry in entries if entry.failed]),
     )
 
@@ -165,16 +160,12 @@ def _attempts(entries: Sequence[LedgerEntry]) -> UsageLine | None:
     return line.model_copy(update={"calls": len(entries)})
 
 
-def _grouped(
-    entries: Sequence[LedgerEntry], key: Callable[[LedgerEntry], str]
-) -> tuple[UsageLine, ...]:
+def _grouped(entries: Sequence[LedgerEntry], key: Callable[[LedgerEntry], str]) -> tuple[UsageLine, ...]:
     """Une ligne par clé, dans l'ordre de première apparition."""
     return tuple(_line(name, mine) for name, mine in _by(entries, key).items())
 
 
-def _by[K](
-    entries: Iterable[LedgerEntry], key: Callable[[LedgerEntry], K]
-) -> dict[K, list[LedgerEntry]]:
+def _by[K](entries: Iterable[LedgerEntry], key: Callable[[LedgerEntry], K]) -> dict[K, list[LedgerEntry]]:
     """Les appels rangés par clé, dans l'ordre de première apparition."""
     grouped: dict[K, list[LedgerEntry]] = {}
     for entry in entries:

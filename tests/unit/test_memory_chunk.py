@@ -40,10 +40,7 @@ def test_tiny_sections_are_merged_with_their_headings() -> None:
     chunks = chunk_document("d", "Guide", DOC, ChunkingSpec())
     assert len(chunks) == 1
     # Le chemin n'en garde qu'un : les titres des sections absorbées passent dans le texte.
-    assert chunks[0].text == (
-        "Intro courte.\n\n## Installation\n\nÉtape un. Étape deux.\n\n### Linux\n\n"
-        "Détail linux.\n\n## Usage\n\nParagraphe d'usage."
-    )
+    assert chunks[0].text == ("Intro courte.\n\n## Installation\n\nÉtape un. Étape deux.\n\n### Linux\n\nDétail linux.\n\n## Usage\n\nParagraphe d'usage.")
     # Le texte d'avant le premier titre a rejoint la section suivante, et son chemin.
     assert chunks[0].heading_path == "Guide > Installation"
 
@@ -137,10 +134,7 @@ def test_labels_only_still_progress() -> None:
 
 
 def test_a_lead_at_the_end_of_a_section_opens_the_next_one() -> None:
-    text = (
-        "# T\n\n## Offre\n\nNous faisons ceci, et le faisons bien.\n\nContact\n\n"
-        "## Écrivez-moi\n\nUn courriel suffit pour commencer."
-    )
+    text = "# T\n\n## Offre\n\nNous faisons ceci, et le faisons bien.\n\nContact\n\n## Écrivez-moi\n\nUn courriel suffit pour commencer."
     chunks = chunk_document("d", "T", text, ChunkingSpec(min_chars=0))
     assert [c.text for c in chunks] == [
         "Nous faisons ceci, et le faisons bien.",

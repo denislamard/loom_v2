@@ -92,9 +92,7 @@ def height(chart: ChartOut) -> float:
     return min(20 * cm, max(6 * cm, 1.4 * cm + 0.6 * cm * len(chart.categories)))
 
 
-def drawing(
-    chart: ChartOut, width: float, look: ChartLook, font: str, language: Language
-) -> Drawing:
+def drawing(chart: ChartOut, width: float, look: ChartLook, font: str, language: Language) -> Drawing:
     """Le graphique, à la largeur donnée, aux couleurs du style ``chart``, dans la police
     ``font`` et la langue du document."""
     paint = _paint(look, font, language)
@@ -123,9 +121,7 @@ def drawing(
     plot.x, plot.y = left, bottom
     plot.width, plot.height = width - left - 0.4 * cm, tall - bottom - 0.4 * cm
     names = [_short(label) for label in chart.categories]
-    data = [
-        [value if value is not None else None for value in values] for _, values in chart.series
-    ]
+    data = [[value if value is not None else None for value in values] for _, values in chart.series]
     if chart.kind == "horizontal_bar":
         # reportlab dessine la première catégorie en bas : à l'envers, elle est en haut.
         names = names[::-1]

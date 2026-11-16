@@ -108,10 +108,7 @@ def titre(texte: str) -> None:
 
 def ligne(result: RunResult) -> str:
     objet = result.data.get("objet", "") if isinstance(result.data, dict) else ""
-    return (
-        f"{result.status.value:<10} {result.iterations} itération(s)  "
-        f"{result.cost_usd:.6f} $  {objet or result.text[:40]}"
-    )
+    return f"{result.status.value:<10} {result.iterations} itération(s)  {result.cost_usd:.6f} $  {objet or result.text[:40]}"
 
 
 def attente(secondes: float) -> str:
@@ -125,9 +122,7 @@ def attente(secondes: float) -> str:
 def etat(found: TenantConsumption, limit: BudgetLimit = "max_cost") -> str:
     """Ce qui a été dépensé sur la fenêtre, et ce qu'il reste s'il y a un plafond."""
     left = found.left(limit)
-    dit = (
-        f"dépensé {amount(limit, found.spent.cost if limit == 'max_cost' else found.spent.tokens)}"
-    )
+    dit = f"dépensé {amount(limit, found.spent.cost if limit == 'max_cost' else found.spent.tokens)}"
     return dit if left is None else f"{dit}, reste {amount(limit, left)}"
 
 
@@ -160,12 +155,8 @@ def limite(
     tenants = tuple(
         tenant.model_copy(
             update={
-                "budgets": Budgets(tenant=TenantBudget.model_validate(posed[tenant.id]))
-                if tenant.id in posed
-                else tenant.budgets,
-                "quotas": Quotas(runs_per_minute=debits[tenant.id])
-                if tenant.id in debits
-                else tenant.quotas,
+                "budgets": Budgets(tenant=TenantBudget.model_validate(posed[tenant.id])) if tenant.id in posed else tenant.budgets,
+                "quotas": Quotas(runs_per_minute=debits[tenant.id]) if tenant.id in debits else tenant.quotas,
             }
         )
         for tenant in config.tenants
@@ -185,20 +176,14 @@ def journal_neuf(config: LoomConfig, prefixe: str) -> LoomConfig:
     événements sous le client, et prendre son identifiant ici le redoublerait.
     """
     base = CONFIG.parent / "data" / "quotas" / prefixe
-    storage = config.storage.model_copy(
-        update={"events": config.storage.events.model_copy(update={"path": base})}
-    )
+    storage = config.storage.model_copy(update={"events": config.storage.events.model_copy(update={"path": base})})
     tenants = tuple(
         tenant
         if tenant.storage is None or tenant.storage.events.path is None
         else tenant.model_copy(
             update={
                 "storage": tenant.storage.model_copy(
-                    update={
-                        "events": tenant.storage.events.model_copy(
-                            update={"path": base / tenant.storage.events.path.name}
-                        )
-                    }
+                    update={"events": tenant.storage.events.model_copy(update={"path": base / tenant.storage.events.path.name})}
                 )
             }
         )
@@ -227,17 +212,12 @@ async def budget(config: LoomConfig, agent: str, prefixe: str) -> None:
             avant = etat(await loom.consumption(DUPONT))
             session = SessionId(f"{prefixe}-jour-{numero}")
             try:
-                result = await loom.run(
-                    agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
-                )
+                result = await loom.run(agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT)
             except BudgetExhausted as refus:
                 refuse = numero
                 print(f"  run {numero} : REFUSÉ    {avant}")
                 print(f"           {refus.reached}")
-                print(
-                    f"           remise à zéro dans {attente(refus.retry_after)}, "
-                    f"le {refus.reached.period.end:%Y-%m-%d %H:%M} UTC"
-                )
+                print(f"           remise à zéro dans {attente(refus.retry_after)}, le {refus.reached.period.end:%Y-%m-%d %H:%M} UTC")
                 break
             print(f"  run {numero} : {ligne(result)}")
             print(f"           {avant} avant le lancement")
@@ -250,10 +230,7 @@ async def budget(config: LoomConfig, agent: str, prefixe: str) -> None:
         titre("Les deux fenêtres, lues au journal")
         for kind in PERIODS:
             found = await loom.consumption(DUPONT, period=kind)
-            plafonds = (
-                ", ".join(pose(found, limit, value) for limit, value in found.limits)
-                or "aucun plafond"
-            )
+            plafonds = ", ".join(pose(found, limit, value) for limit, value in found.limits) or "aucun plafond"
             print(f"  {FENETRES[kind]:<8} {found.runs} run(s), {etat(found)}")
             print(f"           {plafonds}, remise à zéro le {found.resets_at:%Y-%m-%d %H:%M} UTC")
 
@@ -285,9 +262,7 @@ async def quota(config: LoomConfig, agent: str, prefixe: str) -> None:
         for numero in range(1, 5):
             session = SessionId(f"{prefixe}-minute-{numero}")
             try:
-                result = await loom.run(
-                    agent, demande(MARTIN), session_id=session, tenant=MARTIN, user=MARTIN
-                )
+                result = await loom.run(agent, demande(MARTIN), session_id=session, tenant=MARTIN, user=MARTIN)
             except QuotaExceeded as refus:
                 print(f"  run {numero} : REFUSÉ    {refus}")
                 continue
@@ -303,9 +278,7 @@ async def quota(config: LoomConfig, agent: str, prefixe: str) -> None:
         titre("Dupont, sans quota, n'est pas concerné")
         for numero in range(1, 4):
             session = SessionId(f"{prefixe}-libre-{numero}")
-            result = await loom.run(
-                agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
-            )
+            result = await loom.run(agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT)
             print(f"  run {numero} : {ligne(result)}")
 
 
@@ -319,9 +292,7 @@ async def reprise(config: LoomConfig, agent: str, prefixe: str) -> None:
         for numero in range(1, ESSAIS + 1):
             session = SessionId(f"{prefixe}-avant-{numero}")
             try:
-                result = await premiere.run(
-                    agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
-                )
+                result = await premiere.run(agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT)
             except BudgetExhausted as refus:
                 print(f"  run {numero} : REFUSÉ — {refus.reached}")
                 break
@@ -368,9 +339,7 @@ def avec_cles(config: LoomConfig) -> tuple[LoomConfig, dict[TenantId, str], str]
         ),
     )
     return (
-        config.model_copy(
-            update={"security": config.security.model_copy(update={"api_keys": keys})}
-        ),
+        config.model_copy(update={"security": config.security.model_copy(update={"api_keys": keys})}),
         cles,
         bridee,
     )
@@ -395,9 +364,7 @@ async def serveur(loom: Loom) -> AsyncGenerator[str]:
         sock.close()
 
 
-def _http(
-    url: str, *, method: str = "GET", body: Any = None, key: str = ""
-) -> tuple[int, str, Any]:
+def _http(url: str, *, method: str = "GET", body: Any = None, key: str = "") -> tuple[int, str, Any]:
     """Une requête, sans passer par un proxy : le serveur est sur la machine."""
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(url, data=data, method=method)
@@ -415,9 +382,7 @@ def _http(
         return error.code, after, json.loads(error.read() or b"null")
 
 
-async def appel(
-    url: str, *, method: str = "GET", body: Any = None, key: str = ""
-) -> tuple[int, str, Any]:
+async def appel(url: str, *, method: str = "GET", body: Any = None, key: str = "") -> tuple[int, str, Any]:
     """La requête, hors de la boucle : urllib est synchrone, le serveur est ici."""
     return await asyncio.to_thread(_http, url, method=method, body=body, key=key)
 
@@ -465,11 +430,7 @@ async def debit(config: LoomConfig, agent: str, prefixe: str) -> None:
         titre("Débit d'une clé : même une lecture est comptée")
         for _ in range(PAR_CLE + 1):
             code, after, corps = await appel(f"{base}/agents", key=bridee)
-            dit = (
-                corps.get("detail")
-                if code >= 400
-                else f"{len(corps)} agent(s) publié(s) pour {DUPONT}"
-            )
+            dit = corps.get("detail") if code >= 400 else f"{len(corps)} agent(s) publié(s) pour {DUPONT}"
             delai = f"   Retry-After: {after} s" if after else ""
             print(f"  GET  …/agents (clé bridée) → {code} {dit}{delai}")
         # La clé du même client, elle, n'est pas bridée : c'est bien la clé

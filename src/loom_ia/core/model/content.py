@@ -57,9 +57,7 @@ class _Block(DomainModel):
     def _check_provider_keys(self) -> Self:
         for key, meta in self.provider_meta.items():
             if key != meta.provider:
-                raise ValueError(
-                    f"provider_meta[{key!r}] contient des données du fournisseur {meta.provider!r}"
-                )
+                raise ValueError(f"provider_meta[{key!r}] contient des données du fournisseur {meta.provider!r}")
         return self
 
 
@@ -116,9 +114,7 @@ class ToolCallBlock(_Block):
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-type OutputBlock = Annotated[
-    TextBlock | JsonBlock | ArtifactRefBlock | InlineDataBlock, Field(discriminator="type")
-]
+type OutputBlock = Annotated[TextBlock | JsonBlock | ArtifactRefBlock | InlineDataBlock, Field(discriminator="type")]
 
 
 class ToolOutput(DomainModel):
@@ -143,9 +139,7 @@ class ToolOutput(DomainModel):
     # tel quel ; la projection les retire du résultat montré au modèle. Omis
     # quand il est vide : un résultat sans state se sérialise comme avant, et
     # les empreintes des requêtes ne changent pas.
-    state: dict[str, JsonValue] = Field(
-        default_factory=dict[str, JsonValue], exclude_if=lambda value: not value
-    )
+    state: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue], exclude_if=lambda value: not value)
     # Écritures du state refusées (D8) : une ligne par clé, avec le motif. Le
     # résultat reste un succès — l'outil a pu produire son effet — et le modèle
     # lit ces lignes à la suite du résultat (``state_note``). Omis quand il est vide.
@@ -177,13 +171,7 @@ class ToolResultBlock(_Block):
 
 
 type ContentBlock = Annotated[
-    TextBlock
-    | JsonBlock
-    | ArtifactRefBlock
-    | InlineDataBlock
-    | ReasoningBlock
-    | ToolCallBlock
-    | ToolResultBlock,
+    TextBlock | JsonBlock | ArtifactRefBlock | InlineDataBlock | ReasoningBlock | ToolCallBlock | ToolResultBlock,
     Field(discriminator="type"),
 ]
 

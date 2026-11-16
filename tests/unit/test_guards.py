@@ -152,10 +152,7 @@ def test_a_forbidden_text_is_not_copied_into_its_problem() -> None:
     text = f"Voici la clé : {SECRET}"
     checked = check(forbidden, text)
 
-    assert checked.problems == (
-        f"motif interdit présent : {KEY_PATTERN} "
-        f"(position {text.index(SECRET)}, longueur {len(SECRET)})",
-    )
+    assert checked.problems == (f"motif interdit présent : {KEY_PATTERN} (position {text.index(SECRET)}, longueur {len(SECRET)})",)
     assert SECRET not in diagnostic(forbidden, checked.problems)
 
 
@@ -177,9 +174,7 @@ def short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     ],
 )
-def test_a_pattern_that_does_not_finish_fails_the_check(
-    fields: dict[str, Any], text: str, problem: str
-) -> None:
+def test_a_pattern_that_does_not_finish_fails_the_check(fields: dict[str, Any], text: str, problem: str) -> None:
     """Faute de temps, on ne conclut ni « absent » ni « conforme » : le contrôle échoue."""
     checked = check(contract(**fields), text)
 
@@ -292,9 +287,7 @@ async def test_final_answer_is_repaired_then_follows_on_failure() -> None:
 
     outcomes: list[object] = []
     for on_failure in ("fail", "unverified", "fallback"):
-        guard = ContractGuard(
-            contract(**fields, on_failure=on_failure, fallback_message="Relance à reprendre.")
-        )
+        guard = ContractGuard(contract(**fields, on_failure=on_failure, fallback_message="Relance à reprendre."))
         tired = PolicyContext(name=CONTRACT_POLICY, attempt=1)
         outcomes.append((await guard.decide(final("Bonjour"), tired), tired.checks[0].resolution))
     fail, unverified, fallback = outcomes
@@ -341,23 +334,16 @@ async def test_role_output_is_structured_repaired_or_refused() -> None:
     assert isinstance(refused, Replace) and isinstance(refused.value, ToolOutput)
     assert refused.value.is_error
     assert refused.value.as_text.startswith(
-        "Sortie du rôle rediger refusée par son contrat de sortie après 1 réparation "
-        "par son modèle (une règle de la configuration, pas une panne) :\n- "
+        "Sortie du rôle rediger refusée par son contrat de sortie après 1 réparation par son modèle (une règle de la configuration, pas une panne) :\n- "
     )
     assert "Sortie reçue" not in refused.value.as_text
 
     backup = contract(schema=SCHEMA, on_failure="fallback", fallback_message="À reprendre.")
-    replaced = await guard.decide(
-        result(ToolOutput.text("Bonjour"), contract_=backup), PolicyContext(name="x", attempt=1)
-    )
-    assert replaced == Replace(
-        ToolOutput.text("À reprendre.").model_copy(update={"fallback": True}), reason="repli"
-    )
+    replaced = await guard.decide(result(ToolOutput.text("Bonjour"), contract_=backup), PolicyContext(name="x", attempt=1))
+    assert replaced == Replace(ToolOutput.text("À reprendre.").model_copy(update={"fallback": True}), reason="repli")
 
     kept = contract(schema=SCHEMA, on_failure="unverified")
-    marked = await guard.decide(
-        result(ToolOutput.text("Bonjour"), contract_=kept), PolicyContext(name="x", attempt=1)
-    )
+    marked = await guard.decide(result(ToolOutput.text("Bonjour"), contract_=kept), PolicyContext(name="x", attempt=1))
     assert isinstance(marked, Replace) and isinstance(marked.value, ToolOutput)
     assert marked.value.unverified and marked.value.as_text == "Bonjour"
 
@@ -374,9 +360,7 @@ async def test_tools_are_never_repaired_and_errors_are_not_checked() -> None:
     guard = ContractGuard()
     tool_contract = contract(must_match="D-")
     context = PolicyContext(name=CONTRACT_POLICY)
-    decision = await guard.decide(
-        result(ToolOutput.text("rien"), kind="python", contract_=tool_contract), context
-    )
+    decision = await guard.decide(result(ToolOutput.text("rien"), kind="python", contract_=tool_contract), context)
     assert isinstance(decision, Replace) and isinstance(decision.value, ToolOutput)
     assert decision.value.is_error and context.checks[0].target == "tool:rediger"
     errored = result(ToolOutput.error("panne"), kind="python", contract_=tool_contract)
@@ -418,9 +402,7 @@ async def test_a_refused_tool_result_tells_the_orchestrator_not_to_retry_it() ->
     bad = result(
         ToolOutput(data={"montant_ttc": 2400}),
         kind="python",
-        contract_=contract(
-            schema={"type": "object", "properties": {"montant_ttc": {"maximum": 1000}}}
-        ),
+        contract_=contract(schema={"type": "object", "properties": {"montant_ttc": {"maximum": 1000}}}),
     )
     refused = await ContractGuard().decide(bad, PolicyContext(name=CONTRACT_POLICY))
     assert isinstance(refused, Replace) and isinstance(refused.value, ToolOutput)
@@ -447,9 +429,7 @@ async def test_a_refused_tool_result_tells_the_orchestrator_not_to_retry_it() ->
         (2, " après 2 réparations par son modèle"),
     ],
 )
-async def test_a_refused_role_output_says_how_many_repairs_were_tried(
-    attempt: int, after: str
-) -> None:
+async def test_a_refused_role_output_says_how_many_repairs_were_tried(attempt: int, after: str) -> None:
     guarded = contract(must_match="D-", repair={"max_attempts": attempt})
     refused = await ContractGuard().decide(
         result(ToolOutput.text("rien"), contract_=guarded),

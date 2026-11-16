@@ -30,10 +30,7 @@ from loom_ia.core.model import RunStatus, SessionId, TenantId
 from loom_ia.tools_builtin.memory.fake import FakeEmbedder
 from loom_ia.tools_builtin.memory.models import Embedding, checkpoint
 
-NOTE: Final = (
-    "Le devis D-2026-042 de Mme Martin porte sur le remplacement d'un chauffe-eau de 200 L, "
-    "envoyé le 2 septembre."
-)
+NOTE: Final = "Le devis D-2026-042 de Mme Martin porte sur le remplacement d'un chauffe-eau de 200 L, envoyé le 2 septembre."
 
 
 def call(**arguments: Any) -> dict[str, Any]:
@@ -54,12 +51,7 @@ SCRIPT: Final[list[dict[str, Any]]] = [
 
 
 def script_deleting(doc_id: str) -> list[dict[str, Any]]:
-    return [
-        {**step, **call(action="delete", doc_id=doc_id)}
-        if "tool_calls" in step and step["with_text"] == "Oublie"
-        else step
-        for step in SCRIPT
-    ]
+    return [{**step, **call(action="delete", doc_id=doc_id)} if "tool_calls" in step and step["with_text"] == "Oublie" else step for step in SCRIPT]
 
 
 def write_config(
@@ -95,18 +87,14 @@ def write_config(
     }
     if tenants is not None:
         config["tenants"] = tenants
-    (base / "loom.yaml").write_text(
-        yaml.safe_dump(secured(config), allow_unicode=True), encoding="utf-8"
-    )
+    (base / "loom.yaml").write_text(yaml.safe_dump(secured(config), allow_unicode=True), encoding="utf-8")
     agent = {
         "name": "assistant",
         "description": "Répond en s'appuyant sur la mémoire.",
         "main": {"model": "FAKE", "system": "Cherche dans la mémoire avant de répondre."},
         "tools": [memory],
     }
-    (base / "agents" / "assistant.yaml").write_text(
-        yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8"
-    )
+    (base / "agents" / "assistant.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8")
     return base / "loom.yaml"
 
 
@@ -115,15 +103,9 @@ def completed(events: list[Any], action: str) -> list[ToolCompleted]:
     asked = {
         e.payload.call_id
         for e in events
-        if isinstance(e.payload, ToolCalled)
-        and e.payload.tool_name == "memory"
-        and e.payload.arguments.get("action") == action
+        if isinstance(e.payload, ToolCalled) and e.payload.tool_name == "memory" and e.payload.arguments.get("action") == action
     }
-    return [
-        e.payload
-        for e in events
-        if isinstance(e.payload, ToolCompleted) and e.payload.call_id in asked
-    ]
+    return [e.payload for e in events if isinstance(e.payload, ToolCompleted) and e.payload.call_id in asked]
 
 
 def rendered(done: ToolCompleted) -> list[dict[str, Any]]:
@@ -133,13 +115,9 @@ def rendered(done: ToolCompleted) -> list[dict[str, Any]]:
     return [cast(dict[str, Any], item) for item in data]
 
 
-async def listed(
-    loom: Loom, session: SessionId, tenant: TenantId | None = None
-) -> list[dict[str, Any]]:
+async def listed(loom: Loom, session: SessionId, tenant: TenantId | None = None) -> list[dict[str, Any]]:
     """Les documents de la mémoire, lus par un run qui appelle ``list_docs``."""
-    result = await loom.run(
-        "assistant", "Liste les documents.", session_id=session, tenant=tenant, user=tenant or DEV
-    )
+    result = await loom.run("assistant", "Liste les documents.", session_id=session, tenant=tenant, user=tenant or DEV)
     assert result.status == RunStatus.COMPLETED
     events = await loom.events(result.run_id, session_id=session, tenant_id=tenant)
     [done] = completed(events, "list_docs")
@@ -229,39 +207,28 @@ async def test_a_variant_never_writes(tmp_path: Path) -> None:
         wrote = await loom.run("assistant", "Mémorise ce devis.", session_id=session, user=DEV)
         await loom.approve(wrote.run_id, user=DEV, session_id=session)
         await loom.drain()
-        report = await loom.replay(
-            wrote.run_id, session_id=session, mode="variant", models={"main": "AUTRE"}
-        )
+        report = await loom.replay(wrote.run_id, session_id=session, mode="variant", models={"main": "AUTRE"})
         assert report.comparison is not None
         assert report.comparison.calls == (("memory", "refused"), ("memory", "refused"))
         assert [d["title"] for d in await listed(loom, session)] == ["Devis Martin"]
 
 
-async def test_each_client_has_its_own_memory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_each_client_has_its_own_memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``store.path_env`` : la base de chaque client, lue dans ses secrets."""
     for client in ("dupont", "martin"):
         monkeypatch.setenv(f"{client.upper()}_MEMOIRE", str(tmp_path / f"{client}.db"))
-    tenants = [
-        {"id": client, "secrets": {"MEMOIRE_BASE": f"{client.upper()}_MEMOIRE"}}
-        for client in ("dupont", "martin")
-    ]
+    tenants = [{"id": client, "secrets": {"MEMOIRE_BASE": f"{client.upper()}_MEMOIRE"}} for client in ("dupont", "martin")]
     dupont, martin = TenantId("dupont"), TenantId("martin")
     session = SessionId("atelier")
     path = write_config(tmp_path, SCRIPT, tenants=tenants)
     async with Loom(load_config(path)) as loom:
-        asked = await loom.run(
-            "assistant", "Mémorise ce devis.", session_id=session, tenant=dupont, user=dupont
-        )
+        asked = await loom.run("assistant", "Mémorise ce devis.", session_id=session, tenant=dupont, user=dupont)
         await loom.approve(asked.run_id, user=dupont, session_id=session, tenant_id=dupont)
         await loom.drain()
         assert [d["title"] for d in await listed(loom, session, dupont)] == ["Devis Martin"]
         assert await listed(loom, session, martin) == []
 
-        found = await loom.run(
-            "assistant", "Et ce chauffe-eau ?", session_id=session, tenant=martin, user=martin
-        )
+        found = await loom.run("assistant", "Et ce chauffe-eau ?", session_id=session, tenant=martin, user=martin)
         events = await loom.events(found.run_id, session_id=session, tenant_id=martin)
         [hit] = completed(events, "search")
         assert rendered(hit) == []
@@ -321,15 +288,11 @@ async def test_adding_a_note_already_there_never_waits_for_a_human(tmp_path: Pat
         assert [d["doc_id"] for d in await listed(loom, session)] == [document["doc_id"]]
 
 
-async def test_a_write_cut_by_the_tool_timeout_stops_computing_and_writes_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_write_cut_by_the_tool_timeout_stops_computing_and_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Délai de l'outil dépassé : le run continue, rien n'est écrit, le calcul s'arrête."""
     computed: list[str] = []
 
-    def slow(
-        self: FakeEmbedder, texts: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[Embedding]:
+    def slow(self: FakeEmbedder, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
         found: list[Embedding] = []
         for text in texts:
             checkpoint(cancel)

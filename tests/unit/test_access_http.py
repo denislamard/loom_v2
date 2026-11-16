@@ -57,9 +57,7 @@ async def serving(path: FilePath) -> AsyncGenerator[tuple[Loom, httpx2.AsyncClie
 
 
 @asynccontextmanager
-async def serving_store(
-    path: FilePath, store: InMemoryEventStore
-) -> AsyncGenerator[tuple[Loom, httpx2.AsyncClient]]:
+async def serving_store(path: FilePath, store: InMemoryEventStore) -> AsyncGenerator[tuple[Loom, httpx2.AsyncClient]]:
     """Comme ``serving``, sur un journal que le test a préparé."""
     async with Loom(load_config(path), store=store) as loom:
         transport = httpx2.ASGITransport(create_app(loom))
@@ -78,9 +76,7 @@ async def test_an_unreadable_session_is_a_clean_error_not_a_crash(demo: ConfigFa
     async with serving_store(demo(), store) as (_, http):
         read = await http.get(f"/v1/runs/{journal.run_id}", params={"session_id": session})
         detail = await http.get(f"/v1/sessions/{session}")
-        opened = await http.post(
-            "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": session}
-        )
+        opened = await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "session_id": session})
 
     for refused in (read, detail):
         assert refused.status_code == 500
@@ -110,9 +106,7 @@ class _TakenStore(InMemoryEventStore):
 
     taken = False
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         claims = [d for d in drafts if isinstance(d.payload, RunClaimed)]
         if claims and not self.taken:
             self.taken = True
@@ -145,9 +139,7 @@ async def test_agents_are_listed(demo: ConfigFactory) -> None:
     async with serving(path) as (_, http):
         response = await http.get("/v1/agents")
         assert response.status_code == 200
-        assert response.json() == [
-            {"name": "demo", "description": "Répond aux questions de calcul."}
-        ]
+        assert response.json() == [{"name": "demo", "description": "Répond aux questions de calcul."}]
 
 
 async def test_a_run_answers_and_is_readable_afterwards(demo: ConfigFactory) -> None:
@@ -179,9 +171,7 @@ async def test_events_follow_a_run_in_flight(demo: ConfigFactory) -> None:
     async with serving(demo()) as (loom, http):
         # Le journal prévient dès l'écriture : le flux s'ouvre sur un run en cours.
         with loom.store.listen(lambda _: started.set(), run_id):
-            run = asyncio.create_task(
-                http.post("/v1/agents/demo/runs", json={"message": QUESTION, "run_id": run_id})
-            )
+            run = asyncio.create_task(http.post("/v1/agents/demo/runs", json={"message": QUESTION, "run_id": run_id}))
             async with asyncio.timeout(5):
                 await started.wait()
             events = await _sse(http, f"/v1/runs/{run_id}/events")
@@ -197,9 +187,7 @@ async def test_a_replay_can_start_after_a_given_seq(demo: ConfigFactory) -> None
         run_id = started.json()["run_id"]
         whole = await _sse(http, f"/v1/runs/{run_id}/events")
         tail = await _sse(http, f"/v1/runs/{run_id}/events?after_seq={whole[-2][1]}")
-        resumed = await _sse(
-            http, f"/v1/runs/{run_id}/events", headers={"Last-Event-ID": whole[-2][1]}
-        )
+        resumed = await _sse(http, f"/v1/runs/{run_id}/events", headers={"Last-Event-ID": whole[-2][1]})
 
     assert [name for name, _ in tail] == ["run.completed"]
     assert tail == resumed
@@ -234,10 +222,7 @@ async def test_a_run_refused_for_its_state_is_a_422(demo: ConfigFactory) -> None
     """D13 : une clé ``required`` sans valeur ; la demande ne peut pas ouvrir de run."""
     required = {"client_id": {"schema": {"type": "string"}, "required": True}}
     async with serving(demo(agents=[demo_agent(state=required)])) as (_, http):
-        refused = [
-            await http.post("/v1/agents/demo/runs", json=body)
-            for body in ({"message": QUESTION}, {"message": QUESTION, "background": True})
-        ]
+        refused = [await http.post("/v1/agents/demo/runs", json=body) for body in ({"message": QUESTION}, {"message": QUESTION, "background": True})]
     for answer in refused:
         assert answer.status_code == 422
         assert answer.json()["detail"] == "State refusé : client_id : clé obligatoire sans valeur"
@@ -245,9 +230,7 @@ async def test_a_run_refused_for_its_state_is_a_422(demo: ConfigFactory) -> None
 
 async def test_rest_does_not_show_the_session_state_yet(demo: ConfigFactory) -> None:
     """Lire le state demandera sa portée (D5) : le résultat REST ne le porte pas."""
-    written = {
-        "calcul": {"schema": {"type": "string"}, "from": [{"tool": "calculer", "value": "x"}]}
-    }
+    written = {"calcul": {"schema": {"type": "string"}, "from": [{"tool": "calculer", "value": "x"}]}}
     async with serving(demo(agents=[demo_agent(state=written)])) as (loom, http):
         started = (await http.post("/v1/agents/demo/runs", json={"message": QUESTION})).json()
         again = (await http.get(f"/v1/runs/{started['run_id']}")).json()
@@ -329,9 +312,7 @@ async def test_scopes_and_agents_limit_a_key(demo: ConfigFactory) -> None:
 
     assert run.status_code == 403 and "retire 'run'" in run.json()["detail"]
     assert read.status_code == 200
-    assert (
-        elsewhere.status_code == 403 and "sur l'agent demo : la clé" in elsewhere.json()["detail"]
-    )
+    assert elsewhere.status_code == 403 and "sur l'agent demo : la clé" in elsewhere.json()["detail"]
     assert listed.json() == []
 
 
@@ -363,9 +344,7 @@ async def test_a_local_instance_acts_for_its_user(demo: ConfigFactory) -> None:
     assert state.context.user_id == DEV
 
 
-async def test_an_owned_instance_listens_to_the_bus_while_it_serves(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_an_owned_instance_listens_to_the_bus_while_it_serves(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test I4 du 21/10 : ``loom serve`` n'ouvrait pas son instance, le bus restait sourd."""
 
     def bus_en_memoire(config: LoomConfig) -> InMemoryBus:
@@ -407,10 +386,7 @@ CLES = {
         {"id": "passerelle", "permissions": ["read", "act_as"], "act_as_roles": ["approbateur"]},
     ],
     "users": [
-        *(
-            {"id": name, "roles": ["owner"]}
-            for name in ("atelier", "mme-durand", "console", "lecture")
-        ),
+        *({"id": name, "roles": ["owner"]} for name in ("atelier", "mme-durand", "console", "lecture")),
         {"id": "denis", "roles": ["approbateur"]},
         {"id": "app-crm", "roles": ["passerelle"]},
     ],
@@ -441,9 +417,7 @@ CLES = {
 
 async def test_a_run_can_be_left_in_the_background(demo: ConfigFactory) -> None:
     async with serving(demo()) as (loom, http):
-        started = await http.post(
-            "/v1/agents/demo/runs", json={"message": QUESTION, "background": True}
-        )
+        started = await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "background": True})
         assert started.status_code == 202
         accepted = started.json()
         # Le run est inscrit au journal avant la réponse : il se lit aussitôt.
@@ -459,9 +433,7 @@ async def test_a_run_can_be_left_in_the_background(demo: ConfigFactory) -> None:
 async def test_an_approval_is_granted_over_rest(atelier: ConfigFactory) -> None:
     async with serving(atelier(security=CLES)) as (loom, http):
         entete = {"Authorization": f"Bearer {APPROBATEUR}"}
-        started = await http.post(
-            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
-        )
+        started = await http.post("/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete)
         paused = started.json()
         attente = paused["pending_approvals"]
 
@@ -473,9 +445,7 @@ async def test_an_approval_is_granted_over_rest(atelier: ConfigFactory) -> None:
     assert paused["status"] == "paused"
     assert [a["tool_name"] for a in attente] == ["envoyer_email"]
     # Le motif, en clair : ce qui exige l'approbation et ses effets (essai du 01/11).
-    assert [a["reason"] for a in attente] == [
-        "la config exige une approbation pour chaque appel de cet outil (irréversible)"
-    ]
+    assert [a["reason"] for a in attente] == ["la config exige une approbation pour chaque appel de cet outil (irréversible)"]
     assert decided.status_code == 200
     assert decided.json() == {"run_id": paused["run_id"], "calls": [attente[0]["call_id"]]}
     assert finished.json()["status"] == "completed"
@@ -495,9 +465,7 @@ async def test_a_stale_approval_is_a_409(atelier: ConfigFactory) -> None:
     await asyncio.sleep(0.6)
     async with serving(path) as (loom, http):
         entete = {"Authorization": f"Bearer {APPROBATEUR}"}
-        refused = await http.post(
-            f"/v1/runs/{run.run_id}/approve?session_id={run.session_id}", json={}, headers=entete
-        )
+        refused = await http.post(f"/v1/runs/{run.run_id}/approve?session_id={run.session_id}", json={}, headers=entete)
         events = await loom.export_session(run.session_id)
 
     assert refused.status_code == 409
@@ -508,9 +476,7 @@ async def test_a_stale_approval_is_a_409(atelier: ConfigFactory) -> None:
 async def test_corrected_arguments_without_a_call_are_a_422(atelier: ConfigFactory) -> None:
     async with serving(atelier(security=CLES)) as (loom, http):
         entete = {"Authorization": f"Bearer {APPROBATEUR}"}
-        started = await http.post(
-            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
-        )
+        started = await http.post("/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete)
         run = started.json()
         refused = await http.post(
             f"/v1/runs/{run['run_id']}/approve",
@@ -552,9 +518,7 @@ async def test_a_free_signature_in_the_body_is_refused(atelier: ConfigFactory) -
     """Le ``by`` d'avant laissait toute clé signer au nom de n'importe qui (L-3) : retiré."""
     async with serving(atelier(security=CLES)) as (_, http):
         entete = {"Authorization": f"Bearer {APPROBATEUR}"}
-        started = await http.post(
-            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
-        )
+        started = await http.post("/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete)
         refused = await http.post(
             f"/v1/runs/{started.json()['run_id']}/approve",
             json={"by": "denis"},
@@ -599,9 +563,7 @@ def _refusals(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
     return [getattr(record, AUDIT) for record in caplog.records if record.name == AUDIT_LOGGER]
 
 
-async def test_every_refusal_of_the_api_is_written_once(
-    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_every_refusal_of_the_api_is_written_once(atelier: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     """Clé inconnue, clé sans la portée, ``as_user`` refusé, droits du SDK : une ligne chacun.
 
     Au fichier d'audit, la même ligne pour chacun, sans le message (D-9).
@@ -616,9 +578,7 @@ async def test_every_refusal_of_the_api_is_written_once(
         run_id = started.json()["run_id"]
         with caplog.at_level(logging.WARNING, logger=AUDIT_LOGGER):
             inconnue = await http.get("/v1/agents", headers={"Authorization": "Bearer lk_faux"})
-            portee = await http.post(
-                f"/v1/runs/{run_id}/approve", json={}, headers={"Authorization": f"Bearer {CLE}"}
-            )
+            portee = await http.post(f"/v1/runs/{run_id}/approve", json={}, headers={"Authorization": f"Bearer {CLE}"})
             endosse = await http.post(
                 f"/v1/runs/{run_id}/approve",
                 json={"as_user": "mme-durand"},
@@ -655,9 +615,7 @@ async def test_every_refusal_of_the_api_is_written_once(
     assert audited(path) == [cle, portee_, endossement, sdk]
 
 
-async def test_a_refusal_says_whether_the_role_or_the_key_lacks_and_what_it_aimed_at(
-    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_refusal_says_whether_the_role_or_the_key_lacks_and_what_it_aimed_at(atelier: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     """Un refus de l'accès, avant le SDK, dit ce qui manque et sur quoi la requête portait.
 
     Au test REST du 05/11, « Clé sans la portée 'approve' » était dit à une
@@ -716,9 +674,7 @@ async def test_a_refusal_says_whether_the_role_or_the_key_lacks_and_what_it_aime
 async def test_an_approval_can_be_rejected_over_rest(atelier: ConfigFactory) -> None:
     async with serving(atelier(security=CLES)) as (loom, http):
         entete = {"Authorization": f"Bearer {APPROBATEUR}"}
-        started = await http.post(
-            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
-        )
+        started = await http.post("/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete)
         run = started.json()
         refus = await http.post(
             f"/v1/runs/{run['run_id']}/reject",
@@ -758,9 +714,7 @@ async def test_a_paused_run_can_be_cancelled_over_rest(
 ) -> None:
     async with serving(atelier(security=CLES)) as (_, http):
         entete = {"Authorization": f"Bearer {CLE}"}
-        started = await http.post(
-            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
-        )
+        started = await http.post("/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete)
         run_id = started.json()["run_id"]
         stopped = await http.post(f"/v1/runs/{run_id}/cancel", json={}, headers=entete)
         again = await http.post(f"/v1/runs/{run_id}/cancel", json={}, headers=entete)
@@ -776,9 +730,7 @@ async def test_a_cancellation_needs_no_body(atelier: ConfigFactory) -> None:
     """Le corps de `/cancel` n'a qu'un champ facultatif : il l'est aussi (test N2 du 23/10)."""
     async with serving(atelier(security=CLES)) as (_, http):
         entete = {"Authorization": f"Bearer {CLE}"}
-        started = await http.post(
-            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
-        )
+        started = await http.post("/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete)
         run_id = started.json()["run_id"]
         stopped = await http.post(f"/v1/runs/{run_id}/cancel", headers=entete)
         finished = await http.get(f"/v1/runs/{run_id}", headers=entete)
@@ -794,9 +746,7 @@ async def test_the_sse_of_a_cancelled_run_ends_with_its_cancellation(
     """Le flux d'un run annulé se rejoue jusqu'à `run.cancelled`, puis se ferme."""
     async with serving(atelier(security=CLES)) as (_, http):
         entete = {"Authorization": f"Bearer {CLE}"}
-        started = await http.post(
-            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
-        )
+        started = await http.post("/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete)
         run_id = started.json()["run_id"]
         await http.post(f"/v1/runs/{run_id}/cancel", json={}, headers=entete)
         # Sans cette clôture le flux resterait ouvert : le délai fait échouer l'essai.
@@ -844,9 +794,7 @@ async def test_deleting_a_session_needs_admin(demo: ConfigFactory) -> None:
             headers={"Authorization": f"Bearer {CLE}"},
         )
         refused = await http.delete("/v1/sessions/c-42", headers={"Authorization": f"Bearer {CLE}"})
-        removed = await http.delete(
-            "/v1/sessions/c-42", headers={"Authorization": f"Bearer {ADMIN}"}
-        )
+        removed = await http.delete("/v1/sessions/c-42", headers={"Authorization": f"Bearer {ADMIN}"})
         gone = await http.get("/v1/sessions/c-42", headers={"Authorization": f"Bearer {ADMIN}"})
         twice = await http.delete("/v1/sessions/c-42", headers={"Authorization": f"Bearer {ADMIN}"})
 
@@ -889,16 +837,11 @@ async def test_a_key_limited_to_agents_cannot_list_sessions(demo: ConfigFactory)
     ],
     ids=["défaut", "fermées", "prod", "prod ouvertes"],
 )
-async def test_the_docs_are_served_unless_closed(
-    demo: ConfigFactory, root: dict[str, Any], served: bool
-) -> None:
+async def test_the_docs_are_served_unless_closed(demo: ConfigFactory, root: dict[str, Any], served: bool) -> None:
     """Test N2 du 23/10 : `/docs` et `/openapi.json` répondaient 200 sans clé à côté d'une
     API protégée ; ils se ferment en prod, et `server.http.docs` tranche."""
     async with serving(demo(**root)) as (_, http):
-        codes = {
-            path: (await http.get(path)).status_code
-            for path in ("/docs", "/redoc", "/openapi.json")
-        }
+        codes = {path: (await http.get(path)).status_code for path in ("/docs", "/redoc", "/openapi.json")}
 
     assert set(codes.values()) == ({200} if served else {404})
 
@@ -911,11 +854,7 @@ async def test_the_openapi_document_describes_every_route(demo: ConfigFactory) -
     assert document["info"]["title"] == "loom-ia" and document["info"]["version"]
     declared = {tag["name"] for tag in document["tags"]}
     assert declared == {"agents", "runs", "sessions", "journal", "hooks"}
-    operations = [
-        (path, method, spec)
-        for path, methods in document["paths"].items()
-        for method, spec in methods.items()
-    ]
+    operations = [(path, method, spec) for path, methods in document["paths"].items() for method, spec in methods.items()]
     assert operations
     for path, method, spec in operations:
         assert spec.get("summary"), f"{method} {path} sans résumé"
@@ -982,12 +921,8 @@ async def test_the_listing_routes_are_documented(demo: ConfigFactory) -> None:
 async def test_runs_are_listed_and_filtered(demo: ConfigFactory) -> None:
     path = demo(agents=[demo_agent(), demo_agent(name="autre")])
     async with serving(path) as (_, http):
-        first = await http.post(
-            "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "c-1"}
-        )
-        second = await http.post(
-            "/v1/agents/autre/runs", json={"message": QUESTION, "session_id": "c-2"}
-        )
+        first = await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "c-1"})
+        second = await http.post("/v1/agents/autre/runs", json={"message": QUESTION, "session_id": "c-2"})
         page = (await http.get("/v1/runs")).json()
         named = (await http.get("/v1/runs?agent=autre")).json()
         done = (await http.get("/v1/runs?status=completed&status=failed")).json()
@@ -1049,9 +984,7 @@ async def test_a_key_limited_to_agents_gets_only_its_runs(demo: ConfigFactory) -
 
 async def test_events_are_searched_in_the_journal(demo: ConfigFactory) -> None:
     async with serving(demo()) as (_, http):
-        started = await http.post(
-            "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "c-1"}
-        )
+        started = await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "c-1"})
         run_id = started.json()["run_id"]
         calls = (await http.get("/v1/events?type=tool.called")).json()
         named = (await http.get("/v1/events?tool_name=calculer")).json()
@@ -1177,9 +1110,7 @@ async def test_an_identifier_the_journal_cannot_name_is_a_422_not_a_500(
                 "GET events?session": http.get("/v1/events", params={"session_id": bad}),
                 "DELETE session": http.delete(f"/v1/sessions/{name}"),
                 "POST cancel": http.post(f"/v1/runs/{name}/cancel", json={}),
-                "POST session_id": http.post(
-                    "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": bad}
-                ),
+                "POST session_id": http.post("/v1/agents/demo/runs", json={"message": QUESTION, "session_id": bad}),
                 "POST run_id": http.post(
                     "/v1/agents/demo/runs",
                     json={"message": QUESTION, "run_id": bad, "background": True},
@@ -1202,10 +1133,7 @@ async def test_a_last_event_id_that_is_not_a_plain_number_is_ignored(
         url = f"/v1/runs/{started.json()['run_id']}/events"
         whole = (await http.get(url)).text
         # En-têtes latin-1 : 0xB2 est « ² », 0xB3 « ³ ».
-        ignored = [
-            (await http.get(url, headers=[(b"last-event-id", resumed)])).text
-            for resumed in (b"\xb2", b"\xb3", b"9" * 5000, b"-1", b"abc")
-        ]
+        ignored = [(await http.get(url, headers=[(b"last-event-id", resumed)])).text for resumed in (b"\xb2", b"\xb3", b"9" * 5000, b"-1", b"abc")]
 
     assert "run.completed" in whole and all(text == whole for text in ignored)
 
@@ -1213,9 +1141,7 @@ async def test_a_last_event_id_that_is_not_a_plain_number_is_ignored(
 async def test_a_json_body_that_is_not_utf8_is_a_422(demo: ConfigFactory) -> None:
     """Les octets du corps, gardés dans l'erreur, ne savaient pas s'écrire en JSON : 500."""
     async with serving(demo()) as (_, http):
-        broken = await http.post(
-            "/v1/agents/demo/runs", content=b'{"message":"\xff\xfe"}', headers=JSON_BODY
-        )
+        broken = await http.post("/v1/agents/demo/runs", content=b'{"message":"\xff\xfe"}', headers=JSON_BODY)
 
     assert broken.status_code == 422
     assert broken.json()["detail"][0]["type"] == "json_invalid"
@@ -1236,26 +1162,18 @@ async def test_a_json_body_over_the_limit_is_refused_before_it_is_read(
 
     async with Loom.from_config(demo(server={"http": {"max_body_bytes": limit}})) as loom:
         reading = Reading(create_app(loom))
-        async with httpx2.AsyncClient(
-            transport=httpx2.ASGITransport(reading), base_url="http://loom.test"
-        ) as http:
+        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(reading), base_url="http://loom.test") as http:
             declared = await http.post(
                 "/v1/agents/demo/runs",
                 content=json.dumps({"message": "A" * 5_000_000}),
                 headers=JSON_BODY,
             )
             read_declared = reading.read
-            chunked = await http.post(
-                "/v1/agents/demo/runs", content=streamed(b'{"message":"'), headers=JSON_BODY
-            )
+            chunked = await http.post("/v1/agents/demo/runs", content=streamed(b'{"message":"'), headers=JSON_BODY)
             read_chunked = reading.read - read_declared
             # Une route dont FastAPI lit le corps lui-même : même plafond.
-            decided = await http.post(
-                "/v1/runs/x/approve", content=streamed(b'{"reason":"'), headers=JSON_BODY
-            )
-            fits = await http.post(
-                "/v1/agents/demo/runs", content=json.dumps({"message": QUESTION}), headers=JSON_BODY
-            )
+            decided = await http.post("/v1/runs/x/approve", content=streamed(b'{"reason":"'), headers=JSON_BODY)
+            fits = await http.post("/v1/agents/demo/runs", content=json.dumps({"message": QUESTION}), headers=JSON_BODY)
 
     # La longueur annoncée suffit : rien n'est lu. Sinon l'envoi est compté, et s'arrête.
     assert declared.status_code == 413 and read_declared == 0
@@ -1268,10 +1186,7 @@ async def test_a_json_body_over_the_limit_is_refused_before_it_is_read(
 
 def test_the_body_limit_is_an_optional_key_with_a_generous_default(demo: ConfigFactory) -> None:
     assert load_config(demo()).server.http.max_body_bytes == 128 * 1024 * 1024
-    assert (
-        load_config(demo(server={"http": {"max_body_bytes": 1000}})).server.http.max_body_bytes
-        == 1000
-    )
+    assert load_config(demo(server={"http": {"max_body_bytes": 1000}})).server.http.max_body_bytes == 1000
     with pytest.raises(ConfigError, match="max_body_bytes"):
         load_config(demo(server={"http": {"max_body_bytes": 0}}))
 
@@ -1285,13 +1200,9 @@ async def test_json_nested_too_deep_is_refused_before_the_journal_cannot_read_it
         return f'{{"message":"{QUESTION}","run_id":"{run_id}","metadata":{metadata}}}'.encode()
 
     async with serving(demo(storage=JOURNAL)) as (_, http):
-        deep = await http.post(
-            "/v1/agents/demo/runs", content=run("profond", nested(198)), headers=JSON_BODY
-        )
+        deep = await http.post("/v1/agents/demo/runs", content=run("profond", nested(198)), headers=JSON_BODY)
         gone = await http.get("/v1/runs/profond")
-        fine = await http.post(
-            "/v1/agents/demo/runs", content=run("ok", nested(60)), headers=JSON_BODY
-        )
+        fine = await http.post("/v1/agents/demo/runs", content=run("ok", nested(60)), headers=JSON_BODY)
         reread = await http.get("/v1/runs/ok")
 
     assert deep.status_code == 422 and "64 niveaux" in json.dumps(deep.json(), ensure_ascii=False)
@@ -1302,9 +1213,7 @@ async def test_json_nested_too_deep_is_refused_before_the_journal_cannot_read_it
         Approval(call_id="c1", arguments=json.loads(nested(70)))
 
 
-async def _sse(
-    http: httpx2.AsyncClient, url: str, headers: dict[str, str] | None = None
-) -> list[tuple[str, str]]:
+async def _sse(http: httpx2.AsyncClient, url: str, headers: dict[str, str] | None = None) -> list[tuple[str, str]]:
     """Couples ``(event, id)`` lus sur un flux SSE, jusqu'à sa fin."""
     seen: list[tuple[str, str]] = []
     block: dict[str, str] = {}

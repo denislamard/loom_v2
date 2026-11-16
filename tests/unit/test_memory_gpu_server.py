@@ -229,9 +229,7 @@ def test_every_setting_has_its_variable_in_the_unit_with_what_it_does() -> None:
     # Un réglage ajouté sans description ou, sans défaut, sans exemple : refusé ici.
     lines = as_environment(ServiceSettings())
     assert len(lines) == 2 * len(ServiceSettings.model_fields)
-    for field, comment, line in zip(
-        ServiceSettings.model_fields, lines[::2], lines[1::2], strict=True
-    ):
+    for field, comment, line in zip(ServiceSettings.model_fields, lines[::2], lines[1::2], strict=True):
         assert comment.startswith(f"# {describe(field)}"), field
         assert line.removeprefix("# ").startswith(f"Environment={env_name(field)}="), field
     unset = [c for c in lines[::2] if c.endswith("— non réglé par défaut")]
@@ -395,9 +393,7 @@ def test_the_body_size_is_checked_before_reading_it(started: Callable[..., Servi
 def test_bad_requests_say_why(started: Callable[..., Service]) -> None:
     service = started()
     host, port = service.address
-    request = urllib.request.Request(
-        f"http://{host}:{port}/v1/embed", data=b"{pas du json", method="POST"
-    )
+    request = urllib.request.Request(f"http://{host}:{port}/v1/embed", data=b"{pas du json", method="POST")
     with pytest.raises(urllib.error.HTTPError) as unreadable:
         urllib.request.urlopen(request, timeout=10)
     assert unreadable.value.code == 400
@@ -491,9 +487,7 @@ def test_stopping_lets_the_request_in_progress_finish() -> None:
     host.load()
     running = Running(host)
     replies: list[Reply] = []
-    asking = threading.Thread(
-        target=lambda: replies.append(call(running.service, "POST", "/v1/embed", {"texts": ["x"]}))
-    )
+    asking = threading.Thread(target=lambda: replies.append(call(running.service, "POST", "/v1/embed", {"texts": ["x"]})))
     asking.start()
     assert slow.inside.wait(5)
     running.service.stop()
@@ -504,9 +498,7 @@ def test_stopping_lets_the_request_in_progress_finish() -> None:
     assert running.service.exit_code == EXIT_OK
 
 
-def test_the_log_never_holds_the_texts(
-    started: Callable[..., Service], caplog: pytest.LogCaptureFixture
-) -> None:
+def test_the_log_never_holds_the_texts(started: Callable[..., Service], caplog: pytest.LogCaptureFixture) -> None:
     service = started()
     with caplog.at_level(logging.INFO, logger="loom_ia.memory.server"):
         call(service, "POST", "/v1/embed", {"texts": [SECRET_TEXT]})
@@ -518,9 +510,7 @@ def test_the_log_never_holds_the_texts(
 # --- run, main et status -------------------------------------------------------------
 
 
-def test_without_the_memory_extra_run_says_which_to_install(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_without_the_memory_extra_run_says_which_to_install(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     monkeypatch.setattr(app_module, "missing_modules", lambda: ["torch"])
     with caplog.at_level(logging.ERROR, logger="loom_ia.memory.server"):
         assert run(ServiceSettings(port=1)) == EXIT_SETTINGS
@@ -574,18 +564,14 @@ def test_main_serves_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (second.device, second.offline, second.fp16) == ("cuda", False, True)
 
 
-def test_check_validates_without_loading_or_listening(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_check_validates_without_loading_or_listening(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     def never(_settings: ServiceSettings) -> Host:
         raise AssertionError("--check ne charge rien")
 
     monkeypatch.setattr(app_module, "bge_host", never)
     monkeypatch.setattr(app_module, "missing_modules", list)
     assert main(["serve", "--check", "--device", "cpu", "--port", "8800", "--offline"]) == 0
-    assert "réglages valides — 127.0.0.1:8800, device cpu, fp16, hors ligne" in (
-        capsys.readouterr().out
-    )
+    assert "réglages valides — 127.0.0.1:8800, device cpu, fp16, hors ligne" in (capsys.readouterr().out)
     # Un mauvais réglage, l'extra absent, un jeton introuvable : code 2, comme run.
     assert main(["serve", "--check", "--device", "gpu"]) == EXIT_SETTINGS
     monkeypatch.setattr(app_module, "missing_modules", lambda: ["torch"])
@@ -602,9 +588,7 @@ def test_check_validates_without_loading_or_listening(
     assert main(["serve", "--env", "--device", "gpu"]) == EXIT_SETTINGS
 
 
-def test_main_reads_the_variables_and_options_win(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_main_reads_the_variables_and_options_win(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(app_module, "missing_modules", list)
     monkeypatch.setenv("LOOM_MEM_GPU_DEVICE", "cpu")
     monkeypatch.setenv("LOOM_MEM_GPU_PORT", "8801")
@@ -656,9 +640,7 @@ def test_under_systemd_the_log_lines_are_not_dated_twice() -> None:
     assert log_format({}).startswith("%(asctime)s ")
 
 
-def test_status_describes_a_ready_service(
-    started: Callable[..., Service], capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_status_describes_a_ready_service(started: Callable[..., Service], capsys: pytest.CaptureFixture[str]) -> None:
     service = started()
     host, port = service.address
     assert status(f"http://{host}:{port}", None) == 0
@@ -666,9 +648,7 @@ def test_status_describes_a_ready_service(
     assert "ready (protocole 1" in out and "fake-64" in out and "fake-reranker" in out
 
 
-def test_status_of_a_loading_or_absent_service_is_1(
-    started: Callable[..., Service], capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_status_of_a_loading_or_absent_service_is_1(started: Callable[..., Service], capsys: pytest.CaptureFixture[str]) -> None:
     service = started(load=False)
     host, port = service.address
     assert status(f"http://{host}:{port}", None) == 1
@@ -680,9 +660,7 @@ def test_status_of_a_loading_or_absent_service_is_1(
     assert "injoignable" in capsys.readouterr().err
 
 
-def test_status_ignores_the_proxies_of_the_environment(
-    started: Callable[..., Service], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_status_ignores_the_proxies_of_the_environment(started: Callable[..., Service], monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
         monkeypatch.setenv(name, "http://127.0.0.1:9")
     for name in ("NO_PROXY", "no_proxy"):
@@ -691,9 +669,7 @@ def test_status_ignores_the_proxies_of_the_environment(
     assert status(f"http://{host}:{port}", None) == 0
 
 
-def test_status_sends_the_token(
-    started: Callable[..., Service], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_status_sends_the_token(started: Callable[..., Service], monkeypatch: pytest.MonkeyPatch) -> None:
     service = started(token="s3cret")
     host, port = service.address
     url = f"http://{host}:{port}"
@@ -724,9 +700,7 @@ def test_the_application_loads_nothing_of_loom_beyond_the_memory() -> None:
         " and m.startswith('loom_ia.')]\n"
         "print(sorted(bad)); print('torch' in sys.modules)"
     )
-    done = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
-    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60)
     assert done.stdout.split("\n")[:2] == ["[]", "False"]
 
 

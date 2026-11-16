@@ -32,9 +32,7 @@ from loom_ia.tools_builtin.sql_params import SqlParams
 
 pytestmark = pytest.mark.integration
 
-CONTEXT: Final = ToolContext(
-    tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), call_id="c", agent="a"
-)
+CONTEXT: Final = ToolContext(tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), call_id="c", agent="a")
 PASSWORD: Final = "agent-essai"
 
 DDL: Final = """
@@ -153,9 +151,7 @@ def query(sql: str, *params: Any) -> dict[str, Any]:
 
 
 def execute(*statements: tuple[str, list[Any]] | str) -> dict[str, Any]:
-    units = [
-        {"sql": s} if isinstance(s, str) else {"sql": s[0], "params": s[1]} for s in statements
-    ]
+    units = [{"sql": s} if isinstance(s, str) else {"sql": s[0], "params": s[1]} for s in statements]
     return {"action": "execute", "database": "crm", "statements": units}
 
 
@@ -166,8 +162,7 @@ async def test_values_come_back_as_json(tool: SqlTool) -> None:
     result = await call(
         tool,
         **query(
-            "SELECT montant_ht, envoye_le, echeance, meta, ref, delai, tags, age($1::date, "
-            "echeance) AS ecart FROM devis WHERE id = $2",
+            "SELECT montant_ht, envoye_le, echeance, meta, ref, delai, tags, age($1::date, echeance) AS ecart FROM devis WHERE id = $2",
             "2026-12-01",
             1,
         ),
@@ -213,9 +208,7 @@ async def test_values_come_back_as_json(tool: SqlTool) -> None:
         ("(id = 1) = $1", "oui", 1),
     ],
 )
-async def test_parameters_are_converted_to_their_type(
-    tool: SqlTool, where: str, value: Any, count: int
-) -> None:
+async def test_parameters_are_converted_to_their_type(tool: SqlTool, where: str, value: Any, count: int) -> None:
     result = await call(tool, **query(f"SELECT count(*) AS n FROM devis WHERE {where}", value))
     assert result["rows"] == [[count]]
 
@@ -234,9 +227,7 @@ async def test_parameters_are_converted_to_their_type(
         ("ref = $1", "pas-un-uuid", r"ne convient pas au type uuid"),
     ],
 )
-async def test_a_parameter_that_does_not_fit_is_said(
-    tool: SqlTool, where: str, value: Any, said: str
-) -> None:
+async def test_a_parameter_that_does_not_fit_is_said(tool: SqlTool, where: str, value: Any, said: str) -> None:
     with pytest.raises(ToolError, match=said):
         await tool.invoke(query(f"SELECT count(*) FROM devis WHERE {where}", value), CONTEXT)
 
@@ -256,9 +247,7 @@ async def test_execute_commits_together_or_not_at_all(tool: SqlTool, base: Base)
         {"affected_rows": 1, "columns": ["id", "statut"], "returning": [[1, "relance"]]},
         {"affected_rows": 1},
     ]
-    with pytest.raises(
-        ToolError, match=r"Instruction 2 : .*check constraint.*Rien n'est enregistré"
-    ):
+    with pytest.raises(ToolError, match=r"Instruction 2 : .*check constraint.*Rien n'est enregistré"):
         await tool.invoke(
             execute(
                 ("UPDATE devis SET statut = $1 WHERE id = $2", ["envoye", 1]),
@@ -298,9 +287,7 @@ async def test_the_role_refuses_what_the_analysis_would_have(tool: SqlTool, base
         with pytest.raises(ToolError, match="Accès refusé par la base"):
             await backend.query(Statement(sql="SELECT * FROM audit"), _analysis())
         with pytest.raises(ToolError, match="Lecture seule"):
-            await backend.query(
-                Statement(sql="UPDATE devis SET statut = 'x' WHERE id = 1"), _analysis()
-            )
+            await backend.query(Statement(sql="UPDATE devis SET statut = 'x' WHERE id = 1"), _analysis())
         with pytest.raises(ToolError, match="Accès refusé par la base"):
             await backend.execute([(Statement(sql="CREATE TABLE x (a int)"), _analysis())])
         with pytest.raises(ToolError, match="cannot insert multiple commands"):
@@ -379,13 +366,9 @@ async def test_a_long_query_is_stopped_by_the_base(base: Base) -> None:
 
 async def test_a_cancelled_call_stops_the_query_on_the_server(tool: SqlTool, base: Base) -> None:
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(
-            tool.invoke(query("SELECT count(*) FROM generate_series(1, 1000000000)"), CONTEXT), 0.5
-        )
+        await asyncio.wait_for(tool.invoke(query("SELECT count(*) FROM generate_series(1, 1000000000)"), CONTEXT), 0.5)
     await asyncio.sleep(0.5)
-    active = await base.fetch(
-        f"SELECT count(*) FROM pg_stat_activity WHERE usename = '{base.role}' AND state = 'active'"
-    )
+    active = await base.fetch(f"SELECT count(*) FROM pg_stat_activity WHERE usename = '{base.role}' AND state = 'active'")
     assert active[0][0] == 0
 
 
@@ -395,17 +378,12 @@ async def test_a_cancelled_call_stops_the_query_on_the_server(tool: SqlTool, bas
 async def test_schema_is_rendered_from_the_catalog(tool: SqlTool) -> None:
     output = await tool.invoke({"action": "schema", "database": "crm"}, CONTEXT)
     text = output.as_text
-    assert (
-        "-- droits : SELECT, UPDATE (approbation humaine)\nCREATE TABLE devis (  -- Devis envoyés"
-        in text
-    )
+    assert "-- droits : SELECT, UPDATE (approbation humaine)\nCREATE TABLE devis (  -- Devis envoyés" in text
     assert "  montant_ht numeric(10,2)," in text
     assert "  FOREIGN KEY (client_id) REFERENCES clients(id)," in text
     # La clé vers audit, table non permise, n'est pas montrée.
     assert "audit" not in text.replace("audit_id", "")
-    assert (
-        "CHECK ((statut = ANY (ARRAY['brouillon'::text, 'envoye'::text, 'relance'::text])))" in text
-    )
+    assert "CHECK ((statut = ANY (ARRAY['brouillon'::text, 'envoye'::text, 'relance'::text])))" in text
     assert "  nom text NOT NULL,  -- raison sociale" in text
 
 

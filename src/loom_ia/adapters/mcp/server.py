@@ -71,11 +71,7 @@ def is_connection_lost(error: BaseException) -> bool:
         return data.code == types.CONNECTION_CLOSED or data.message == SESSION_TERMINATED
     return isinstance(
         error,
-        anyio.ClosedResourceError
-        | anyio.BrokenResourceError
-        | anyio.EndOfStream
-        | ConnectionError
-        | httpx.TransportError,
+        anyio.ClosedResourceError | anyio.BrokenResourceError | anyio.EndOfStream | ConnectionError | httpx.TransportError,
     )
 
 
@@ -187,9 +183,7 @@ class McpServer:
                 self._tools = await self._list(session)
             return self._tools
 
-    async def call(
-        self, name: str, arguments: dict[str, Any], *, meta: dict[str, Any], retry: bool
-    ) -> types.CallToolResult:
+    async def call(self, name: str, arguments: dict[str, Any], *, meta: dict[str, Any], retry: bool) -> types.CallToolResult:
         """Appelle un outil ; rejoue une fois après une perte de connexion si ``retry``."""
         attempts = 2 if retry else 1
         attempt = 1
@@ -219,9 +213,7 @@ class McpServer:
                 attempts,
             )
             if attempt >= attempts:
-                raise ConnectionLost(
-                    f"Connexion au serveur MCP {self.name} perdue pendant l'appel : {lost!r}"
-                ) from lost
+                raise ConnectionLost(f"Connexion au serveur MCP {self.name} perdue pendant l'appel : {lost!r}") from lost
             attempt += 1
 
     def _cancel_remote(self, session: ClientSession, request_id: int, name: str) -> None:
@@ -231,11 +223,7 @@ class McpServer:
         une seconde annulation (fin du lot) couperait un envoi fait en ligne.
         """
         notification = types.ClientNotification(
-            types.CancelledNotification(
-                params=types.CancelledNotificationParams(
-                    requestId=request_id, reason="délai dépassé ou run annulé côté loom"
-                )
-            )
+            types.CancelledNotification(params=types.CancelledNotificationParams(requestId=request_id, reason="délai dépassé ou run annulé côté loom"))
         )
 
         async def send() -> None:
@@ -243,9 +231,7 @@ class McpServer:
                 async with asyncio.timeout(CANCEL_TIMEOUT):
                     await session.send_notification(notification)
             except Exception as exc:
-                logger.debug(
-                    "Annulation de %s non transmise au serveur MCP %s : %r", name, self.name, exc
-                )
+                logger.debug("Annulation de %s non transmise au serveur MCP %s : %r", name, self.name, exc)
 
         task = asyncio.create_task(send(), name=f"mcp-cancel:{self.name}")
         self._cancelling.add(task)
@@ -253,14 +239,10 @@ class McpServer:
 
     async def on_message(
         self,
-        message: RequestResponder[types.ServerRequest, types.ClientResult]
-        | types.ServerNotification
-        | Exception,
+        message: RequestResponder[types.ServerRequest, types.ClientResult] | types.ServerNotification | Exception,
     ) -> None:
         """Messages spontanés du serveur : seul le changement de liste d'outils compte."""
-        if isinstance(message, types.ServerNotification) and isinstance(
-            message.root, types.ToolListChangedNotification
-        ):
+        if isinstance(message, types.ServerNotification) and isinstance(message.root, types.ToolListChangedNotification):
             logger.info("Liste d'outils du serveur MCP %s modifiée", self.name)
             self._tools = None
 
@@ -315,11 +297,7 @@ class McpServer:
         try:
             session = await held.start(self.spec.connect_timeout)
         except Exception as exc:
-            message = (
-                f"pas de réponse en {self.spec.connect_timeout:g} s"
-                if isinstance(exc, TimeoutError)
-                else _describe(exc)
-            )
+            message = f"pas de réponse en {self.spec.connect_timeout:g} s" if isinstance(exc, TimeoutError) else _describe(exc)
             delay = self._backoff[min(self._failures, len(self._backoff) - 1)]
             self._failures += 1
             self._retry_at = self._clock() + delay
@@ -337,9 +315,7 @@ class McpServer:
         cursor: str | None = None
         try:
             while True:
-                page = await session.list_tools(
-                    params=types.PaginatedRequestParams(cursor=cursor) if cursor else None
-                )
+                page = await session.list_tools(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
                 tools += page.tools
                 cursor = page.nextCursor
                 if not cursor:

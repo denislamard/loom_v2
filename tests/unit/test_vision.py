@@ -74,9 +74,7 @@ async def stored(store: ArtifactStore, data: bytes = PNG) -> ArtifactRefBlock:
 
 
 def asking(*blocks: Any) -> ModelRequest:
-    return ModelRequest(
-        model_id="m", messages=(Message(role="user", blocks=(TextBlock(text="Regarde"), *blocks)),)
-    )
+    return ModelRequest(model_id="m", messages=(Message(role="user", blocks=(TextBlock(text="Regarde"), *blocks)),))
 
 
 # --- Résolution des références -------------------------------------------------
@@ -85,9 +83,7 @@ def asking(*blocks: Any) -> ModelRequest:
 async def test_blind_models_get_a_mention() -> None:
     files = InMemoryArtifactStore()
     image = await stored(files)
-    pdf = ArtifactRefBlock(
-        uri="artifact://default/s1/x.pdf", media_type="application/pdf", size=2048, name="devis.pdf"
-    )
+    pdf = ArtifactRefBlock(uri="artifact://default/s1/x.pdf", media_type="application/pdf", size=2048, name="devis.pdf")
     request = asking(image, pdf)
     resolved = await MediaResolver(BLIND, files).resolve(request)
     assert resolved.messages[0].blocks[1:] == (
@@ -120,14 +116,10 @@ async def test_blind_models_get_a_mention() -> None:
         ({}, False, "introuvable dans le stockage"),
     ],
 )
-async def test_unusable_images_fail_before_the_call(
-    capabilities: dict[str, Any], stored_file: bool, message: str
-) -> None:
+async def test_unusable_images_fail_before_the_call(capabilities: dict[str, Any], stored_file: bool, message: str) -> None:
     files = InMemoryArtifactStore()
     image = await stored(files) if stored_file else await stored(InMemoryArtifactStore())
-    spec = VISION.model_copy(
-        update={"capabilities": ModelCapabilities(vision=True, **capabilities)}
-    )
+    spec = VISION.model_copy(update={"capabilities": ModelCapabilities(vision=True, **capabilities)})
     with pytest.raises(ModelError, match=message) as caught:
         await MediaResolver(spec, files).resolve(asking(image))
     assert caught.value.kind == "invalid_request"
@@ -143,11 +135,7 @@ async def test_tool_images_follow_the_results_when_needed() -> None:
         tool_call_message(("c1", "tracer", {}), ("c2", "compter", {})),
         Message(
             role="tool",
-            blocks=(
-                ToolResultBlock(
-                    call_id="c1", output=ToolOutput(blocks=(TextBlock(text="voici"), image))
-                ),
-            ),
+            blocks=(ToolResultBlock(call_id="c1", output=ToolOutput(blocks=(TextBlock(text="voici"), image))),),
         ),
         Message(role="tool", blocks=(ToolResultBlock(call_id="c2", output=ToolOutput.text("3")),)),
     )
@@ -158,14 +146,10 @@ async def test_tool_images_follow_the_results_when_needed() -> None:
     assert [m.role for m in moved.messages] == ["user", "assistant", "tool", "tool", "user"]
     first = moved.messages[2].blocks[0]
     assert isinstance(first, ToolResultBlock)
-    assert first.output.blocks[1] == TextBlock(
-        text="[image photo.png (image/png, 32 octets) : dans le message qui suit]"
-    )
+    assert first.output.blocks[1] == TextBlock(text="[image photo.png (image/png, 32 octets) : dans le message qui suit]")
     assert moved.messages[4].blocks == (TextBlock(text=MOVED_IMAGES), inline)
 
-    capable = VISION.model_copy(
-        update={"capabilities": ModelCapabilities(vision=True, tool_result_media=True)}
-    )
+    capable = VISION.model_copy(update={"capabilities": ModelCapabilities(vision=True, tool_result_media=True)})
     kept = await MediaResolver(capable, files).resolve(request)
     assert len(kept.messages) == 4
     result = kept.messages[2].blocks[0]
@@ -174,9 +158,7 @@ async def test_tool_images_follow_the_results_when_needed() -> None:
     blind = await MediaResolver(BLIND, files).resolve(request)
     result = blind.messages[2].blocks[0]
     assert isinstance(result, ToolResultBlock)
-    assert result.output.blocks[1] == TextBlock(
-        text="[image renvoyée photo.png (image/png, 32 octets) : non visible par ce modèle]"
-    )
+    assert result.output.blocks[1] == TextBlock(text="[image renvoyée photo.png (image/png, 32 octets) : non visible par ce modèle]")
 
 
 @pytest.mark.parametrize(
@@ -186,9 +168,7 @@ async def test_tool_images_follow_the_results_when_needed() -> None:
         ({"max_image_bytes": 10}, "32 octets, au-delà des 10 acceptés par le modèle VISION"),
     ],
 )
-async def test_tool_images_the_model_refuses_become_mentions(
-    capabilities: dict[str, Any], reason: str
-) -> None:
+async def test_tool_images_the_model_refuses_become_mentions(capabilities: dict[str, Any], reason: str) -> None:
     # Le run ne doit pas échouer à cause d'une image qu'un outil a produite :
     # elle reste dans l'historique, et chaque appel suivant échouerait aussi.
     files = InMemoryArtifactStore()
@@ -196,16 +176,10 @@ async def test_tool_images_the_model_refuses_become_mentions(
     messages = (
         Message.user("Trace."),
         tool_call_message(("c1", "tracer", {})),
-        Message(
-            role="tool", blocks=(ToolResultBlock(call_id="c1", output=ToolOutput(blocks=(image,))),)
-        ),
+        Message(role="tool", blocks=(ToolResultBlock(call_id="c1", output=ToolOutput(blocks=(image,))),)),
     )
-    spec = VISION.model_copy(
-        update={"capabilities": ModelCapabilities(vision=True, **capabilities)}
-    )
-    resolved = await MediaResolver(spec, files).resolve(
-        ModelRequest(model_id="m", messages=messages)
-    )
+    spec = VISION.model_copy(update={"capabilities": ModelCapabilities(vision=True, **capabilities)})
+    resolved = await MediaResolver(spec, files).resolve(ModelRequest(model_id="m", messages=messages))
     assert len(resolved.messages) == 3
     result = resolved.messages[2].blocks[0]
     assert isinstance(result, ToolResultBlock)
@@ -266,11 +240,7 @@ async def test_attachments_are_stored_then_joined_to_the_request() -> None:
     [sent] = main.requests
     assert sent.messages[0].blocks[1] == TextBlock(text=MENTION)
     # L'empreinte porte sur la requête avant résolution : sans les octets.
-    [answer] = [
-        e.payload
-        for e in await journal(events, started.run_id)
-        if isinstance(e.payload, ModelResponded)
-    ]
+    [answer] = [e.payload for e in await journal(events, started.run_id) if isinstance(e.payload, ModelResponded)]
     unresolved = sent.model_copy(update={"messages": (request.message,)})
     assert answer.request_hash == unresolved.request_hash() != sent.request_hash()
 
@@ -347,9 +317,7 @@ async def test_vision_role_sees_the_attachments() -> None:
     assert state.output == Message.assistant("La photo montre un carré bleu.")
     offered = main.requests[0].tools
     assert [t.name for t in offered] == ["decrire_image"]
-    assert offered[0].description.endswith(
-        "Reçoit déjà, inutile de les transmettre : les pièces jointes de la demande (images)."
-    )
+    assert offered[0].description.endswith("Reçoit déjà, inutile de les transmettre : les pièces jointes de la demande (images).")
     # L'orchestrateur ne voit pas l'image ; le rôle la reçoit après son texte.
     assert main.requests[0].messages[0].blocks[1] == TextBlock(text=MENTION)
     # Le rôle est proposé : consigne $ref et résultats marqués.
@@ -358,10 +326,7 @@ async def test_vision_role_sees_the_attachments() -> None:
     assert isinstance(marked, ToolResultBlock)
     assert marked.output.as_text == "[result:1]\nUn carré bleu."
     [seen] = eye.requests
-    text = (
-        "<attachments>\n- photo.png (image/png, 32 octets)\n</attachments>\n\n"
-        '<arguments>\n{"consigne": "Décris."}\n</arguments>'
-    )
+    text = '<attachments>\n- photo.png (image/png, 32 octets)\n</attachments>\n\n<arguments>\n{"consigne": "Décris."}\n</arguments>'
     assert seen.messages == (
         Message(
             role="user",
@@ -371,15 +336,9 @@ async def test_vision_role_sees_the_attachments() -> None:
             ),
         ),
     )
-    [role_answer] = [
-        e.payload
-        for e in await journal(events, started.run_id)
-        if isinstance(e.payload, ModelResponded) and e.role == "decrire_image"
-    ]
+    [role_answer] = [e.payload for e in await journal(events, started.run_id) if isinstance(e.payload, ModelResponded) and e.role == "decrire_image"]
     [ref] = [b for b in state.messages[0].blocks if isinstance(b, ArtifactRefBlock)]
-    unresolved = seen.model_copy(
-        update={"messages": (Message(role="user", blocks=(TextBlock(text=text), ref)),)}
-    )
+    unresolved = seen.model_copy(update={"messages": (Message(role="user", blocks=(TextBlock(text=text), ref)),)})
     assert role_answer.request_hash == unresolved.request_hash()
 
 
@@ -402,9 +361,7 @@ async def test_vision_role_template_lists_the_attachments() -> None:
     )
     started = await begin_run(ctx, "?", attachments=[Attachment(data=PNG, name="photo.png")])
     await drive(ctx, started.run_id)
-    assert eye.requests[0].messages[0].blocks[0] == TextBlock(
-        text="Fichiers :\n- photo.png (image/png, 32 octets)"
-    )
+    assert eye.requests[0].messages[0].blocks[0] == TextBlock(text="Fichiers :\n- photo.png (image/png, 32 octets)")
 
 
 # --- Modèle simulé ---------------------------------------------------------------
@@ -428,9 +385,7 @@ async def test_fake_script_follows_the_offered_tools() -> None:
     )
     # Le message qui porte les images des résultats n'est pas une nouvelle demande.
     moved = Message(role="user", blocks=(TextBlock(text=MOVED_IMAGES),))
-    follow_up = offered.model_copy(
-        update={"messages": (Message.user("a"), first.message, result, moved)}
-    )
+    follow_up = offered.model_copy(update={"messages": (Message.user("a"), first.message, result, moved)})
     assert (await complete(model, follow_up)).message.text == "Avec image."
 
     alone = ModelRequest(model_id="f", messages=(Message.user("a"),))
@@ -595,11 +550,7 @@ async def test_last_run_mentions_the_images_of_earlier_turns() -> None:
         TextBlock(text="Que montre la photo ?"),
         TextBlock(text=EARLIER),
     )
-    assert not any(
-        isinstance(block, InlineDataBlock)
-        for message in second.messages
-        for block in message.blocks
-    )
+    assert not any(isinstance(block, InlineDataBlock) for message in second.messages for block in message.blocks)
 
 
 async def test_last_run_does_not_read_earlier_images_again() -> None:

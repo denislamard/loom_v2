@@ -56,9 +56,7 @@ def test_a_healthy_pattern_searches_and_substitutes() -> None:
 
 
 def test_a_pattern_that_does_not_finish_raises_regex_timeout() -> None:
-    with pytest.raises(
-        RegexTimeout, match=r"motif trop coûteux : '\^\(a\|aa\)\+\$' \(délai de 0.2 s"
-    ) as raised:
+    with pytest.raises(RegexTimeout, match=r"motif trop coûteux : '\^\(a\|aa\)\+\$' \(délai de 0.2 s") as raised:
         search(SLOW, SLOW_TEXT)
     assert raised.value.pattern == SLOW
     with pytest.raises(RegexTimeout):
@@ -105,9 +103,7 @@ KEYWORDS: list[tuple[dict[str, Any], Any]] = [
 
 
 @pytest.mark.parametrize(("schema", "instance"), KEYWORDS)
-def test_every_keyword_that_searches_a_pattern_has_a_delay(
-    schema: dict[str, Any], instance: Any
-) -> None:
+def test_every_keyword_that_searches_a_pattern_has_a_delay(schema: dict[str, Any], instance: Any) -> None:
     with pytest.raises(RegexTimeout, match="motif trop coûteux"):
         bounded_validator(schema).is_valid(instance)
 
@@ -177,9 +173,7 @@ HEALTHY: list[tuple[dict[str, Any], list[Any]]] = [
 
 
 @pytest.mark.parametrize(("schema", "instances"), HEALTHY)
-def test_nothing_changes_when_no_pattern_is_slow(
-    schema: dict[str, Any], instances: list[Any]
-) -> None:
+def test_nothing_changes_when_no_pattern_is_slow(schema: dict[str, Any], instances: list[Any]) -> None:
     """Mêmes erreurs, même chemin, mêmes messages que ``jsonschema`` seul."""
     stock = validator_for(schema, default=Draft202012Validator)(schema)
     bounded = bounded_validator(schema)
@@ -195,9 +189,7 @@ def test_jsonschema_has_no_other_function_that_searches_a_pattern() -> None:
         f"{module.__name__.rsplit('.', 1)[1]}.{name}"
         for module in (_keywords, _legacy_keywords, _utils)
         for name, function in vars(module).items()
-        if isinstance(function, types.FunctionType)
-        and function.__module__ == module.__name__
-        and "re" in function.__code__.co_names
+        if isinstance(function, types.FunctionType) and function.__module__ == module.__name__ and "re" in function.__code__.co_names
     }
     assert searching == {
         "_keywords.pattern",

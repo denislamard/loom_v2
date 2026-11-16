@@ -29,9 +29,7 @@ from loom_ia.core.model import CircuitBreaker, ModelErrorKind
 type Clock = Callable[[], float]
 
 # Erreurs d'un modèle qui comptent pour son disjoncteur.
-CIRCUIT_ERRORS: Final[frozenset[ModelErrorKind]] = frozenset(
-    {"transient", "overloaded", "quota_exhausted"}
-)
+CIRCUIT_ERRORS: Final[frozenset[ModelErrorKind]] = frozenset({"transient", "overloaded", "quota_exhausted"})
 
 
 def model_key(model_id: str) -> str:

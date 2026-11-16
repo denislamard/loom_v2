@@ -64,10 +64,7 @@ MCP_HTTP: dict[str, Any] = {"mcp": {"http": True}}
 def cles(**kinds: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """Une clé par entrée ; rend le bloc `security` et les jetons."""
     jetons = {nom: new_api_key() for nom in kinds}
-    keys = [
-        {"id": nom, "user": DEV, "hash": fingerprint(jetons[nom]), **spec}
-        for nom, spec in kinds.items()
-    ]
+    keys = [{"id": nom, "user": DEV, "hash": fingerprint(jetons[nom]), **spec} for nom, spec in kinds.items()]
     return {"api_keys": keys}, jetons
 
 
@@ -174,9 +171,7 @@ async def test_nothing_is_mounted_when_it_is_not_asked(demo: ConfigFactory) -> N
 
 
 @pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
-async def test_the_documented_path_answers_without_a_redirect(
-    demo: ConfigFactory, path: str
-) -> None:
+async def test_the_documented_path_answers_without_a_redirect(demo: ConfigFactory, path: str) -> None:
     """`/mcp` répond comme `/mcp/` : ni 307 avant la clé, ni Location à suivre (test N5 du 23/10).
 
     Le montage seul ne servait que `/mcp/` : un POST sur `/mcp`, l'adresse que
@@ -242,9 +237,7 @@ async def test_a_key_rate_limit_counts_the_mcp_requests_too(demo: ConfigFactory)
         },
     }
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app), base_url="http://127.0.0.1"
-        ) as http:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://127.0.0.1") as http:
             assert (await http.get("/v1/agents", headers=cle)).status_code == 200
             assert (await http.post("/mcp/", json=init, headers=mcp)).status_code == 200
             refus = await http.post("/mcp/", json=init, headers=mcp)
@@ -425,9 +418,7 @@ async def test_a_file_is_read_with_read_content_and_the_agents_of_its_session(
     image = [{"type": "image", "data": base64.b64encode(PNG).decode(), "mimeType": "image/png"}]
     async with Loom.from_config(path) as loom:
         async with parle(loom, jetons["complete"]) as session:
-            lance = await session.call_tool(
-                "demo", {"message": QUESTION, "session_id": "s1", "attachments": image}
-            )
+            lance = await session.call_tool("demo", {"message": QUESTION, "session_id": "s1", "attachments": image})
             uri = ((lance.structuredContent or {})["artifacts"])[0]["uri"]
             entier = await session.read_resource(AnyUrl(uri))
         async with parle(loom, jetons["atelier"]) as session:
@@ -572,9 +563,7 @@ async def test_a_trace_resource_follows_the_scope_and_every_agent_of_the_tree(
     assert entiere["content"] is True and entiere["output"] == TREE_ANSWER
     assert nue["content"] is False and nue["output"] is None
     assert all(e["content"] is None for span in nue["spans"] for e in span["events"])
-    assert [span["span_id"] for span in nue["spans"]] == [
-        span["span_id"] for span in entiere["spans"]
-    ]
+    assert [span["span_id"] for span in nue["spans"]] == [span["span_id"] for span in entiere["spans"]]
 
 
 async def test_the_events_resource_follows_every_agent_of_the_tree(tree: ConfigFactory) -> None:
@@ -654,9 +643,7 @@ async def test_elicitation_is_never_asked_over_http(atelier: ConfigFactory) -> N
     security, jetons = cles(atelier={"scopes": ["run", "read"]})
     asked: list[str] = []
 
-    async def elicit(
-        context: RequestContext[ClientSession, Any], params: ElicitRequestParams
-    ) -> ElicitResult:
+    async def elicit(context: RequestContext[ClientSession, Any], params: ElicitRequestParams) -> ElicitResult:
         asked.append(params.message)
         return ElicitResult(action="accept", content={"decision": "accorder"})
 
@@ -707,9 +694,7 @@ async def test_cancel_needs_the_right_on_the_agent_of_the_run(demo: ConfigFactor
         async with parle(loom, jetons["tout"]) as session:
             arrete = await session.call_tool("cancel", {"run_id": laisse})
     # Arrêter demande `cancel` sur **l'agent du run**, pas sur un autre.
-    assert refus.isError and texte(refus) == (
-        "dev n'a pas la permission 'cancel' sur l'agent demo : la clé bureau est bornée à autre"
-    )
+    assert refus.isError and texte(refus) == ("dev n'a pas la permission 'cancel' sur l'agent demo : la clé bureau est bornée à autre")
     assert (arrete.structuredContent or {})["cancelled"] is True
     # Au fichier d'audit : l'outil, l'agent du run et le run visés (D-9).
     [ligne] = audited(path)
@@ -729,9 +714,7 @@ def lu(result: ReadResourceResult) -> Any:
     return json.loads(content.text)
 
 
-def test_validate_announces_the_resources(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_announces_the_resources(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from loom_ia.access.cli import main
 
     security, _ = cles(atelier={"scopes": ["run", "read"]})

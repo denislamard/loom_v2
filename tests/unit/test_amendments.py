@@ -57,9 +57,7 @@ ARGUMENTS: dict[str, JsonValue] = {"client": "Dupont", "message": "Bonjour Madam
 APPEL: tuple[str, str, dict[str, JsonValue]] = ("c1", "envoyer", ARGUMENTS)
 
 
-def context(
-    store: InMemoryEventStore, model: ScriptedModel, tool_: object, **options: object
-) -> RunContext:
+def context(store: InMemoryEventStore, model: ScriptedModel, tool_: object, **options: object) -> RunContext:
     defaults: dict[str, object] = {
         "tools": ToolExecutor([tool_]),  # pyright: ignore[reportArgumentType]
         "system": "Tu relances.",
@@ -99,17 +97,13 @@ def note_after_results(request: ModelRequest) -> str | None:
 
 
 def test_the_note_names_who_changed_which_fields_and_why() -> None:
-    by_denis = Amendment(
-        call_id="c1", origin="approval", fields=("message",), by="denis", reason="trop formel"
-    )
+    by_denis = Amendment(call_id="c1", origin="approval", fields=("message",), by="denis", reason="trop formel")
     assert amendment_note(by_denis) == (
         "[Note du système : denis a remplacé les arguments de ton appel avant exécution "
         "(champs : message ; motif : trop formel). L'appel affiché plus haut porte déjà "
         f"les arguments de denis : {EXECUTED}{DECIDED}]"
     )
-    assert amendment_note(by_denis, "envoyer").startswith(
-        "[Note du système : denis a remplacé les arguments de ton appel à envoyer avant "
-    )
+    assert amendment_note(by_denis, "envoyer").startswith("[Note du système : denis a remplacé les arguments de ton appel à envoyer avant ")
     anonymous = Amendment(call_id="c1", origin="approval", fields=("client", "message"))
     assert amendment_note(anonymous) == (
         "[Note du système : les arguments de ton appel ont été remplacés à l'approbation "
@@ -127,9 +121,7 @@ def test_the_note_names_who_changed_which_fields_and_why() -> None:
         f"remplacés : {again}]"
     )
     # Test E7 du 19/10 : la politique nommée, avec son motif.
-    named = Amendment(
-        call_id="c1", origin="policy", fields=("taux_tva",), by="plafond_ttc", reason="abrogé"
-    )
+    named = Amendment(call_id="c1", origin="policy", fields=("taux_tva",), by="plafond_ttc", reason="abrogé")
     assert amendment_note(named) == (
         "[Note du système : la politique plafond_ttc a remplacé les arguments de ton appel "
         "avant exécution (champs : taux_tva ; motif : abrogé). L'appel affiché plus haut porte "
@@ -137,8 +129,7 @@ def test_the_note_names_who_changed_which_fields_and_why() -> None:
     )
     two = Amendment(call_id="c1", origin="policy", fields=("a",), by="p1, p2", reason="x ; y")
     assert amendment_note(two).startswith(
-        "[Note du système : les politiques p1, p2 ont remplacé les arguments de ton appel "
-        "avant exécution (champs : a ; motif : x ; y)."
+        "[Note du système : les politiques p1, p2 ont remplacé les arguments de ton appel avant exécution (champs : a ; motif : x ; y)."
     )
 
 
@@ -162,12 +153,7 @@ def test_the_note_follows_the_results_of_its_turn() -> None:
     assert noted[:3] == (asked, plain, amended)
     assert noted[3] == Message(
         role="user",
-        blocks=(
-            TextBlock(
-                text=f"{amendment_note(by_policy, 'envoyer')}\n"
-                f"{amendment_note(by_denis, 'envoyer')}"
-            ),
-        ),
+        blocks=(TextBlock(text=f"{amendment_note(by_policy, 'envoyer')}\n{amendment_note(by_denis, 'envoyer')}"),),
     )
     assert noted[4] is later
     assert note_amendments((plain,), ()) == (plain,)
@@ -187,11 +173,7 @@ async def test_an_approver_correction_is_announced_to_the_model() -> None:
     state = await run(context(store, model, SENSIBLE, approver=approver))
 
     assert state.status is RunStatus.COMPLETED
-    assert state.amendments == (
-        Amendment(
-            call_id="c1", origin="approval", fields=("message",), by="denis", reason="trop formel"
-        ),
-    )
+    assert state.amendments == (Amendment(call_id="c1", origin="approval", fields=("message",), by="denis", reason="trop formel"),)
     assert result_text(model.requests[1]) == "Relance envoyée à Dupont (14 caractères)"
     assert note_after_results(model.requests[1]) == (
         "[Note du système : denis a remplacé les arguments de ton appel à envoyer avant "
@@ -229,9 +211,7 @@ async def test_a_policy_replacement_is_announced_without_its_values() -> None:
     ctx = context(InMemoryEventStore(), model, envoyer, policies=_bind(signe))
     state = await run(ctx)
 
-    assert state.amendments == (
-        Amendment(call_id="c1", origin="policy", fields=("message",), by="signe", reason="signé"),
-    )
+    assert state.amendments == (Amendment(call_id="c1", origin="policy", fields=("message",), by="signe", reason="signé"),)
     assert result_text(model.requests[1]) == "Relance envoyée à Dupont (14 caractères)"
     text = note_after_results(model.requests[1])
     # La politique et son motif sont dits (test E7 du 19/10), jamais l'ancienne valeur.
@@ -246,6 +226,4 @@ async def test_a_policy_replacement_is_announced_without_its_values() -> None:
 
 
 def _bind(*policies: FunctionPolicy) -> Policies:
-    return Policies(
-        BoundPolicy(policy=p, name=p.name, points=p.points, max_attempts=1) for p in policies
-    )
+    return Policies(BoundPolicy(policy=p, name=p.name, points=p.points, max_attempts=1) for p in policies)

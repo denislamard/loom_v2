@@ -76,10 +76,7 @@ AUDIT_FILE = "audit.jsonl"
 
 # Le même bloc, à écrire tel quel dans un loom.yaml rédigé à la main.
 SECURITY_YAML = (
-    "security:\n"
-    f"  roles: [{{id: owner, permissions: [{', '.join(EVERYTHING)}]}}]\n"
-    f"  users: [{{id: {DEV}, roles: [owner]}}]\n"
-    f"  audit: {{path: {AUDIT_FILE}}}\n"
+    f"security:\n  roles: [{{id: owner, permissions: [{', '.join(EVERYTHING)}]}}]\n  users: [{{id: {DEV}, roles: [owner]}}]\n  audit: {{path: {AUDIT_FILE}}}\n"
 )
 
 
@@ -113,8 +110,7 @@ def secured(config: dict[str, Any]) -> dict[str, Any]:
     tenants: list[str] = [tenant["id"] for tenant in declared]
     security.setdefault(
         "users",
-        [{"id": tenant, "roles": ["owner"], "tenant": tenant} for tenant in tenants]
-        or [{"id": DEV, "roles": ["owner"]}],
+        [{"id": tenant, "roles": ["owner"], "tenant": tenant} for tenant in tenants] or [{"id": DEV, "roles": ["owner"]}],
     )
     secured = {**config, "security": security}
     server: dict[str, Any] = dict(config.get("server") or {})
@@ -287,9 +283,7 @@ async def envoyer_email(destinataire: str) -> str:
 RELANCE: list[dict[str, Any]] = [
     {
         "text": "J'envoie.",
-        "tool_calls": [
-            {"name": "envoyer_email", "arguments": {"destinataire": "mme.martin@example.com"}}
-        ],
+        "tool_calls": [{"name": "envoyer_email", "arguments": {"destinataire": "mme.martin@example.com"}}],
     },
     {"text": "Relance envoyée."},
 ]
@@ -305,9 +299,7 @@ def atelier(tmp_path: Path) -> Callable[..., Path]:
         config: dict[str, Any] = {
             "version": 1,
             "imports": ["outils_atelier"],
-            "models": [
-                {"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": RELANCE}}
-            ],
+            "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": RELANCE}}],
             "storage": {"events": {"backend": "jsonl", "path": "data"}},
             "telemetry": {"logging": {"level": "CRITICAL"}},
             **root,

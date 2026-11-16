@@ -51,9 +51,7 @@ def page_range(said: str | None) -> tuple[int, int | None]:
     return first, last
 
 
-async def read(
-    data: bytes, where: str, pages: str | None, budget: int = READ_CHARS
-) -> dict[str, JsonValue]:
+async def read(data: bytes, where: str, pages: str | None, budget: int = READ_CHARS) -> dict[str, JsonValue]:
     """Le texte des pages demandées, dans un budget de taille ; ``ToolError`` sinon.
 
     ``budget`` : celui d'un résultat d'outil par défaut ; ``loom.memory``, qui lit
@@ -83,20 +81,14 @@ async def read(
     try:
         out, _ = await asyncio.wait_for(process.communicate(data), READ_DEADLINE)
     except TimeoutError:
-        raise ToolError(
-            f"{where} : lecture arrêtée après {READ_DEADLINE:g} s ; demander moins de pages, "
-            "ou le PDF est forgé."
-        ) from None
+        raise ToolError(f"{where} : lecture arrêtée après {READ_DEADLINE:g} s ; demander moins de pages, ou le PDF est forgé.") from None
     finally:
         # Échéance, annulation de l'appel : le process ne survit pas à la lecture.
         if process.returncode is None:
             process.kill()
             await process.wait()
     if process.returncode != 0:
-        raise ToolError(
-            f"{where} : lecture arrêtée par ses bornes (mémoire ou temps) — PDF trop lourd, "
-            "ou forgé."
-        )
+        raise ToolError(f"{where} : lecture arrêtée par ses bornes (mémoire ou temps) — PDF trop lourd, ou forgé.")
     try:
         found = cast(dict[str, JsonValue], json.loads(out))
     except ValueError:
@@ -124,15 +116,9 @@ def _shaped(found: dict[str, JsonValue], budget: int) -> dict[str, JsonValue]:
     empty = cast(list[int], found.get("empty_pages") or [])
     if empty:
         listed = ", ".join(map(str, empty[:20])) + (" …" if len(empty) > 20 else "")
-        notes.append(
-            f"Page(s) sans texte : {listed} — page scannée ou image ; le texte n'en est pas "
-            "extrait (pas d'OCR)."
-        )
+        notes.append(f"Page(s) sans texte : {listed} — page scannée ou image ; le texte n'en est pas extrait (pas d'OCR).")
     if next_page is not None:
-        notes.append(
-            f"Lecture coupée par la taille du résultat ({budget} caractères) : la suite "
-            f"commence page {next_page} (pages={next_page}-)."
-        )
+        notes.append(f"Lecture coupée par la taille du résultat ({budget} caractères) : la suite commence page {next_page} (pages={next_page}-).")
     if found.get("cut"):
         notes.append(PAGE_CUT)
     if found.get("encrypted"):

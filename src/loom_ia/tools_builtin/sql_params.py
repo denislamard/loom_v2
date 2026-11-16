@@ -97,8 +97,7 @@ _TABLE_SCHEMA: Final = {
                 "rights": _RIGHTS_LIST,
                 "approval": {
                     "description": (
-                        "Approbation de chaque droit accordé : never (l'appel passe) ou "
-                        "always (validation humaine) ; un droit absent garde son défaut."
+                        "Approbation de chaque droit accordé : never (l'appel passe) ou always (validation humaine) ; un droit absent garde son défaut."
                     ),
                     "type": "object",
                     "propertyNames": {"enum": list(SQL_RIGHTS)},
@@ -129,9 +128,7 @@ def _table(value: object, *, where: str) -> object:
     """Une table de la config, en entrée de ``TableSpec`` : ``{"rights": <table interne>}``."""
     if not isinstance(value, Mapping):
         # Une liste ; ou autre chose, que ``resolve`` refuse en le disant.
-        rights = resolve(
-            value, None, known=SQL_RIGHTS, defaults=DEFAULT_APPROVAL, where=where, form="table"
-        )
+        rights = resolve(value, None, known=SQL_RIGHTS, defaults=DEFAULT_APPROVAL, where=where, form="table")
         return {"rights": rights}
     fields = dict(cast(Mapping[str, object], value))
     if not fields:
@@ -141,9 +138,7 @@ def _table(value: object, *, where: str) -> object:
         if "approval" in fields:
             raise ValueError(f"{where} : 'rights' manquant")
         # L'ancienne table droit → approbation : ``resolve`` la refuse, avec quoi écrire.
-        resolve(
-            fields, None, known=SQL_RIGHTS, defaults=DEFAULT_APPROVAL, where=where, form="table"
-        )
+        resolve(fields, None, known=SQL_RIGHTS, defaults=DEFAULT_APPROVAL, where=where, form="table")
     approval = fields.pop("approval", None)
     fields["rights"] = resolve(
         fields["rights"],
@@ -179,8 +174,7 @@ class SqliteSpec(BaseModel):
         said = str(self.path)
         if said.startswith("~") or "$" in said:
             raise ValueError(
-                f"{said!r} — ni « ~ » ni variable ($HOME…) dans 'path', qui n'est pas "
-                "interprété : donner un chemin absolu, ou relatif au fichier de config"
+                f"{said!r} — ni « ~ » ni variable ($HOME…) dans 'path', qui n'est pas interprété : donner un chemin absolu, ou relatif au fichier de config"
             )
         return self
 
@@ -199,9 +193,7 @@ class DatabaseSpec(BaseModel):
     ]
     # Ce que la description de l'outil dit d'une table (« devis ») ou d'une colonne
     # (« devis.statut ») : le sens métier, les valeurs permises…
-    describe: dict[str, Annotated[str, Field(min_length=1, max_length=500)]] = Field(
-        default_factory=dict[str, str]
-    )
+    describe: dict[str, Annotated[str, Field(min_length=1, max_length=500)]] = Field(default_factory=dict[str, str])
     # Fonctions que sqlglot ne connaît pas, permises quand même (age, clock_timestamp,
     # jsonb_build_object, une fonction à soi…). Les autres inconnues sont refusées.
     functions: tuple[Annotated[str, Field(pattern=IDENTIFIER_PATTERN)], ...] = ()
@@ -224,10 +216,7 @@ class DatabaseSpec(BaseModel):
         tables = fields.get("tables")
         if isinstance(tables, Mapping):
             name = fields.get("name")
-            fields["tables"] = {
-                table: _table(value, where=f"base {name!r}, table {table!r}")
-                for table, value in cast(Mapping[object, object], tables).items()
-            }
+            fields["tables"] = {table: _table(value, where=f"base {name!r}, table {table!r}") for table, value in cast(Mapping[object, object], tables).items()}
         return fields
 
     @model_validator(mode="after")
@@ -242,24 +231,16 @@ class DatabaseSpec(BaseModel):
                 raise ValueError(f"base {self.name!r}, table {table!r} : aucun droit donné")
             needing = [right for right in ("update", "delete") if right in rights]
             if needing and "select" not in rights:
-                raise ValueError(
-                    f"base {self.name!r}, table {table!r} : {', '.join(needing)} exige "
-                    "'select' (la base lit les colonnes du WHERE)"
-                )
+                raise ValueError(f"base {self.name!r}, table {table!r} : {', '.join(needing)} exige 'select' (la base lit les colonnes du WHERE)")
         if self.sqlite is not None:
             folded = [table.lower() for table in self.tables]
             doubles = sorted({t for t in folded if folded.count(t) > 1})
             if doubles:
-                raise ValueError(
-                    f"base {self.name!r} : tables qui ne diffèrent que par la casse "
-                    f"({', '.join(doubles)}) — SQLite ne les distingue pas"
-                )
+                raise ValueError(f"base {self.name!r} : tables qui ne diffèrent que par la casse ({', '.join(doubles)}) — SQLite ne les distingue pas")
         for key in self.describe:
             table = key.split(".", 1)[0]
             if table not in self.tables:
-                raise ValueError(
-                    f"base {self.name!r} : describe {key!r} — table {table!r} non déclarée"
-                )
+                raise ValueError(f"base {self.name!r} : describe {key!r} — table {table!r} non déclarée")
         lowered = [name.lower() for name in self.functions]
         doubles = sorted({f for f in lowered if lowered.count(f) > 1})
         if doubles:
@@ -305,13 +286,9 @@ class SqlParams(BaseModel):
         try:
             ZoneInfo(self.timezone)
         except ZoneInfoNotFoundError, ValueError:
-            raise ValueError(
-                f"fuseau inconnu : {self.timezone!r} — un nom IANA, par exemple Europe/Paris"
-            ) from None
+            raise ValueError(f"fuseau inconnu : {self.timezone!r} — un nom IANA, par exemple Europe/Paris") from None
         return self
 
     def secret_names(self) -> tuple[str, ...]:
         """Les variables que l'outil lit : un client peut les rediriger (``secrets``)."""
-        return tuple(
-            dict.fromkeys(db.postgres.dsn_env for db in self.databases if db.postgres is not None)
-        )
+        return tuple(dict.fromkeys(db.postgres.dsn_env for db in self.databases if db.postgres is not None))

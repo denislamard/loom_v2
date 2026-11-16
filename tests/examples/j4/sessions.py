@@ -63,9 +63,7 @@ def storage(config: LoomConfig) -> LoomConfig:
     """Journal SQLite à la place des fichiers JSONL, dans le même dossier."""
     base = config.base_dir or CONFIG.parent
     events = EventsStorage(backend="sqlite", path=base / "data" / "sessions.sqlite3")
-    return config.model_copy(
-        update={"storage": config.storage.model_copy(update={"events": events})}
-    )
+    return config.model_copy(update={"storage": config.storage.model_copy(update={"events": events})})
 
 
 def deroule(events: list[Event]) -> list[str]:
@@ -86,16 +84,12 @@ def cherche(events: list[Event], run_id: str) -> list[dict[str, Any]]:
     return [
         dict(event.payload.arguments)
         for event in events
-        if event.run_id == run_id
-        and isinstance(event.payload, ToolCalled)
-        and event.payload.tool_name == "chercher_devis"
+        if event.run_id == run_id and isinstance(event.payload, ToolCalled) and event.payload.tool_name == "chercher_devis"
     ]
 
 
 def marqueurs(events: list[Event]) -> list[tuple[int, SessionSnapshot]]:
-    return [
-        (event.seq, event.payload) for event in events if isinstance(event.payload, SessionSnapshot)
-    ]
+    return [(event.seq, event.payload) for event in events if isinstance(event.payload, SessionSnapshot)]
 
 
 async def conversation(loom: Loom, agent: str, session: SessionId) -> tuple[RunResult, RunResult]:
@@ -118,9 +112,7 @@ async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Sessions : conversation, snapshot, suppression")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--sqlite", action="store_true", help="journal SQLite (extra sqlite)")
-    parser.add_argument(
-        "--paralleles", action="store_true", help="deux runs en même temps sur la session"
-    )
+    parser.add_argument("--paralleles", action="store_true", help="deux runs en même temps sur la session")
     parser.add_argument("--purger", action="store_true", help="supprime la session à la fin (RGPD)")
     parser.add_argument("--session", default=None, help="session à rejoindre ou à créer")
     args = parser.parse_args(argv)
@@ -160,9 +152,7 @@ async def main(argv: list[str]) -> int:
         print(f"{reponse(result)}\n")
         for line in deroule([e for e in events if e.run_id == result.run_id]):
             print(f"  {line}")
-        print(
-            f"  statut {result.status} · {result.iterations} itération(s) · {result.cost_usd:.5f} $"
-        )
+        print(f"  statut {result.status} · {result.iterations} itération(s) · {result.cost_usd:.5f} $")
         print()
 
     if not args.paralleles:
@@ -170,9 +160,7 @@ async def main(argv: list[str]) -> int:
         # l'historique de la session.
         appels = cherche(events, results[1].run_id)
         print(f"Le second run a cherché : {json.dumps(appels, ensure_ascii=False)}")
-        assert any(call.get("numero") == "D-2026-042" for call in appels), (
-            "le second run n'a pas retrouvé le devis dans l'historique"
-        )
+        assert any(call.get("numero") == "D-2026-042" for call in appels), "le second run n'a pas retrouvé le devis dans l'historique"
 
     seqs = [event.seq for event in events]
     print(f"Journal    : {len(events)} événements, seq {seqs[0]} à {seqs[-1]}")
@@ -183,17 +171,12 @@ async def main(argv: list[str]) -> int:
     print("oui" if history(events) == history(sans) else "NON")
     for seq, snapshot in marqueurs(events):
         print(
-            f"  · session.snapshot (seq {seq}) : couvre le journal jusqu'à "
-            f"{snapshot.up_to_seq}, {len(snapshot.messages)} messages, "
-            f"~{snapshot.tokens} tokens"
+            f"  · session.snapshot (seq {seq}) : couvre le journal jusqu'à {snapshot.up_to_seq}, {len(snapshot.messages)} messages, ~{snapshot.tokens} tokens"
         )
 
     print(f"\nSessions   : {', '.join(record.session_id for record in listed) or 'aucune'}")
     if removed is not None:
-        print(
-            f"Supprimée  : {removed.session_id} — {removed.events} événement(s), "
-            f"{removed.artifacts} fichier(s)"
-        )
+        print(f"Supprimée  : {removed.session_id} — {removed.events} événement(s), {removed.artifacts} fichier(s)")
     else:
         print(f"Export     : uv run loom --config {shown(CONFIG)} sessions export {session}")
         print(f"Suppression: uv run loom --config {shown(CONFIG)} sessions delete {session}")

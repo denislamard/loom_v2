@@ -134,6 +134,7 @@ def cm_twips(value: float) -> int:
     """Une longueur en cm, en twips : la mesure de Word, que le PDF reprend."""
     return round(value * CM)
 
+
 PAGE_SIZES: Final[Mapping[str, tuple[int, int]]] = {
     "A4": (11906, 16838),
     "A5": (8391, 11906),
@@ -243,9 +244,7 @@ PROPERTIES: Final[tuple[Property, ...]] = (
 )
 PROPERTY_NAMES: Final = frozenset(found.name for found in PROPERTIES)
 # Les propriétés propres à certains styles, et ceux (avec leurs dérivés) qui les portent.
-_OWNERS: Final[Mapping[str, frozenset[str]]] = {
-    found.name: found.owners for found in PROPERTIES if found.owners is not None
-}
+_OWNERS: Final[Mapping[str, frozenset[str]]] = {found.name: found.owners for found in PROPERTIES if found.owners is not None}
 # Les réglages : des clés du fichier qui ne sont pas des styles.
 SETTINGS: Final = frozenset({"colors", "page", "numbering", "language", "labels", "image", "chart", "fonts"})
 # La disposition des sections d'un modèle : dans le modèle de document depuis 2.1.0.
@@ -421,10 +420,7 @@ def _length_in(unit: str) -> Callable[[object], object]:
             return value
         found = _LENGTH.match(value.strip())
         if found is None:
-            raise ValueError(
-                f"longueur {value!r} : un nombre et, au besoin, son unité (pt, mm, cm, in), "
-                "ex. 11pt, 2cm"
-            )
+            raise ValueError(f"longueur {value!r} : un nombre et, au besoin, son unité (pt, mm, cm, in), ex. 11pt, 2cm")
         number = float(found.group(1).replace(",", "."))
         given = found.group(2) or unit
         # Arrondie au millionième : 1,5 cm reste 1,5, et 20 mm vaut 2 cm.
@@ -488,6 +484,7 @@ def _sides_in(unit: str, high: float) -> Callable[[object], object]:
         return (top, right, bottom, left)
 
     return sides
+
 
 type Color = Annotated[str, BeforeValidator(_text_color), AfterValidator(_color)]
 type Fill = Annotated[str, BeforeValidator(_text_color), AfterValidator(_fill)]
@@ -623,10 +620,7 @@ class BandTableSpec(_Spec):
         moved = {"gap": "column_gap", "borders": "borders", "line": "line"}
         found = [f"{old} → {new}" for old, new in moved.items() if old in entries]
         if found:
-            raise ValueError(
-                f"{' ; '.join(found)} : des propriétés du style de la table depuis 2.0.21 "
-                "(footer, ou le style que nomme style:)"
-            )
+            raise ValueError(f"{' ; '.join(found)} : des propriétés du style de la table depuis 2.0.21 (footer, ou le style que nomme style:)")
         return entries
 
     @model_validator(mode="after")
@@ -634,9 +628,7 @@ class BandTableSpec(_Spec):
         columns = len(self.widths)
         for number, row in enumerate(self.rows, start=1):
             if len(row) != columns:
-                raise ValueError(
-                    f"ligne {number} : {len(row)} cellule(s) pour {columns} colonne(s) (widths)"
-                )
+                raise ValueError(f"ligne {number} : {len(row)} cellule(s) pour {columns} colonne(s) (widths)")
         return self
 
 
@@ -848,10 +840,7 @@ class StyleFile(_Spec):
         entries = cast(Mapping[object, object], value)
         renamed = [f"{old} → {new}" for old, new in RENAMED_STYLES.items() if old in entries]
         if renamed:
-            raise ValueError(
-                f"{' ; '.join(renamed)} : le style de base s'appelle body depuis 2.0.21 "
-                "(docs/style_format.md)"
-            )
+            raise ValueError(f"{' ; '.join(renamed)} : le style de base s'appelle body depuis 2.0.21 (docs/style_format.md)")
         layout = sorted(name for name in LAYOUT if name in entries)
         if layout:
             raise ValueError(
@@ -1012,11 +1001,7 @@ def logos(spec: StyleFile) -> list[tuple[str, str | bytes]]:
     page = spec.page
     if page is None:
         return []
-    return [
-        (f"page.{name}", band.logo.file)
-        for name, band in (("header", page.header), ("footer", page.footer))
-        if band is not None and band.logo is not None
-    ]
+    return [(f"page.{name}", band.logo.file) for name, band in (("header", page.header), ("footer", page.footer)) if band is not None and band.logo is not None]
 
 
 def font_files(spec: StyleFile) -> list[tuple[str, str, str | bytes]]:
@@ -1626,10 +1611,7 @@ def _check_bands(style: Style, faults: list[str]) -> None:
             if chosen not in style.looks:
                 faults.append(f"{where} : style « {chosen} » inconnu")
             elif name not in style.chain(chosen):
-                faults.append(
-                    f"{where} : le style « {chosen} » ne part pas de {name} "
-                    f"(base : {style.bases.get(chosen)})"
-                )
+                faults.append(f"{where} : le style « {chosen} » ne part pas de {name} (base : {style.bases.get(chosen)})")
         if table is None or (table.style and table.style not in style.looks):
             continue
         look = style.look(table.style or name)
@@ -1641,8 +1623,7 @@ def _check_bands(style: Style, faults: list[str]) -> None:
         if room < autos * round(MIN_AUTO_WIDTH * CM) or room < 0:
             faults.append(
                 f"{where}.table : {fixed / CM:.4g} cm de colonnes pour {available / CM:.4g} cm de "
-                f"largeur utile"
-                + (f", et {MIN_AUTO_WIDTH:g} cm au moins par colonne auto" if autos else "")
+                f"largeur utile" + (f", et {MIN_AUTO_WIDTH:g} cm au moins par colonne auto" if autos else "")
             )
         gap = round((look.column_gap or 0) * CM)
         if gap and any(width <= gap for width in band_columns(table, available)):

@@ -64,10 +64,7 @@ def session_factory(spec: McpServerSpec, *, environ: Mapping[str, str]) -> Sessi
 def _secret(spec: McpServerSpec, variable: str, environ: Mapping[str, str]) -> str:
     value = environ.get(variable, "").strip()
     if not value:
-        raise McpConfigError(
-            f"Serveur MCP {spec.name!r} : la variable d'environnement {variable} "
-            "est absente ou vide"
-        )
+        raise McpConfigError(f"Serveur MCP {spec.name!r} : la variable d'environnement {variable} est absente ou vide")
     return value
 
 
@@ -78,9 +75,7 @@ def _stdio(spec: McpServerSpec, environ: Mapping[str, str]) -> SessionFactory:
         **spec.env,
         **{child: _secret(spec, parent, environ) for child, parent in spec.env_from.items()},
     }
-    params = StdioServerParameters(
-        command=spec.command, args=list(spec.args), env=env or None, cwd=spec.cwd
-    )
+    params = StdioServerParameters(command=spec.command, args=list(spec.args), env=env or None, cwd=spec.cwd)
 
     @asynccontextmanager
     async def open_session(handler: MessageHandlerFnT) -> AsyncGenerator[ClientSession]:
@@ -88,9 +83,7 @@ def _stdio(spec: McpServerSpec, environ: Mapping[str, str]) -> SessionFactory:
         opened = False
         try:
             async with stdio_client(params, errlog=tail.writer) as (read, write):
-                async with ClientSession(
-                    read, write, message_handler=handler, client_info=CLIENT_INFO
-                ) as session:
+                async with ClientSession(read, write, message_handler=handler, client_info=CLIENT_INFO) as session:
                     await session.initialize()
                     opened = True
                     yield session
@@ -155,15 +148,10 @@ class _StderrTail:
 def _started(error: BaseException, lines: list[str]) -> str:
     """Ce que l'on sait d'une ouverture ratée : la cause, et la fin du stderr du serveur."""
     cause = _innermost(error)
-    said = (
-        cause.error.message if isinstance(cause, McpError) else (str(cause) or type(cause).__name__)
-    )
+    said = cause.error.message if isinstance(cause, McpError) else (str(cause) or type(cause).__name__)
     if lines:
         shown = " | ".join(lines[-STDERR_SHOWN:])
-        return (
-            f"le serveur s'est arrêté ou a refusé l'ouverture ({said}) ; "
-            f"fin de son stderr : {shown}"
-        )
+        return f"le serveur s'est arrêté ou a refusé l'ouverture ({said}) ; fin de son stderr : {shown}"
     return f"le serveur s'est arrêté ou a refusé l'ouverture ({said}), sans rien écrire sur stderr"
 
 
@@ -185,9 +173,7 @@ def _http(spec: McpServerSpec, environ: Mapping[str, str]) -> SessionFactory:
     async def open_session(handler: MessageHandlerFnT) -> AsyncGenerator[ClientSession]:
         async with create_mcp_http_client(headers=headers or None) as http:
             async with streamable_http_client(url, http_client=http) as (read, write, _):
-                async with ClientSession(
-                    read, write, message_handler=handler, client_info=CLIENT_INFO
-                ) as session:
+                async with ClientSession(read, write, message_handler=handler, client_info=CLIENT_INFO) as session:
                     await session.initialize()
                     yield session
 

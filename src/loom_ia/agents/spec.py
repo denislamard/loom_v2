@@ -196,10 +196,7 @@ type ContextItem = ContextName | ToolResultsContext | LastTurnsContext
 # (``session_state``) ou certaines de ses clés. À plat, pour que les erreurs de
 # la config gardent des chemins courts.
 type RoleContextItem = (
-    Literal["user_input", "caller_context", "attachments", "session_summary", "session_state"]
-    | ToolResultsContext
-    | LastTurnsContext
-    | SessionStateContext
+    Literal["user_input", "caller_context", "attachments", "session_summary", "session_state"] | ToolResultsContext | LastTurnsContext | SessionStateContext
 )
 
 # Nom d'un juge pour la réponse finale, quand il n'en déclare pas.
@@ -341,12 +338,7 @@ class RoleSpec(BaseRole):
     @property
     def tool_results(self) -> tuple[str, ...]:
         """Outils dont le rôle reçoit les résultats."""
-        return tuple(
-            tool
-            for item in self.context
-            if isinstance(item, ToolResultsContext)
-            for tool in item.tool_results
-        )
+        return tuple(tool for item in self.context if isinstance(item, ToolResultsContext) for tool in item.tool_results)
 
 
 def _declared_context(context: tuple[RoleContextItem, ...]) -> list[str]:
@@ -391,16 +383,10 @@ def _check_template(source: str, properties: set[str], declared: list[str]) -> N
                 pass
             case ("args", name, *_):
                 if name not in properties:
-                    raise ValueError(
-                        f"input_template : {shown} — {name!r} absent de input_schema.properties"
-                    )
+                    raise ValueError(f"input_template : {shown} — {name!r} absent de input_schema.properties")
             case (
                 "context",
-                "user_input"
-                | "caller_context"
-                | "attachments"
-                | "session_summary"
-                | "last_turns" as name,
+                "user_input" | "caller_context" | "attachments" | "session_summary" | "last_turns" as name,
                 *rest,
             ):
                 if name not in declared:
@@ -424,9 +410,7 @@ def _check_template(source: str, properties: set[str], declared: list[str]) -> N
     # Les pièces jointes partent en images après le texte : les citer est facultatif.
     unused = [name for name in declared if name not in used and name != "attachments"]
     if unused:
-        raise ValueError(
-            f"input_template : contexte déclaré mais non utilisé : {', '.join(unused)}"
-        )
+        raise ValueError(f"input_template : contexte déclaré mais non utilisé : {', '.join(unused)}")
 
 
 def _state_used(shown: str, rest: list[str], declared: list[str]) -> set[str]:
@@ -451,11 +435,7 @@ def _state_used(shown: str, rest: list[str], declared: list[str]) -> set[str]:
 
 def state_cited(source: str) -> set[str]:
     """Clés du state citées par un template (``context.session_state.<clé>``)."""
-    return {
-        path[2]
-        for path in Template.parse(source).variables
-        if len(path) > 2 and path[:2] == ("context", SESSION_STATE)
-    }
+    return {path[2] for path in Template.parse(source).variables if len(path) > 2 and path[:2] == ("context", SESSION_STATE)}
 
 
 def _reject_judge(data: object, what: str) -> None:
@@ -493,9 +473,7 @@ def _context_items(data: object) -> list[object]:
 def _names_session_state(item: object) -> bool:
     if isinstance(item, SessionStateContext):
         return True
-    return item == SESSION_STATE or (
-        isinstance(item, dict) and SESSION_STATE in cast(dict[object, object], item)
-    )
+    return item == SESSION_STATE or (isinstance(item, dict) and SESSION_STATE in cast(dict[object, object], item))
 
 
 def _reject_session_state(data: object, reason: str) -> None:
@@ -523,9 +501,7 @@ def _only_session_state(data: object) -> None:
 # Seuls les modules légers de leurs paramètres sont importés ici.
 _PARAMETERIZED: Final = parameterized_builtins()
 # Pour l'éditeur : une référence à paramètres relève de son propre modèle.
-_NOT_PARAMETERIZED: Final[dict[str, JsonValue] | None] = (
-    {"not": {"enum": list[JsonValue](sorted(_PARAMETERIZED))}} if _PARAMETERIZED else None
-)
+_NOT_PARAMETERIZED: Final[dict[str, JsonValue] | None] = {"not": {"enum": list[JsonValue](sorted(_PARAMETERIZED))}} if _PARAMETERIZED else None
 
 
 class PythonTool(DomainModel):
@@ -619,10 +595,7 @@ def _builtin_reference(reference: str, params: type[BaseModel], entry: Builtin) 
     def check(self: PythonTool) -> PythonTool:
         given = [name for name in entry.refused if getattr(self, name) is not None]
         if given:
-            raise ValueError(
-                f"{reference} : {', '.join(given)} ne se règle pas sur cet outil — "
-                f"{entry.refused_because}"
-            )
+            raise ValueError(f"{reference} : {', '.join(given)} ne se règle pas sur cet outil — {entry.refused_because}")
         if entry.own_description and self.description is not None:
             raise ValueError(
                 f"{reference} : description ne se règle pas sur cet outil — elle est tirée "
@@ -636,9 +609,7 @@ def _builtin_reference(reference: str, params: type[BaseModel], entry: Builtin) 
             raise ValueError(_validation_said(exc)) from None
         return self
 
-    fields: dict[str, Any] = {
-        name: (info.annotation, info) for name, info in params.model_fields.items()
-    }
+    fields: dict[str, Any] = {name: (info.annotation, info) for name, info in params.model_fields.items()}
     validators: dict[str, Any] = {"_builtin_params": model_validator(mode="after")(check)}
     # Le contrôle que le modèle des paramètres fait avant tout (``precheck``) : une clé
     # retirée dite avec ce qui la remplace, plutôt qu'en « Extra inputs are not permitted ».
@@ -673,16 +644,13 @@ def _validation_said(error: ModelValidationError) -> str:
 
 # Référence ``loom.<outil>`` → modèle de sa référence, pour les outils à paramètres.
 BUILTIN_REFERENCES: Final[dict[str, type[PythonTool]]] = {
-    reference: _builtin_reference(reference, model, entry)
-    for reference, (model, entry) in _PARAMETERIZED.items()
+    reference: _builtin_reference(reference, model, entry) for reference, (model, entry) in _PARAMETERIZED.items()
 }
 
 
 def builtin_settings(declared: PythonTool, params: type[BaseModel]) -> dict[str, object]:
     """Les paramètres d'une référence d'outil fourni, à valider par le modèle de l'outil."""
-    return {
-        name: getattr(declared, name) for name in params.model_fields if hasattr(declared, name)
-    }
+    return {name: getattr(declared, name) for name in params.model_fields if hasattr(declared, name)}
 
 
 class McpTools(DomainModel):
@@ -749,9 +717,7 @@ class SourceTools(DomainModel):
     @model_validator(mode="after")
     def _check_filters(self) -> Self:
         if self.include is not None and self.exclude is not None:
-            raise ValueError(
-                f"Source d'outils {self.source!r} : 'include' ou 'exclude', pas les deux"
-            )
+            raise ValueError(f"Source d'outils {self.source!r} : 'include' ou 'exclude', pas les deux")
         return self
 
     @property
@@ -837,9 +803,7 @@ class PolicyRef(DomainModel):
     @model_validator(mode="after")
     def _check_name(self) -> Self:
         if self.name is not None and self.name.startswith(RESERVED_PREFIX):
-            raise ValueError(
-                f"Politique {self.name!r} : le préfixe {RESERVED_PREFIX!r} est réservé à loom-ia"
-            )
+            raise ValueError(f"Politique {self.name!r} : le préfixe {RESERVED_PREFIX!r} est réservé à loom-ia")
         return self
 
 
@@ -898,15 +862,9 @@ class StateSource(DomainModel):
         if (self.path is not None) == ("value" in self.model_fields_set):
             raise ValueError(f"from, outil {self.tool!r} : 'path' ou 'value', l'un des deux")
         if self.path is None and "on_missing" in self.model_fields_set:
-            raise ValueError(
-                f"from, outil {self.tool!r} : 'on_missing' ne vaut qu'avec 'path' "
-                "(une 'value' ne manque jamais)"
-            )
+            raise ValueError(f"from, outil {self.tool!r} : 'on_missing' ne vaut qu'avec 'path' (une 'value' ne manque jamais)")
         if self.path is not None and not _JSON_POINTER.fullmatch(self.path):
-            raise ValueError(
-                f"from, outil {self.tool!r} : path {self.path!r} n'est pas un pointeur JSON "
-                "(« /champ/0 », ou « » pour tout le résultat)"
-            )
+            raise ValueError(f"from, outil {self.tool!r} : path {self.path!r} n'est pas un pointeur JSON (« /champ/0 », ou « » pour tout le résultat)")
         return self
 
 
@@ -973,35 +931,22 @@ class StateKey(DomainModel):
         except SchemaError as exc:
             raise ValueError(f"schema invalide : {exc.message}") from exc
         if self.required and self.default is not None:
-            raise ValueError(
-                "'required' et 'default' s'excluent : une clé qui a une valeur par défaut "
-                "ne manque jamais"
-            )
+            raise ValueError("'required' et 'default' s'excluent : une clé qui a une valeur par défaut ne manque jamais")
         validator = bounded_validator(self.json_schema)
         if self.default is not None:
             _conforms(validator, self.default, "default")
         if len(set(self.writers)) != len(self.writers):
             raise ValueError("writers : écrivain cité deux fois")
         if ("model" in self.writers) != (self.extract is not None):
-            raise ValueError(
-                "'model' dans writers et 'extract' vont ensemble : le modèle désigne un "
-                "résultat, extract dit ce qu'on en tire"
-            )
+            raise ValueError("'model' dans writers et 'extract' vont ensemble : le modèle désigne un résultat, extract dit ce qu'on en tire")
         if self.clears and self.extract is None:
-            raise ValueError(
-                "'clears' va avec 'extract' : il s'applique quand le modèle pose la clé"
-            )
+            raise ValueError("'clears' va avec 'extract' : il s'applique quand le modèle pose la clé")
         if len(set(self.clears)) != len(self.clears):
             raise ValueError("clears : clé citée deux fois")
         if self.sources and "tools" not in self.writers:
             raise ValueError("'from' pose la clé par un outil : 'tools' doit être dans writers")
-        if self.required and any(
-            source.path is None and source.value is None for source in self.sources
-        ):
-            raise ValueError(
-                "from : une 'value' null effacerait une clé obligatoire ('required'), "
-                "que seule l'application remplace"
-            )
+        if self.required and any(source.path is None and source.value is None for source in self.sources):
+            raise ValueError("from : une 'value' null effacerait une clé obligatoire ('required'), que seule l'application remplace")
         tools = [source.tool for source in self.sources]
         doubles = sorted({tool for tool in tools if tools.count(tool) > 1})
         if doubles:
@@ -1021,9 +966,7 @@ def _conforms(validator: Validator, value: JsonValue, label: str) -> None:
     except ValidationError as exc:
         raise ValueError(f"{label} ne suit pas le schéma de la clé : {exc.message}") from None
     except RegexTimeout as exc:
-        raise ValueError(
-            f"{label} : le schéma de la clé ne peut pas être appliqué ({exc})"
-        ) from None
+        raise ValueError(f"{label} : le schéma de la clé ne peut pas être appliqué ({exc})") from None
 
 
 class ApproveAccess(DomainModel):
@@ -1111,10 +1054,7 @@ def _check_access_list(label: str, roles: tuple[str, ...]) -> None:
     qu'on lit, puisqu'une liste absente laisse tout rôle qui a la permission.
     """
     if not roles:
-        raise ValueError(
-            f"{label} : liste vide — personne ne pourrait agir ; retirer la clé pour laisser "
-            "décider les permissions des rôles"
-        )
+        raise ValueError(f"{label} : liste vide — personne ne pourrait agir ; retirer la clé pour laisser décider les permissions des rôles")
     doubles = sorted({role for role in roles if roles.count(role) > 1})
     if doubles:
         raise ValueError(f"{label} : rôle cité deux fois : {', '.join(doubles)}")
@@ -1182,19 +1122,13 @@ class AgentSpec(DomainModel):
     def _check_state(self) -> Self:
         for key in self.state:
             if not re.fullmatch(STATE_KEY_PATTERN, key):
-                raise ValueError(
-                    f"state : clé {key!r} invalide (lettres, chiffres et '_', 64 au plus, "
-                    "sans chiffre en tête)"
-                )
+                raise ValueError(f"state : clé {key!r} invalide (lettres, chiffres et '_', 64 au plus, sans chiffre en tête)")
         named = self.main.state_keys
         if named is not None and not self.state:
             raise ValueError("main.context : session_state, mais aucune clé déclarée dans 'state'")
         unknown = sorted(key for key in named or () if key not in self.state)
         if unknown:
-            raise ValueError(
-                f"main.context : session_state cite {', '.join(map(repr, unknown))}, "
-                f"absente(s) de 'state' (clés : {', '.join(self.state)})"
-            )
+            raise ValueError(f"main.context : session_state cite {', '.join(map(repr, unknown))}, absente(s) de 'state' (clés : {', '.join(self.state)})")
         for role in self.roles:
             self._check_role_state(role)
         self._check_model_state()
@@ -1214,10 +1148,7 @@ class AgentSpec(DomainModel):
                 if target.required:
                     raise ValueError(f"{label} : clé obligatoire, rien ne l'efface")
                 if "model" not in target.writers:
-                    raise ValueError(
-                        f"{label} : l'effacement vient du modèle, 'model' doit être dans "
-                        "ses writers"
-                    )
+                    raise ValueError(f"{label} : l'effacement vient du modèle, 'model' doit être dans ses writers")
 
     def _check_model_state(self) -> None:
         """Clés tenues par le modèle : ``loom.state`` déclaré, et les clés montrées à ``main``."""
@@ -1225,21 +1156,14 @@ class AgentSpec(DomainModel):
         provided = any(tool.python == "loom.state" for tool in self.python_tools)
         if kept and not provided:
             raise ValueError(
-                f"state : {', '.join(map(repr, kept))} a 'model' dans writers, mais l'agent "
-                "n'a pas l'outil loom.state (tools: - python: loom.state)"
+                f"state : {', '.join(map(repr, kept))} a 'model' dans writers, mais l'agent n'a pas l'outil loom.state (tools: - python: loom.state)"
             )
         if provided and not kept:
-            raise ValueError(
-                "loom.state : aucune clé du state n'a 'model' dans writers, l'outil n'aurait "
-                "rien à écrire"
-            )
+            raise ValueError("loom.state : aucune clé du state n'a 'model' dans writers, l'outil n'aurait rien à écrire")
         shown = self.main.state_keys
         hidden = [key for key in kept if shown is None or (shown and key not in shown)]
         if hidden:
-            raise ValueError(
-                f"state : le modèle écrit {', '.join(map(repr, hidden))} sans la voir — "
-                "la montrer dans main.context (session_state)"
-            )
+            raise ValueError(f"state : le modèle écrit {', '.join(map(repr, hidden))} sans la voir — la montrer dans main.context (session_state)")
 
     def _check_role_state(self, role: RoleSpec) -> None:
         """Le state que reçoit un rôle : des clés que l'agent déclare, citées comme telles."""
@@ -1252,17 +1176,12 @@ class AgentSpec(DomainModel):
         declared = f"(clés : {', '.join(self.state)})"
         unknown = sorted(key for key in keys if key not in self.state)
         if unknown:
-            raise ValueError(
-                f"{label} : {', '.join(map(repr, unknown))} absente(s) de 'state' {declared}"
-            )
+            raise ValueError(f"{label} : {', '.join(map(repr, unknown))} absente(s) de 'state' {declared}")
         template = role.input_template
         cited: set[str] = state_cited(template) if template is not None else set()
         unknown = sorted(key for key in cited if key not in self.state)
         if unknown:
-            raise ValueError(
-                f"Rôle {role.name!r} : input_template cite {', '.join(map(repr, unknown))}, "
-                f"absente(s) de 'state' {declared}"
-            )
+            raise ValueError(f"Rôle {role.name!r} : input_template cite {', '.join(map(repr, unknown))}, absente(s) de 'state' {declared}")
 
     @model_validator(mode="after")
     def _unique_tools(self) -> Self:
@@ -1273,16 +1192,12 @@ class AgentSpec(DomainModel):
         prefixes = [ref.prefix for ref in self.mcp_tools]
         doubles = {name for name in prefixes if prefixes.count(name) > 1}
         if doubles:
-            raise ValueError(
-                f"Préfixe MCP déclaré deux fois : {', '.join(sorted(doubles))} "
-                "(donner un 'alias' à l'une des références)"
-            )
+            raise ValueError(f"Préfixe MCP déclaré deux fois : {', '.join(sorted(doubles))} (donner un 'alias' à l'une des références)")
         prefixes += [ref.prefix for ref in self.source_tools]
         doubles = {name for name in prefixes if prefixes.count(name) > 1}
         if doubles:
             raise ValueError(
-                f"Préfixe d'outils déclaré deux fois : {', '.join(sorted(doubles))} "
-                "(serveur MCP ou source d'outils ; donner un 'alias' à l'une des références)"
+                f"Préfixe d'outils déclaré deux fois : {', '.join(sorted(doubles))} (serveur MCP ou source d'outils ; donner un 'alias' à l'une des références)"
             )
         roles = [role.name for role in self.roles]
         doubles = {name for name in roles if roles.count(name) > 1}
@@ -1291,17 +1206,11 @@ class AgentSpec(DomainModel):
         subagents = [ref.tool_name for ref in self.subagents]
         doubles = {name for name in subagents if subagents.count(name) > 1}
         if doubles:
-            raise ValueError(
-                f"Sous-agent déclaré deux fois : {', '.join(sorted(doubles))} "
-                "(donner un 'name' à l'une des références)"
-            )
+            raise ValueError(f"Sous-agent déclaré deux fois : {', '.join(sorted(doubles))} (donner un 'name' à l'une des références)")
         judges = [name for name, _, _ in self.judges]
         doubles = {name for name in judges if judges.count(name) > 1}
         if doubles:
-            raise ValueError(
-                f"Juge déclaré deux fois : {', '.join(sorted(doubles))} "
-                "(donner un 'name' à l'un des juges)"
-            )
+            raise ValueError(f"Juge déclaré deux fois : {', '.join(sorted(doubles))} (donner un 'name' à l'un des juges)")
         return self
 
     @property
@@ -1310,11 +1219,7 @@ class AgentSpec(DomainModel):
         found: list[tuple[str, RoleSpec | None, JudgeSpec]] = []
         if self.judge is not None:
             found.append((self.judge.name or OUTPUT_JUDGE, None, self.judge))
-        found += [
-            (role.judge.name or role.name, role, role.judge)
-            for role in self.roles
-            if role.judge is not None
-        ]
+        found += [(role.judge.name or role.name, role, role.judge) for role in self.roles if role.judge is not None]
         return tuple(found)
 
     @property

@@ -93,9 +93,7 @@ class McpHttp:
     # Chemin de montage, sous le préfixe commun de l'application.
     path: Final = MCP_PATH
 
-    def __init__(
-        self, loom: Loom, *, name: str = SERVER_NAME, rates: RateWindow | None = None
-    ) -> None:
+    def __init__(self, loom: Loom, *, name: str = SERVER_NAME, rates: RateWindow | None = None) -> None:
         config = loom.config
         self.config = config
         self.security: SecurityConfig = config.security

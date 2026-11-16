@@ -22,12 +22,7 @@ class InMemoryArtifactStore:
             raise ArtifactNotFound(uri) from None
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
-        doomed = [
-            uri
-            for uri in self._files
-            if (location := ArtifactLocation.parse(uri)).tenant == tenant_id
-            and location.session == session_id
-        ]
+        doomed = [uri for uri in self._files if (location := ArtifactLocation.parse(uri)).tenant == tenant_id and location.session == session_id]
         for uri in doomed:
             del self._files[uri]
         return len(doomed)

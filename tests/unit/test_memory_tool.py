@@ -44,9 +44,7 @@ ALL_ACTIONS: Final[dict[str, dict[str, object]]] = {
     "update": {},
     "delete": {},
 }
-CONTEXT: Final = ToolContext(
-    tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), call_id="c", agent="a"
-)
+CONTEXT: Final = ToolContext(tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), call_id="c", agent="a")
 NOTE: Final = "Le devis D-2026-042 de Mme Martin porte sur un chauffe-eau de 200 L."
 
 
@@ -157,9 +155,7 @@ def test_without_an_imposed_project_the_model_gives_it(tmp_path: Path) -> None:
     assert set(properties) == {"action", "query", "k", "tags", "project", "text", "title"}
 
 
-def test_the_spec_declares_the_worst_of_the_permitted_actions(
-    tmp_path: Path, workspace: Path
-) -> None:
+def test_the_spec_declares_the_worst_of_the_permitted_actions(tmp_path: Path, workspace: Path) -> None:
     assert (mounted(tmp_path).spec.side_effects, mounted(tmp_path).spec.approval) == (
         "irreversible",
         "always",
@@ -187,10 +183,7 @@ async def test_reads_pass_and_writes_wait(memory: MemoryTool) -> None:
     assert (search.approval, search.side_effects) == ("never", "none")
     add = memory.assess_call({"action": "add_text", "text": NOTE, "title": "Devis Martin"})
     assert (add.approval, add.side_effects, add.idempotent) == ("always", "reversible", True)
-    assert add.reason == (
-        "mémoriser un texte « Devis Martin » dans le projet documentation — la config exige "
-        "une approbation pour add_text"
-    )
+    assert add.reason == ("mémoriser un texte « Devis Martin » dans le projet documentation — la config exige une approbation pour add_text")
     added = await call(memory, action="add_text", text=NOTE, title="Devis Martin")
     delete = memory.assess_call({"action": "delete", "doc_id": added["doc_id"]})
     assert (delete.approval, delete.side_effects, delete.idempotent) == (
@@ -216,9 +209,7 @@ def test_a_call_that_will_be_refused_has_no_effect(memory: MemoryTool) -> None:
         assert (found.approval, found.side_effects) == ("never", "none")
 
 
-async def test_a_file_add_file_cannot_read_is_not_put_to_a_human(
-    memory: MemoryTool, workspace: Path
-) -> None:
+async def test_a_file_add_file_cannot_read_is_not_put_to_a_human(memory: MemoryTool, workspace: Path) -> None:
     """Dossier, droit et extension sont vérifiés avant l'approbation ; le contenu, à l'exécution."""
     (workspace / "plaquette.odt").write_bytes(b"PK\x03\x04")
     allowed = memory.assess_call({"action": "add_file", "file": "workspace/cgv.md"})
@@ -228,9 +219,7 @@ async def test_a_file_add_file_cannot_read_is_not_put_to_a_human(
         found = memory.assess_call({"action": "add_file", "file": file})
         assert (found.approval, found.side_effects) == ("never", "none"), file
     # Refusé tout de suite à l'exécution, pour la même raison.
-    await refused(
-        memory, r"extension \.odt refusée", action="add_file", file="workspace/plaquette.odt"
-    )
+    await refused(memory, r"extension \.odt refusée", action="add_file", file="workspace/plaquette.odt")
     # Un fichier absent passe l'évaluation : il peut être déposé pendant l'attente.
     missing = memory.assess_call({"action": "add_file", "file": "workspace/a-venir.md"})
     assert missing.approval == "always"
@@ -241,9 +230,7 @@ def assessed(tool: MemoryTool, **arguments: JsonValue) -> tuple[str, str]:
     return found.approval, found.side_effects
 
 
-async def test_an_update_or_delete_that_writes_nothing_is_not_put_to_a_human(
-    tmp_path: Path, memory: MemoryTool
-) -> None:
+async def test_an_update_or_delete_that_writes_nothing_is_not_put_to_a_human(tmp_path: Path, memory: MemoryTool) -> None:
     """Document inconnu, d'un autre projet, texte inchangé ou déjà pris : aucune approbation."""
     base = tmp_path / "memoire.db"
     # Base absente : aucun document, et le coup d'œil ne la crée pas.
@@ -266,17 +253,13 @@ async def test_an_update_or_delete_that_writes_nothing_is_not_put_to_a_human(
     assert assessed(memory, action="update", doc_id=doc_id, text=f"  {NOTE.upper()}  ") == nothing
     # Le texte d'un autre document : refusé à l'exécution.
     assert assessed(memory, action="update", doc_id=doc_id, text="Facture F-2026-007.") == nothing
-    await refused(
-        memory, "déjà celui du document", action="update", doc_id=doc_id, text="Facture F-2026-007."
-    )
+    await refused(memory, "déjà celui du document", action="update", doc_id=doc_id, text="Facture F-2026-007.")
     # Un autre projet imposé ne voit pas ce document.
     elsewhere = mounted(tmp_path, project="ailleurs")
     assert assessed(elsewhere, action="delete", doc_id=other["doc_id"]) == nothing
 
 
-async def test_adding_a_text_the_project_already_has_is_not_put_to_a_human(
-    tmp_path: Path, memory: MemoryTool
-) -> None:
+async def test_adding_a_text_the_project_already_has_is_not_put_to_a_human(tmp_path: Path, memory: MemoryTool) -> None:
     """Le même texte (casse et espaces mis à part) : ``duplicate_of``, sans approbation."""
     new = ("always", "reversible")
     assert assessed(memory, action="add_text", text=NOTE, title="Devis Martin") == new
@@ -293,9 +276,7 @@ async def test_adding_a_text_the_project_already_has_is_not_put_to_a_human(
     free = mounted(tmp_path, actions=["search", "add_text", "projects"])
     assert assessed(free, action="add_text", text=NOTE, title="Devis", project="chantiers") == new
     # Le projet donné par le modèle est mis en forme comme à l'écriture.
-    assert assessed(
-        free, action="add_text", text=NOTE, title="Devis", project=" Documentation "
-    ) == (nothing)
+    assert assessed(free, action="add_text", text=NOTE, title="Devis", project=" Documentation ") == (nothing)
 
 
 @pytest.mark.parametrize("content", [b"pas une base SQLite", b""])
@@ -371,14 +352,10 @@ async def test_files_that_add_file_refuses(memory: MemoryTool, workspace: Path) 
 
 def guide(sections: int) -> str:
     """Un markdown d'une section par partie, chacune assez longue pour faire un passage."""
-    return "# Guide\n\n" + "\n\n".join(
-        f"## Partie {i}\n\n" + "Du texte utile au guide. " * 12 for i in range(sections)
-    )
+    return "# Guide\n\n" + "\n\n".join(f"## Partie {i}\n\n" + "Du texte utile au guide. " * 12 for i in range(sections))
 
 
-def test_the_approval_says_the_size_and_the_passages_of_a_text_file(
-    memory: MemoryTool, workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_approval_says_the_size_and_the_passages_of_a_text_file(memory: MemoryTool, workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (workspace / "guide.md").write_text(guide(5), encoding="utf-8")
     found = memory.assess_call({"action": "add_file", "file": "workspace/guide.md"})
     assert found.approval == "always" and found.reason is not None
@@ -396,18 +373,14 @@ def test_the_approval_says_the_size_and_the_passages_of_a_text_file(
     assert found.reason is not None and "calcul" not in found.reason
 
 
-def test_a_long_computation_is_said_in_minutes(
-    memory: MemoryTool, workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_long_computation_is_said_in_minutes(memory: MemoryTool, workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (workspace / "guide.md").write_text(guide(63), encoding="utf-8")
     monkeypatch.setattr(FakeEmbedder, "device", property(lambda _: "cpu"))
     found = memory.assess_call({"action": "add_file", "file": "workspace/guide.md"})
     assert found.reason is not None and "63 passages, ~2 min de calcul sur cpu)" in found.reason
 
 
-def test_the_approval_says_what_will_be_refused_but_still_asks(
-    memory: MemoryTool, workspace: Path
-) -> None:
+def test_the_approval_says_what_will_be_refused_but_still_asks(memory: MemoryTool, workspace: Path) -> None:
     """Le fichier peut changer pendant l'attente : ce qu'on en voit informe, sans décider."""
     (workspace / "long.txt").write_text("mot " * (MAX_TEXT_CHARS // 4 + 1), encoding="utf-8")
     (workspace / "latin1.txt").write_bytes("é".encode("latin-1"))
@@ -421,9 +394,7 @@ def test_the_approval_says_what_will_be_refused_but_still_asks(
         assert found.reason is not None and said in found.reason, file
 
 
-def test_the_approval_gives_only_the_size_of_a_word_or_pdf_file(
-    memory: MemoryTool, workspace: Path
-) -> None:
+def test_the_approval_gives_only_the_size_of_a_word_or_pdf_file(memory: MemoryTool, workspace: Path) -> None:
     """Un .docx ou un .pdf n'est pas converti pour évaluer l'appel : sa taille seule."""
     (workspace / "plaquette.docx").write_bytes(b"PK\x03\x04" + b"x" * 64_000)
     found = memory.assess_call({"action": "add_file", "file": "workspace/plaquette.docx"})
@@ -512,18 +483,13 @@ async def test_a_word_file_is_stored_with_its_sections(memory: MemoryTool, works
     assert added["title"] == "Plaquette commerciale"
     doc = await call(memory, action="get", doc_id=added["doc_id"])
     assert doc["source"] == "workspace/plaquette.docx" and doc["source_kind"] == "file"
-    assert doc["text"] == (
-        "# Plaquette commerciale\n\n## Offre\n\nUn agent de relance par artisan.\n\n"
-        "## Tarifs\n\nSur devis, après un audit gratuit."
-    )
+    assert doc["text"] == ("# Plaquette commerciale\n\n## Offre\n\nUn agent de relance par artisan.\n\n## Tarifs\n\nSur devis, après un audit gratuit.")
     [hit] = await call(memory, action="search", query="audit gratuit")
     assert hit["doc_id"] == added["doc_id"]
     # Le même fichier : rien de doublé ; modifié : le même document, remplacé.
     again = await call(memory, action="add_file", file="workspace/plaquette.docx")
     assert again["duplicate_of"] == added["doc_id"]
-    (workspace / "plaquette.docx").write_bytes(
-        docx(paragraph("Plaquette commerciale", "Titre"), paragraph("Nouvelle offre."))
-    )
+    (workspace / "plaquette.docx").write_bytes(docx(paragraph("Plaquette commerciale", "Titre"), paragraph("Nouvelle offre.")))
     changed = await call(memory, action="add_file", file="workspace/plaquette.docx")
     assert changed["doc_id"] == added["doc_id"] and changed["updated"]
 
@@ -561,17 +527,13 @@ async def test_a_word_invoice_is_stored_as_it_shows(memory: MemoryTool, workspac
         assert said in text, said
 
 
-async def test_a_word_file_without_title_is_named_after_the_file(
-    memory: MemoryTool, workspace: Path
-) -> None:
+async def test_a_word_file_without_title_is_named_after_the_file(memory: MemoryTool, workspace: Path) -> None:
     (workspace / "cgv-2026.docx").write_bytes(docx(paragraph("Acompte de 30 % à la commande.")))
     added = await call(memory, action="add_file", file="workspace/cgv-2026.docx")
     assert added["title"] == "cgv-2026"
 
 
-async def test_a_word_file_beyond_the_text_limit_is_refused(
-    memory: MemoryTool, workspace: Path
-) -> None:
+async def test_a_word_file_beyond_the_text_limit_is_refused(memory: MemoryTool, workspace: Path) -> None:
     # Un paragraphe seul plus long que la borne : coupé par le lecteur, donc refusé.
     (workspace / "un-bloc.docx").write_bytes(docx(paragraph("mot " * (MAX_TEXT_CHARS // 4))))
     many = [paragraph(f"Paragraphe {i} : " + "mot " * 100) for i in range(800)]
@@ -598,9 +560,7 @@ def pdf_of(*pages: str) -> bytes:
 
 
 async def test_a_pdf_gives_its_text_page_by_page(memory: MemoryTool, workspace: Path) -> None:
-    (workspace / "devis-martin.pdf").write_bytes(
-        pdf_of("Devis D-2026-042\nChauffe-eau 200 L", "Conditions\nAcompte de 30 %")
-    )
+    (workspace / "devis-martin.pdf").write_bytes(pdf_of("Devis D-2026-042\nChauffe-eau 200 L", "Conditions\nAcompte de 30 %"))
     added = await call(memory, action="add_file", file="workspace/devis-martin.pdf")
     assert added["title"] == "devis-martin"
     doc = await call(memory, action="get", doc_id=added["doc_id"])
@@ -613,9 +573,7 @@ async def test_a_pdf_without_text_is_refused(memory: MemoryTool, workspace: Path
     await refused(memory, "aucun texte dans le PDF", action="add_file", file="workspace/scan.pdf")
 
 
-async def test_without_the_pdf_extra_a_pdf_is_refused_before_approval(
-    tmp_path: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_without_the_pdf_extra_a_pdf_is_refused_before_approval(tmp_path: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     said = "la lecture des .pdf demande l'extra loom-ia[pdf] (pypdf absent)"
     monkeypatch.setattr(files_module, "_pdf_problem", lambda: said)
     tool = mounted(tmp_path, project="documentation")
@@ -633,9 +591,7 @@ def test_why_pdf_files_cannot_be_read(monkeypatch: pytest.MonkeyPatch) -> None:
         return lambda name: None if name == missing else ModuleSpec(name, None)
 
     monkeypatch.setattr(files_module.importlib.util, "find_spec", without("pypdf"))
-    assert files_module.unreadable() == {
-        ".pdf": "la lecture des .pdf demande l'extra loom-ia[pdf] (pypdf absent)"
-    }
+    assert files_module.unreadable() == {".pdf": "la lecture des .pdf demande l'extra loom-ia[pdf] (pypdf absent)"}
     monkeypatch.setattr(files_module.importlib.util, "find_spec", without("autre"))
 
     def old_pypdf(_: str) -> str:
@@ -715,9 +671,7 @@ def test_a_base_path_from_the_client_secrets(tmp_path: Path) -> None:
 def test_a_file_of_loom_is_never_the_base(tmp_path: Path) -> None:
     journal = tmp_path / "journal"
     journal.mkdir()
-    context = BuiltinContext(
-        base_dir=tmp_path, protected=(Protected(journal, "le journal", subtree=True),)
-    )
+    context = BuiltinContext(base_dir=tmp_path, protected=(Protected(journal, "le journal", subtree=True),))
     with pytest.raises(ValueError, match="est dans le journal"):
         build(params(actions=["search"], store={"path": "journal/m.db"}), context)
 
@@ -732,9 +686,7 @@ def without(missing: str) -> Callable[..., ModuleSpec | None]:
     return find
 
 
-def test_the_real_models_need_the_memory_extra(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_real_models_need_the_memory_extra(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(importlib.util, "find_spec", without("torch"))
     given = params(actions=["search"], models={"device": "cpu"})
     with pytest.raises(ImportError) as caught:
@@ -742,13 +694,9 @@ def test_the_real_models_need_the_memory_extra(
     assert caught.value.name == "torch"
 
 
-def test_add_url_needs_the_memory_web_extra(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_add_url_needs_the_memory_web_extra(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(importlib.util, "find_spec", without("bs4"))
-    with pytest.raises(
-        ValueError, match=r"'bs4' absente \(installer l'extra : loom-ia\[memory-web\]\)"
-    ):
+    with pytest.raises(ValueError, match=r"'bs4' absente \(installer l'extra : loom-ia\[memory-web\]\)"):
         build(params(actions=["add_url"], project="p"), BuiltinContext(base_dir=tmp_path))
 
 
@@ -786,9 +734,7 @@ def test_the_tool_has_its_own_timeout_and_the_agent_may_change_it(demo: ConfigFa
 
 
 @pytest.mark.parametrize("setting", ["approval", "side_effects", "idempotent"])
-def test_the_common_settings_that_actions_express_are_refused(
-    demo: ConfigFactory, setting: str
-) -> None:
+def test_the_common_settings_that_actions_express_are_refused(demo: ConfigFactory, setting: str) -> None:
     value = {"approval": "never", "side_effects": "none", "idempotent": True}[setting]
     path = demo(agents=[memory_agent(**{setting: value})], storage=JSONL)
     with pytest.raises(ConfigError, match="chaque action permise a son approbation"):
@@ -801,9 +747,7 @@ def test_a_write_under_approval_needs_a_durable_journal(demo: ConfigFactory) -> 
         build_agent(load_config(path), "demo", InMemoryEventStore())
 
 
-def test_validate_shows_the_base_and_the_actions(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_base_and_the_actions(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(agents=[memory_agent()], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out

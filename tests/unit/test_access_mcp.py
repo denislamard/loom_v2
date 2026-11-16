@@ -68,9 +68,7 @@ type ElicitAction = Literal["accept", "decline", "cancel"]
 
 
 @asynccontextmanager
-async def serving(
-    path: Path, *, elicitation: Elicitation | None = None, user: str = DEV
-) -> AsyncGenerator[tuple[Loom, ClientSession]]:
+async def serving(path: Path, *, elicitation: Elicitation | None = None, user: str = DEV) -> AsyncGenerator[tuple[Loom, ClientSession]]:
     """Une instance servie en MCP, et un client branché dessus.
 
     Avec ``elicitation``, le client déclare la capacité : c'est ce que le
@@ -78,15 +76,11 @@ async def serving(
     ``user`` : l'utilisateur au nom duquel le serveur agit (``loom mcp --user``).
     """
     async with Loom.from_config(path) as loom:
-        async with connected(
-            create_server(loom, user=user), client_info=CLIENT, elicitation_callback=elicitation
-        ) as client:
+        async with connected(create_server(loom, user=user), client_info=CLIENT, elicitation_callback=elicitation) as client:
             yield loom, client
 
 
-async def test_a_refusal_over_mcp_is_written_with_its_access(
-    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_a_refusal_over_mcp_is_written_with_its_access(demo: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     """D-9 : un outil refusé à l'utilisateur du serveur laisse une ligne au journal d'audit."""
     roles = [OWNER, {"id": "lecteur", "permissions": ["read"]}]
     users = [{"id": DEV, "roles": ["owner"]}, {"id": "lucie", "roles": ["lecteur"]}]
@@ -100,9 +94,7 @@ async def test_a_refusal_over_mcp_is_written_with_its_access(
     assert (refus["access"], refus["user"], refus["permission"]) == ("mcp", "lucie", "run")
     # Ce que l'appel visait : l'outil, son agent ; et ce qui manque, le rôle et non la clé.
     assert (refus["action"], refus["agent"]) == ("demo", "demo")
-    assert refus["reason"] == (
-        "lucie n'a pas la permission 'run' : aucun de ses rôles (lecteur) ne la porte"
-    )
+    assert refus["reason"] == ("lucie n'a pas la permission 'run' : aucun de ses rôles (lecteur) ne la porte")
     assert audited(path) == [refus]
 
 
@@ -128,9 +120,7 @@ async def test_each_published_agent_is_a_tool(demo: ConfigFactory) -> None:
 
 
 @pytest.mark.parametrize("name", [STATUS_TOOL, REPORT_TOOL, CANCEL_TOOL])
-async def test_an_agent_named_like_a_control_tool_is_refused_at_mount(
-    demo: ConfigFactory, name: str
-) -> None:
+async def test_an_agent_named_like_a_control_tool_is_refused_at_mount(demo: ConfigFactory, name: str) -> None:
     """L'outil intégré masquerait l'agent : le montage le refuse en le nommant."""
     path = demo(agents=[demo_agent(), demo_agent(name=name)])
     async with Loom.from_config(path) as loom:
@@ -294,9 +284,7 @@ async def test_the_two_indexes_are_listed_and_the_rest_is_templated(demo: Config
     assert [str(entry.uri) for entry in listed.resources] == [RUNS, SESSIONS]
     assert all(entry.mimeType == "application/json" for entry in listed.resources)
     # Ce qu'on ne peut pas énumérer sans tout ouvrir se construit d'un gabarit.
-    assert [template.uriTemplate for template in gabarits.resourceTemplates] == [
-        uri for uri, _, _ in TEMPLATES
-    ]
+    assert [template.uriTemplate for template in gabarits.resourceTemplates] == [uri for uri, _, _ in TEMPLATES]
     assert all(template.description for template in gabarits.resourceTemplates)
     # Test G3 du 21/10 : rien ne disait que l'URI rendue dans ``artifacts`` se lit telle quelle.
     [fichier] = [t for t in gabarits.resourceTemplates if t.name == "fichier"]
@@ -421,9 +409,7 @@ async def test_cancel_stops_a_run_and_says_when_there_was_nothing_to_stop(
 def _answers(decision: str, *, action: ElicitAction = "accept", motif: str = "") -> Elicitation:
     """Client qui répond au formulaire comme le ferait un humain."""
 
-    async def callback(
-        context: RequestContext[ClientSession, Any], params: ElicitRequestParams
-    ) -> ElicitResult:
+    async def callback(context: RequestContext[ClientSession, Any], params: ElicitRequestParams) -> ElicitResult:
         assert "envoyer_email" in params.message
         if action != "accept":
             return ElicitResult(action=action)
@@ -497,9 +483,7 @@ async def test_without_elicitation_the_tool_hands_back_a_paused_run(
     # Un run qui attend un humain n'est pas un échec : l'outil rend la main.
     assert not paused.isError
     assert paused.structuredContent["status"] == "paused"
-    assert [a["tool_name"] for a in paused.structuredContent["pending_approvals"]] == [
-        "envoyer_email"
-    ]
+    assert [a["tool_name"] for a in paused.structuredContent["pending_approvals"]] == ["envoyer_email"]
     dit = _text(paused.content)
     assert "en attente d'approbation" in dit and run_id in dit and STATUS_TOOL in dit
     # Le motif accompagne l'appel : le client sait ce qu'un humain doit trancher.
@@ -552,9 +536,7 @@ EQUIPE: dict[str, Any] = {
 def _asked(asked: list[str]) -> Elicitation:
     """Client qui accorde tout ce qu'on lui demande, et note qu'on le lui a demandé."""
 
-    async def callback(
-        context: RequestContext[ClientSession, Any], params: ElicitRequestParams
-    ) -> ElicitResult:
+    async def callback(context: RequestContext[ClientSession, Any], params: ElicitRequestParams) -> ElicitResult:
         asked.append(params.message)
         return ElicitResult(action="accept", content={"decision": "accorder", "motif": ""})
 
@@ -595,9 +577,7 @@ async def test_elicitation_hands_over_what_its_user_cannot_decide(atelier: Confi
     assert done.status == RunStatus.COMPLETED
 
 
-async def test_an_agent_that_forbids_self_approval_is_never_elicited(
-    atelier: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_an_agent_that_forbids_self_approval_is_never_elicited(atelier: ConfigFactory, tmp_path: Path) -> None:
     asked: list[str] = []
     path = atelier(security=EQUIPE)
     fichier = tmp_path / "agents" / "demo.yaml"

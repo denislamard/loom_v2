@@ -50,9 +50,7 @@ def add_actions(
     imported = tenanted(actions.add_parser("import", help="réimporte un export JSONL"))
     imported.add_argument("agent")
     imported.add_argument("file", type=Path)
-    reindex = tenanted(
-        actions.add_parser("reindex", help="recalcule les passages avec le modèle de la config")
-    )
+    reindex = tenanted(actions.add_parser("reindex", help="recalcule les passages avec le modèle de la config"))
     reindex.add_argument("agent")
     evaluate = tenanted(actions.add_parser("eval", help="mesure la recherche sur un jeu doré"))
     evaluate.add_argument("agent")
@@ -128,26 +126,17 @@ def _print_report(report: EvalReport, *, as_json: bool) -> None:
         score = f"{result.expected_score:.3f}" if result.expected_score is not None else "  -  "
         print(f"{mark} {rank:>7}  {score}  {result.query}")
     off = f", {report.off_topic} hors sujet" if report.off_topic else ""
-    print(
-        f"\n{report.cases} cas{off} — recall@1 {report.recall_at_1:.2f}  "
-        f"recall@5 {report.recall_at_5:.2f}  MRR {report.mrr:.2f}"
-    )
+    print(f"\n{report.cases} cas{off} — recall@1 {report.recall_at_1:.2f}  recall@5 {report.recall_at_5:.2f}  MRR {report.mrr:.2f}")
     lowest, highest = report.lowest_expected, report.highest_off_topic
     if report.separable is False:
-        print(
-            f"aucun min_score ne sépare : une question hors sujet atteint {highest}, "
-            f"une réponse attendue tombe à {lowest}"
-        )
+        print(f"aucun min_score ne sépare : une question hors sujet atteint {highest}, une réponse attendue tombe à {lowest}")
         return
     if report.suggested_min_score is None:
         return
     noise = report.noise_removed_at_suggested
     filtered = f"{noise:.0%} du bruit filtré" if noise is not None else ""
     if report.separable:
-        why = (
-            f"entre le hors-sujet le plus fort, {highest}, "
-            f"et la réponse attendue la plus faible, {lowest}"
-        )
+        why = f"entre le hors-sujet le plus fort, {highest}, et la réponse attendue la plus faible, {lowest}"
         tail = f" ({why}{' ; ' + filtered if filtered else ''})"
     else:
         tail = f" (aucun cas perdu{' ; ' + filtered if filtered else ''})"

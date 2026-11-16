@@ -71,9 +71,7 @@ class FakeSecrets:
 def keyring(*, common: str | None = KEY_A, **tables: str) -> SecretKeyring:
     """Trousseau sur un secret unique, redirigé par client quand il faut."""
     per_tenant = {TenantId(name): {KEY_ENV: value} for name, value in tables.items()}
-    return SecretKeyring(
-        FakeSecrets(per_tenant, {KEY_ENV: common} if common is not None else {}), [KEY_ENV]
-    )
+    return SecretKeyring(FakeSecrets(per_tenant, {KEY_ENV: common} if common is not None else {}), [KEY_ENV])
 
 
 def run_drafts(session: SessionId = SESSION, tenant: TenantId = DEFAULT_TENANT) -> list[EventDraft]:
@@ -124,10 +122,7 @@ async def test_the_content_is_nowhere_in_the_clear(tmp_path: Path) -> None:
     # « 2+2 » se cherche hors des sceaux : un sceau est du base64 aléatoire,
     # dont l'alphabet contient « 2 » et « + », et il y tombe par hasard (un
     # journal sur 75 environ).
-    outside = [
-        {**line, "payload": {k: v for k, v in line["payload"].items() if k != SEALED}}
-        for line in lines(tmp_path)
-    ]
+    outside = [{**line, "payload": {k: v for k, v in line["payload"].items() if k != SEALED}} for line in lines(tmp_path)]
     assert "2+2" not in json.dumps(outside)
     assert "calculer" in raw
     # La charge est remplacée par un sceau, et rien d'autre n'en subsiste.
@@ -210,9 +205,7 @@ async def test_another_key_does_not_open_the_seal(tmp_path: Path) -> None:
 
 async def test_a_new_key_seals_while_the_old_one_still_opens(tmp_path: Path) -> None:
     drafts = await _write_sealed(tmp_path)
-    tournee = SecretKeyring(
-        FakeSecrets({}, {"NEUVE": KEY_B, "ANCIENNE": KEY_A}), ["NEUVE", "ANCIENNE"]
-    )
+    tournee = SecretKeyring(FakeSecrets({}, {"NEUVE": KEY_B, "ANCIENNE": KEY_A}), ["NEUVE", "ANCIENNE"])
     store = JsonlEventStore(tmp_path / "journal", codec=SealingCodec(tournee))
     # L'ancienne ouvre ce qu'elle a fermé, la neuve ferme la suite.
     assert len(await store.read(DEFAULT_TENANT, SESSION)) == len(drafts)
@@ -441,9 +434,7 @@ async def test_a_file_of_another_tenant_needs_that_tenants_key() -> None:
 
 
 def test_encryption_is_declared_at_the_root_with_secret_names(demo: ConfigFactory) -> None:
-    config = load_config(
-        demo(storage={"events": {"backend": "jsonl", "path": "data"}, "encryption": SEAL})
-    )
+    config = load_config(demo(storage={"events": {"backend": "jsonl", "path": "data"}, "encryption": SEAL}))
     declared = config.storage.encryption
     assert declared is not None
     assert declared.keys == (KEY_ENV,)
@@ -486,17 +477,13 @@ def test_the_same_secret_declared_twice_is_refused(demo: ConfigFactory) -> None:
 
 def test_no_declared_key_is_refused(demo: ConfigFactory) -> None:
     with pytest.raises(ConfigError):
-        load_config(
-            demo(storage={"events": {"backend": "jsonl", "path": "data"}, "encryption": {}})
-        )
+        load_config(demo(storage={"events": {"backend": "jsonl", "path": "data"}, "encryption": {}}))
 
 
 # --- Le montage ---------------------------------------------------------------
 
 
-async def test_the_declared_seal_reaches_the_journal_and_the_files(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_the_declared_seal_reaches_the_journal_and_the_files(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv(KEY_ENV, KEY_A)
     storage: dict[str, Any] = {
         "events": {"backend": "jsonl", "path": str(tmp_path / "events")},
@@ -525,9 +512,7 @@ async def test_the_declared_seal_reaches_the_journal_and_the_files(
     assert not isinstance(create_artifact_store(clear), SealingArtifactStore)
 
 
-async def test_a_run_writes_nothing_readable_without_the_key(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_a_run_writes_nothing_readable_without_the_key(demo: ConfigFactory, tmp_path: Path) -> None:
     path = demo(
         storage={
             "events": {"backend": "jsonl", "path": str(tmp_path / "events")},
@@ -645,9 +630,7 @@ def test_no_durable_payload_carries_a_field_named_sealed() -> None:
     "backend",
     ["sqlite", pytest.param("postgres", marks=pytest.mark.integration)],
 )
-async def test_sql_journals_seal_their_payloads(
-    backend: str, tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
+async def test_sql_journals_seal_their_payloads(backend: str, tmp_path: Path, request: pytest.FixtureRequest) -> None:
     ring = keyring()
     drafts = run_drafts()
     if backend == "sqlite":
@@ -688,9 +671,7 @@ def _sqlite_rows(path: Path) -> Sequence[str]:
 # --- Ce que l'API répond ------------------------------------------------------
 
 
-async def test_a_sealed_read_answers_424_and_names_the_key(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_a_sealed_read_answers_424_and_names_the_key(demo: ConfigFactory, tmp_path: Path) -> None:
     pytest.importorskip("fastapi")
     from httpx2 import ASGITransport, AsyncClient
 
@@ -804,9 +785,7 @@ def test_a_config_written_by_hand_reads_back(tmp_path: Path) -> None:
     models: []
     """
     (tmp_path / "agents").mkdir()
-    (tmp_path / "loom.yaml").write_text(
-        yaml.safe_dump(secured(yaml.safe_load(raw))), encoding="utf-8"
-    )
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(yaml.safe_load(raw))), encoding="utf-8")
     config = load_config(tmp_path / "loom.yaml")
     assert config.storage.encryption is not None
     assert config.tenant_spec(MARTIN) is not None

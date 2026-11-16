@@ -141,27 +141,13 @@ def adjusted(config: LoomConfig, *, reel: bool) -> tuple[LoomConfig, str]:
     """Ajoute l'outil sensible à l'agent, rend le rôle non terminal, déclare les clés."""
     base = "relance_reel" if reel else "relance"
     spec = next(a for a in config.agents if a.name == base)
-    main = spec.main.model_copy(
-        update={"system": prompt_text(spec.main) + CONSIGNE_ENVOI, "system_file": None}
-    )
-    roles = tuple(
-        role.model_copy(update={"terminal": False}) if role.name == "rediger_relance" else role
-        for role in spec.roles
-    )
-    agent = spec.model_copy(
-        update={"main": main, "roles": roles, "tools": (*spec.tools, _envoi(spec))}
-    )
+    main = spec.main.model_copy(update={"system": prompt_text(spec.main) + CONSIGNE_ENVOI, "system_file": None})
+    roles = tuple(role.model_copy(update={"terminal": False}) if role.name == "rediger_relance" else role for role in spec.roles)
+    agent = spec.model_copy(update={"main": main, "roles": roles, "tools": (*spec.tools, _envoi(spec))})
     agents = tuple(agent if a.name == base else a for a in config.agents)
     models = list(config.models)
     if not reel:
-        models = [
-            _script(m, MAIN)
-            if m.id == "FAKE_MAIN"
-            else _script(m, ROLE)
-            if m.id == "FAKE_ROLE"
-            else m
-            for m in models
-        ]
+        models = [_script(m, MAIN) if m.id == "FAKE_MAIN" else _script(m, ROLE) if m.id == "FAKE_ROLE" else m for m in models]
     return (
         config.model_copy(
             update={
@@ -229,11 +215,7 @@ def outcome(result: RunResult) -> str:
 
 def envoi(events: list[Event]) -> str:
     """Ce que l'envoi est devenu : parti, ou jamais tenté."""
-    finis = [
-        e.payload
-        for e in events
-        if e.type == "tool.completed" and e.facets.get("tool_name") == ENVOI
-    ]
+    finis = [e.payload for e in events if e.type == "tool.completed" and e.facets.get("tool_name") == ENVOI]
     if not finis:
         return "jamais tenté"
     fini = finis[-1]
@@ -280,9 +262,7 @@ async def par_python(loom: Loom, agent: str, session: SessionId) -> None:
         print(f"    {asked.tool_name} ({asked.call_id}) → {asked.arguments.get('destinataire')}")
     print(f"  en CLI    : loom approve {run_id} --session {session} --user {UTILISATEUR}")
 
-    accordes = await loom.approve(
-        run_id, user=UTILISATEUR, reason="devis vérifié", session_id=session
-    )
+    accordes = await loom.approve(run_id, user=UTILISATEUR, reason="devis vérifié", session_id=session)
     print(f"  décision  : {len(accordes)} appel accordé par « {UTILISATEUR} »")
     await loom.drain()
     fin = await loom.result(run_id, session_id=session)
@@ -360,9 +340,7 @@ async def par_rest(loom: Loom, agent: str, session: SessionId) -> None:
         attente = en_attente["pending_approvals"]
         print(f"  GET  run  : {en_attente['status']}, {len(attente)} approbation(s)")
 
-        code, refus = await appel(
-            f"{base}/runs/{run_id}/approve{dans}", method="POST", body={}, key=CLE_TABLEAU
-        )
+        code, refus = await appel(f"{base}/runs/{run_id}/approve{dans}", method="POST", body={}, key=CLE_TABLEAU)
         print(f"  approve   : {code} avec la clé « tableau » — {refus['detail']}")
 
         code, decided = await appel(
@@ -377,9 +355,7 @@ async def par_rest(loom: Loom, agent: str, session: SessionId) -> None:
         _, fiche = await appel(f"{base}/sessions/{session}", key=CLE_ATELIER)
         events = await loom.export_session(session)
         print(f"  GET  run  : {outcome(fin)}")
-        print(
-            f"  GET  fiche: {len(fiche['runs'])} run, {len(fiche['pending_approvals'])} en attente"
-        )
+        print(f"  GET  fiche: {len(fiche['runs'])} run, {len(fiche['pending_approvals'])} en attente")
         print(f"  journal   : accordé par « {decide_par(events, 'approval.granted')} » (la clé)")
         print(f"  envoi     : {envoi(events)}")
         print(f"  réponse   : {_ligne(fin)}\n")
@@ -399,16 +375,12 @@ async def par_mcp(loom: Loom, agent: str, session: SessionId) -> None:
     async def formulaire(context: RequestContext[Any, Any], params: Any) -> ElicitResult:
         assert isinstance(params, ElicitRequestParams)
         print(f"    [formulaire] {params.message.splitlines()[0]}")
-        return ElicitResult(
-            action="accept", content={"decision": "accorder", "motif": "cliente connue"}
-        )
+        return ElicitResult(action="accept", content={"decision": "accorder", "motif": "cliente connue"})
 
     avec = SessionId(f"{session}-elicite")
     client = Implementation(name="atelier-mcp", version="1.0")
     print("  client qui déclare l'elicitation :")
-    async with connected(
-        create_server(loom, user=UTILISATEUR), client_info=client, elicitation_callback=formulaire
-    ) as mcp:
+    async with connected(create_server(loom, user=UTILISATEUR), client_info=client, elicitation_callback=formulaire) as mcp:
         result = await mcp.call_tool(agent, {"message": DEMANDE, "session_id": avec})
         structure = result.structuredContent or {}
     events = await loom.export_session(avec)

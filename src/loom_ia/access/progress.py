@@ -99,9 +99,7 @@ class Progress:
         match event.payload:
             case ToolCalled(call_id=call_id):
                 self._called.add((event.run_id, call_id))
-            case ToolCompleted(call_id=call_id, output=output) if (
-                output.is_error and (event.run_id, call_id) not in self._called
-            ):
+            case ToolCompleted(call_id=call_id, output=output) if output.is_error and (event.run_id, call_id) not in self._called:
                 # Refusé avant de partir (outil inconnu, arguments ou référence
                 # refusés, politique, approbation) : rien n'a été appelé, et le
                 # modèle a reçu ce motif — la ligne le dit aussi.
@@ -130,9 +128,7 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             return f"contrôle {payload.guard} {payload.target} : conforme{normalized}{reason}"
         case GuardChecked(outcome="failed", resolution=resolution):
             then = f", {RESOLUTIONS[resolution]}" if resolution is not None else ""
-            return (
-                f"contrôle {payload.guard} {payload.target} : non conforme{then} — {payload.reason}"
-            )
+            return f"contrôle {payload.guard} {payload.target} : non conforme{then} — {payload.reason}"
         case GuardChecked():
             reason = SKIP_REASONS.get(payload.reason, payload.reason)
             return f"contrôle {payload.guard} {payload.target} : ignoré — {reason}"
@@ -140,21 +136,12 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             model = payload.model or payload.model_id
             return f"juge {payload.judge} ({model}) : {notes(payload.criteria)}"
         case ModelFellBack(reason="circuit_open"):
-            return (
-                f"secours {payload.slot} : {payload.from_model} → {payload.to_model} — "
-                f"{payload.error}"
-            )
+            return f"secours {payload.slot} : {payload.from_model} → {payload.to_model} — {payload.error}"
         case ModelFellBack():
-            return (
-                f"secours {payload.slot} : {payload.from_model} → {payload.to_model} — "
-                f"model.{payload.reason} : {_short(payload.error)}"
-            )
+            return f"secours {payload.slot} : {payload.from_model} → {payload.to_model} — model.{payload.reason} : {_short(payload.error)}"
         case CircuitOpened():
             target = "modèle" if payload.target_kind == "model" else "serveur"
-            return (
-                f"disjoncteur ouvert : {target} {payload.target} écarté {payload.cooldown_s:g} s "
-                f"(échecs de suite : {payload.failures})"
-            )
+            return f"disjoncteur ouvert : {target} {payload.target} écarté {payload.cooldown_s:g} s (échecs de suite : {payload.failures})"
         case BudgetExceeded():
             action = "arrêt" if payload.action == "stop" else "avertissement"
             text = describe_budget(payload.scope, payload.limit, payload.value, payload.spent)
@@ -167,10 +154,7 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             return None
         case PolicyDecided():
             reason = f" — {payload.reason}" if payload.reason else ""
-            return (
-                f"politique {payload.policy} ({payload.point}) : "
-                f"{DECISIONS[payload.decision]}{reason}"
-            )
+            return f"politique {payload.policy} ({payload.point}) : {DECISIONS[payload.decision]}{reason}"
         case ApprovalRequested():
             delai = (
                 ""
@@ -208,10 +192,7 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
         case QuestionExpired():
             return "question restée sans réponse : le modèle continue sans"
         case ArtifactStored():
-            return (
-                f"{STORED[payload.origin]} : {payload.name or payload.uri} "
-                f"({payload.media_type}, {payload.size} octets)"
-            )
+            return f"{STORED[payload.origin]} : {payload.name or payload.uri} ({payload.media_type}, {payload.size} octets)"
         case SessionCompacted():
             return f"session résumée : {describe_compaction(payload)}"
         case RunStarted() if subrun:

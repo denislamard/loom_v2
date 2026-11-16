@@ -173,13 +173,7 @@ def deplacee(
     tenants = tuple(
         tenant.model_copy(
             update={
-                "storage": tenant.storage.model_copy(
-                    update={
-                        "events": tenant.storage.events.model_copy(
-                            update={"path": dossier / "events" / tenant.id}
-                        )
-                    }
-                )
+                "storage": tenant.storage.model_copy(update={"events": tenant.storage.events.model_copy(update={"path": dossier / "events" / tenant.id})})
                 if tenant.storage is not None
                 else None
             }
@@ -194,9 +188,7 @@ def _retouche(agent: Any, prompt_main: str | None, prompt_role: str | None) -> A
     change: dict[str, Any] = {}
     if prompt_main is not None and agent.main.system_file is not None:
         texte = Path(agent.main.system_file).read_text(encoding="utf-8")
-        change["main"] = agent.main.model_copy(
-            update={"system_file": None, "system": f"{texte}\n{prompt_main}"}
-        )
+        change["main"] = agent.main.model_copy(update={"system_file": None, "system": f"{texte}\n{prompt_main}"})
     if prompt_role is not None and agent.roles:
         role = agent.roles[0]
         texte = Path(role.system_file).read_text(encoding="utf-8")
@@ -213,16 +205,12 @@ def sans_cles(config: LoomConfig) -> dict[str, str]:
     return {nom: valeur for nom, valeur in os.environ.items() if nom not in noms}
 
 
-async def enregistrer(
-    config: LoomConfig, args: argparse.Namespace, session: SessionId
-) -> list[str]:
+async def enregistrer(config: LoomConfig, args: argparse.Namespace, session: SessionId) -> list[str]:
     """Les deux runs de la session, comme d'habitude : ce sont eux qu'on rejouera."""
     ids: list[str] = []
     async with Loom(config) as loom:
         for demande in DEMANDES:
-            result = await loom.run(
-                agent_de(args), demande, session_id=session, tenant=DUPONT, user=DUPONT
-            )
+            result = await loom.run(agent_de(args), demande, session_id=session, tenant=DUPONT, user=DUPONT)
             print(f"  run {result.run_id} : {result.status}")
             ids.append(result.run_id)
     return ids
@@ -256,26 +244,19 @@ async def identique(args: argparse.Namespace, controle: Controle) -> None:
         ids = await enregistrer(config, args, session)
         environ = sans_cles(config)
         retirees = sorted(set(os.environ) - set(environ))
-        titre(
-            "Rejoués par une instance sans clé d'API"
-            + (f" ({', '.join(retirees)} retirées)" if retirees else "")
-        )
+        titre("Rejoués par une instance sans clé d'API" + (f" ({', '.join(retirees)} retirées)" if retirees else ""))
         async with Loom(config, environ=environ) as loom:
             avant = len(await loom.export_session(session, tenant_id=DUPONT))
             for rang, run_id in enumerate(ids, 1):
                 print(f"\n  run {rang} ({run_id})")
                 report = await loom.replay(RunId(run_id), session_id=session, tenant_id=DUPONT)
                 montre(report)
-                print(
-                    "  rejoué à l'identique : "
-                    + controle.tient(f"identique : le run {rang} a divergé", report.identical)
-                )
+                print("  rejoué à l'identique : " + controle.tient(f"identique : le run {rang} a divergé", report.identical))
                 print(
                     "  chaque appel refait, ni plus ni moins : "
                     + controle.tient(
                         f"identique : le run {rang} n'a pas refait les mêmes appels",
-                        report.model_calls[0] == report.model_calls[1] > 0
-                        and report.tool_calls[0] == report.tool_calls[1] > 0,
+                        report.model_calls[0] == report.model_calls[1] > 0 and report.tool_calls[0] == report.tool_calls[1] > 0,
                     )
                 )
             apres = len(await loom.export_session(session, tenant_id=DUPONT))
@@ -298,11 +279,7 @@ async def divergence(args: argparse.Namespace, controle: Controle) -> None:
         for ou, au_role in (("orchestrateur", False), ("rôle rediger_relance", True)):
             titre(f"Une phrase de plus au prompt — {ou}")
             enonce("  ajoutée : ", AJOUT)
-            modifiee = (
-                deplacee(Path(dossier), prompt_role=AJOUT)
-                if au_role
-                else deplacee(Path(dossier), prompt_main=AJOUT)
-            )
+            modifiee = deplacee(Path(dossier), prompt_role=AJOUT) if au_role else deplacee(Path(dossier), prompt_main=AJOUT)
             async with Loom(modifiee, environ=sans_cles(modifiee)) as loom:
                 report = await loom.replay(RunId(run_id), session_id=session, tenant_id=DUPONT)
             montre(report)
@@ -326,9 +303,7 @@ async def divergence(args: argparse.Namespace, controle: Controle) -> None:
                     "  au premier appel, rien n'est rejoué au-delà : "
                     + controle.tient(
                         "divergence (orchestrateur) : des appels ont été rejoués",
-                        trouvee is not None
-                        and "n°1 " in trouvee.where
-                        and report.model_calls[1] == 0,
+                        trouvee is not None and "n°1 " in trouvee.where and report.model_calls[1] == 0,
                     )
                 )
             else:
@@ -336,9 +311,7 @@ async def divergence(args: argparse.Namespace, controle: Controle) -> None:
                     f"  à l'appel du rôle, après {report.model_calls[1]} appel(s) servi(s) : "
                     + controle.tient(
                         "divergence (rôle) : pas à l'appel du rôle, ou rien de rejoué avant",
-                        trouvee is not None
-                        and "rediger_relance au journal" in trouvee.where
-                        and report.model_calls[1] > 0,
+                        trouvee is not None and "rediger_relance au journal" in trouvee.where and report.model_calls[1] > 0,
                     )
                 )
 
@@ -369,9 +342,7 @@ def _orchestrateurs(config: LoomConfig, acces: Any) -> LoomConfig:
     autre[2]["tool_calls"][0]["arguments"]["objet"] = OBJET_CHANGE
     autre[-1] = {"text": "L'envoi de la relance n'a pas abouti."}
     ajoutes = tuple(
-        base.model_copy(
-            update={"id": ident, "model": modele, "params": {**base.params, "script": script}}
-        )
+        base.model_copy(update={"id": ident, "model": modele, "params": {**base.params, "script": script}})
         for ident, modele, script in (
             (MEME_ENVOI, "fake-main-meme", meme),
             (AUTRE_ENVOI, "fake-main-autre", autre),
@@ -419,9 +390,7 @@ async def variante(args: argparse.Namespace, controle: Controle) -> None:
         titre("Le run d'origine")
         async with Loom(config) as loom:
             loom.register(acces.ENVOI, acces.envoyer_email)
-            result = await loom.run(
-                agent, acces.DEMANDE, session_id=session, user=acces.UTILISATEUR
-            )
+            result = await loom.run(agent, acces.DEMANDE, session_id=session, user=acces.UTILISATEUR)
             accordes: tuple[str, ...] = ()
             if result.pending_approvals:
                 accordes = await loom.approve(
@@ -443,9 +412,7 @@ async def variante(args: argparse.Namespace, controle: Controle) -> None:
 
         essais: list[tuple[str, str, ToolFate | None]]
         if args.reel:
-            essais = [
-                ("Claude Haiku 4.5 à l'orchestrateur, à la place de MiniMax-M3", "HAIKU", None)
-            ]
+            essais = [("Claude Haiku 4.5 à l'orchestrateur, à la place de MiniMax-M3", "HAIKU", None)]
         else:
             config = _orchestrateurs(config, acces)
             essais = [
@@ -459,9 +426,7 @@ async def variante(args: argparse.Namespace, controle: Controle) -> None:
             environ = None if args.reel else sans_cles(config)
             async with Loom(config, environ=environ) as loom:
                 loom.register(acces.ENVOI, acces.envoyer_email)
-                report = await loom.replay(
-                    result.run_id, session_id=session, mode="variant", models={"main": modele}
-                )
+                report = await loom.replay(result.run_id, session_id=session, mode="variant", models={"main": modele})
             comparison = report.comparison
             assert comparison is not None
             compare(report, comparison)
@@ -481,18 +446,14 @@ def _attendus(
         "  la variante quitte l'origine au premier appel, et dit que le modèle a changé : "
         + controle.tient(
             "variante : pas d'écart au premier appel, ou le modèle n'y est pas nommé",
-            divergence is not None
-            and divergence.kind == "model"
-            and "n°1 " in divergence.where
-            and "model" in divergence.parts,
+            divergence is not None and divergence.kind == "model" and "n°1 " in divergence.where and "model" in divergence.parts,
         )
     )
     print(
         "  chaque appel de modèle de la variante est compté, servi ou parti : "
         + controle.tient(
             "variante : les appels servis et partis ne font pas le compte",
-            comparison.served_models + comparison.real_models == comparison.variant.model_calls
-            and comparison.real_models > 0,
+            comparison.served_models + comparison.real_models == comparison.variant.model_calls and comparison.real_models > 0,
         )
     )
     print(
@@ -573,12 +534,7 @@ def _cles(config: LoomConfig) -> LoomConfig:
 def _sans_contenu(lue: dict[str, Any]) -> bool:
     """Vrai si la trace lue ne porte aucun contenu : ni réponse, ni contenu d'événement."""
     evenements = [event for span in lue["spans"] for event in span["events"]]
-    return (
-        lue["content"] is False
-        and lue["output"] is None
-        and bool(evenements)
-        and all(event["content"] is None for event in evenements)
-    )
+    return lue["content"] is False and lue["output"] is None and bool(evenements) and all(event["content"] is None for event in evenements)
 
 
 async def inspect_(args: argparse.Namespace, controle: Controle) -> None:
@@ -589,9 +545,7 @@ async def inspect_(args: argparse.Namespace, controle: Controle) -> None:
         annonce(CONFIG, agent_de(args))
         titre("Un run de Dupont")
         async with Loom(config) as loom:
-            result = await loom.run(
-                agent_de(args), DEMANDES[0], session_id=session, tenant=DUPONT, user=DUPONT
-            )
+            result = await loom.run(agent_de(args), DEMANDES[0], session_id=session, tenant=DUPONT, user=DUPONT)
             print(f"  run {result.run_id} : {result.status}")
             trace = await loom.trace(result.run_id, session_id=session, tenant_id=DUPONT)
 
@@ -603,9 +557,7 @@ async def inspect_(args: argparse.Namespace, controle: Controle) -> None:
             titre("Relue par REST, avec et sans read_content")
             if find_spec("uvicorn") is None or find_spec("fastapi") is None:
                 print("  extra 'http' absent : lecture REST non jouée")
-                controle.saute(
-                    "inspect, REST (extra 'http' absent : uv run --extra http …)", partie=True
-                )
+                controle.saute("inspect, REST (extra 'http' absent : uv run --extra http …)", partie=True)
             else:
                 async with acces.serveur(loom) as base:
                     url = f"{base}/traces/{result.run_id}?session_id={session}"
@@ -616,9 +568,7 @@ async def inspect_(args: argparse.Namespace, controle: Controle) -> None:
             titre("Relue par MCP (loom://traces/…)")
             if find_spec("mcp") is None:
                 print("  extra 'mcp' absent : lecture MCP non jouée")
-                controle.saute(
-                    "inspect, MCP (extra 'mcp' absent : uv run --extra mcp …)", partie=True
-                )
+                controle.saute("inspect, MCP (extra 'mcp' absent : uv run --extra mcp …)", partie=True)
             else:
                 lue = await _par_mcp(loom, result.run_id, session)
                 print(f"  {len(lue['spans'])} span(s) lus")
@@ -638,11 +588,7 @@ def _arbre(trace: Trace, lignes: list[str], reponse: str, controle: Controle) ->
     outils = sum(1 for span in trace.spans if span.kind == "tool")
     vus_chats = sum(1 for tete in tetes if tete.startswith("modèle ") and " — " in tete)
     # « appel … » : un appel refusé avant de partir (arguments non conformes…).
-    vus_outils = sum(
-        1
-        for tete in tetes
-        if tete.startswith(("outil ", "rôle ", "sous-agent ", "appel ")) and " — " in tete
-    )
+    vus_outils = sum(1 for tete in tetes if tete.startswith(("outil ", "rôle ", "sous-agent ", "appel ")) and " — " in tete)
     print(
         f"\n  chaque appel de la trace a sa ligne ({chats} de modèle, {outils} d'outil) : "
         + controle.tient(
@@ -687,8 +633,7 @@ def _rest(
         "  la demande de Dupont est dans l'une, pas dans l'autre : "
         + controle.tient(
             "inspect : la demande paraît sans read_content, ou manque avec",
-            demande in json.dumps(complete, ensure_ascii=False)
-            and demande not in json.dumps(nue, ensure_ascii=False),
+            demande in json.dumps(complete, ensure_ascii=False) and demande not in json.dumps(nue, ensure_ascii=False),
         )
     )
 
@@ -750,10 +695,7 @@ async def j4(args: argparse.Namespace, controle: Controle) -> None:
         montre(report)
         identiques += report.identical
         controle.tient(f"j4 : le run {run_id} ({session}) a divergé", report.identical)
-    print(
-        f"\n  rejoués à l'identique : {identiques} sur {len(rangees)} : "
-        + ("oui" if identiques == len(rangees) else "NON")
-    )
+    print(f"\n  rejoués à l'identique : {identiques} sur {len(rangees)} : " + ("oui" if identiques == len(rangees) else "NON"))
 
 
 async def _sessions_j4(base: LoomConfig) -> list[tuple[str, str, str]]:
@@ -761,9 +703,7 @@ async def _sessions_j4(base: LoomConfig) -> list[tuple[str, str, str]]:
     trouves: list[tuple[str, str, str]] = []
     async with Loom(base, environ=sans_cles(base)) as loom:
         for record in await loom.sessions():
-            if not record.session_id.startswith("atelier-") or not record.session_id.endswith(
-                tuple(f"-{cas}" for cas in CAS_J4)
-            ):
+            if not record.session_id.startswith("atelier-") or not record.session_id.endswith(tuple(f"-{cas}" for cas in CAS_J4)):
                 continue
             for event in await loom.export_session(record.session_id):
                 if event.type == "run.started" and event.payload.parent_run_id is None:  # type: ignore[union-attr]
@@ -789,9 +729,7 @@ async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="Rejouer un run, à l'identique ou en variante, et voir où il s'écarte"
-    )
+    parser = argparse.ArgumentParser(description="Rejouer un run, à l'identique ou en variante, et voir où il s'écarte")
     parser.add_argument("--reel", action="store_true", help="vrais modèles pour enregistrer")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     args = parser.parse_args(argv)

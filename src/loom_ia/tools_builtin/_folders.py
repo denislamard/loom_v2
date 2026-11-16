@@ -113,9 +113,7 @@ class Folders:
                     (
                         "",
                         tuple(
-                            Grant(right, approval == "always", right in DESTRUCTIVE)
-                            for right in RIGHTS
-                            if (approval := folder.rights.get(right)) is not None
+                            Grant(right, approval == "always", right in DESTRUCTIVE) for right in RIGHTS if (approval := folder.rights.get(right)) is not None
                         ),
                     ),
                 ),
@@ -143,9 +141,7 @@ class Folders:
             raise ToolError(f"'path' attendu sous la forme « <dossier>/<chemin> » ({known}).")
         pure = PurePosixPath(raw)
         if pure.is_absolute():
-            raise ToolError(
-                f"Chemin absolu refusé : « <dossier>/<chemin> », avec un dossier parmi : {known}."
-            )
+            raise ToolError(f"Chemin absolu refusé : « <dossier>/<chemin> », avec un dossier parmi : {known}.")
         if ".." in pure.parts:
             raise ToolError("Chemin refusé : « .. » n'est pas permis.")
         if not pure.parts:
@@ -167,10 +163,7 @@ class Folders:
         """``ToolError`` si le dossier qui gouverne le chemin n'accorde pas ces droits."""
         missing = [right for right in rights if right not in located.folder.rights]
         if missing:
-            raise ToolError(
-                f"Droit {', '.join(missing)} refusé sur {located.address} "
-                f"(dossier {located.folder.name} : {located.folder.granted()})."
-            )
+            raise ToolError(f"Droit {', '.join(missing)} refusé sur {located.address} (dossier {located.folder.name} : {located.folder.granted()}).")
 
     @staticmethod
     def asked(located: Located, rights: Iterable[Right]) -> list[Right]:
@@ -190,9 +183,7 @@ class Folders:
             words = by_folder.setdefault(located.folder.name, [])
             if RIGHT_WORDS[right] not in words:
                 words.append(RIGHT_WORDS[right])
-        said = ", ".join(
-            f"{' et '.join(words)} dans {folder}" for folder, words in by_folder.items()
-        )
+        said = ", ".join(f"{' et '.join(words)} dans {folder}" for folder, words in by_folder.items())
         return f"la config exige une approbation pour {said}"
 
     def resolved(self, located: Located) -> Path:
@@ -204,22 +195,17 @@ class Folders:
         try:
             target = path.resolve()
         except (OSError, RuntimeError, UnicodeError) as exc:
-            raise ToolError(
-                f"{located.address} : chemin illisible ({type(exc).__name__})."
-            ) from exc
+            raise ToolError(f"{located.address} : chemin illisible ({type(exc).__name__}).") from exc
         match self.outside(target, located.folder):
             case None:
                 return target
             case "outside":
                 raise ToolError(f"Chemin refusé : {located.address} mène hors des dossiers permis.")
             case "hidden":
-                raise ToolError(
-                    "Chemin refusé : les fichiers et dossiers cachés sont inaccessibles."
-                )
+                raise ToolError("Chemin refusé : les fichiers et dossiers cachés sont inaccessibles.")
             case Folder(name=other):
                 raise ToolError(
-                    f"Chemin refusé : {located.address} passe par un lien vers le dossier "
-                    f"{other}, qui a ses propres droits ; y accéder par « {other}/… »."
+                    f"Chemin refusé : {located.address} passe par un lien vers le dossier {other}, qui a ses propres droits ; y accéder par « {other}/… »."
                 )
 
     def outside(self, real: Path, folder: Folder) -> Folder | Literal["outside", "hidden"] | None:
@@ -244,11 +230,7 @@ def mount(specs: Iterable[FolderSpec], context: BuiltinContext) -> tuple[Folder,
     """
     folders: list[Folder] = []
     for spec in specs:
-        given = (
-            spec.path
-            if spec.path.is_absolute() or context.base_dir is None
-            else (context.base_dir / spec.path)
-        )
+        given = spec.path if spec.path.is_absolute() or context.base_dir is None else (context.base_dir / spec.path)
         root = given.resolve()
         if not root.is_dir():
             raise ValueError(f"dossier {spec.name!r} : {root} n'existe pas ou n'est pas un dossier")
@@ -281,9 +263,7 @@ def _exposes(root: Path, protected: tuple[Protected, ...]) -> str | None:
 # --- Écriture -----------------------------------------------------------------------
 
 
-def write_bytes(
-    target: Path, located: Located, data: bytes, overwrite: bool
-) -> dict[str, JsonValue]:
+def write_bytes(target: Path, located: Located, data: bytes, overwrite: bool) -> dict[str, JsonValue]:
     """Écrit ``data`` en ``target`` (déjà résolu) : création exclusive, ou remplacement.
 
     Le même contenu déjà là n'est pas réécrit (``written`` faux) : c'est ce qui
@@ -322,9 +302,7 @@ def write_bytes(
 
 
 def _exists(located: Located) -> ToolError:
-    return ToolError(
-        f"{located.address} existe déjà : overwrite=true pour le remplacer (droit overwrite)."
-    )
+    return ToolError(f"{located.address} existe déjà : overwrite=true pour le remplacer (droit overwrite).")
 
 
 _EXCLUSIVE: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)

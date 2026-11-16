@@ -98,9 +98,7 @@ class RoutedEventStore:
     def __init__(self, router: TenantRouter) -> None:
         self._router = router
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         tenant_id, _ = journal_key(drafts)
         return await self._router.events(tenant_id).append(drafts, expected_seq=expected_seq)
 

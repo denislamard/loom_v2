@@ -44,9 +44,7 @@ from loom_ia.tools_builtin._style_params import (
 
 _W: Final = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _HEAD: Final = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-_VML: Final = (
-    'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
-)
+_VML: Final = 'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
 _PLACEHOLDER: Final = re.compile(r"\{(page|pages|title)\}")
 # La numérotation des titres (réglage ``numbering``), à part des listes.
 HEADING_NUMBERING: Final = 900
@@ -124,9 +122,7 @@ _DEFAULT_PARAGRAPH: Final = frozenset({"space_before", "space_after", "line_spac
 
 type Pieces = list[tuple[str, str]]
 # Ce qu'un style de tableau dit du tableau et de ses cellules, et pas de leur texte.
-_CELL_PROPS: Final = frozenset(
-    {"border", "border_top", "border_bottom", "border_left", "border_right", "fill"}
-)
+_CELL_PROPS: Final = frozenset({"border", "border_top", "border_bottom", "border_left", "border_right", "fill"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,10 +201,7 @@ def _side(side: str, value: str, space: Sides | None) -> str:
         return f'<w:{side} w:val="nil"/>'
     width, color = rule
     gap = round(space[_SIDE_OF[side]]) if space is not None else 0
-    return (
-        f'<w:{side} w:val="single" w:sz="{round(width * 8)}" w:space="{gap}" '
-        f'w:color="{color}"/>'
-    )
+    return f'<w:{side} w:val="single" w:sz="{round(width * 8)}" w:space="{gap}" w:color="{color}"/>'
 
 
 def paragraph_pieces(props: Mapping[str, Any], space: Sides | None = None) -> Pieces:
@@ -326,8 +319,7 @@ def _heading(style: Style, level: int) -> str:
         [
             (
                 "numPr",
-                f'<w:numPr><w:ilvl w:val="{level - 1}"/>'
-                f'<w:numId w:val="{HEADING_NUMBERING}"/></w:numPr>',
+                f'<w:numPr><w:ilvl w:val="{level - 1}"/><w:numId w:val="{HEADING_NUMBERING}"/></w:numPr>',
             )
         ]
         if style.numbering != "none"
@@ -396,15 +388,11 @@ def _custom(style: Style, used: Iterable[str]) -> str:
     style Word de sa base, n'écrivant que ce qui lui est propre."""
     wanted: set[str] = set()
     for name in used:
-        wanted.update(
-            step for step in style.chain(name) if step not in WORD_IDS and step != "paragraph"
-        )
+        wanted.update(step for step in style.chain(name) if step not in WORD_IDS and step != "paragraph")
     said = ""
     for name in sorted(wanted):
         base = style.bases.get(name) or "body"
-        said += _named(
-            style, name, name, name, based=word_id(style, base), stop=base, next_style=None
-        )
+        said += _named(style, name, name, name, based=word_id(style, base), stop=base, next_style=None)
     return said
 
 
@@ -422,9 +410,7 @@ def styles_xml(style: Style, used: Iterable[str] = (), custom: Iterable[str] = (
         _RPR,
     )
     space = style.look("body").border_space
-    defaults_paragraph = ordered(
-        paragraph_pieces({p: v for p, v in text.items() if p in _DEFAULT_PARAGRAPH}, space), _PPR
-    )
+    defaults_paragraph = ordered(paragraph_pieces({p: v for p, v in text.items() if p in _DEFAULT_PARAGRAPH}, space), _PPR)
     normal = {p: v for p, v in text.items() if p not in _DEFAULT_RUN | _DEFAULT_PARAGRAPH}
     said = (
         _HEAD + f'<w:styles xmlns:w="{_W}">'
@@ -463,19 +449,13 @@ def styles_xml(style: Style, used: Iterable[str] = (), custom: Iterable[str] = (
     if HEADER in wanted:
         said += _named(style, HEADER, "header", "header")
     if LAYOUT in wanted:
-        said += (
-            f'<w:style w:type="table" w:styleId="{LAYOUT}"><w:name w:val="{LAYOUT_NAME}"/>'
-            "<w:tblPr/></w:style>"
-        )
+        said += f'<w:style w:type="table" w:styleId="{LAYOUT}"><w:name w:val="{LAYOUT_NAME}"/><w:tblPr/></w:style>'
     return said + _extra_styles(style, wanted) + _custom(style, custom) + "</w:styles>"
 
 
 def _character(style_id: str, name: str, run: str) -> str:
     """Un style de caractère : le lien, l'appel de note."""
-    return (
-        f'<w:style w:type="character" w:styleId="{style_id}"><w:name w:val="{name}"/>'
-        f"<w:qFormat/><w:rPr>{run}</w:rPr></w:style>"
-    )
+    return f'<w:style w:type="character" w:styleId="{style_id}"><w:name w:val="{name}"/><w:qFormat/><w:rPr>{run}</w:rPr></w:style>'
 
 
 def _extra_styles(style: Style, wanted: set[str]) -> str:
@@ -492,15 +472,10 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
             mechanics=[("keepLines", "<w:keepLines/>")],
         )
     if FIELDS in wanted:
-        said += (
-            f'<w:style w:type="table" w:styleId="{FIELDS}"><w:name w:val="{FIELDS_NAME}"/>'
-            "<w:tblPr/></w:style>"
-        )
+        said += f'<w:style w:type="table" w:styleId="{FIELDS}"><w:name w:val="{FIELDS_NAME}"/><w:tblPr/></w:style>'
     if FIELD_VALUE in wanted:
         said += _named(style, FIELD_VALUE, "loom field value", "fields")
-        said += _named(
-            style, FIELD_LABEL, "loom field label", "fields_label", based=FIELD_VALUE, stop="fields"
-        )
+        said += _named(style, FIELD_LABEL, "loom field label", "fields_label", based=FIELD_VALUE, stop="fields")
     if TABLE_GROUP in wanted:
         said += _named(
             style,
@@ -530,21 +505,14 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
             stop="table",
         )
     if ATTENDANCE in wanted:
-        said += _named(
-            style, ATTENDANCE, "loom attendance", "attendance", based="TableText", stop="table"
-        )
+        said += _named(style, ATTENDANCE, "loom attendance", "attendance", based="TableText", stop="table")
     if HYPERLINK in wanted:
         said += _character(HYPERLINK, "Hyperlink", run_xml(style.between("link", "body")))
     if FOOTNOTE_TEXT in wanted:
         said += _named(style, FOOTNOTE_TEXT, "footnote text", "footnote")
-        said += _character(
-            FOOTNOTE_REFERENCE, "footnote reference", '<w:vertAlign w:val="superscript"/>'
-        )
+        said += _character(FOOTNOTE_REFERENCE, "footnote reference", '<w:vertAlign w:val="superscript"/>')
     if SIGNATURE in wanted:
-        said += (
-            f'<w:style w:type="table" w:styleId="{SIGNATURE}"><w:name w:val="{SIGNATURE_NAME}"/>'
-            "<w:tblPr/></w:style>"
-        )
+        said += f'<w:style w:type="table" w:styleId="{SIGNATURE}"><w:name w:val="{SIGNATURE_NAME}"/><w:tblPr/></w:style>'
     keep: Pieces = [("keepNext", "<w:keepNext/>")]
     if SIGNER in wanted:
         said += _named(style, SIGNER, SIGNER_NAME, "signature", mechanics=keep)
@@ -557,13 +525,10 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
                 check,
                 CHECK_NAMES[check],
                 based="ListParagraph",
-                paragraph=f'<w:tabs><w:tab w:val="left" w:pos="{left}"/></w:tabs>'
-                f'<w:ind w:left="{left}" w:hanging="340"/>',
+                paragraph=f'<w:tabs><w:tab w:val="left" w:pos="{left}"/></w:tabs><w:ind w:left="{left}" w:hanging="340"/>',
             )
     if TOC_HEADING in wanted:
-        said += _named(
-            style, TOC_HEADING, "TOC Heading", "toc", next_style="Normal", mechanics=keep
-        )
+        said += _named(style, TOC_HEADING, "TOC Heading", "toc", next_style="Normal", mechanics=keep)
     step = cm_twips(style.look("toc").level_indent or 0)
     for level, toc in enumerate(TOC_LEVELS):
         if toc in wanted:
@@ -660,10 +625,7 @@ def numbering_xml(
     for number, (ordered, deep) in enumerate(lists, start=1):
         definition = int(ordered) + (_DEEP if deep else 0)
         said += f'<w:num w:numId="{number}"><w:abstractNumId w:val="{definition}"/>'
-        said += "".join(
-            f'<w:lvlOverride w:ilvl="{level}"><w:startOverride w:val="1"/></w:lvlOverride>'
-            for level in range(3 if deep else 2)
-        )
+        said += "".join(f'<w:lvlOverride w:ilvl="{level}"><w:startOverride w:val="1"/></w:lvlOverride>' for level in range(3 if deep else 2))
         said += "</w:num>"
     if headings != "none":
         said += f'<w:num w:numId="{HEADING_NUMBERING}"><w:abstractNumId w:val="2"/></w:num>'
@@ -699,10 +661,7 @@ def _logo_gap(band: Band | None) -> str:
     (LibreOffice ignore l'espacement d'un caractère sans largeur, et ``effectExtent``)."""
     if band is None or band.logo is None or not band.logo.gap:
         return ""
-    return (
-        f'<w:r><w:rPr><w:spacing w:val="{twips(band.logo.gap)}"/><w:sz w:val="2"/>'
-        '<w:szCs w:val="2"/></w:rPr><w:t xml:space="preserve">\u00a0</w:t></w:r>'
-    )
+    return f'<w:r><w:rPr><w:spacing w:val="{twips(band.logo.gap)}"/><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr><w:t xml:space="preserve">\u00a0</w:t></w:r>'
 
 
 def _with_logo(logo: str, band: Band | None, text: str) -> str:
@@ -765,19 +724,14 @@ def band_xml(
     zones = {zone: zones.get(zone, "") for zone in ("left", "center", "right")}
     paragraphs: list[str] = []
     if band is not None and (band.left is not None or band.right is not None):
-        tabs = (
-            f'<w:tabs><w:tab w:val="center" w:pos="{width // 2}"/>'
-            f'<w:tab w:val="right" w:pos="{width}"/></w:tabs><w:jc w:val="left"/>'
-        )
+        tabs = f'<w:tabs><w:tab w:val="center" w:pos="{width // 2}"/><w:tab w:val="right" w:pos="{width}"/></w:tabs><w:jc w:val="left"/>'
         paragraphs.append(
             f'<w:p><w:pPr><w:pStyle w:val="{style_id}"/>{tabs}</w:pPr>{zones["left"]}'
             f"<w:r><w:tab/></w:r>{zones['center']}<w:r><w:tab/></w:r>{zones['right']}</w:p>"
         )
     elif zones["center"]:
         # Le centre, seul : toujours centré.
-        paragraphs.append(
-            f'<w:p><w:pPr><w:pStyle w:val="{style_id}"/>{centered}</w:pPr>{zones["center"]}</w:p>'
-        )
+        paragraphs.append(f'<w:p><w:pPr><w:pStyle w:val="{style_id}"/>{centered}</w:pPr>{zones["center"]}</w:p>')
     lines: list[str] = []
     for element in band.lines if band else ():
         # Une ligne : un paragraphe au style de l'élément ; dans un en-tête, centrée si son
@@ -800,10 +754,7 @@ def band_xml(
     return _HEAD + f'<w:{kind} xmlns:w="{_W}"{space}>' + "".join(paragraphs) + f"</w:{kind}>"
 
 
-_NIL_BORDERS: Final = (
-    '<w:pBdr><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/>'
-    '<w:right w:val="nil"/></w:pBdr>'
-)
+_NIL_BORDERS: Final = '<w:pBdr><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/></w:pBdr>'
 
 
 def _table_side(side: str, value: str | None) -> str:
@@ -815,17 +766,10 @@ def _table_side(side: str, value: str | None) -> str:
 
 
 def _has_rule(look: Look) -> bool:
-    return any(
-        parse_rule(value) is not None
-        for value in (
-            look.border, look.border_top, look.border_bottom, look.border_left, look.border_right
-        )
-    )
+    return any(parse_rule(value) is not None for value in (look.border, look.border_top, look.border_bottom, look.border_left, look.border_right))
 
 
-def _cell_paragraph(
-    style_id: str, look: Look, align: str | None, content: str, spacing: tuple[float, float]
-) -> str:
+def _cell_paragraph(style_id: str, look: Look, align: str | None, content: str, spacing: tuple[float, float]) -> str:
     """Un paragraphe d'une cellule : le style de l'en-tête, du pied ou de la cellule, sans
     les filets, le fond ni le retrait du style, que porte la table ; son espace avant et
     après, ``spacing`` (``Style.cell_spacing``), s'il n'est pas celui de son style."""
@@ -891,10 +835,7 @@ def _band_table(
     rows = band_rows(band, header=kind == "hdr")
     # Un filet horizontal intérieur sous une ligne de la table, et l'écart au texte de part
     # et d'autre, comme celui du cadre.
-    ruled = [
-        inner_h and not row.line and number + 1 < len(rows) and not rows[number + 1].line
-        for number, row in enumerate(rows)
-    ]
+    ruled = [inner_h and not row.line and number + 1 < len(rows) and not rows[number + 1].line for number, row in enumerate(rows)]
     said = (
         f'<w:tbl><w:tblPr><w:tblW w:w="{total}" w:type="dxa"/>'
         + (f'<w:tblInd w:w="{indent}" w:type="dxa"/>' if indent else "")
@@ -908,16 +849,10 @@ def _band_table(
         '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
         '<w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>'
         '<w:tblLook w:val="0000" w:firstRow="0" w:lastRow="0" w:firstColumn="0" '
-        'w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr><w:tblGrid>'
-        + "".join(f'<w:gridCol w:w="{column}"/>' for column in columns)
-        + "</w:tblGrid>"
+        'w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr><w:tblGrid>' + "".join(f'<w:gridCol w:w="{column}"/>' for column in columns) + "</w:tblGrid>"
     )
     for number, row in enumerate(rows):
-        cells: list[tuple[BandElement, int, int]] = (
-            [(row.cells[0], 0, count)]
-            if row.line
-            else [(cell, index, 1) for index, cell in enumerate(row.cells)]
-        )
+        cells: list[tuple[BandElement, int, int]] = [(row.cells[0], 0, count)] if row.line else [(cell, index, 1) for index, cell in enumerate(row.cells)]
         ruled_below = ruled[number]
         ruled_above = number > 0 and ruled[number - 1]
         said += "<w:tr>"
@@ -945,10 +880,7 @@ def _band_table(
                 + (f"<w:tcBorders>{rules}</w:tcBorders>" if rules else "")
                 + (f'<w:shd w:val="clear" w:color="auto" w:fill="{shade}"/>' if shade else "")
                 + "<w:tcMar>"
-                + "".join(
-                    f'<w:{side} w:w="{value}" w:type="dxa"/>'
-                    for side, value in zip(("top", "left", "bottom", "right"), margins, strict=True)
-                )
+                + "".join(f'<w:{side} w:w="{value}" w:type="dxa"/>' for side, value in zip(("top", "left", "bottom", "right"), margins, strict=True))
                 + "</w:tcMar>"
                 + f'<w:vAlign w:val="{own.valign or look.valign or "top"}"/>'
             )
@@ -989,11 +921,7 @@ def _band_space(kind: str, style: Style, height: int, *, before: int = 0, mark: 
         pieces.append(("pBdr", _NIL_BORDERS))
     if look.fill is not None and look.fill != NONE:
         pieces.append(("shd", '<w:shd w:val="clear" w:color="auto" w:fill="auto"/>'))
-    return (
-        f"<w:p><w:pPr>{ordered(pieces, _PPR)}"
-        '<w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr>'
-        f"{mark}</w:p>"
-    )
+    return f'<w:p><w:pPr>{ordered(pieces, _PPR)}<w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr>{mark}</w:p>'
 
 
 # La hauteur du paragraphe qui clôt un en-tête ou un pied après sa table : un point.

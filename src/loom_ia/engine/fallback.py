@@ -154,9 +154,7 @@ class ModelChain:
             ),
         )
 
-    async def run(
-        self, request: ModelRequest, *, current: str | None = None
-    ) -> AsyncGenerator[ChainEvent | Answered]:
+    async def run(self, request: ModelRequest, *, current: str | None = None) -> AsyncGenerator[ChainEvent | Answered]:
         """Événements de l'appel (tentatives, bascules, disjoncteurs), puis la réponse.
 
         ``request`` est construite pour le modèle ``current`` (celui de
@@ -187,9 +185,7 @@ class ModelChain:
             if index == start and request.model_id == link.spec.model:
                 sent = sendable(
                     link.spec,
-                    request.model_copy(
-                        update={"messages": own_reasoning(request.messages, link.spec.model)}
-                    ),
+                    request.model_copy(update={"messages": own_reasoning(request.messages, link.spec.model)}),
                 )
             else:
                 sent = self.request_for(link.spec, request)

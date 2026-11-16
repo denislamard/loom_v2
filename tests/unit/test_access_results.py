@@ -222,18 +222,10 @@ async def test_skipping_the_judges_needs_the_admin_scope(demo: ConfigFactory) ->
     }
     url = "/v1/agents/demo/runs"
     async with rest(judged(demo, 0.2, security=security)) as (_, http):
-        refused = await http.post(
-            url, json={"message": QUESTION, "judges": "skip"}, headers=_bearer(runner)
-        )
-        forced = await http.post(
-            url, json={"message": QUESTION, "judges": "force"}, headers=_bearer(runner)
-        )
-        skipped = await http.post(
-            url, json={"message": QUESTION, "judges": "skip"}, headers=_bearer(admin)
-        )
-        form = await http.post(
-            url, data={"message": QUESTION, "judges": "skip"}, headers=_bearer(admin)
-        )
+        refused = await http.post(url, json={"message": QUESTION, "judges": "skip"}, headers=_bearer(runner))
+        forced = await http.post(url, json={"message": QUESTION, "judges": "force"}, headers=_bearer(runner))
+        skipped = await http.post(url, json={"message": QUESTION, "judges": "skip"}, headers=_bearer(admin))
+        form = await http.post(url, data={"message": QUESTION, "judges": "skip"}, headers=_bearer(admin))
 
     assert refused.status_code == 403 and "retire 'admin'" in refused.json()["detail"]
     assert forced.status_code == 201 and forced.json()["status"] == "failed"
@@ -244,12 +236,8 @@ async def test_skipping_the_judges_needs_the_admin_scope(demo: ConfigFactory) ->
 
 async def test_an_open_instance_may_skip_the_judges(demo: ConfigFactory) -> None:
     async with rest(judged(demo, 0.2)) as (_, http):
-        skipped = await http.post(
-            "/v1/agents/demo/runs", json={"message": QUESTION, "judges": "skip"}
-        )
-        wrong = await http.post(
-            "/v1/agents/demo/runs", json={"message": QUESTION, "judges": "jamais"}
-        )
+        skipped = await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "judges": "skip"})
+        wrong = await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "judges": "jamais"})
 
     assert skipped.status_code == 201 and skipped.json()["text"] == ANSWER
     assert wrong.status_code == 422
@@ -284,10 +272,7 @@ async def test_the_session_report_route(demo: ConfigFactory) -> None:
     # Même journal, servi avec une clé limitée à un autre agent.
     async with rest(judged(demo, security=security)) as (_, http):
         hidden = await http.get("/v1/sessions/atelier/report", headers=_bearer(lecteur))
-    assert (
-        hidden.status_code == 403
-        and "sur l'agent demo : la clé lecteur est bornée à x" in hidden.json()["detail"]
-    )
+    assert hidden.status_code == 403 and "sur l'agent demo : la clé lecteur est bornée à x" in hidden.json()["detail"]
 
 
 # --- MCP ----------------------------------------------------------------------------
@@ -334,15 +319,10 @@ async def test_mcp_says_when_an_answer_is_unverified(demo: ConfigFactory) -> Non
     assert answer == ANSWER and note.startswith("Réponse non vérifiée")
 
 
-def test_the_cli_says_a_fallback_answer(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_says_a_fallback_answer(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = judged(demo, 0.2, on_failure="fallback", fallback_message="Réponse indisponible.")
     assert main(["--config", str(path), "run", "demo", QUESTION]) == 0
-    assert (
-        "Repli      : oui (réponse remplacée par le message de repli de son contrat ou de son juge)"
-        in capsys.readouterr().err
-    )
+    assert "Repli      : oui (réponse remplacée par le message de repli de son contrat ou de son juge)" in capsys.readouterr().err
 
 
 async def test_a_fallback_answer_is_said_by_every_access(demo: ConfigFactory) -> None:
@@ -382,10 +362,7 @@ async def test_the_mcp_report_tool(demo: ConfigFactory) -> None:
         by_run = await client.call_tool(REPORT_TOOL, {"run_id": run_id, "session_id": "atelier"})
         by_session = await client.call_tool(REPORT_TOOL, {"session_id": "atelier"})
         expected = await loom.report(session_id=SessionId("atelier"))
-        refusals = [
-            await client.call_tool(REPORT_TOOL, arguments)
-            for arguments in ({"run_id": "absent"}, {"session_id": "absente"}, {})
-        ]
+        refusals = [await client.call_tool(REPORT_TOOL, arguments) for arguments in ({"run_id": "absent"}, {"session_id": "absente"}, {})]
 
     assert listed[REPORT_TOOL].outputSchema == REPORT_OUTPUT
     assert not by_run.isError and by_run.structuredContent is not None
@@ -401,16 +378,11 @@ async def test_the_mcp_report_tool(demo: ConfigFactory) -> None:
 # --- CLI ----------------------------------------------------------------------------
 
 
-def test_the_cli_shows_verdicts_and_the_error_type(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_shows_verdicts_and_the_error_type(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = judged(demo, 0.2)
     assert main(["--config", str(path), "run", "demo", QUESTION]) == 1
     err = capsys.readouterr().err
-    assert (
-        "Juge       : output (réponse finale), tentative 1 — refusée : exact 0,20 (seuil 0,80)"
-        in err
-    )
+    assert "Juge       : output (réponse finale), tentative 1 — refusée : exact 0,20 (seuil 0,80)" in err
     assert f"Erreur     : {REFUSED}" in err and "(guard.judge)" in err
 
     path = judged(demo, 0.2, on_failure="unverified")
@@ -438,17 +410,10 @@ async def test_a_result_names_the_judges_that_did_not_judge(demo: ConfigFactory)
     assert forced.skipped_judges == () and len(forced.verdicts) == 1
 
 
-def test_the_cli_marks_a_failed_criterion_that_does_not_block(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_marks_a_failed_criterion_that_does_not_block(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     criteria = [{"name": "exact", "rule": "Le calcul est juste.", "blocking": False}]
-    assert (
-        main(["--config", str(judged(demo, 0.2, criteria=criteria)), "run", "demo", QUESTION]) == 0
-    )
-    assert (
-        "Juge       : output (réponse finale), tentative 1 — acceptée : "
-        "exact 0,20 (seuil 0,80, non bloquant)"
-    ) in capsys.readouterr().err
+    assert main(["--config", str(judged(demo, 0.2, criteria=criteria)), "run", "demo", QUESTION]) == 0
+    assert ("Juge       : output (réponse finale), tentative 1 — acceptée : exact 0,20 (seuil 0,80, non bloquant)") in capsys.readouterr().err
 
 
 async def test_verdicts_name_the_judged_call(demo: ConfigFactory) -> None:
@@ -466,19 +431,13 @@ async def test_verdicts_name_the_judged_call(demo: ConfigFactory) -> None:
     assert first == repaired != second == again
 
 
-def test_the_cli_numbers_the_judged_calls(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_numbers_the_judged_calls(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(role_judged(demo)), "run", "demo", QUESTION]) == 0
-    judged_lines = [
-        line for line in capsys.readouterr().err.splitlines() if line.startswith("Juge")
-    ]
+    judged_lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("Juge")]
     assert judged_lines == [
-        "Juge       : verifier (rôle verifier, appel 1), tentative 1 — refusée : "
-        "exact 0,20 (seuil 0,80)",
+        "Juge       : verifier (rôle verifier, appel 1), tentative 1 — refusée : exact 0,20 (seuil 0,80)",
         "Juge       : verifier (rôle verifier, appel 1), tentative 2 — acceptée : exact 1,00",
-        "Juge       : verifier (rôle verifier, appel 2), tentative 1 — refusée : "
-        "exact 0,20 (seuil 0,80)",
+        "Juge       : verifier (rôle verifier, appel 2), tentative 1 — refusée : exact 0,20 (seuil 0,80)",
         "Juge       : verifier (rôle verifier, appel 2), tentative 2 — acceptée : exact 1,00",
     ]
 

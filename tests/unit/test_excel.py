@@ -267,9 +267,7 @@ async def test_writes_a_formatted_workbook(tool: ExcelTool, disk: Path) -> None:
     assert value.comment is not None and "Source" in value.comment.text
     # Le libellé d'une ligne d'hypothèse reste noir.
     label = hypotheses["A2"]
-    assert label.font is not None and (
-        label.font.color is None or label.font.color.rgb != "000000FF"
-    )
+    assert label.font is not None and (label.font.color is None or label.font.color.rgb != "000000FF")
     assert hypotheses["A4"].value == "Bleu sur fond jaune : hypothèse (sa source en commentaire)."
     width = suivi.column_dimensions["A"].width
     assert width is not None and 8 <= width <= 60
@@ -370,9 +368,7 @@ async def test_replacing_needs_overwrite(tool: ExcelTool, disk: Path) -> None:
     assert (done["written"], done["replaced"]) == (True, True)
     assert load_workbook(disk / "sortie/a.xlsx").sheetnames == ["Hypothèses"]
     await call(tool, path="valide/a.xlsx", sheets=[SUIVI])
-    await refused(
-        tool, "Droit overwrite refusé", path="valide/a.xlsx", sheets=[SUIVI], overwrite=True
-    )
+    await refused(tool, "Droit overwrite refusé", path="valide/a.xlsx", sheets=[SUIVI], overwrite=True)
 
 
 async def test_paths_follow_local_files(tool: ExcelTool) -> None:
@@ -406,9 +402,7 @@ def test_assess_asks_only_where_the_folder_asks(tool: ExcelTool, disk: Path) -> 
     )
     asked = tool.assess_call({"path": "valide/a.xlsx", "sheets": [SUIVI]})
     assert asked.approval == "always"
-    assert asked.reason == (
-        "écrire le classeur valide/a.xlsx — la config exige une approbation pour écrire dans valide"
-    )
+    assert asked.reason == ("écrire le classeur valide/a.xlsx — la config exige une approbation pour écrire dans valide")
     guarded = make(
         disk,
         {"name": "donnees", "path": "donnees", "rights": ["read"], "approval": {"read": "always"}},
@@ -419,8 +413,7 @@ def test_assess_asks_only_where_the_folder_asks(tool: ExcelTool, disk: Path) -> 
     read = guarded.assess_call(arguments)
     assert (read.approval, read.reason) == (
         "always",
-        "écrire le classeur sortie/a.xlsx, en lisant donnees/devis.csv — la config exige une "
-        "approbation pour lire dans donnees",
+        "écrire le classeur sortie/a.xlsx, en lisant donnees/devis.csv — la config exige une approbation pour lire dans donnees",
     )
     wrong = tool.assess_call({"path": "/etc/a.xlsx", "sheets": [SUIVI]})
     assert (wrong.approval, wrong.side_effects) == ("never", "none")
@@ -431,9 +424,7 @@ def test_assess_asks_only_where_the_folder_asks(tool: ExcelTool, disk: Path) -> 
 
 async def test_reads_a_french_csv(tool: ExcelTool, disk: Path) -> None:
     (disk / "donnees" / "devis.csv").write_text(
-        "Client;Date devis;Montant HT;Relances;Commentaire\n"
-        "Dupont;02/10/2026;1 250,50;2;rappeler\n"
-        "Martin;2026-10-09;830;0;\n",
+        "Client;Date devis;Montant HT;Relances;Commentaire\nDupont;02/10/2026;1 250,50;2;rappeler\nMartin;2026-10-09;830;0;\n",
         encoding="utf-8-sig",
     )
     sheet = {**SUIVI, "rows": None, "data": {"path": "donnees/devis.csv"}}
@@ -495,9 +486,7 @@ def test_an_empty_source_gives_no_rows() -> None:
 
 async def test_inline_rows_are_bounded(tool: ExcelTool) -> None:
     many = {**SUIVI, "rows": [{"cells": ["x"]}] * 201}
-    await refused(
-        tool, "au-delà de 200 — les écrire dans un fichier", path="sortie/a.xlsx", sheets=[many]
-    )
+    await refused(tool, "au-delà de 200 — les écrire dans un fichier", path="sortie/a.xlsx", sheets=[many])
     both = {**SUIVI, "data": {"path": "donnees/a.csv"}}
     await refused(tool, "'rows' ou 'data', pas les deux", path="sortie/a.xlsx", sheets=[both])
 
@@ -557,9 +546,7 @@ async def test_the_timezone_is_a_parameter(disk: Path) -> None:
 
 async def test_a_percent_given_as_a_whole_number_warns(tool: ExcelTool) -> None:
     done = await call(tool, path="sortie/p.xlsx", sheets=[_one("percent", 15)])
-    assert done["warnings"] == [
-        "F!A2 : 15 affiché 1500% — un pourcentage se donne en fraction (0.15 pour 15 %)"
-    ]
+    assert done["warnings"] == ["F!A2 : 15 affiché 1500% — un pourcentage se donne en fraction (0.15 pour 15 %)"]
 
 
 @pytest.mark.parametrize(
@@ -572,9 +559,7 @@ async def test_a_percent_given_as_a_whole_number_warns(tool: ExcelTool) -> None:
         ("boolean", "peut-être", "n'est pas une valeur boolean"),
     ],
 )
-async def test_a_value_that_does_not_fit_its_type(
-    tool: ExcelTool, column_type: str, value: JsonValue, said: str
-) -> None:
+async def test_a_value_that_does_not_fit_its_type(tool: ExcelTool, column_type: str, value: JsonValue, said: str) -> None:
     await refused(tool, said, path="sortie/v.xlsx", sheets=[_one(column_type, value)])
 
 
@@ -660,10 +645,7 @@ def test_formula_accepted_prefixed_and_warned() -> None:
     assert (written, errors) == ('=_xlfn.TEXTJOIN(", ",TRUE,A1:A3)&" ; textjoin("', [])
     assert _formula("=ROUND(A1,2)")[2] == []
     _, _, warnings = _formula("=B5*1.05")
-    assert warnings == [
-        "Suivi!C5 : constante 1.05 dans '=B5*1.05' — une hypothèse se met dans sa propre "
-        "cellule, citée par la formule"
-    ]
+    assert warnings == ["Suivi!C5 : constante 1.05 dans '=B5*1.05' — une hypothèse se met dans sa propre cellule, citée par la formule"]
 
 
 async def test_formulas_are_checked_in_the_workbook(tool: ExcelTool, disk: Path) -> None:
@@ -675,9 +657,7 @@ async def test_formulas_are_checked_in_the_workbook(tool: ExcelTool, disk: Path)
         ],
         "rows": [{"cells": [0.1, "=A2*'Suivi'!C2"]}, {"cells": [None, "=SOMME(B2)"]}],
     }
-    await refused(
-        tool, "Calcul!B3 : fonction française SOMME", path="sortie/f.xlsx", sheets=[SUIVI, sheet]
-    )
+    await refused(tool, "Calcul!B3 : fonction française SOMME", path="sortie/f.xlsx", sheets=[SUIVI, sheet])
     sheet["rows"] = [{"cells": [0.1, "=A2*Suivi!C2"]}]
     done = await call(tool, path="sortie/f.xlsx", sheets=[SUIVI, sheet])
     linked = cell(disk / "sortie/f.xlsx", "Calcul", "B2")
@@ -747,9 +727,7 @@ def excel_agent(**reference: Any) -> dict[str, Any]:
 def test_delete_in_approval_is_refused_when_the_config_loads(demo: ConfigFactory) -> None:
     """Par la référence de l'agent aussi, avant les règles communes des dossiers."""
     folders = [{"name": "s", "path": "/tmp", "rights": ["write"], "approval": {"delete": "never"}}]
-    with pytest.raises(
-        ConfigError, match=r"dossier s : le droit 'delete' ne sert pas à loom\.excel"
-    ):
+    with pytest.raises(ConfigError, match=r"dossier s : le droit 'delete' ne sert pas à loom\.excel"):
         load_config(demo(agents=[excel_agent(folders=folders)]))
 
 
@@ -762,9 +740,7 @@ def test_mounted_from_the_config(demo: ConfigFactory, tmp_path: Path) -> None:
     assert (spec.name, spec.timeout, spec.approval) == ("excel", 30, "never")
 
 
-def test_a_missing_extra_is_said_at_mount(
-    demo: ConfigFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_missing_extra_is_said_at_mount(demo: ConfigFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "sortie").mkdir()
     # Le paquet et ses modules, déjà importés par ce fichier : à réimporter, sans openpyxl.
     package = "loom_ia.tools_builtin.excel"
@@ -793,9 +769,7 @@ async def test_a_run_writes_the_workbook(demo: ConfigFactory, tmp_path: Path) ->
     script: list[dict[str, Any]] = [
         {
             "text": "J'écris le classeur.",
-            "tool_calls": [
-                {"name": "excel", "arguments": {"path": "sortie/r.xlsx", "sheets": [SUIVI]}}
-            ],
+            "tool_calls": [{"name": "excel", "arguments": {"path": "sortie/r.xlsx", "sheets": [SUIVI]}}],
         },
         {"text": "Classeur écrit."},
     ]
@@ -820,13 +794,9 @@ async def test_a_run_writes_the_workbook(demo: ConfigFactory, tmp_path: Path) ->
     assert (tmp_path / "sortie" / "r.xlsx").is_file()
 
 
-def test_validate_shows_the_folders_and_the_recalc(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_folders_and_the_recalc(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "sortie").mkdir()
-    folders = [
-        {"name": "sortie", "path": "sortie", "rights": ["write"], "approval": {"write": "always"}}
-    ]
+    folders = [{"name": "sortie", "path": "sortie", "rights": ["write"], "approval": {"write": "always"}}]
     path = demo(agents=[excel_agent(folders=folders)], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out

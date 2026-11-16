@@ -142,9 +142,7 @@ class Fichiers:
 
 
 def lire(call_id: str, nom: str = "note.txt", delai: float = 0.0) -> PendingCall:
-    return PendingCall(
-        call_id=call_id, name="fichiers", arguments={"action": "read", "nom": nom, "delai": delai}
-    )
+    return PendingCall(call_id=call_id, name="fichiers", arguments={"action": "read", "nom": nom, "delai": delai})
 
 
 def ecrire(call_id: str, texte: str, nom: str = "note.txt", delai: float = 0.05) -> PendingCall:
@@ -159,9 +157,7 @@ def awaiting(*calls: PendingCall) -> RunState:
     journal = RunJournal(agent="demo", tenant_id=TenantId("default"))
     journal.start("?", context=CallerContext(tenant_id=TenantId("default"), user_id="u1"))
     events = [draft.to_event(seq) for seq, draft in enumerate(journal.take(), start=1)]
-    return fold(events, journal.run_id).model_copy(
-        update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls}
-    )
+    return fold(events, journal.run_id).model_copy(update={"status": RunStatus.AWAITING_TOOLS, "pending_calls": calls})
 
 
 async def collect(executor: ToolExecutor, state: RunState) -> list[ToolEvent]:
@@ -176,11 +172,7 @@ def trace(events: list[ToolEvent]) -> list[str]:
         ToolCompleted: "completed",
         ApprovalRequested: "approval",
     }
-    return [
-        f"{names[type(e)]} {e.call_id}"
-        for e in events
-        if isinstance(e, ToolCalled | ToolCompleted | ApprovalRequested)
-    ]
+    return [f"{names[type(e)]} {e.call_id}" for e in events if isinstance(e, ToolCalled | ToolCompleted | ApprovalRequested)]
 
 
 def results(events: list[ToolEvent]) -> dict[str, str]:
@@ -216,9 +208,7 @@ async def test_reads_still_run_together() -> None:
     disque = Disque(files={"a": "A", "b": "B", "c": "C"})
     executor = ToolExecutor([Fichiers(disque)])
 
-    events = await collect(
-        executor, awaiting(lire("r1", "a", 0.05), lire("r2", "b", 0.05), lire("r3", "c", 0.05))
-    )
+    events = await collect(executor, awaiting(lire("r1", "a", 0.05), lire("r2", "b", 0.05), lire("r3", "c", 0.05)))
 
     assert [step for step, _ in disque.log] == ["début"] * 3 + ["fin"] * 3
     assert trace(events)[:3] == ["called r1", "called r2", "called r3"]
@@ -259,9 +249,7 @@ async def test_two_writes_keep_the_order_the_model_wrote() -> None:
     disque = Disque()
     executor = ToolExecutor([Fichiers(disque)])
 
-    await collect(
-        executor, awaiting(ecrire("w1", "lente", delai=0.05), ecrire("w2", "rapide", delai=0.0))
-    )
+    await collect(executor, awaiting(ecrire("w1", "lente", delai=0.05), ecrire("w2", "rapide", delai=0.0)))
 
     assert disque.files["note.txt"] == "rapide"
     assert disque.log == [("début", "w1"), ("fin", "w1"), ("début", "w2"), ("fin", "w2")]
@@ -333,9 +321,7 @@ async def test_closing_the_batch_launches_nothing_more() -> None:
     executor = ToolExecutor([Fichiers(disque)])
     seen: list[ToolEvent] = []
 
-    async with aclosing(
-        executor.run_batch(awaiting(ecrire("w", "v2", delai=10.0), lire("r")))
-    ) as batch:
+    async with aclosing(executor.run_batch(awaiting(ecrire("w", "v2", delai=10.0), lire("r")))) as batch:
         async for event in batch:
             seen.append(event)
             if isinstance(event, ToolCalled):
@@ -354,9 +340,7 @@ async def test_a_write_waiting_for_an_approval_holds_back_the_calls_after_it() -
     disque = Disque(files={"note.txt": "v1"})
     executor = ToolExecutor([Fichiers(disque, approval="always")])
 
-    events = await collect(
-        executor, awaiting(lire("r1"), ecrire("w", "v2"), lire("r2"), ecrire("w2", "v3"))
-    )
+    events = await collect(executor, awaiting(lire("r1"), ecrire("w", "v2"), lire("r2"), ecrire("w2", "v3")))
 
     # La lecture d'avant passe ; l'écriture attend un humain ; ce qui suit attend avec elle,
     # et la seconde écriture, à approuver elle aussi, est demandée dans la même pause.
@@ -369,9 +353,7 @@ async def test_two_writes_to_approve_are_asked_together_and_run_in_order() -> No
     disque = Disque(files={"note.txt": "v1"})
     executor = ToolExecutor([Fichiers(disque, approval="always")])
 
-    events = await collect(
-        executor, awaiting(ecrire("w1", "v2", delai=0.05), lire("r"), ecrire("w2", "v3"))
-    )
+    events = await collect(executor, awaiting(ecrire("w1", "v2", delai=0.05), lire("r"), ecrire("w2", "v3")))
 
     # La lecture entre les deux attend sans rien écrire ; aucune politique n'a tourné pour elle.
     assert trace(events) == ["approval w1", "approval w2"]
@@ -424,13 +406,9 @@ def journaled(*payloads: DurablePayload) -> RunState:
 
 def called(call_id: str) -> ToolCalled:
     arguments: dict[str, JsonValue] = (
-        {"action": "write", "nom": "note.txt", "texte": "v2", "delai": 0.0}
-        if call_id == "w"
-        else {"action": "read", "nom": "note.txt", "delai": 0.0}
+        {"action": "write", "nom": "note.txt", "texte": "v2", "delai": 0.0} if call_id == "w" else {"action": "read", "nom": "note.txt", "delai": 0.0}
     )
-    return ToolCalled(
-        call_id=call_id, tool_name="fichiers", tool_kind="python", arguments=arguments
-    )
+    return ToolCalled(call_id=call_id, tool_name="fichiers", tool_kind="python", arguments=arguments)
 
 
 async def test_a_stop_between_two_ordered_calls_resumes_the_second_as_new() -> None:
@@ -501,9 +479,7 @@ class Enfant(DelegatedTool):
     def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
     ) -> AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput | Waiting]:
-        async def go() -> AsyncGenerator[
-            DelegatedPayload | Consumption | Exchange | ToolOutput | Waiting
-        ]:
+        async def go() -> AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput | Waiting]:
             self.ran += 1
             yield Waiting(call_id=context.call_id, run_id=RunId("enfant-1"))
 
@@ -548,9 +524,7 @@ class Delegue(DelegatedTool):
     def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
     ) -> AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput | Waiting]:
-        async def go() -> AsyncGenerator[
-            DelegatedPayload | Consumption | Exchange | ToolOutput | Waiting
-        ]:
+        async def go() -> AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput | Waiting]:
             self.log.append(("début", context.call_id))
             await asyncio.sleep(0.03)
             self.log.append(("fin", context.call_id))
@@ -828,9 +802,7 @@ def test_the_live_display_follows_the_new_journal_order(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("approval", [None, "always"])
-def test_a_journal_written_without_ordering_replays_identically(
-    tmp_path: Path, approval: str | None
-) -> None:
+def test_a_journal_written_without_ordering_replays_identically(tmp_path: Path, approval: str | None) -> None:
     """Un journal d'avant (lecture passée avant l'écriture) se rejoue à l'identique avec l'ordre :
     les résultats viennent du journal, et la requête au modèle les range dans l'ordre des appels."""
 
@@ -866,13 +838,7 @@ def refuse_l_ecriture(subject: AfterTool) -> Decision:
 
 
 def failing() -> Policies:
-    return Policies(
-        [
-            BoundPolicy(
-                policy=refuse_l_ecriture, name="refuse_l_ecriture", points=refuse_l_ecriture.points
-            )
-        ]
-    )
+    return Policies([BoundPolicy(policy=refuse_l_ecriture, name="refuse_l_ecriture", points=refuse_l_ecriture.points)])
 
 
 async def test_a_failing_after_tool_policy_stops_the_chain() -> None:
@@ -881,12 +847,7 @@ async def test_a_failing_after_tool_policy_stops_the_chain() -> None:
     executor = ToolExecutor([Fichiers(disque)])
 
     async with asyncio.timeout(5):
-        events = [
-            e
-            async for e in executor.run_batch(
-                awaiting(lire("r"), ecrire("w1", "v2"), ecrire("w2", "v3")), policies=failing()
-            )
-        ]
+        events = [e async for e in executor.run_batch(awaiting(lire("r"), ecrire("w1", "v2"), ecrire("w2", "v3")), policies=failing())]
 
     assert trace(events) == ["called r", "completed r", "called w1", "completed w1"]
     assert disque.files["note.txt"] == "v2"
@@ -920,9 +881,7 @@ async def test_without_ordering_a_failing_policy_lets_the_whole_batch_run() -> N
         ("free", "effects", "effects"),
     ],
 )
-def test_the_agent_setting_overrides_the_root_one(
-    tmp_path: Path, root: str, agent: str | None, expected: str
-) -> None:
+def test_the_agent_setting_overrides_the_root_one(tmp_path: Path, root: str, agent: str | None, expected: str) -> None:
     path = atelier(tmp_path, order=root, approval=None)
     if agent is not None:
         fichier = tmp_path / "agents" / "demo.yaml"
@@ -968,11 +927,7 @@ def test_a_sub_agent_reference_declares_its_effects(tmp_path: Path) -> None:
     async def go() -> dict[str, str]:
         async with Loom.from_config(path) as loom:
             tools = loom.context("demo", TenantId("default")).tools
-            return {
-                name: found.spec.side_effects
-                for name in ("compta", "secretaire")
-                if (found := tools.get(name)) is not None
-            }
+            return {name: found.spec.side_effects for name in ("compta", "secretaire") if (found := tools.get(name)) is not None}
 
     assert asyncio.run(go()) == {"compta": "none", "secretaire": "irreversible"}
 
@@ -1009,9 +964,7 @@ async def test_two_sub_agents_declared_without_effect_run_together() -> None:
         ('side_effects="reversible"', False),
     ],
 )
-def test_validate_warns_about_a_python_tool_without_declared_effects(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], declared: str, warned: bool
-) -> None:
+def test_validate_warns_about_a_python_tool_without_declared_effects(tmp_path: Path, capsys: pytest.CaptureFixture[str], declared: str, warned: bool) -> None:
     path = atelier(tmp_path, order="effects", approval=None)
     source = (tmp_path / "outils_ordre.py").read_text(encoding="utf-8")
     (tmp_path / "outils_ordre.py").write_text(
@@ -1026,9 +979,7 @@ def test_validate_warns_about_a_python_tool_without_declared_effects(
     assert "outil ecrire : side_effects" not in out
 
 
-def test_validate_takes_the_declaration_of_the_reference(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_takes_the_declaration_of_the_reference(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier(tmp_path, order="free", approval=None)
     fichier = tmp_path / "agents" / "demo.yaml"
     spec = yaml.safe_load(fichier.read_text(encoding="utf-8"))
@@ -1043,9 +994,7 @@ def test_validate_takes_the_declaration_of_the_reference(
     assert "appels d'un tour tous ensemble (order: free)" in out
 
 
-def test_validate_says_nothing_about_the_provided_tools(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_nothing_about_the_provided_tools(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """B-5 : ``loom.current_datetime`` et ``loom.fetch_page`` déclarent leurs effets."""
     path = atelier(tmp_path, order="effects", approval=None)
     fichier = tmp_path / "agents" / "demo.yaml"

@@ -48,9 +48,7 @@ from loom_ia.tools_builtin import Place, Settings
 JOURNAL: dict[str, Any] = {"events": {"backend": "jsonl", "path": "journaux"}}
 
 
-def test_validate_shows_what_the_config_declares(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_what_the_config_declares(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "validate"]) == 0
     out = capsys.readouterr().out
     assert "✓ 1 agent monté" in out.splitlines()[0]
@@ -60,9 +58,7 @@ def test_validate_shows_what_the_config_declares(
     assert f"  Clés d'API   aucune : API REST locale, au nom de {DEV}\n" in out
 
 
-def test_validate_puts_the_verdict_first_and_the_warnings_last(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_puts_the_verdict_first_and_the_warnings_last(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Le verdict en tête, des sections nommées, les points à risque regroupés à la fin."""
     path = demo()
     assert main(["--config", str(path), "validate"]) == 0
@@ -83,8 +79,7 @@ def test_validate_puts_the_verdict_first_and_the_warnings_last(
         "  ⚠ Bus memory   les nouvelles ne sortent pas de ce process",
         "  ⚠ Chiffrement  aucun : contenus en clair au repos",
         "  ⚠ Rétention    aucune : rien ne s'efface",
-        "  ⚠ Agent demo   outil calculer : side_effects non déclaré, compté comme sans effet "
-        "(none s'il ne fait que lire)",
+        "  ⚠ Agent demo   outil calculer : side_effects non déclaré, compté comme sans effet (none s'il ne fait que lire)",
     ]
 
 
@@ -112,9 +107,7 @@ def test_the_verdict_says_zero_agent_in_the_singular(tmp_path: Path) -> None:
     assert "✓ 2 agents montés" in _render(report).splitlines()[0]
 
 
-def test_validate_mounts_the_internal_compaction_agent(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_mounts_the_internal_compaction_agent(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     models = [MODEL, {**MODEL, "id": "RESUME", "model": "fake-resume"}]
     path = demo(models=models, sessions={"compaction": {"model": "RESUME"}})
     assert main(["--config", str(path), "validate"]) == 0
@@ -124,9 +117,7 @@ def test_validate_mounts_the_internal_compaction_agent(
     assert "✓ 1 agent monté" in out
 
 
-def test_validate_refuses_a_compaction_model_without_its_key(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_validate_refuses_a_compaction_model_without_its_key(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("anthropic")
     monkeypatch.delenv("CLE_DU_RESUME", raising=False)
     resume = {
@@ -142,18 +133,14 @@ def test_validate_refuses_a_compaction_model_without_its_key(
     assert "CLE_DU_RESUME" in capsys.readouterr().err
 
 
-def test_validate_tells_what_is_wrong_with_the_declared_state(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_tells_what_is_wrong_with_the_declared_state(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Au chargement (schéma de la clé) comme au montage (source ``from``)."""
     loaded: dict[str, Any] = {"k": {"schema": {"type": "chaine"}}}
     assert main(["--config", str(demo(agents=[demo_agent(state=loaded)])), "validate"]) == 2
     assert "state.k — schema invalide" in capsys.readouterr().err
 
     # « calculer » rend du texte : rien à lire au chemin « /resultat ».
-    mounted: dict[str, Any] = {
-        "k": {"schema": {}, "from": [{"tool": "calculer", "path": "/resultat"}]}
-    }
+    mounted: dict[str, Any] = {"k": {"schema": {}, "from": [{"tool": "calculer", "path": "/resultat"}]}}
     assert main(["--config", str(demo(agents=[demo_agent(state=mounted)])), "validate"]) == 2
     assert "state 'k' : l'outil 'calculer' ne rend pas de données" in capsys.readouterr().err
 
@@ -170,9 +157,7 @@ def test_validate_without_keys_mounts_the_agents_a_missing_key_would_refuse(
     demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv(ABSENTE, raising=False)
-    path = demo(
-        models=[REEL], agents=[demo_agent(main={"model": "REEL", "system_file": "demo.md"})]
-    )
+    path = demo(models=[REEL], agents=[demo_agent(main={"model": "REEL", "system_file": "demo.md"})])
 
     assert main(["--config", str(path), "validate"]) == 2
     assert ABSENTE in capsys.readouterr().err
@@ -193,9 +178,7 @@ def test_run_prints_the_answer(demo: ConfigFactory, capsys: pytest.CaptureFixtur
 
 
 @pytest.mark.parametrize("flag", ["-q", "--quiet"])
-def test_run_quiet_prints_only_the_answer(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], flag: str
-) -> None:
+def test_run_quiet_prints_only_the_answer(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], flag: str) -> None:
     assert main(["--config", str(demo()), "run", "demo", QUESTION, flag]) == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == ANSWER
@@ -217,18 +200,14 @@ def _answering(demo: ConfigFactory, text: str, **agent: Any) -> Path:
     return demo(models=[model], agents=[demo_agent(**agent)])
 
 
-def test_run_onlydata_prints_the_data_alone(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_onlydata_prints_the_data_alone(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = _answering(demo, 'Voici : ```json\n{"total": 87}\n```', output={"schema": TOTAL_SCHEMA})
     assert main(["--config", str(path), "run", "demo", QUESTION, "--json", "--onlydata"]) == 0
     out = capsys.readouterr().out
     assert out == '{\n  "total": 87\n}\n'
 
 
-def test_run_onlydata_without_data_leaves_stdout_empty(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_onlydata_without_data_leaves_stdout_empty(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Sans contrat, pas de ``data`` : rien à analyser, et le script le sait par le code."""
     path = _answering(demo, ANSWER)
     assert main(["--config", str(path), "run", "demo", QUESTION, "--json", "--onlydata"]) == 1
@@ -242,17 +221,13 @@ def test_run_onlydata_needs_json(demo: ConfigFactory, capsys: pytest.CaptureFixt
     assert "--onlydata ne s'emploie qu'avec --json" in capsys.readouterr().err
 
 
-def test_run_in_json_gives_the_whole_result(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_in_json_gives_the_whole_result(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "run", "demo", QUESTION, "--json"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert (result["status"], result["text"], result["iterations"]) == ("completed", ANSWER, 2)
 
 
-def test_run_in_stream_shows_the_answer_as_it_comes(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_in_stream_shows_the_answer_as_it_comes(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "run", "demo", QUESTION, "--stream"]) == 0
     captured = capsys.readouterr()
     assert captured.out.startswith("Je calcule.")
@@ -298,9 +273,7 @@ STATE: dict[str, Any] = {
 }
 
 
-def test_run_poses_the_state_and_state_reads_it(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_poses_the_state_and_state_reads_it(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """``--state`` lit sa valeur en JSON, sinon en texte ; ``loom state`` montre la session."""
     path = str(demo(storage=JOURNAL, agents=[demo_agent(state=STATE)]))
     asked = ["--state", "client_id=CL 42", "--state", "rang=3", "--session", "atelier"]
@@ -314,9 +287,7 @@ def test_run_poses_the_state_and_state_reads_it(
     # ``null`` efface : la clé obligatoire manque, le run est refusé avant tout écrit.
     erase = ["--state", "client_id=null", "--session", "atelier"]
     assert main(["--config", path, "run", "demo", QUESTION, *erase]) == 2
-    assert capsys.readouterr().err == (
-        "Demande refusée : State refusé : client_id : clé obligatoire sans valeur\n"
-    )
+    assert capsys.readouterr().err == ("Demande refusée : State refusé : client_id : clé obligatoire sans valeur\n")
     assert main(["--config", path, "state", "inconnue"]) == 1
     assert capsys.readouterr().err == "Session inconnue inconnue\n"
 
@@ -340,9 +311,7 @@ def test_a_state_value_is_json_or_else_text(given: str, value: object) -> None:
     assert _state_item(given) == ("note", value)
 
 
-def test_state_of_an_unreadable_session_is_one_line(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_state_of_an_unreadable_session_is_one_line(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage=JOURNAL)
     journal = RunJournal(agent="demo", session_id=SessionId("casse"))
     journal.start(QUESTION).model_turn(Message.assistant(ANSWER)).complete()
@@ -363,9 +332,7 @@ def test_state_of_an_unreadable_session_is_one_line(
         (["--state", "a=1", "--state", "a=2"], "--state : clé donnée deux fois : a"),
     ],
 )
-def test_a_malformed_state_is_refused(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], given: list[str], said: str
-) -> None:
+def test_a_malformed_state_is_refused(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], given: list[str], said: str) -> None:
     path = str(demo(agents=[demo_agent(state=STATE)]))
     with pytest.raises(SystemExit) as exited:
         code = main(["--config", path, "run", "demo", QUESTION, *given])
@@ -375,9 +342,7 @@ def test_a_malformed_state_is_refused(
 
 
 @pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
-def test_sessions_list_shows_a_session_id_without_obeying_it(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_sessions_list_shows_a_session_id_without_obeying_it(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Un journal SQLite accepte tout identifiant de session : la liste ne le laisse pas agir."""
     path = demo(storage={"events": {"backend": "sqlite", "path": "loom.db"}})
     assert main(["--config", str(path), "run", "demo", QUESTION, "--session", HOSTILE]) == 0
@@ -387,23 +352,19 @@ def test_sessions_list_shows_a_session_id_without_obeying_it(
     assert out.startswith(HOSTILE_SHOWN) and not {"\x1b", "\x07", "\x9b"} & set(out)
 
 
-def test_resume_finishes_an_interrupted_run(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_resume_finishes_an_interrupted_run(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage=JOURNAL)
     journal = RunJournal(agent="demo")
-    journal.start(QUESTION).model_turn(
-        tool_call_message(("c1", "calculer", {"expr": "12*7+3"}), text="Je calcule.")
-    ).tool_results({"c1": ToolOutput.text("87")})
+    journal.start(QUESTION).model_turn(tool_call_message(("c1", "calculer", {"expr": "12*7+3"}), text="Je calcule.")).tool_results(
+        {"c1": ToolOutput.text("87")}
+    )
     _write(path.parent / "journaux", journal)
 
     assert main(["--config", str(path), "resume", journal.run_id]) == 0
     assert capsys.readouterr().out.strip() == ANSWER
 
 
-def test_the_same_run_id_twice_is_refused(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_same_run_id_twice_is_refused(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage=JOURNAL)
     command = ["--config", str(path), "run", "demo", QUESTION, "--run-id", "run-unique"]
     assert main(command) == 0
@@ -412,9 +373,7 @@ def test_the_same_run_id_twice_is_refused(
     assert "existe déjà" in capsys.readouterr().err
 
 
-def test_an_unknown_agent_is_refused(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_an_unknown_agent_is_refused(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "run", "absent", QUESTION]) == 2
     assert "Agent 'absent' inconnu" in capsys.readouterr().err
 
@@ -424,9 +383,7 @@ def test_a_missing_config_is_refused(tmp_path: Path, capsys: pytest.CaptureFixtu
     assert "Configuration :" in capsys.readouterr().err
 
 
-def test_a_file_that_cannot_be_written_is_refused_not_raised(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_file_that_cannot_be_written_is_refused_not_raised(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Un ``OSError`` d'exploitation sort en message et en code 2, sans trace."""
     path = demo(storage=JOURNAL)
     assert main(["--config", str(path), "run", "demo", QUESTION, "--session", "atelier"]) == 0
@@ -441,9 +398,7 @@ def test_a_file_that_cannot_be_written_is_refused_not_raised(
     assert str(absent) in err
 
 
-def test_an_agent_closed_to_a_tenant_keeps_its_own_refusal(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_an_agent_closed_to_a_tenant_keeps_its_own_refusal(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """``AgentNotAllowed`` est une ``PermissionError`` : l'``OSError`` ne doit pas la prendre."""
     tenants = [{"id": "dupont", "agents": ["autre"]}]
     agents = [demo_agent(), demo_agent(name="autre")]
@@ -455,9 +410,7 @@ def test_an_agent_closed_to_a_tenant_keeps_its_own_refusal(
     assert "Erreur d'entrée-sortie" not in err
 
 
-def test_resuming_a_run_held_elsewhere_is_refused_not_raised(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_resuming_a_run_held_elsewhere_is_refused_not_raised(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Un autre worker mène le run (concession vivante) : refus lisible, code 2, sans trace."""
     path = demo(storage=JOURNAL)
     journal = RunJournal(agent="demo", session_id=SessionId("atelier"))
@@ -482,9 +435,7 @@ def test_resuming_a_run_held_elsewhere_is_refused_not_raised(
     assert "réessayer après l'échéance" in captured.err
 
 
-def test_a_session_with_an_unreadable_run_is_refused_in_one_line(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_session_with_an_unreadable_run_is_refused_in_one_line(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage=JOURNAL)
     journal = RunJournal(agent="demo", session_id=SessionId("casse"))
     journal.start(QUESTION).model_turn(Message.assistant(ANSWER)).complete()
@@ -525,9 +476,7 @@ def test_a_busy_or_corrupted_journal_is_one_line_not_a_traceback(
     assert captured.err.count("\n") == 1
 
 
-def test_a_programming_error_keeps_its_traceback(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_programming_error_keeps_its_traceback(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Seules les erreurs d'exploitation sont converties : un bogue doit se voir."""
 
     async def broken(self: Loom, *args: object, **kwargs: object) -> NoReturn:
@@ -591,18 +540,12 @@ def test_keys_create_refuses_an_expiry_that_is_not_a_number(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """« ²j » passait ``isdigit`` et ``int`` le refusait : le refus nomme l'option."""
-    assert (
-        main(["keys", "create", "atelier", "--user", "dev", "--scope", "run", "--expires", "²j"])
-        == 2
-    )
+    assert main(["keys", "create", "atelier", "--user", "dev", "--scope", "run", "--expires", "²j"]) == 2
     assert "--expires" in capsys.readouterr().err
 
 
 def test_keys_create_gives_a_key_and_its_fingerprint(capsys: pytest.CaptureFixture[str]) -> None:
-    assert (
-        main(["keys", "create", "atelier", "--user", "dev", "--scope", "run", "--agent", "demo"])
-        == 0
-    )
+    assert main(["keys", "create", "atelier", "--user", "dev", "--scope", "run", "--agent", "demo"]) == 0
     out = capsys.readouterr().out
     key = _field(out, "Clé        :")
     assert key.startswith("lk_")
@@ -633,9 +576,7 @@ def test_schema_is_valid_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert schema["properties"]["version"]
 
 
-def test_serve_starts_the_rest_access(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_serve_starts_the_rest_access(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     http = pytest.importorskip("loom_ia.access.http", reason="extra 'http' absent")
     served: dict[str, Any] = {}
 
@@ -649,9 +590,7 @@ def test_serve_starts_the_rest_access(
     assert "http://127.0.0.1:9100/v1" in capsys.readouterr().out
 
 
-def test_mcp_serves_on_stdio(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_mcp_serves_on_stdio(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     server = pytest.importorskip("loom_ia.access.mcp_server", reason="extra 'mcp' absent")
     served: dict[str, Any] = {}
 
@@ -717,26 +656,19 @@ def test_a_refusal_in_the_cli_is_said_once_and_written_once(
     assert audited(Path(path)) == [droits, personne]
 
 
-def test_a_command_without_user_says_how_to_name_one(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_command_without_user_says_how_to_name_one(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """D-1, D-10 : ni ``--user`` ni ``LOOM_USER`` — refusé avant d'ouvrir le journal."""
     monkeypatch.delenv(USER_ENV)
     path = str(demo(storage={"events": {"backend": "jsonl", "path": "journaux"}}))
     for command in (["run", "demo", QUESTION], ["approve", "r-1"], ["answer", "r-1", "x"]):
         assert main(["--config", path, *command]) == 2
-        assert capsys.readouterr().err == (
-            f"Au nom de qui ? Donner --user UTILISATEUR, ou poser {USER_ENV} "
-            "(dans l'environnement ou le .env du projet)\n"
-        )
+        assert capsys.readouterr().err == (f"Au nom de qui ? Donner --user UTILISATEUR, ou poser {USER_ENV} (dans l'environnement ou le .env du projet)\n")
     assert not (Path(path).parent / "journaux").exists()
     # --user suffit, sans la variable.
     assert main(["--config", path, "run", "demo", QUESTION, "--user", DEV]) == 0
 
 
-def test_the_user_option_wins_over_the_variable(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_user_option_wins_over_the_variable(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setenv(USER_ENV, "fantome")
     path = str(demo())
     assert main(["--config", path, "run", "demo", QUESTION]) == 2
@@ -744,9 +676,7 @@ def test_the_user_option_wins_over_the_variable(
     assert main(["--config", path, "run", "demo", QUESTION, "--user", DEV]) == 0
 
 
-def test_a_run_for_another_tenant_than_the_user_s_is_refused(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_run_for_another_tenant_than_the_user_s_is_refused(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Le client est celui de l'utilisateur : ``--tenant`` ne le change pas."""
     path = str(demo(tenants=[{"id": "dupont"}, {"id": "martin"}]))
     args = ["--config", path, "run", "demo", QUESTION, "--user", "dupont"]
@@ -755,9 +685,7 @@ def test_a_run_for_another_tenant_than_the_user_s_is_refused(
     assert main([*args, "--tenant", "dupont"]) == 0
 
 
-def test_mcp_refuses_an_unknown_user_or_another_tenant(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_mcp_refuses_an_unknown_user_or_another_tenant(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """``loom mcp --user`` : l'utilisateur est déclaré, et le client est le sien."""
     pytest.importorskip("loom_ia.access.mcp_server", reason="extra 'mcp' absent")
     assert main(["--config", str(demo()), "mcp", "--user", "fantome"]) == 2
@@ -779,18 +707,14 @@ def _paused(path: Path, capsys: pytest.CaptureFixture[str]) -> str:
     return str(started["run_id"])
 
 
-def test_run_says_what_a_paused_run_is_waiting_for(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_says_what_a_paused_run_is_waiting_for(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(atelier()), "run", "demo", "Relance."]) == 1
     erreur = capsys.readouterr().err
     assert "Statut     : paused" in erreur
     assert "En attente : envoyer_email" in erreur and "loom approve" in erreur
 
 
-def test_run_quiet_still_says_what_a_paused_run_is_waiting_for(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_quiet_still_says_what_a_paused_run_is_waiting_for(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """``-q`` tait le bilan, pas ce qu'il reste à faire pour que le run aboutisse."""
     assert main(["--config", str(atelier()), "run", "demo", "Relance.", "-q"]) == 1
     erreur = capsys.readouterr().err
@@ -798,9 +722,7 @@ def test_run_quiet_still_says_what_a_paused_run_is_waiting_for(
     assert "En attente : envoyer_email" in erreur and "loom approve" in erreur
 
 
-def test_the_proposed_approve_command_names_its_session_and_tenant(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_proposed_approve_command_names_its_session_and_tenant(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Copiée telle quelle, la commande doit trouver le run (test D7 du 18/10)."""
     path = str(atelier(tenants=[{"id": "default"}, {"id": "dupont"}]))
     args = ["--config", path, "run", "demo", "Relance.", "--session", "s1", "--user", "dupont"]
@@ -816,9 +738,7 @@ def test_the_proposed_approve_command_names_its_session_and_tenant(
     assert "loom approve" in seule and "--session" not in seule and "--tenant" not in seule
 
 
-def test_approve_finishes_the_run_in_this_terminal(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_approve_finishes_the_run_in_this_terminal(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier()
     run_id = _paused(path, capsys)
 
@@ -829,9 +749,7 @@ def test_approve_finishes_the_run_in_this_terminal(
     assert _decisions(path, "approval.granted") == [DEV]
 
 
-def test_reject_hands_the_reason_back_to_the_model(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_reject_hands_the_reason_back_to_the_model(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier()
     run_id = _paused(path, capsys)
 
@@ -841,12 +759,8 @@ def test_reject_hands_the_reason_back_to_the_model(
     assert _decisions(path, "approval.rejected") == [DEV]
 
 
-@pytest.mark.parametrize(
-    ("verb", "decision"), [("approve", "approval.granted"), ("reject", "approval.rejected")]
-)
-def test_no_wait_writes_the_decision_and_leaves_the_run(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str], verb: str, decision: str
-) -> None:
+@pytest.mark.parametrize(("verb", "decision"), [("approve", "approval.granted"), ("reject", "approval.rejected")])
+def test_no_wait_writes_the_decision_and_leaves_the_run(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str], verb: str, decision: str) -> None:
     path = atelier()
     run_id = _paused(path, capsys)
 
@@ -862,9 +776,7 @@ def test_no_wait_writes_the_decision_and_leaves_the_run(
     assert [event.type for event in _events(path)][-1] == "run.completed"
 
 
-def test_without_no_wait_the_decision_is_followed_by_the_resumption(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_without_no_wait_the_decision_is_followed_by_the_resumption(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier()
     run_id = _paused(path, capsys)
 
@@ -891,18 +803,14 @@ def test_with_a_broker_the_resumption_is_left_to_the_worker(
     assert main(["--config", str(path), verb, run_id, "--session", run_id]) == 0
     sortie = capsys.readouterr()
     assert sortie.out == ""
-    assert sortie.err.splitlines()[-1] == (
-        f"Reprise confiée au worker (file asyncio) : suivre avec loom sessions show {run_id}"
-    )
+    assert sortie.err.splitlines()[-1] == (f"Reprise confiée au worker (file asyncio) : suivre avec loom sessions show {run_id}")
 
 
 async def _never_drained(self: Loom) -> None:
     raise AssertionError("avec un courtier, la commande n'attend pas la reprise")
 
 
-def test_approving_a_run_that_awaits_nothing_is_refused(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_approving_a_run_that_awaits_nothing_is_refused(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage=JOURNAL)
     assert main(["--config", str(path), "run", "demo", QUESTION, "--json"]) == 0
     run_id = json.loads(capsys.readouterr().out)["run_id"]
@@ -911,9 +819,7 @@ def test_approving_a_run_that_awaits_nothing_is_refused(
     assert "rien n'attend de décision" in capsys.readouterr().err
 
 
-def test_correcting_arguments_needs_a_designated_call(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_correcting_arguments_needs_a_designated_call(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier()
     run_id = _paused(path, capsys)
 
@@ -921,9 +827,7 @@ def test_correcting_arguments_needs_a_designated_call(
     assert sans_call == 2 and "--call" in capsys.readouterr().err
 
 
-def test_a_corrected_argument_is_the_one_that_goes(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_corrected_argument_is_the_one_that_goes(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier()
     run_id = _paused(path, capsys)
     call_id = _awaited(path, run_id)
@@ -951,9 +855,7 @@ def test_a_corrected_argument_is_the_one_that_goes(
     assert "compta@example.com" in str(getattr(done, "output", ""))
 
 
-def test_an_unknown_call_id_is_refused(
-    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_an_unknown_call_id_is_refused(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = atelier()
     run_id = _paused(path, capsys)
 
@@ -976,11 +878,7 @@ def _events(path: Path) -> list[Event]:
 
 def _decisions(path: Path, type_: str) -> list[str | None]:
     """Auteurs des décisions d'un type, tels que le journal les garde."""
-    return [
-        None if (by := event.facets.get("by")) is None else str(by)
-        for event in _events(path)
-        if event.type == type_
-    ]
+    return [None if (by := event.facets.get("by")) is None else str(by) for event in _events(path) if event.type == type_]
 
 
 def _awaited(path: Path, run_id: str) -> str:
@@ -1025,9 +923,7 @@ def test_the_package_runs_as_a_module() -> None:
 
     from loom_ia import __version__
 
-    done = subprocess.run(
-        [sys.executable, "-m", "loom_ia", "--version"], capture_output=True, text=True, timeout=60
-    )
+    done = subprocess.run([sys.executable, "-m", "loom_ia", "--version"], capture_output=True, text=True, timeout=60)
     assert (done.returncode, done.stdout.strip()) == (0, f"loom {__version__}")
 
 
@@ -1037,9 +933,7 @@ def test_help_does_not_leak_internal_milestone_names(capsys: pytest.CaptureFixtu
     assert "J5" not in capsys.readouterr().out
 
 
-def test_a_missing_extra_names_the_package_not_the_tool(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], demo: ConfigFactory
-) -> None:
+def test_a_missing_extra_names_the_package_not_the_tool(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], demo: ConfigFactory) -> None:
     """Le message vaut pour pip comme pour uv (CIP-5) : l'extra, pas ``uv sync``."""
     import builtins
 
@@ -1059,10 +953,7 @@ def test_a_missing_extra_names_the_package_not_the_tool(
 # --- Journal en mémoire, contrats et correspondance des modèles dans `validate` (19/10) ---
 
 
-MEMORY_SAID = (
-    "Journal en mémoire : il ne vit que le temps d'un process ; "
-    "cette commande ne voit pas les runs des autres commandes loom.\n"
-)
+MEMORY_SAID = "Journal en mémoire : il ne vit que le temps d'un process ; cette commande ne voit pas les runs des autres commandes loom.\n"
 
 
 @pytest.mark.parametrize(
@@ -1076,9 +967,7 @@ MEMORY_SAID = (
         ["sessions", "delete", "s-1", "--yes"],
     ],
 )
-def test_a_memory_journal_is_said_to_keep_nothing_between_commands(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], command: list[str]
-) -> None:
+def test_a_memory_journal_is_said_to_keep_nothing_between_commands(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], command: list[str]) -> None:
     """Test F5 du 19/10 : « Aucune session. » juste après un run, sans dire pourquoi."""
     main(["--config", str(demo()), *command])
     captured = capsys.readouterr()
@@ -1086,16 +975,12 @@ def test_a_memory_journal_is_said_to_keep_nothing_between_commands(
     assert "Journal en mémoire" not in captured.out  # stdout reste lisible par un script
 
 
-def test_a_lasting_journal_says_nothing_about_memory(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_lasting_journal_says_nothing_about_memory(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo(storage=JOURNAL)), "sessions", "list"]) == 0
     assert "Journal en mémoire" not in capsys.readouterr().err
 
 
-def test_the_journal_of_the_named_client_is_the_one_looked_at(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_journal_of_the_named_client_is_the_one_looked_at(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """La racine est en JSONL, mais ce client a son journal à lui, en mémoire."""
     path = demo(
         storage=JOURNAL,
@@ -1107,9 +992,7 @@ def test_the_journal_of_the_named_client_is_the_one_looked_at(
     assert capsys.readouterr().err.startswith(MEMORY_SAID)
 
 
-def test_validate_shows_what_each_contract_requires(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_what_each_contract_requires(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Test E1 du 19/10 : `validate` disait que `loom.contract` était posé, pas ce qu'il
     exigeait."""
     agent = demo_agent(
@@ -1139,9 +1022,7 @@ def test_validate_shows_what_each_contract_requires(
     ) in out
 
 
-def test_validate_writes_a_client_model_mapping_apart_from_the_fallbacks(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_writes_a_client_model_mapping_apart_from_the_fallbacks(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Test E6 du 19/10 : sous « client dupont », le juge affichait « modèle OPUS » sans dire
     que ce client le fait tourner sur HAIKU ; et « → » est déjà le signe des secours."""
     models = [
@@ -1164,9 +1045,7 @@ def test_validate_writes_a_client_model_mapping_apart_from_the_fallbacks(
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
     dupont, martin = out.split("client martin")
-    assert "juges        output (réponse finale) : modèle OPUS (FAKE pour ce client) → SONNET" in (
-        dupont
-    )
+    assert "juges        output (réponse finale) : modèle OPUS (FAKE pour ce client) → SONNET" in (dupont)
     assert "juges        output (réponse finale) : modèle OPUS → SONNET," in martin
 
 
@@ -1177,16 +1056,12 @@ def test_the_run_summary_names_the_cache_when_there_is_some() -> None:
     from loom_ia.core.model import Usage
 
     assert _cache_said(Usage(input_tokens=50, output_tokens=543)) == ""
-    with_cache = Usage(
-        input_tokens=50, output_tokens=543, cache_read_tokens=4300, cache_write_tokens=149
-    )
+    with_cache = Usage(input_tokens=50, output_tokens=543, cache_read_tokens=4300, cache_write_tokens=149)
     assert _cache_said(with_cache) == " · cache : lu 4300, écrit 149"
 
 
 @pytest.mark.parametrize("action", ["stop", "warn"])
-def test_the_run_summary_says_a_budget_was_reached(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], action: str
-) -> None:
+def test_the_run_summary_says_a_budget_was_reached(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], action: str) -> None:
     """Test J4 du 21/10 : un plafond atteint ne se voyait que dans le journal."""
     path = demo(budgets={"run": {"max_calls": 1}, "on_exceed": action})
     code = main(["--config", str(path), "run", "demo", QUESTION])
@@ -1198,17 +1073,13 @@ def test_the_run_summary_says_a_budget_was_reached(
     assert len(budget_lines) == 1 and budget_lines[0].endswith(said)
 
 
-def test_the_run_summary_has_no_budget_line_without_a_ceiling_reached(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_run_summary_has_no_budget_line_without_a_ceiling_reached(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "run", "demo", QUESTION]) == 0
     assert "Budget     :" not in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("claimed", [None, -60, 600], ids=["sans concession", "échue", "vivante"])
-def test_a_run_nobody_pilots_is_said_to_resume(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], claimed: int | None
-) -> None:
+def test_a_run_nobody_pilots_is_said_to_resume(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], claimed: int | None) -> None:
     """Test H1 du 20/10 : un run arrêté en plein vol (process tué) ne se signalait nulle part."""
     path = demo(storage=JOURNAL)
     journal = RunJournal(agent="demo", session_id=SessionId("atelier"))
@@ -1235,9 +1106,7 @@ def test_a_run_nobody_pilots_is_said_to_resume(
     assert (hint in inspected) is not piloted
 
 
-def test_a_finished_run_is_not_said_to_resume(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_finished_run_is_not_said_to_resume(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(storage=JOURNAL)
     assert main(["--config", str(path), "run", "demo", QUESTION, "--session", "atelier"]) == 0
     capsys.readouterr()
@@ -1248,9 +1117,7 @@ def test_a_finished_run_is_not_said_to_resume(
 # --- Lot B du 23/10 : dire une fois, dire où ----------------------------------
 
 
-def test_a_failed_run_says_its_error_once_on_stderr(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_failed_run_says_its_error_once_on_stderr(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Test L2 du 22/10 : un 401 se lisait trois fois (log ERROR, « Erreur », stdout)."""
     panne = {**MODEL, "params": {"script": [{"error": "auth"}]}}
     path = demo(models=[panne], telemetry={"logging": {"level": "WARNING"}})
@@ -1261,9 +1128,7 @@ def test_a_failed_run_says_its_error_once_on_stderr(
     assert "Erreur     : Panne simulée" in printed.err and "ERROR" not in printed.err
 
 
-def test_global_options_are_read_after_the_subcommand(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_global_options_are_read_after_the_subcommand(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     """Test M4 du 23/10 : ``loom validate --profile prod`` était refusé par argparse."""
     path = demo()
     monkeypatch.chdir(path.parent.parent)
@@ -1276,9 +1141,7 @@ def test_global_options_are_read_after_the_subcommand(
     assert main(["--config", str(path), "sessions", "list", "--profile", "dev"]) == 0
 
 
-def test_a_reading_command_does_not_repeat_the_setup_warnings(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_reading_command_does_not_repeat_the_setup_warnings(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests H7 et K4 : ``sessions show`` répétait les avertissements de montage."""
     pytest.importorskip("opentelemetry.sdk")
     monkeypatch.delenv("LOOM_OTLP_VIDE", raising=False)
@@ -1291,9 +1154,7 @@ def test_a_reading_command_does_not_repeat_the_setup_warnings(
         assert "LOOM_OTLP_VIDE" not in capsys.readouterr().err, command
 
 
-def test_storage_sql_says_when_the_config_declares_no_postgres(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_storage_sql_says_when_the_config_declares_no_postgres(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Test N4 du 23/10 : le SQL sortait sans dire qu'il n'était pas celui de la config."""
     assert main(["--config", str(demo(storage=JOURNAL)), "storage", "sql"]) == 0
     printed = capsys.readouterr()
@@ -1301,9 +1162,7 @@ def test_storage_sql_says_when_the_config_declares_no_postgres(
     assert "CREATE TABLE" in printed.out
 
 
-def test_an_unknown_agent_does_not_offer_the_internal_ones(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_an_unknown_agent_does_not_offer_the_internal_ones(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Test N4 du 23/10 : « _compaction » était proposé à qui s'était trompé de nom."""
     models = [MODEL, {**MODEL, "id": "RESUME", "model": "fake-resume"}]
     path = demo(models=models, sessions={"compaction": {"model": "RESUME"}})
@@ -1312,9 +1171,7 @@ def test_an_unknown_agent_does_not_offer_the_internal_ones(
     assert "demo" in err and "_compaction" not in err
 
 
-def test_a_config_error_names_a_model_by_its_id(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_config_error_names_a_model_by_its_id(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Test M1 du 21/10 : « models.0.max_token » obligeait à compter les modèles."""
     path = demo(models=[MODEL, {**MODEL, "id": "HAIKU", "max_token": 3}])
     assert main(["--config", str(path), "validate"]) == 2
@@ -1327,9 +1184,7 @@ def test_the_published_schema_leaves_out_base_dir(capsys: pytest.CaptureFixture[
     assert "base_dir" not in json.loads(capsys.readouterr().out)["properties"]
 
 
-def test_an_undefined_variable_names_the_prompt_file(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_an_undefined_variable_names_the_prompt_file(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     """Test M7 du 23/10 : le refus nommait « main.system », pas le fichier à corriger."""
     path = demo()
     (path.parent / "prompts" / "demo.md").write_text("Pour {{ entreprise }}.", encoding="utf-8")
@@ -1342,9 +1197,7 @@ def test_an_undefined_variable_names_the_prompt_file(
 # --- Lot C du 23/10 : ce qui sort du journal ----------------------------------
 
 
-def test_validate_says_there_is_no_collector(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_there_is_no_collector(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "validate"]) == 0
     out = capsys.readouterr().out
     assert "  Télémétrie   logs " in out and "exports : métadonnées seules" in out
@@ -1370,13 +1223,9 @@ def test_validate_shows_the_collector_the_capture_and_the_overrides(
     path = demo(telemetry=telemetry, tenants=tenants)
     assert main(["--config", str(path), "validate"]) == 0
     printed = capsys.readouterr()
+    assert ("  Télémétrie   logs WARNING (console) · exports : métadonnées seules\n               échanges bruts au journal (≤ 256 Kio/corps)\n") in printed.out
     assert (
-        "  Télémétrie   logs WARNING (console) · exports : métadonnées seules\n"
-        "               échanges bruts au journal (≤ 256 Kio/corps)\n"
-    ) in printed.out
-    assert (
-        "collecteur otel : adresse dans LOOM_OTLP_VIDE (vide — non monté, aucune trace n'en "
-        "partira), http/protobuf, service loom-ia, délai 10 s"
+        "collecteur otel : adresse dans LOOM_OTLP_VIDE (vide — non monté, aucune trace n'en partira), http/protobuf, service loom-ia, délai 10 s"
     ) in printed.out
     assert "masquage du contenu exporté : secret, email, phone, iban, devis" in printed.out
     client = printed.out[printed.out.index("client dupont") :]

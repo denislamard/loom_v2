@@ -140,9 +140,7 @@ class IdempotentTool[**P, R]:
         retry_unknown: bool = False,
     ) -> None:
         self._tool = tool
-        self._spec = tool.spec.model_copy(
-            update={"idempotent": True, "business_key": key is not None}
-        )
+        self._spec = tool.spec.model_copy(update={"idempotent": True, "business_key": key is not None})
         self._key = key
         self.reservation = reservation
         self.ttl = ttl
@@ -251,8 +249,7 @@ class IdempotentTool[**P, R]:
             except ResultTooLarge:
                 size = len(json.dumps(payload, ensure_ascii=False))
                 logger.warning(
-                    "Outil %s : résultat de %d caractères trop gros pour être mémorisé sous %s, "
-                    "forme réduite enregistrée",
+                    "Outil %s : résultat de %d caractères trop gros pour être mémorisé sous %s, forme réduite enregistrée",
                     self._spec.name,
                     size,
                     key,
@@ -261,8 +258,7 @@ class IdempotentTool[**P, R]:
                 await store.complete(key, _reduced(output, size), self.ttl, **proof)
         except Exception:
             logger.exception(
-                "Outil %s : effet produit, mais non mémorisé sous %s ; la clé reste réservée "
-                "sans résultat, le prochain appel sera d'état inconnu",
+                "Outil %s : effet produit, mais non mémorisé sous %s ; la clé reste réservée sans résultat, le prochain appel sera d'état inconnu",
                 self._spec.name,
                 key,
                 extra=where,
@@ -281,18 +277,14 @@ def _proof(store: IdempotencyStore) -> dict[str, str]:
     """
     for method in (store.reserve, store.complete, store.release):
         parameters = inspect.signature(method).parameters
-        if "holder" not in parameters and not any(
-            parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
-        ):
+        if "holder" not in parameters and not any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
             return {}
     return {"holder": uuid.uuid4().hex}
 
 
 def _reduced(output: ToolOutput, size: int) -> JsonValue:
     """Ce qu'on mémorise d'un résultat trop gros : un constat, et ses références."""
-    note = ToolOutput.text(
-        OVERSIZED.format(size=size, limit=MAX_RECORDED), is_error=output.is_error
-    )
+    note = ToolOutput.text(OVERSIZED.format(size=size, limit=MAX_RECORDED), is_error=output.is_error)
     reduced = note.model_copy(update={"artifacts": output.artifacts, "offloaded": output.offloaded})
     # Le state que l'outil écrit lui-même est gardé s'il tient dans la limite ;
     # celui que la config lit dans ses données (``from: path``) ne peut pas
@@ -329,8 +321,6 @@ def idempotent[**P, R](
     """Mémorise l'effet de l'outil sous sa clé, avec ou sans options."""
 
     def wrap(target: FunctionTool[P, R]) -> IdempotentTool[P, R]:
-        return IdempotentTool(
-            target, key=key, reservation=reservation, ttl=ttl, retry_unknown=retry_unknown
-        )
+        return IdempotentTool(target, key=key, reservation=reservation, ttl=ttl, retry_unknown=retry_unknown)
 
     return wrap if tool is None else wrap(tool)

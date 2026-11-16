@@ -82,10 +82,7 @@ class PoolLimits:
 
     def __post_init__(self) -> None:
         if not 1 <= self.min_size <= self.max_size:
-            raise ValueError(
-                f"Pool Postgres : 1 <= min_size <= max_size attendu, "
-                f"pas {self.min_size} et {self.max_size}"
-            )
+            raise ValueError(f"Pool Postgres : 1 <= min_size <= max_size attendu, pas {self.min_size} et {self.max_size}")
         for name in ("command_timeout", "lock_timeout", "acquire_timeout"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"Pool Postgres : {name} doit être positif")
@@ -107,9 +104,7 @@ _SCHEMA_KEY: Final = "loom_ia/schema"
 # Réglages **de la transaction** (``true``) : le client pour la politique de lignes, et
 # le délai des verrous. Le pool d'asyncpg rend ses connexions avec ``RESET ALL`` — un
 # ``SET`` fait à l'ouverture ne survivrait pas à la première transaction.
-_SET_TENANT: Final = (
-    f"SELECT set_config('{TENANT_SETTING}', $1, true), set_config('lock_timeout', $2, true)"
-)
+_SET_TENANT: Final = f"SELECT set_config('{TENANT_SETTING}', $1, true), set_config('lock_timeout', $2, true)"
 _SET_LOCK: Final = "SELECT set_config('lock_timeout', $1, true)"
 
 
@@ -251,8 +246,7 @@ class PostgresPool:
             # Un autre process pose ou migre le schéma et ne rend pas son verrou à temps.
             # Rien n'est ouvert ni modifié : la même demande repasse quand il a fini.
             raise JournalBusy(
-                f"{self._table} : le schéma est préparé par un autre process "
-                f"(verrou non pris en {self._limits.lock_timeout:g} s) ; réessayer"
+                f"{self._table} : le schéma est préparé par un autre process (verrou non pris en {self._limits.lock_timeout:g} s) ; réessayer"
             ) from exc
         finally:
             await connection.close()
@@ -272,8 +266,7 @@ class PostgresPool:
             return False
         except asyncpg.InsufficientPrivilegeError:
             logger.warning(
-                "%s : la version du schéma n'est pas lisible par ce rôle ; migration non "
-                "vérifiée (appliquer 'loom storage sql' avec le rôle propriétaire)",
+                "%s : la version du schéma n'est pas lisible par ce rôle ; migration non vérifiée (appliquer 'loom storage sql' avec le rôle propriétaire)",
                 self._table,
             )
             return True
@@ -316,9 +309,7 @@ class PostgresPool:
                 # Le verrou n'a pas été pris dans le délai : rien n'est écrit, la
                 # transaction est annulée. Une erreur que l'appelant sait nommer.
                 raise JournalBusy(
-                    f"{self._table} : un verrou n'a pas pu être pris en "
-                    f"{self._limits.lock_timeout:g} s (journal tenu par un autre écrivain) ; "
-                    "réessayer"
+                    f"{self._table} : un verrou n'a pas pu être pris en {self._limits.lock_timeout:g} s (journal tenu par un autre écrivain) ; réessayer"
                 ) from exc
 
     async def aclose(self) -> None:

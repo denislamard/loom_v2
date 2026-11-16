@@ -227,10 +227,7 @@ NOT_RUN_SINCE: Final = (
 
 # Un délai dépassé avant même que l'outil démarre : tous les threads des outils étaient
 # pris, et le travail, annulé dans la file, n'a rien fait.
-NOT_STARTED: Final = (
-    "Délai dépassé : l'outil n'a pas démarré en {limit:g} s, tous les threads des outils "
-    "étant pris. Il n'a rien fait ; tu peux le rappeler."
-)
+NOT_STARTED: Final = "Délai dépassé : l'outil n'a pas démarré en {limit:g} s, tous les threads des outils étant pris. Il n'a rien fait ; tu peux le rappeler."
 
 UNKNOWN_STATE: Final = (
     "État inconnu : l'exécution de cet outil a été interrompue et il a peut-être "
@@ -490,11 +487,7 @@ class ToolExecutor:
             for source in self.sources:
                 setting = self.circuits.get(source.name, CircuitBreaker())
                 key = mcp_key(source.name)
-                left = (
-                    self.breakers.remaining(key)
-                    if self.breakers is not None and setting is not None
-                    else None
-                )
+                left = self.breakers.remaining(key) if self.breakers is not None and setting is not None else None
                 if left is not None:
                     message = f"disjoncteur ouvert : pas de nouvel essai avant {left:.0f} s"
                     logger.warning(
@@ -503,11 +496,7 @@ class ToolExecutor:
                         message,
                         extra={"run_id": context.run_id},
                     )
-                    events.append(
-                        ToolSourceUnavailable(
-                            source=source.name, error=message, required=source.required
-                        )
-                    )
+                    events.append(ToolSourceUnavailable(source=source.name, error=message, required=source.required))
                     continue
                 try:
                     provided = await stack.enter_async_context(source.open(context))
@@ -533,11 +522,7 @@ class ToolExecutor:
                                     error=message,
                                 )
                             )
-                    events.append(
-                        ToolSourceUnavailable(
-                            source=source.name, error=message, required=source.required
-                        )
-                    )
+                    events.append(ToolSourceUnavailable(source=source.name, error=message, required=source.required))
                     continue
                 if self.breakers is not None:
                     self.breakers.succeeded(key)
@@ -611,11 +596,7 @@ class ToolExecutor:
         profondeur permise) ne compte pas.
         """
         model_tool = self.state_rules.model_tool
-        return any(
-            (tool.spec.kind in {"role", "agent"} or tool.spec.name == model_tool)
-            and _offered(tool, run)
-            for tool in self._tools.values()
-        )
+        return any((tool.spec.kind in {"role", "agent"} or tool.spec.name == model_tool) and _offered(tool, run) for tool in self._tools.values())
 
     @property
     def specs(self) -> tuple[ToolSpec, ...]:
@@ -651,11 +632,7 @@ class ToolExecutor:
 
         Avec ``run``, les outils délégués indisponibles dans ce run sont écartés.
         """
-        return tuple(
-            tool.spec.definition()
-            for tool in self._tools.values()
-            if run is None or _offered(tool, run)
-        )
+        return tuple(tool.spec.definition() for tool in self._tools.values() if run is None or _offered(tool, run))
 
     async def run_batch(
         self,
@@ -697,9 +674,7 @@ class ToolExecutor:
             answerer = partial(answers, state.run_id) if answers is not None else _nobody
         # Un sous-run et un run de compaction n'ont pas de state (D3).
         keeps = bool(self.state_rules) and keeps_state(state)
-        current = (
-            state_of_run(session_state or {}, state, before=_batch_turn(state)) if keeps else {}
-        )
+        current = state_of_run(session_state or {}, state, before=_batch_turn(state)) if keeps else {}
         # Taille du state au fil du lot, dans l'ordre des appels : chaque appel
         # compte ce que les autres ont posé, voisins déjà soldés compris (D7).
         tally = _batch_tally(state, current) if keeps else BatchTally()
@@ -727,11 +702,7 @@ class ToolExecutor:
         for call in state.pending_calls:
             tool = self._tools.get(call.name)
             try:
-                prepared = (
-                    self._unknown_tool(call.name, view)
-                    if tool is None or not _offered(tool, view)
-                    else await self._prepare(call, tool, view)
-                )
+                prepared = self._unknown_tool(call.name, view) if tool is None or not _offered(tool, view) else await self._prepare(call, tool, view)
             except Exception as exc:
                 # Une exception imprévue n'avorte pas le lot : la reprise
                 # rejouerait le même appel, donc la même exception, sans fin.
@@ -747,12 +718,7 @@ class ToolExecutor:
                     yield event
                 continue
             ordered = self.order == "effects"
-            if (
-                ordered
-                and blocked.holds(prepared)
-                and state.approval(call.call_id) is None
-                and not _always_asked(prepared, self.imposed)
-            ):
+            if ordered and blocked.holds(prepared) and state.approval(call.call_id) is None and not _always_asked(prepared, self.imposed):
                 # Un appel qui le précède attend un humain : celui-ci partira après
                 # lui, à un lot suivant. Rien n'est écrit pour lui d'ici là, pas même
                 # ses politiques, qui tourneront une fois, à son lancement. Celui qui
@@ -763,11 +729,7 @@ class ToolExecutor:
             # Un appel repris a été lancé avec ces arguments-là, remplacés par une
             # politique le cas échéant (``_before_tool``) : ce sont eux qui disent
             # si son effet a pu se produire, donc s'il peut repartir.
-            launched_with = (
-                call.replaced_arguments
-                if call.started and call.replaced_arguments is not None
-                else prepared.arguments
-            )
+            launched_with = call.replaced_arguments if call.started and call.replaced_arguments is not None else prepared.arguments
             # Approbation déjà tranchée : on applique la décision, on ne la
             # redemande pas — même si une politique la redemanderait.
             settled = state.approval(call.call_id)
@@ -793,10 +755,7 @@ class ToolExecutor:
                 # inconnu : la règle de reprise s'applique, comme sans accord
                 # (#18). Un accord encore intact, lui, répond à un état inconnu
                 # si l'appel est déjà parti (il a été demandé après coup).
-                if not settled.launched or (
-                    _retry_safe(prepared.tool, launched_with)
-                    and _retry_safe(prepared.tool, prepared.arguments)
-                ):
+                if not settled.launched or (_retry_safe(prepared.tool, launched_with) and _retry_safe(prepared.tool, prepared.arguments)):
                     admitted = replace(prepared, approved=call.started and not settled.launched)
                     if ordered and blocked.holds(admitted):
                         blocked.hold(admitted)
@@ -896,9 +855,7 @@ class ToolExecutor:
         for run_id, late in list(self._late.items()):
             if not any(threads.running for threads in late.values()):
                 del self._late[run_id]  # fini depuis, ou run qui n'a pas eu de lot suivant
-        lingering: dict[str, tool_threads.CallThreads] = (
-            self._late.pop(state.run_id, {}) if self.order == "effects" else {}
-        )
+        lingering: dict[str, tool_threads.CallThreads] = self._late.pop(state.run_id, {}) if self.order == "effects" else {}
         carried = set(lingering)
 
         async def execute(item: _Ready) -> None:
@@ -911,9 +868,7 @@ class ToolExecutor:
                 # L'outil (ou une tâche qu'il attend) s'est annulé sans que le lot
                 # l'ait demandé : c'est son échec, pas un arrêt du run. Sans résultat,
                 # le lot attendrait cet appel indéfiniment.
-                queue.put_nowait(
-                    _completed(item.call, _cancelled(item.call.name, exc, state), started=began)
-                )
+                queue.put_nowait(_completed(item.call, _cancelled(item.call.name, exc, state), started=began))
 
         # Ordre des appels (barrière sur les effets) : les appels sans effet d'un
         # même segment partent ensemble ; un appel à effet attend que tout ce qui
@@ -973,9 +928,7 @@ class ToolExecutor:
                     if isinstance(event, ToolCompleted | Waiting | _Unknown):
                         remaining -= 1
                     if isinstance(event, Waiting) or (
-                        isinstance(event, Decided)
-                        and isinstance(event.payload, PolicyDecided)
-                        and event.payload.decision == "fail"
+                        isinstance(event, Decided) and isinstance(event.payload, PolicyDecided) and event.payload.decision == "fail"
                     ):
                         suspended = True
                     if isinstance(event, _Unknown):
@@ -1029,9 +982,7 @@ class ToolExecutor:
         for question in held_questions:
             yield question
 
-    async def _lingering(
-        self, lingering: dict[str, tool_threads.CallThreads]
-    ) -> tuple[str, str] | None:
+    async def _lingering(self, lingering: dict[str, tool_threads.CallThreads]) -> tuple[str, str] | None:
         """Attend le travail encore en cours d'appels à effet ; l'appel et son outil s'il dure.
 
         L'attente est bornée par ``grace`` ; sans borne (``None``), elle dure le
@@ -1058,11 +1009,7 @@ class ToolExecutor:
         """Un appel à ``ask`` : sa réponse, ou sa question à écrire (wait_answer)."""
         known = state.question(call.call_id)
         if known is not None and not known.open:
-            output = (
-                questions.answered_output(known)
-                if known.reply is not None
-                else questions.expired_output(known)
-            )
+            output = questions.answered_output(known) if known.reply is not None else questions.expired_output(known)
             yield _completed(call, output, started=None)
             return
         if known is not None:
@@ -1170,9 +1117,7 @@ class ToolExecutor:
         arguments remplacés sont repris tels qu'ils ont été journalisés.
         """
         call = item.call
-        subject = BeforeTool(
-            state=view.state, call=call, spec=item.tool.spec, arguments=item.arguments
-        )
+        subject = BeforeTool(state=view.state, call=call, spec=item.tool.spec, arguments=item.arguments)
         if call.started:
             if call.replaced_arguments is not None:
                 subject = BeforeTool(
@@ -1201,10 +1146,7 @@ class ToolExecutor:
         problem = self._schema_errors(name, arguments) if self.validate_arguments else None
         if problem is None:
             return None
-        return (
-            f"Appel à {name} non exécuté : les arguments corrigés par l'approbateur "
-            f"sont refusés par le schéma de l'outil. {problem}"
-        )
+        return f"Appel à {name} non exécuté : les arguments corrigés par l'approbateur sont refusés par le schéma de l'outil. {problem}"
 
     def _schema_errors(
         self,
@@ -1276,9 +1218,7 @@ class ToolExecutor:
             caller=state.context,
             idempotency=self._idempotency(call.call_id, spec.name, view),
             replay_unknown=item.approved,
-            on_reuse=lambda key: emit(
-                IdempotencyReused(key=key, call_id=call.call_id, tool_name=spec.name)
-            ),
+            on_reuse=lambda key: emit(IdempotencyReused(key=key, call_id=call.call_id, tool_name=spec.name)),
             # Une copie par appel : un outil qui modifierait une valeur ne touche pas les autres.
             state=MappingProxyType(deepcopy(dict(view.session_state))),
             files=(
@@ -1300,16 +1240,12 @@ class ToolExecutor:
         exchange: Exchange | None = None
         served: ToolOutput | None = None
         if item.replayed and self.replay is not None:
-            output, consumption = await self.replay.output(
-                state.run_id, call.call_id, spec.name, call.arguments, item.arguments
-            )
+            output, consumption = await self.replay.output(state.run_id, call.call_id, spec.name, call.arguments, item.arguments)
             if self.replay.from_journal(state.run_id, call.call_id):
                 served = output
         elif isinstance(tool, DelegatedTool):
             produced = tool.run(item.arguments, context, view)
-            output, consumption, exchange = await _delegated(
-                produced, tool, context, emit, timeout, state
-            )
+            output, consumption, exchange = await _delegated(produced, tool, context, emit, timeout, state)
         else:
             with tool_threads.tracking(threads):
                 try:
@@ -1351,15 +1287,11 @@ class ToolExecutor:
             if tally is not None:
                 tally.record(call.call_id, output.state)
         else:
-            output = self._posed(
-                output, spec.name, view, tally if tally is not None else BatchTally(), call.call_id
-            )
+            output = self._posed(output, spec.name, view, tally if tally is not None else BatchTally(), call.call_id)
         output = await self._settle(output, spec, call.call_id, view, emit)
         emit(_completed(call, output, started=started, consumption=consumption))
 
-    def _posed(
-        self, output: ToolOutput, tool: str, view: RunView, tally: BatchTally, call_id: str
-    ) -> ToolOutput:
+    def _posed(self, output: ToolOutput, tool: str, view: RunView, tally: BatchTally, call_id: str) -> ToolOutput:
         """Le résultat avec les écritures du state qu'il pose (D6 à D8, D12).
 
         Un résultat en erreur n'en pose aucune, même s'il en portait avant
@@ -1433,9 +1365,7 @@ class ToolExecutor:
             match verdict.decision:
                 case Retry(feedback=feedback) if verdict.by is not None:
                     repaired = (
-                        tool.repair(
-                            exchange, feedback, policy=verdict.by, context=context, run=view
-                        )
+                        tool.repair(exchange, feedback, policy=verdict.by, context=context, run=view)
                         if isinstance(tool, DelegatedTool) and exchange is not None
                         else None
                     )
@@ -1449,14 +1379,10 @@ class ToolExecutor:
                             }
                         )
                     attempts[verdict.by] = attempts.get(verdict.by, 0) + 1
-                    again, _, exchange = await _delegated(
-                        repaired, tool, context, emit, tool.spec.timeout, view.state
-                    )
+                    again, _, exchange = await _delegated(repaired, tool, context, emit, tool.spec.timeout, view.state)
                     if isinstance(again, Waiting):
                         # Seul un sous-agent attend, et un sous-agent ne se répare pas.
-                        return ToolOutput.error(
-                            f"Réparation de {tool.spec.name} : run délégué en attente."
-                        )
+                        return ToolOutput.error(f"Réparation de {tool.spec.name} : run délégué en attente.")
                     output = again
                     continue
                 case Fail():
@@ -1481,12 +1407,7 @@ class ToolExecutor:
             if has_inline_data(output.blocks):
                 output = await self._store_files(output, call_id, state, emit)
             limit = spec.offload_over or self.offload_over
-            if (
-                limit is not None
-                and not spec.terminal
-                and spec.kind != "builtin"
-                and len(visible_text(output)) > limit
-            ):
+            if limit is not None and not spec.terminal and spec.kind != "builtin" and len(visible_text(output)) > limit:
                 output = await self._offload(output, limit, spec, call_id, view, emit)
         except Exception as exc:
             logger.warning(
@@ -1495,10 +1416,7 @@ class ToolExecutor:
                 exc_info=exc,
                 extra={"run_id": state.run_id},
             )
-            return ToolOutput.error(
-                f"Résultat de l'outil {spec.name} perdu : échec du stockage d'artefacts "
-                f"({type(exc).__name__}: {exc})."
-            )
+            return ToolOutput.error(f"Résultat de l'outil {spec.name} perdu : échec du stockage d'artefacts ({type(exc).__name__}: {exc}).")
         return output
 
     async def _store_files(
@@ -1517,12 +1435,7 @@ class ToolExecutor:
                 continue
             size = len(block.data)
             if self.artifacts is None:
-                blocks.append(
-                    TextBlock(
-                        text=f"[fichier {block.media_type} de {size_label(size)} non conservé : "
-                        "aucun stockage d'artefacts]"
-                    )
-                )
+                blocks.append(TextBlock(text=f"[fichier {block.media_type} de {size_label(size)} non conservé : aucun stockage d'artefacts]"))
                 continue
             media_type = sniff(block.data) or block.media_type
             uri = artifact_uri(state.context.tenant_id, state.session_id, block.data, media_type)
@@ -1536,9 +1449,7 @@ class ToolExecutor:
                 call_id=call_id,
             )
             emit(Stored(call_id=call_id, payload=stored))
-            blocks.append(
-                ArtifactRefBlock(uri=uri, media_type=media_type, size=size, name=block.name)
-            )
+            blocks.append(ArtifactRefBlock(uri=uri, media_type=media_type, size=size, name=block.name))
             if uri not in uris:
                 uris.append(uri)
         return output.model_copy(update={"blocks": tuple(blocks), "artifacts": tuple(uris)})
@@ -1604,13 +1515,7 @@ async def _invoked(
                     return ToolOutput.error(NOT_STARTED.format(limit=limit))
             if effects:
                 working = threads is not None and bool(threads.running)
-                said = (
-                    LATE_EFFECT
-                    if working
-                    else REMOTE_EFFECT
-                    if tool.spec.kind == "mcp"
-                    else STOPPED_EFFECT
-                )
+                said = LATE_EFFECT if working else REMOTE_EFFECT if tool.spec.kind == "mcp" else STOPPED_EFFECT
                 raise UnknownEffect(said.format(limit=limit)) from None
             return ToolOutput.error(f"Délai dépassé : pas de réponse en {limit:g} s.")
         # TimeoutError levée par l'outil lui-même.
@@ -1778,8 +1683,7 @@ def _asks_approval(
         if forced == "always":
             who = f"le client {tenant}" if tenant else "l'appelant"
             return (
-                f"la config impose une approbation pour chaque appel de cet outil, pour {who} "
-                f"({effects})",
+                f"la config impose une approbation pour chaque appel de cet outil, pour {who} ({effects})",
                 None,
             )
     elif assessment is not None:
@@ -1797,16 +1701,10 @@ async def _nobody(_: PendingQuestion) -> NoAnswer:
     return NoAnswer(reason="personne ne répond au rejeu", expired=True)
 
 
-def _request(
-    item: _Ready, asked: tuple[str, str | None], settings: ApprovalSettings, approvers: Approvers
-) -> ApprovalRequested:
+def _request(item: _Ready, asked: tuple[str, str | None], settings: ApprovalSettings, approvers: Approvers) -> ApprovalRequested:
     """Demande d'approbation d'un appel, prête à écrire, avec qui peut la trancher (§ 5.3)."""
     reason, policy = asked
-    expire_at = (
-        None
-        if settings.expires_in is None
-        else datetime.now(UTC) + timedelta(seconds=settings.expires_in)
-    )
+    expire_at = None if settings.expires_in is None else datetime.now(UTC) + timedelta(seconds=settings.expires_in)
     return ApprovalRequested(
         call_id=item.call.call_id,
         tool_name=item.call.name,
@@ -1819,9 +1717,7 @@ def _request(
     )
 
 
-def _decision(
-    request: ApprovalRequested, decided: ApprovalDecision
-) -> ApprovalGranted | ApprovalRejected:
+def _decision(request: ApprovalRequested, decided: ApprovalDecision) -> ApprovalGranted | ApprovalRejected:
     """Décision d'un approbateur en ligne, telle qu'elle s'écrit au journal."""
     if isinstance(decided, Rejected):
         return ApprovalRejected(
@@ -1864,10 +1760,7 @@ def _refused(tool_name: str, verdict: str, reason: str, by: str | None = None) -
 
 
 # Ce qu'un refus demande au modèle : ne pas insister, et le dire.
-_DECIDED = (
-    "C'est une décision, pas une panne : ne refais pas cet appel ; dis à l'utilisateur "
-    "ce qui a été refusé et pourquoi."
-)
+_DECIDED = "C'est une décision, pas une panne : ne refais pas cet appel ; dis à l'utilisateur ce qui a été refusé et pourquoi."
 
 
 def _by_why(by: str | None, reason: str) -> str:
@@ -1884,12 +1777,7 @@ def _already_refused(state: RunState, item: _Ready) -> str | None:
     """
     for asked in reversed(state.approvals):
         outcome = asked.outcome
-        if (
-            outcome is not None
-            and outcome.verdict == "rejected"
-            and asked.tool_name == item.call.name
-            and asked.arguments == item.arguments
-        ):
+        if outcome is not None and outcome.verdict == "rejected" and asked.tool_name == item.call.name and asked.arguments == item.arguments:
             who = _by_why(outcome.by, outcome.reason)
             return (
                 f"Appel à {item.call.name} non exécuté : le même appel, avec les mêmes "
@@ -1988,11 +1876,7 @@ def _batch_tally(state: RunState, current: Mapping[str, JsonValue]) -> BatchTall
     journal y sont reportés, pour que les suivants les comptent.
     """
     turn = _batch_turn(state)
-    calls = (
-        [call.call_id for call in state.messages[turn].tool_calls]
-        if turn < len(state.messages)
-        else []
-    )
+    calls = [call.call_id for call in state.messages[turn].tool_calls] if turn < len(state.messages) else []
     for pending in state.pending_calls:
         if pending.call_id not in calls:
             calls.append(pending.call_id)
@@ -2006,11 +1890,7 @@ def _batch_tally(state: RunState, current: Mapping[str, JsonValue]) -> BatchTall
 def _batch_turn(state: RunState) -> int:
     """Position de la réponse du modèle dont le lot s'exécute : la dernière de l'assistant."""
     return next(
-        (
-            i
-            for i in range(len(state.messages) - 1, -1, -1)
-            if state.messages[i].role == "assistant"
-        ),
+        (i for i in range(len(state.messages) - 1, -1, -1) if state.messages[i].role == "assistant"),
         len(state.messages),
     )
 
@@ -2027,20 +1907,13 @@ def _unexpected(name: str, exc: Exception, state: RunState) -> ToolOutput:
 
 def _cancelled(name: str, exc: asyncio.CancelledError, state: RunState) -> ToolOutput:
     """Résultat d'un outil annulé de l'intérieur, sans que le lot ait été arrêté."""
-    logger.warning(
-        "Outil %s annulé de l'intérieur", name, exc_info=exc, extra={"run_id": state.run_id}
-    )
-    return ToolOutput.error(
-        f"Erreur de l'outil {name} : l'outil s'est annulé de lui-même (CancelledError), "
-        "sans que le run ait été arrêté."
-    )
+    logger.warning("Outil %s annulé de l'intérieur", name, exc_info=exc, extra={"run_id": state.run_id})
+    return ToolOutput.error(f"Erreur de l'outil {name} : l'outil s'est annulé de lui-même (CancelledError), sans que le run ait été arrêté.")
 
 
 def _unprepared(name: str, exc: Exception, state: RunState) -> str:
     """Refus destiné au modèle d'un appel dont la préparation a levé une exception imprévue."""
-    logger.error(
-        "Préparation de l'appel à %s impossible", name, exc_info=exc, extra={"run_id": state.run_id}
-    )
+    logger.error("Préparation de l'appel à %s impossible", name, exc_info=exc, extra={"run_id": state.run_id})
     return f"Appel à {name} impossible à préparer : {type(exc).__name__}: {exc!s:.500}"
 
 

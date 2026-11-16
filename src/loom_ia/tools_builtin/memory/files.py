@@ -112,10 +112,7 @@ async def extract(data: bytes, path: Path, address: str) -> Extracted:
 
 
 def _too_long(address: str) -> str:
-    return (
-        f"{address} : plus de {MAX_TEXT_CHARS} caractères de texte, la borne d'un document "
-        "de la mémoire ; le découper en plusieurs fichiers."
-    )
+    return f"{address} : plus de {MAX_TEXT_CHARS} caractères de texte, la borne d'un document de la mémoire ; le découper en plusieurs fichiers."
 
 
 # --- Word ------------------------------------------------------------------------------
@@ -149,9 +146,7 @@ def word_markdown(blocks: Sequence[JsonValue]) -> tuple[str | None, str]:
                 # Le titre du document en « # » ; les niveaux de Word un cran en dessous.
                 parts.append(f"{'#' * min(level + 1, 6)} {heading}")
             case "list":
-                lines = _list_lines(
-                    cast(list[JsonValue], block.get("items") or []), bool(block.get("ordered")), 0
-                )
+                lines = _list_lines(cast(list[JsonValue], block.get("items") or []), bool(block.get("ordered")), 0)
                 parts.append("\n".join(lines))
             case "table":
                 table = _table(cast(list[JsonValue], block.get("rows") or []))
@@ -163,10 +158,7 @@ def word_markdown(blocks: Sequence[JsonValue]) -> tuple[str | None, str]:
                 parts.append(
                     "\n".join(
                         f"**{label}** : {value}".rstrip()
-                        for label, value in (
-                            cast(list[str], pair)
-                            for pair in cast(list[JsonValue], block.get("items") or [])
-                        )
+                        for label, value in (cast(list[str], pair) for pair in cast(list[JsonValue], block.get("items") or []))
                     )
                 )
             case "code":
@@ -191,9 +183,7 @@ def _list_lines(items: Sequence[JsonValue], ordered: bool, depth: int) -> list[s
         if isinstance(item, dict):
             nested = cast(Mapping[str, JsonValue], item)
             lines.append(f"{indent}{marker} {nested.get('text') or ''}")
-            lines.extend(
-                _list_lines(cast(list[JsonValue], nested.get("items") or []), False, depth + 1)
-            )
+            lines.extend(_list_lines(cast(list[JsonValue], nested.get("items") or []), False, depth + 1))
         else:
             lines.append(f"{indent}{marker} {item}")
     return lines
@@ -228,8 +218,5 @@ async def _from_pdf(data: bytes, path: Path, address: str) -> Extracted:
     pages = cast(list[dict[str, JsonValue]], found["pages"])
     text = "\n\n".join(str(page["text"]).strip() for page in pages if page.get("text"))
     if not text.strip():
-        raise ToolError(
-            f"{address} : aucun texte dans le PDF — scanné ou fait d'images ; il n'est pas lu "
-            "(pas d'OCR)."
-        )
+        raise ToolError(f"{address} : aucun texte dans le PDF — scanné ou fait d'images ; il n'est pas lu (pas d'OCR).")
     return Extracted(title=path.stem, text=text)

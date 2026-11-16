@@ -113,9 +113,7 @@ class _Encoder:
     device: str
     special: frozenset[int]
 
-    def encode(
-        self, texts: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[Embedding]:
+    def encode(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
         found: list[Embedding] = []
         torch = self.torch
         with torch.inference_mode():
@@ -159,9 +157,7 @@ class _PairScorer:
     model: Any
     device: str
 
-    def score(
-        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[float]:
+    def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
         found: list[float] = []
         torch = self.torch
         with torch.inference_mode():
@@ -233,9 +229,7 @@ class BgeM3Embedder:
             special=frozenset(int(i) for i in special if i is not None),
         )
 
-    def embed_documents(
-        self, texts: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[Embedding]:
+    def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
         if not texts:
             return []
         batch = list(texts)
@@ -275,9 +269,7 @@ class BgeReranker:
         half = half_precision(self._spec.fp16, device)
         with _from_hub(offline):
             tokenizer = transformers.AutoTokenizer.from_pretrained(name, local_files_only=offline)
-            model = transformers.AutoModelForSequenceClassification.from_pretrained(
-                name, local_files_only=offline
-            )
+            model = transformers.AutoModelForSequenceClassification.from_pretrained(name, local_files_only=offline)
         return _PairScorer(
             torch=torch,
             tokenizer=tokenizer,
@@ -285,9 +277,7 @@ class BgeReranker:
             device=device,
         )
 
-    def score(
-        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
-    ) -> list[float]:
+    def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
         if not passages:
             return []
         batch = list(passages)

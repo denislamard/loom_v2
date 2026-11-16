@@ -109,9 +109,7 @@ def chain(
     )
 
 
-async def collect(
-    model_chain: ModelChain, request: ModelRequest = REQUEST, *, current: str | None = None
-) -> list[Any]:
+async def collect(model_chain: ModelChain, request: ModelRequest = REQUEST, *, current: str | None = None) -> list[Any]:
     return [item async for item in model_chain.run(request, current=current)]
 
 
@@ -180,14 +178,10 @@ async def test_the_chain_falls_back_after_the_retries() -> None:
         max_tokens=100,
         params={"temperature": 0.9},
     )
-    retried, fell, answered = await collect(
-        chain((A, first), (b, second), params={"top_p": 1}), request
-    )
+    retried, fell, answered = await collect(chain((A, first), (b, second), params={"top_p": 1}), request)
 
     assert isinstance(retried, ModelRetried) and retried.error_kind == "overloaded"
-    assert fell == ModelFellBack(
-        slot="main", from_model="A", to_model="B", reason="overloaded", error="surchargé"
-    )
+    assert fell == ModelFellBack(slot="main", from_model="A", to_model="B", reason="overloaded", error="surchargé")
     assert fell.event_status == "warning"
     assert isinstance(answered, Answered) and answered.spec is b and answered.attempts == 1
     assert answered.response.message.text == "Réponse de B"
@@ -265,11 +259,7 @@ async def test_context_overflow_goes_to_a_larger_window() -> None:
         )
     # Sans fenêtre déclarée, pas de comparaison possible : pas de bascule.
     with pytest.raises(ModelError, match="trop long"):
-        await collect(
-            chain(
-                (A, ScriptedModel(ModelError("context_overflow", "trop long"))), (larger, skipped)
-            )
-        )
+        await collect(chain((A, ScriptedModel(ModelError("context_overflow", "trop long"))), (larger, skipped)))
 
 
 async def test_an_open_breaker_skips_its_model() -> None:
@@ -281,9 +271,7 @@ async def test_an_open_breaker_skips_its_model() -> None:
 
     items = await collect(chain((a, first), (B, second), breakers=breakers))
     assert [type(item) for item in items] == [ModelRetried, CircuitOpened, ModelFellBack, Answered]
-    assert items[1] == CircuitOpened(
-        target_kind="model", target="A", failures=1, cooldown_s=30, error="surchargé"
-    )
+    assert items[1] == CircuitOpened(target_kind="model", target="A", failures=1, cooldown_s=30, error="surchargé")
     assert breakers.remaining("model:B") is None
 
     clock.now = 10
@@ -306,13 +294,8 @@ async def test_a_chain_all_open_is_unavailable() -> None:
     # Le modèle a échoué, son secours est écarté : la dernière erreur est dite.
     quota = ModelError("quota_exhausted", "crédit épuisé")
     with pytest.raises(ModelError) as caught:
-        await collect(
-            chain((spec("C"), ScriptedModel(quota)), (B, ScriptedModel()), breakers=breakers)
-        )
-    assert caught.value.message == (
-        "écarté(s) par leur disjoncteur : B (encore 60 s) ; "
-        "dernière erreur : model.quota_exhausted — crédit épuisé"
-    )
+        await collect(chain((spec("C"), ScriptedModel(quota)), (B, ScriptedModel()), breakers=breakers))
+    assert caught.value.message == ("écarté(s) par leur disjoncteur : B (encore 60 s) ; dernière erreur : model.quota_exhausted — crédit épuisé")
     with pytest.raises(ValueError, match="Chaîne de modèles vide"):
         chain()
 
@@ -320,9 +303,7 @@ async def test_a_chain_all_open_is_unavailable() -> None:
     fresh = CircuitBreakers(Clock())
     unguarded = spec("A", circuit_breaker=None, retry={"max_attempts": 1})
     for _ in range(6):
-        items = await collect(
-            chain((unguarded, ScriptedModel(DOWN)), (B, ScriptedModel(answer("B"))), breakers=fresh)
-        )
+        items = await collect(chain((unguarded, ScriptedModel(DOWN)), (B, ScriptedModel(answer("B"))), breakers=fresh))
         assert [type(item) for item in items] == [ModelFellBack, Answered]
     assert fresh.remaining("model:A") is None
 
@@ -380,9 +361,7 @@ async def run(ctx: RunContext, prompt: str = "2 + 2 ?") -> tuple[Any, list[Event
 
 async def test_a_run_falls_back_and_stays_on_the_fallback() -> None:
     main_model = ScriptedModel(DOWN, DOWN)
-    fallback = ScriptedModel(
-        tool_call_message(("c1", "calculer", {"expr": "2+2"})), answer("Cela fait 4.")
-    )
+    fallback = ScriptedModel(tool_call_message(("c1", "calculer", {"expr": "2+2"})), answer("Cela fait 4."))
     b = spec("B", pricing={"input": 1.0, "output": 1.0})
     ctx = RunContext(
         agent="demo",
@@ -451,9 +430,7 @@ class Source:
         raise self.error
 
 
-SOURCES = SourceContext(
-    tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), agent="demo"
-)
+SOURCES = SourceContext(tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"), agent="demo")
 
 
 async def opened_events(executor: ToolExecutor) -> list[Any]:
@@ -470,9 +447,7 @@ async def test_a_source_breaker_opens_after_failed_connections() -> None:
     )
     assert [type(e) for e in await opened_events(executor)] == [ToolSourceUnavailable]
     circuit, missing = await opened_events(executor)
-    assert circuit == CircuitOpened(
-        target_kind="mcp", target="crm", failures=2, cooldown_s=30, error="connexion refusée"
-    )
+    assert circuit == CircuitOpened(target_kind="mcp", target="crm", failures=2, cooldown_s=30, error="connexion refusée")
     assert isinstance(missing, ToolSourceUnavailable)
     [skipped] = await opened_events(executor)
     assert isinstance(skipped, ToolSourceUnavailable)
@@ -532,9 +507,7 @@ def lines(events: Sequence[Event]) -> list[str]:
 async def test_the_breaker_is_shared_by_the_runs_of_an_instance(demo: ConfigFactory) -> None:
     path = demo(
         models=[MODEL, DOWN_MODEL],
-        agents=[
-            demo_agent(main={"model": "DOWN", "fallbacks": ["FAKE"], "system": "Tu calcules."})
-        ],
+        agents=[demo_agent(main={"model": "DOWN", "fallbacks": ["FAKE"], "system": "Tu calcules."})],
     )
     reasons: list[list[str]] = []
     events: list[Event] = []
@@ -543,9 +516,7 @@ async def test_the_breaker_is_shared_by_the_runs_of_an_instance(demo: ConfigFact
             result = await loom.run("demo", QUESTION, user=DEV)
             assert result.text == ANSWER
             events = await loom.events(result.run_id)
-            reasons.append(
-                [e.type for e in events if e.type in {"model.fell_back", "circuit.opened"}]
-            )
+            reasons.append([e.type for e in events if e.type in {"model.fell_back", "circuit.opened"}])
         state = await loom.state(events[-1].run_id)
     assert reasons == [
         ["model.fell_back"],
@@ -560,26 +531,21 @@ async def test_the_breaker_is_shared_by_the_runs_of_an_instance(demo: ConfigFact
 async def test_the_progress_lines_of_a_fallback(demo: ConfigFactory) -> None:
     path = demo(
         models=[MODEL, {**DOWN_MODEL, "circuit_breaker": {"failures": 1, "cooldown": 30}}],
-        agents=[
-            demo_agent(main={"model": "DOWN", "fallbacks": ["FAKE"], "system": "Tu calcules."})
-        ],
+        agents=[demo_agent(main={"model": "DOWN", "fallbacks": ["FAKE"], "system": "Tu calcules."})],
     )
     async with Loom.from_config(path) as loom:
         result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.events(result.run_id)
     assert lines(events)[:2] == [
         "· disjoncteur ouvert : modèle DOWN écarté 30 s (échecs de suite : 1)",
-        "· secours main : DOWN → FAKE — model.overloaded : Panne simulée par le script du "
-        "modèle 'DOWN' (réponse n°1 : overloaded)",
+        "· secours main : DOWN → FAKE — model.overloaded : Panne simulée par le script du modèle 'DOWN' (réponse n°1 : overloaded)",
     ]
 
 
 def test_validate_shows_the_chains(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(
         models=[MODEL, DOWN_MODEL],
-        agents=[
-            demo_agent(main={"model": "DOWN", "fallbacks": ["FAKE"], "system": "Tu calcules."})
-        ],
+        agents=[demo_agent(main={"model": "DOWN", "fallbacks": ["FAKE"], "system": "Tu calcules."})],
     )
     assert main(["--config", str(path), "validate"]) == 0
     assert "  demo · DOWN → FAKE · 1 outil Python\n" in capsys.readouterr().out
@@ -640,9 +606,7 @@ async def test_a_judge_falls_back(demo: ConfigFactory) -> None:
         "id": "JUDGE",
         "sdk": "fake",
         "model": "judge-1",
-        "params": {
-            "script": [{"tool_calls": [{"name": "verdict", "arguments": {"criteria": scores}}]}]
-        },
+        "params": {"script": [{"tool_calls": [{"name": "verdict", "arguments": {"criteria": scores}}]}]},
     }
     judge = {
         "model": "DOWN",
@@ -705,10 +669,7 @@ def test_require_tool_is_refused_on_a_model_refusing_a_forced_tool(demo: ConfigF
     )
     with pytest.raises(ConfigError) as caught:
         load_config(path)
-    assert (
-        "la politique loom.require_tool impose un appel d'outil, que le modèle 'FREE' refuse"
-        in str(caught.value)
-    )
+    assert "la politique loom.require_tool impose un appel d'outil, que le modèle 'FREE' refuse" in str(caught.value)
     # Sans la politique, le même modèle est accepté ; et elle reste permise ailleurs.
     load_config(demo(models=[MODEL, free], agents=[demo_agent(main={"model": "FREE"})]))
     load_config(demo(models=[MODEL, free], agents=[demo_agent(policies=policies)]))
@@ -768,9 +729,7 @@ CRITERIA: list[dict[str, Any]] = [{"name": "exact", "rule": "Le résultat est ju
         ),
     ],
 )
-def test_startup_checks_of_the_chains(
-    demo: ConfigFactory, agent: dict[str, Any], message: str
-) -> None:
+def test_startup_checks_of_the_chains(demo: ConfigFactory, agent: dict[str, Any], message: str) -> None:
     path = demo(models=[MODEL, NO_TOOLS, SONNET], agents=[agent])
     with pytest.raises(ConfigError) as caught:
         load_config(path)
@@ -814,18 +773,9 @@ def test_warnings_when_mounting(demo: ConfigFactory, caplog: pytest.LogCaptureFi
     with caplog.at_level(logging.WARNING, logger="loom_ia.runtime.wiring"):
         build_agent(config, "demo", InMemoryEventStore())
     messages = [r.getMessage() for r in caplog.records]
-    assert (
-        "Agent 'demo', juge 'output' : même modèle que la sortie qu'il évalue (SMALL) : "
-        "juge corrélé" in messages
-    )
-    assert (
-        "Agent 'demo' : budget en dollars, mais sans tarif pour FAKE, SMALL : "
-        "leurs appels comptent 0 $" in messages
-    )
-    assert (
-        "Agent 'demo' : le secours SMALL a une fenêtre de contexte plus petite que FAKE "
-        "(32000 < 200000 tokens)" in messages
-    )
+    assert "Agent 'demo', juge 'output' : même modèle que la sortie qu'il évalue (SMALL) : juge corrélé" in messages
+    assert "Agent 'demo' : budget en dollars, mais sans tarif pour FAKE, SMALL : leurs appels comptent 0 $" in messages
+    assert "Agent 'demo' : le secours SMALL a une fenêtre de contexte plus petite que FAKE (32000 < 200000 tokens)" in messages
 
 
 # --- Identifiant du modèle dans la config ----------------------------------------------
@@ -840,16 +790,12 @@ TWIN_DOWN: dict[str, Any] = {
 }
 
 
-async def test_events_name_the_model_of_the_config(
-    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_events_name_the_model_of_the_config(demo: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
     """Deux déclarations du même modèle du fournisseur : le journal dit laquelle a servi."""
     path = demo(
         models=[MODEL, TWIN_DOWN],
         telemetry={"capture": {"raw_exchanges": True}},
-        agents=[
-            demo_agent(main={"model": "DOWN", "fallbacks": ["FAKE"], "system": "Tu calcules."})
-        ],
+        agents=[demo_agent(main={"model": "DOWN", "fallbacks": ["FAKE"], "system": "Tu calcules."})],
     )
     async with Loom.from_config(path) as loom:
         with caplog.at_level(logging.INFO, logger="loom_ia.engine.loop"):
@@ -859,12 +805,8 @@ async def test_events_name_the_model_of_the_config(
     assert result.text == ANSWER
 
     retried = [(p.model_id, p.model) for e in events if isinstance(p := e.payload, ModelRetried)]
-    exchanged = [
-        (p.model_id, p.model) for e in events if isinstance(p := e.payload, ModelExchanged)
-    ]
-    responded = [
-        (p.model_id, p.model) for e in events if isinstance(p := e.payload, ModelResponded)
-    ]
+    exchanged = [(p.model_id, p.model) for e in events if isinstance(p := e.payload, ModelExchanged)]
+    responded = [(p.model_id, p.model) for e in events if isinstance(p := e.payload, ModelResponded)]
     assert retried == [("fake-1", "DOWN")]
     assert exchanged == [("fake-1", "DOWN")] * 2 + [("fake-1", "FAKE")] * 2
     assert responded == [("fake-1", "FAKE")] * 2
@@ -874,9 +816,7 @@ async def test_events_name_the_model_of_the_config(
     logged = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Modèle ")]
     assert logged and all(line.startswith("Modèle FAKE (rôle main)") for line in logged)
     chats = [s for s in trace.spans if s.kind == "chat"]
-    assert {
-        (s.attributes["loom.model.id"], s.attributes["gen_ai.request.model"]) for s in chats
-    } == {("FAKE", "fake-1")}
+    assert {(s.attributes["loom.model.id"], s.attributes["gen_ai.request.model"]) for s in chats} == {("FAKE", "fake-1")}
     assert any("modèle FAKE (fake-1) (main)" in line for line in render_trace(trace))
 
 
@@ -894,9 +834,7 @@ async def test_the_report_separates_two_declarations_of_a_model(demo: ConfigFact
         await loom.run("demo", QUESTION, session_id=session, user=DEV)
         await loom.run("bis", QUESTION, session_id=session, user=DEV)
         report = await loom.report(session_id=session)
-        found = await loom.query(
-            EventQuery(tenant_id=DEFAULT_TENANT, session_id=session, model="BIS")
-        )
+        found = await loom.query(EventQuery(tenant_id=DEFAULT_TENANT, session_id=session, model="BIS"))
     assert [(m.name, m.model_id, m.calls) for m in report.models] == [
         ("FAKE", "fake-1", 2),
         ("BIS", "fake-1", 2),

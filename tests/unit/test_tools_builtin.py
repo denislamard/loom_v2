@@ -141,9 +141,7 @@ def test_empty_catalogue_says_so(demo: ConfigFactory, monkeypatch: pytest.Monkey
 
 @pytest.mark.usefixtures("provided")
 def test_missing_dependency_is_refused(demo: ConfigFactory) -> None:
-    with pytest.raises(
-        ConfigError, match=rf"Outil fourni 'loom\.absent' : dépendance '{ABSENT}' absente"
-    ):
+    with pytest.raises(ConfigError, match=rf"Outil fourni 'loom\.absent' : dépendance '{ABSENT}' absente"):
         _agent(demo, {"python": "loom.absent"})
 
 
@@ -160,16 +158,13 @@ def test_name_clash_with_an_own_tool_is_refused(demo: ConfigFactory) -> None:
         _agent(demo, {"python": "calculer"}, {"python": "loom.calculer"})
 
 
-async def test_import_path_in_a_package_named_loom_is_not_a_builtin(
-    demo: ConfigFactory, tmp_path: Path
-) -> None:
+async def test_import_path_in_a_package_named_loom_is_not_a_builtin(demo: ConfigFactory, tmp_path: Path) -> None:
     """``loom.x:y`` reste un chemin d'import : celui d'un paquet à soi nommé ``loom``."""
     package = tmp_path / "loom"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "outils_maison.py").write_text(
-        "from loom_ia.tools import tool\n\n\n"
-        "@tool\ndef maison(x: int) -> int:\n    '''Outil maison.'''\n    return x\n",
+        "from loom_ia.tools import tool\n\n\n@tool\ndef maison(x: int) -> int:\n    '''Outil maison.'''\n    return x\n",
         encoding="utf-8",
     )
     try:
@@ -209,9 +204,7 @@ async def test_a_run_calls_the_builtin_tool(demo: ConfigFactory) -> None:
 # --- Ce que montre loom validate (D3) ------------------------------------------------
 
 
-def test_validate_lists_the_provided_tools(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_lists_the_provided_tools(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     tools = [{"python": "calculer"}, {"python": "loom.fetch_page"}]
     path = demo(agents=[demo_agent(tools=tools)])
     assert main(["--config", str(path), "validate"]) == 0
@@ -222,9 +215,7 @@ def test_validate_lists_the_provided_tools(
     assert "  demo · FAKE · 2 outils Python\n  ├ calculer\n  └ fetch_page\n" in out
 
 
-def test_validate_says_nothing_without_provided_tools(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_says_nothing_without_provided_tools(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo()), "validate"]) == 0
     assert "Fournis" not in capsys.readouterr().out
 
@@ -269,18 +260,10 @@ async def test_register_refuses_a_loom_name(demo: ConfigFactory) -> None:
 SAMPLE_PARAMS: dict[str, Callable[[Path], dict[str, Any]]] = {
     "loom.state": lambda _: {},
     "loom.ask": lambda _: {},
-    "loom.local_files": lambda folder: {
-        "folders": [{"name": "essai", "path": str(folder), "rights": ["read"]}]
-    },
-    "loom.excel": lambda folder: {
-        "folders": [{"name": "essai", "path": str(folder), "rights": ["write"]}]
-    },
-    "loom.word": lambda folder: {
-        "folders": [{"name": "essai", "path": str(folder), "rights": ["read", "write"]}]
-    },
-    "loom.pdf": lambda folder: {
-        "folders": [{"name": "essai", "path": str(folder), "rights": ["read", "write"]}]
-    },
+    "loom.local_files": lambda folder: {"folders": [{"name": "essai", "path": str(folder), "rights": ["read"]}]},
+    "loom.excel": lambda folder: {"folders": [{"name": "essai", "path": str(folder), "rights": ["write"]}]},
+    "loom.word": lambda folder: {"folders": [{"name": "essai", "path": str(folder), "rights": ["read", "write"]}]},
+    "loom.pdf": lambda folder: {"folders": [{"name": "essai", "path": str(folder), "rights": ["read", "write"]}]},
     "loom.memory": lambda folder: {
         "store": {"path": str(folder / "memoire.db")},
         "models": {"kind": "fake"},
@@ -380,9 +363,7 @@ def test_validating_a_config_imports_only_the_parameter_modules() -> None:
         "'pypdf' in sys.modules, 'loom_ia.tools_builtin.memory' in sys.modules, "
         "'torch' in sys.modules, 'transformers' in sys.modules, 'bs4' in sys.modules)\n"
     )
-    done = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
-    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60)
     assert done.stdout.split() == ["False"] * 16
 
 
@@ -420,9 +401,7 @@ def test_validating_a_config_imports_only_the_parameter_modules() -> None:
         ),
     ],
 )
-def test_parameters_are_checked_when_the_config_loads(
-    demo: ConfigFactory, tool_ref: dict[str, Any], message: str
-) -> None:
+def test_parameters_are_checked_when_the_config_loads(demo: ConfigFactory, tool_ref: dict[str, Any], message: str) -> None:
     """Chaque outil n'accepte que ses propres paramètres, et dès ``load_config``."""
     with pytest.raises(ConfigError, match=message):
         load_config(demo(agents=[demo_agent(tools=[tool_ref])]))
@@ -486,9 +465,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Ouvert, BuiltinContext
     """``loom.sql`` monté par une fabrique d'essai : l'outil rendu, et le contexte reçu."""
     made: list[tuple[Ouvert, BuiltinContext | None]] = []
 
-    def fake(
-        reference: str, params: BaseModel | None = None, *, context: BuiltinContext | None = None
-    ) -> Ouvert:
+    def fake(reference: str, params: BaseModel | None = None, *, context: BuiltinContext | None = None) -> Ouvert:
         tool = Ouvert()
         made.append((tool, context))
         return tool
@@ -497,9 +474,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Ouvert, BuiltinContext
     return made
 
 
-def test_the_factory_receives_the_secrets_and_the_storage_dsns(
-    demo: ConfigFactory, opened: list[tuple[Ouvert, BuiltinContext | None]]
-) -> None:
+def test_the_factory_receives_the_secrets_and_the_storage_dsns(demo: ConfigFactory, opened: list[tuple[Ouvert, BuiltinContext | None]]) -> None:
     storage = {
         "events": {"backend": "jsonl", "path": "journal"},
         "idempotency": {"backend": "postgres", "dsn_env": "LOOM_IDEMPOTENCE_DSN"},
@@ -514,9 +489,7 @@ def test_the_factory_receives_the_secrets_and_the_storage_dsns(
     assert context.protected_dsns == ("LOOM_IDEMPOTENCE_DSN", "LOOM_BUS_DSN")
 
 
-async def test_an_agent_closes_the_builtin_tools_it_opened(
-    demo: ConfigFactory, opened: list[tuple[Ouvert, BuiltinContext | None]]
-) -> None:
+async def test_an_agent_closes_the_builtin_tools_it_opened(demo: ConfigFactory, opened: list[tuple[Ouvert, BuiltinContext | None]]) -> None:
     """Fermé avec l'agent, même enveloppé par un réglage commun (``timeout``)."""
     path = demo(agents=[demo_agent(tools=[{**SQL_REFERENCE, "timeout": 5}])])
     agent = build_agent(load_config(path), "demo", InMemoryEventStore())
@@ -526,9 +499,7 @@ async def test_an_agent_closes_the_builtin_tools_it_opened(
     assert tool.closed == 1
 
 
-async def test_an_own_tool_with_aclose_is_still_not_closed(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_an_own_tool_with_aclose_is_still_not_closed(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un outil à soi qui a un ``aclose`` n'était pas fermé par loom : il ne l'est toujours pas."""
     own = Ouvert()
     module = types.ModuleType("loom_essai_maison")

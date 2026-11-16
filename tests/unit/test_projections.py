@@ -208,9 +208,7 @@ def test_transition_from_wrong_state_is_a_divergence() -> None:
     journal.start("x")
     events = numbered(journal)
     state = fold(events, journal.run_id)
-    wrong = journal.scope.draft(
-        RunTransitioned(from_state=RunStatus.PAUSED, to_state=RunStatus.READY_FOR_MODEL)
-    )
+    wrong = journal.scope.draft(RunTransitioned(from_state=RunStatus.PAUSED, to_state=RunStatus.READY_FOR_MODEL))
     with pytest.raises(ProjectionError, match="transition depuis paused"):
         apply(state, wrong.to_event(3))
 
@@ -228,9 +226,7 @@ def test_nothing_is_accepted_after_closing() -> None:
     journal = calculation_run()
     events = numbered(journal)
     state = fold(events, journal.run_id)
-    extra = journal.scope.draft(
-        RunTransitioned(from_state=RunStatus.COMPLETED, to_state=RunStatus.READY_FOR_MODEL)
-    )
+    extra = journal.scope.draft(RunTransitioned(from_state=RunStatus.COMPLETED, to_state=RunStatus.READY_FOR_MODEL))
     with pytest.raises(ProjectionError, match="après l'état completed"):
         apply(state, extra.to_event(len(events) + 1))
 
@@ -255,9 +251,7 @@ def test_a_lease_written_after_the_final_state_is_absorbed() -> None:
     journal = RunJournal()
     journal.start("x").model_turn(Message.assistant("ok")).complete()
     *opening, closing = journal.take()  # ... transition vers completed, puis run.completed
-    lease = journal.scope.draft(
-        RunClaimed(worker_id="worker-2", lease_until=datetime.now(UTC) + timedelta(seconds=60))
-    )
+    lease = journal.scope.draft(RunClaimed(worker_id="worker-2", lease_until=datetime.now(UTC) + timedelta(seconds=60)))
 
     for order in ([lease, closing], [closing, lease]):
         events = [d.to_event(seq) for seq, d in enumerate([*opening, *order], start=1)]
@@ -361,15 +355,11 @@ def test_history_keeps_completed_root_runs_without_reasoning() -> None:
 
     empty = RunJournal(session_id=session)
     empty.start("Rien ?")
-    empty.model_turn(
-        Message(role="assistant", blocks=(TextBlock(text=""), TextBlock(text="")))
-    ).complete()
+    empty.model_turn(Message(role="assistant", blocks=(TextBlock(text=""), TextBlock(text="")))).complete()
 
     mixed = RunJournal(session_id=session)
     mixed.start("Et là ?")
-    mixed.model_turn(
-        Message(role="assistant", blocks=(TextBlock(text=""), TextBlock(text="Oui")))
-    ).complete()
+    mixed.model_turn(Message(role="assistant", blocks=(TextBlock(text=""), TextBlock(text="Oui")))).complete()
 
     messages = history(numbered(done, failed, child, thinking_only, empty, mixed))
     assert messages == [
@@ -399,9 +389,7 @@ def writing_run(
     journal = RunJournal(session_id=session)
     journal.start("x", state=posed)
     if outputs:
-        calls: list[tuple[str, str, dict[str, JsonValue]]] = [
-            (f"c{n}", "outil", {}) for n in range(1, len(outputs) + 1)
-        ]
+        calls: list[tuple[str, str, dict[str, JsonValue]]] = [(f"c{n}", "outil", {}) for n in range(1, len(outputs) + 1)]
         journal.model_turn(tool_call_message(*calls))
         journal.tool_results({f"c{n}": out for n, out in enumerate(outputs, start=1)})
     return journal.model_turn(Message.assistant("fait"))
@@ -456,9 +444,7 @@ def test_the_call_order_decides_between_two_writes_of_a_key() -> None:
 def test_the_session_state_follows_the_journal() -> None:
     """L'application pose à l'ouverture, les outils écrivent, ``None`` efface (D10)."""
     session = SessionId("c-42")
-    first = writing_run(
-        session, written("ticket", ticket="T-1"), posed={"client_id": "CL-1", "langue": "fr"}
-    ).complete()
+    first = writing_run(session, written("ticket", ticket="T-1"), posed={"client_id": "CL-1", "langue": "fr"}).complete()
     second = writing_run(session, written("clos", ticket=None), posed={"langue": "en"}).complete()
     events = numbered(first, second)
     first_run = [e for e in events if e.run_id == first.run_id]

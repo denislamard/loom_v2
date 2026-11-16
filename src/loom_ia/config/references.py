@@ -47,8 +47,7 @@ class Registry:
         # sous ce nom ne serait jamais atteint (D5).
         if name.startswith(RESERVED_PREFIX):
             raise ConfigError(
-                f"Nom {name!r} refusé ({source or 'registre'}) : le préfixe "
-                f"{RESERVED_PREFIX!r} est réservé aux outils et politiques fournis par loom-ia"
+                f"Nom {name!r} refusé ({source or 'registre'}) : le préfixe {RESERVED_PREFIX!r} est réservé aux outils et politiques fournis par loom-ia"
             )
         known = self._objects.get(name)
         if known is not None and known is not obj:
@@ -87,10 +86,7 @@ def resolve(reference: str, registry: Registry, *, base_dir: Path | None = None)
         return found
     if ":" not in reference:
         known = ", ".join(registry.names) or "aucun"
-        raise ConfigError(
-            f"Référence {reference!r} introuvable : aucun objet de ce nom "
-            f"(enregistrés : {known}). Utiliser 'imports' ou un chemin 'module:attr'"
-        )
+        raise ConfigError(f"Référence {reference!r} introuvable : aucun objet de ce nom (enregistrés : {known}). Utiliser 'imports' ou un chemin 'module:attr'")
     module_name, _, attribute = reference.partition(":")
     with _importable(base_dir):
         try:
@@ -100,9 +96,7 @@ def resolve(reference: str, registry: Registry, *, base_dir: Path | None = None)
     try:
         return getattr(module, attribute)
     except AttributeError as exc:
-        raise ConfigError(
-            f"Référence {reference!r} : {attribute!r} absent du module {module_name!r}"
-        ) from exc
+        raise ConfigError(f"Référence {reference!r} : {attribute!r} absent du module {module_name!r}") from exc
 
 
 # Modules voisins importés par loom : nom de premier niveau → dossier de la

@@ -250,14 +250,10 @@ def make_source(
         ({"examples": EXAMPLES * 11}, r"11 reçu\(s\)"),
     ],
 )
-def test_the_host_refuses_what_it_can_see_without_running(
-    changed: dict[str, Any], said: str
-) -> None:
+def test_the_host_refuses_what_it_can_see_without_running(changed: dict[str, Any], said: str) -> None:
     arguments = forging(**changed)
     with pytest.raises(ToolError, match=said):
-        check_forged(
-            arguments["name"], arguments["input_schema"], arguments["code"], arguments["examples"]
-        )
+        check_forged(arguments["name"], arguments["input_schema"], arguments["code"], arguments["examples"])
 
 
 @pytest.mark.parametrize(
@@ -294,9 +290,7 @@ def short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_pattern_that_does_not_finish_refuses_the_example() -> None:
     """Le schéma est celui du modèle : son motif ne gèle pas l'hôte, il refuse l'outil."""
     examples: list[Any] = [{"arguments": {"s": SLOW_TEXT}, "expected": 35}]
-    with pytest.raises(
-        ToolError, match=r"exemple 1 : input_schema ne peut pas être appliqué — motif"
-    ):
+    with pytest.raises(ToolError, match=r"exemple 1 : input_schema ne peut pas être appliqué — motif"):
         check_forged("lent", SLOW_SCHEMA, SLOW_CODE, examples)
 
 
@@ -415,9 +409,7 @@ async def test_a_run_sees_the_tools_forged_before_it_started(tmp_path: Path) -> 
     source = make_source(tmp_path, FakeRunner())
     before = str(uuid.uuid7())
     await asyncio.sleep(0.01)
-    Catalog(tmp_path / "catalogue").save(
-        "default", replace(forged(), forged_at=datetime.now(UTC).isoformat())
-    )
+    Catalog(tmp_path / "catalogue").save("default", replace(forged(), forged_at=datetime.now(UTC).isoformat()))
     await asyncio.sleep(0.01)
     after = str(uuid.uuid7())
     seen: dict[str, list[str]] = {}
@@ -470,9 +462,7 @@ async def test_forging_runs_each_example_then_saves(tmp_path: Path) -> None:
         ),
     ],
 )
-async def test_a_failing_example_refuses_the_tool(
-    tmp_path: Path, answer: Execution, said: str
-) -> None:
+async def test_a_failing_example_refuses_the_tool(tmp_path: Path, answer: Execution, said: str) -> None:
     source = make_source(tmp_path, FakeRunner(lambda _e, _a: answer))
     async with source.open(source_context()) as tools:
         out = await by_name(tools)[FORGE].invoke(forging(), tool_context())
@@ -499,9 +489,7 @@ TEXT_HINT = "(`expected` est le texte JSON de la valeur rendue : donne la valeur
         (15, "14", "(attendu une chaîne, obtenu un nombre)"),
     ],
 )
-async def test_a_mismatch_of_type_says_so(
-    tmp_path: Path, result: Any, expected: Any, said: str
-) -> None:
+async def test_a_mismatch_of_type_says_so(tmp_path: Path, result: Any, expected: Any, said: str) -> None:
     source = make_source(tmp_path, FakeRunner(lambda _e, _a: Execution(ok=True, result=result)))
     example = {"arguments": {"n": 3}, "expected": expected}
     async with source.open(source_context()) as tools:
@@ -514,9 +502,7 @@ async def test_a_mismatch_of_type_says_so(
     ("result", "expected"),
     [(15, 14), ("quinze", "quatorze"), ({"total": 15}, {"total": 14}), ([15], [14])],
 )
-async def test_a_mismatch_of_value_alone_adds_nothing(
-    tmp_path: Path, result: Any, expected: Any
-) -> None:
+async def test_a_mismatch_of_value_alone_adds_nothing(tmp_path: Path, result: Any, expected: Any) -> None:
     source = make_source(tmp_path, FakeRunner(lambda _e, _a: Execution(ok=True, result=result)))
     example = {"arguments": {"n": 3}, "expected": expected}
     async with source.open(source_context()) as tools:
@@ -563,9 +549,7 @@ async def test_schema_and_examples_may_come_as_json_text(tmp_path: Path) -> None
         ({"examples": '[{"arguments": {"n": "trois"}, "expected": 1}]'}, "exemple 1 : ses arg"),
     ],
 )
-async def test_json_text_is_checked_like_objects(
-    tmp_path: Path, changed: dict[str, Any], said: str
-) -> None:
+async def test_json_text_is_checked_like_objects(tmp_path: Path, changed: dict[str, Any], said: str) -> None:
     runner = FakeRunner()
     source = make_source(tmp_path, runner)
     async with source.open(source_context()) as tools:
@@ -777,9 +761,7 @@ async def test_forged_for_real_then_called_both_ways(tmp_path: Path, execd: Path
     async with source.open(source_context()) as tools:
         out = await by_name(tools)[FORGE].invoke(forging(), tool_context())
         assert not out.is_error, out.as_text
-        called = await by_name(tools)[CALL].invoke(
-            {"name": "carres", "arguments": {"n": 10}}, tool_context()
-        )
+        called = await by_name(tools)[CALL].invoke({"name": "carres", "arguments": {"n": 10}}, tool_context())
     assert called.data == 385
     assert called.as_text == "385\n\nstdout :\ncalcul 10\n"
     async with source.open(source_context("r2")) as tools:
@@ -793,9 +775,7 @@ async def test_real_refusals_say_what_went_wrong(tmp_path: Path, execd: Path) ->
     cases = {
         "attendu 15, obtenu 14": forging(examples=[{"arguments": {"n": 3}, "expected": 15}]),
         "dependance absente : 'numpy'": forging(code="import numpy\n" + CODE),
-        'File "carres.py", line 2, in carres': forging(
-            code="def carres(n):\n    raise ValueError('non')\n"
-        ),
+        'File "carres.py", line 2, in carres': forging(code="def carres(n):\n    raise ValueError('non')\n"),
         "bad_result": forging(code="def carres(n):\n    return {1, 2}\n"),
         "timeout": forging(code="import time\ndef carres(n):\n    time.sleep(5)\n"),
     }
@@ -860,9 +840,7 @@ def config_file(base: Path, vm_dir: Path) -> Path:
     return base / "loom.yaml"
 
 
-async def test_loom_mounts_the_source_and_the_vm_lives_with_it(
-    tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_loom_mounts_the_source_and_the_vm_lives_with_it(tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     vm_dir = make_vm()
     from loom_ia.adapters.firecracker import Vm
@@ -884,9 +862,7 @@ async def test_loom_mounts_the_source_and_the_vm_lives_with_it(
     assert (tmp_path / "config" / "catalogue" / "default" / "carres" / "carres.py").is_file()
 
 
-async def test_a_vm_already_running_is_left_running(
-    tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_vm_already_running_is_left_running(tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     vm_dir = make_vm()
     from loom_ia.adapters.firecracker import Vm
@@ -903,9 +879,7 @@ async def test_a_vm_already_running_is_left_running(
         await vm.stop(grace=5, wait=5)
 
 
-async def test_validate_and_replay_start_no_vm(
-    tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_validate_and_replay_start_no_vm(tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     vm_dir = make_vm()
     from loom_ia.adapters.firecracker import Vm
@@ -939,10 +913,7 @@ def produced(files: Mapping[str, bytes], skipped: tuple[str, ...] = ()) -> Execu
     return Execution(
         ok=True,
         result="fait",
-        outputs=tuple(
-            Output(path, len(data), hashlib.sha256(data).hexdigest())
-            for path, data in files.items()
-        ),
+        outputs=tuple(Output(path, len(data), hashlib.sha256(data).hexdigest()) for path, data in files.items()),
         outputs_skipped=skipped,
     )
 
@@ -1042,9 +1013,7 @@ async def test_a_broken_session_stops_the_transfer_but_keeps_the_result(tmp_path
         out = await by_name(tools)["carres"].invoke({"n": 1}, tool_context())
     assert not out.is_error and out.data == "fait"
     assert [b.name for b in inline(out)] == ["a.txt"]
-    assert "- b.txt (1 o) : transfert interrompu\n- c.txt (1 o) : transfert interrompu" in (
-        out.as_text
-    )
+    assert "- b.txt (1 o) : transfert interrompu\n- c.txt (1 o) : transfert interrompu" in (out.as_text)
 
 
 async def _ready(jobs: FakeJobs) -> FakeJobs:
@@ -1077,9 +1046,7 @@ async def test_the_list_of_files_left_is_bounded(tmp_path: Path) -> None:
     assert text.endswith("- … et 15 autre(s)")
 
 
-async def test_the_transfer_has_its_own_deadline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_the_transfer_has_its_own_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(forge_module, "FETCH_BUDGET", 0.2)
     files = {"a.txt": b"a", "b.txt": b"b", "c.txt": b"c"}
 
@@ -1109,9 +1076,7 @@ async def test_links_and_special_files_are_said(tmp_path: Path) -> None:
 async def test_examples_and_failures_fetch_nothing(tmp_path: Path) -> None:
     files = {"a.txt": b"a"}
     ok = produced(files)
-    runner = FakeRunner(
-        lambda _e, a: replace(ok, result=14) if a.get("n") == 3 else ok, files=files
-    )
+    runner = FakeRunner(lambda _e, a: replace(ok, result=14) if a.get("n") == 3 else ok, files=files)
     source = make_source(tmp_path, runner)
     async with source.open(source_context()) as tools:
         out = await by_name(tools)[FORGE].invoke(forging(), tool_context())
@@ -1199,9 +1164,7 @@ async def test_a_file_written_in_the_vm_comes_back(tmp_path: Path, execd: Path) 
     source = make_source(tmp_path, UdsRunner(execd), {"wall_ms": 5000})
     async with source.open(source_context()) as tools:
         assert not (await by_name(tools)[FORGE].invoke(writing(), tool_context())).is_error
-        out = await by_name(tools)[CALL].invoke(
-            {"name": "ecrit", "arguments": {"nom": "graphe.svg"}}, tool_context()
-        )
+        out = await by_name(tools)[CALL].invoke({"name": "ecrit", "arguments": {"nom": "graphe.svg"}}, tool_context())
     assert out.as_text == '"graphe.svg"'
     [block] = inline(out)
     assert (block.name, block.media_type, block.data) == (
@@ -1230,19 +1193,12 @@ async def test_parallel_calls_each_get_their_own_files(tmp_path: Path, execd: Pa
 
 
 async def test_a_symlink_in_out_is_not_followed(tmp_path: Path, execd: Path) -> None:
-    code = (
-        "import os\n"
-        "def lien(n):\n"
-        "    os.symlink('/etc/passwd', os.path.join(os.environ['OUT_DIR'], 'lien'))\n"
-        "    return n\n"
-    )
+    code = "import os\ndef lien(n):\n    os.symlink('/etc/passwd', os.path.join(os.environ['OUT_DIR'], 'lien'))\n    return n\n"
     arguments = forging(name="lien", code=code, examples=[{"arguments": {"n": 1}, "expected": 1}])
     source = make_source(tmp_path, UdsRunner(execd), {"wall_ms": 5000})
     async with source.open(source_context()) as tools:
         assert not (await by_name(tools)[FORGE].invoke(arguments, tool_context())).is_error
-        out = await by_name(tools)[CALL].invoke(
-            {"name": "lien", "arguments": {"n": 2}}, tool_context()
-        )
+        out = await by_name(tools)[CALL].invoke({"name": "lien", "arguments": {"n": 2}}, tool_context())
     assert inline(out) == []
     assert "- lien : lien ou fichier spécial, ignoré" in out.as_text
 
@@ -1258,17 +1214,13 @@ FILE_SCRIPT: list[dict[str, Any]] = [
     {
         "with_text": "Dessine",
         "text": "Je l'appelle.",
-        "tool_calls": [
-            {"name": "forge__call", "arguments": {"name": "ecrit", "arguments": {"nom": "g.svg"}}}
-        ],
+        "tool_calls": [{"name": "forge__call", "arguments": {"name": "ecrit", "arguments": {"nom": "g.svg"}}}],
     },
     {"with_text": "Dessine", "text": "Fait."},
 ]
 
 
-async def test_loom_stores_the_file_and_journals_its_uri(
-    tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_loom_stores_the_file_and_journals_its_uri(tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     path = config_file(tmp_path / "config", make_vm())
     config = yaml.safe_load(path.read_text())
@@ -1280,11 +1232,7 @@ async def test_loom_stores_the_file_and_journals_its_uri(
         events = await loom.events(run.run_id)
         [described] = await loom.session_files(run.session_id)
         _, data = await loom.session_file(run.session_id, described.file)
-    called = next(
-        e.payload
-        for e in events
-        if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "forge__call"
-    )
+    called = next(e.payload for e in events if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "forge__call")
     [ref] = [b for b in called.output.blocks if isinstance(b, ArtifactRefBlock)]
     assert called.output.artifacts == (ref.uri,)
     assert (ref.name, ref.media_type, ref.size) == ("g.svg", "image/svg+xml", 16)
@@ -1373,17 +1321,11 @@ async def test_a_forged_file_goes_from_the_vm_to_a_folder_through_a_subagent(
     }
     (base / "loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True))
     for agent in (chef, forgeron):
-        (base / "agents" / f"{agent['name']}.yaml").write_text(
-            yaml.safe_dump(agent, allow_unicode=True)
-        )
+        (base / "agents" / f"{agent['name']}.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True))
     async with Loom(load_config(base / "loom.yaml")) as loom:
         run = await loom.run("chef", "Dessine un graphe et range-le.", user="dev")
         events = await loom.events(run.run_id)
     assert run.status == RunStatus.COMPLETED, run
     assert (base / "rendu" / "g.svg").read_bytes() == b"<svg>g.svg</svg>"
-    delegated = next(
-        e.payload
-        for e in events
-        if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "forgeron"
-    )
+    delegated = next(e.payload for e in events if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "forgeron")
     assert [b.name for b in delegated.output.blocks if isinstance(b, ArtifactRefBlock)] == ["g.svg"]

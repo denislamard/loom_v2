@@ -74,8 +74,7 @@ async def purge_wal(connection: aiosqlite.Connection, path: Path) -> None:
         return
     if row is None or row[0]:
         logger.warning(
-            "%s : le WAL n'est pas purgé (un lecteur tient la base) ; les octets supprimés"
-            " y restent jusqu'au prochain point de reprise",
+            "%s : le WAL n'est pas purgé (un lecteur tient la base) ; les octets supprimés y restent jusqu'au prochain point de reprise",
             path,
         )
 

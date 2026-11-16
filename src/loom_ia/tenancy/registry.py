@@ -51,9 +51,7 @@ class UnknownTenant(Unknown):
     """Aucun client de cet identifiant dans la configuration."""
 
     def __init__(self, tenant_id: TenantId, declared: tuple[TenantId, ...]) -> None:
-        super().__init__(
-            f"Client {tenant_id!r} non déclaré (clients : {', '.join(declared) or 'aucun'})"
-        )
+        super().__init__(f"Client {tenant_id!r} non déclaré (clients : {', '.join(declared) or 'aucun'})")
         self.tenant_id = tenant_id
 
 
@@ -187,7 +185,5 @@ def _mapped(config: LoomConfig, spec: TenantSpec) -> tuple[ModelSpec, ...]:
     models: list[ModelSpec] = []
     for model in config.models:
         target = spec.models.get(model.id)
-        models.append(
-            model if target is None else by_id[target].model_copy(update={"id": model.id})
-        )
+        models.append(model if target is None else by_id[target].model_copy(update={"id": model.id}))
     return tuple(models)

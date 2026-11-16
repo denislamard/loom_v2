@@ -351,9 +351,7 @@ def test_a_suite_is_read_relative_to_its_file(labo: Path) -> None:
         (
             {
                 "judge": {"model": "JUGE", "criteria": [{"name": "ton", "rule": "r"}]},
-                "cases": [
-                    {"name": "c", "input": "?", "criteria": [{"name": "ton", "rule": "autre"}]}
-                ],
+                "cases": [{"name": "c", "input": "?", "criteria": [{"name": "ton", "rule": "autre"}]}],
             },
             "nommé deux fois : ton",
         ),
@@ -379,17 +377,13 @@ def test_a_suite_is_read_relative_to_its_file(labo: Path) -> None:
         (
             {
                 "judge": {"model": "JUGE"},
-                "cases": [
-                    {"name": "c", "replay": "j/*.jsonl", "criteria": [{"name": "x", "rule": "r"}]}
-                ],
+                "cases": [{"name": "c", "replay": "j/*.jsonl", "criteria": [{"name": "x", "rule": "r"}]}],
             },
             "un cas de rejeu n'a ni attendus, ni critères",
         ),
     ],
 )
-def test_a_suite_refuses_what_would_prove_nothing(
-    labo: Path, changes: dict[str, Any], message: str
-) -> None:
+def test_a_suite_refuses_what_would_prove_nothing(labo: Path, changes: dict[str, Any], message: str) -> None:
     path = suite(labo, **changes)
     with pytest.raises(ConfigError, match=r"suite\.yaml") as refus:
         load_suite(path)
@@ -434,9 +428,7 @@ def test_a_replay_pattern_in_a_folder_with_glob_characters(tmp_path: Path) -> No
     base = tmp_path / "suite [v2] *?"
     (base / "journaux").mkdir(parents=True)
     (base / "journaux" / "a.jsonl").write_text("", encoding="utf-8")
-    lue = EvalSuite.model_validate(
-        {"agent": "demo", "base_dir": base, "cases": [{"name": "r", "replay": "journaux/*.jsonl"}]}
-    )
+    lue = EvalSuite.model_validate({"agent": "demo", "base_dir": base, "cases": [{"name": "r", "replay": "journaux/*.jsonl"}]})
     assert [p.name for p in lue.journals(lue.cases[0])] == ["a.jsonl"]
 
 
@@ -495,16 +487,11 @@ def test_checks_say_what_they_found() -> None:
     assert results["statut completed"].detail == "failed (guard.judge)"
     assert results['champ objet = "Autre"'].detail == 'vaut "Relance"'
     assert results["champ x.y = 1"].detail == "absent de la sortie structurée"
-    assert results['appelle envoyer avec {"destinataire": "dupont"}'].detail == (
-        'arguments reçus : {"destinataire": "martin", "copie": {"a": 1, "b": 2}}'
-    )
+    assert results['appelle envoyer avec {"destinataire": "dupont"}'].detail == ('arguments reçus : {"destinataire": "martin", "copie": {"a": 1, "b": 2}}')
     assert results["appelle annuler"].detail == "appels : calculer, envoyer"
     assert results["n'appelle pas envoyer"].detail == "appelé 1 fois"
     # Un contrôle de texte ne recopie pas le texte : le rapport le donne une fois.
-    assert (
-        results["contient « dupont »"].detail == ""
-        and results["contient « dupont »"].kind == "text"
-    )
+    assert results["contient « dupont »"].detail == "" and results["contient « dupont »"].kind == "text"
 
 
 def test_a_state_check_says_what_it_found() -> None:
@@ -546,9 +533,7 @@ def test_an_empty_text_check_is_refused(key: str) -> None:
 
 def test_a_field_path_whose_step_is_not_an_index_is_absent() -> None:
     """``liste.²`` levait ``ValueError`` : « ² » passe ``isdigit`` mais pas ``int``."""
-    outcome = Outcome(
-        status=RunStatus.COMPLETED, text="Fait.", data={"liste": [1]}, error_type=None, tools=()
-    )
+    outcome = Outcome(status=RunStatus.COMPLETED, text="Fait.", data={"liste": [1]}, error_type=None, tools=())
     [result] = check(Expect.model_validate({"fields": {"liste.²": 1}}), outcome)
     assert not result.passed and result.detail == "absent de la sortie structurée"
 
@@ -604,9 +589,7 @@ def test_a_pattern_runs_with_a_time_limit(monkeypatch: pytest.MonkeyPatch) -> No
         (RunStatus.PAUSED, None, "paused"),
     ],
 )
-def test_a_run_that_did_not_complete_fails_the_case_without_a_status(
-    status: RunStatus, error_type: str | None, found: str
-) -> None:
+def test_a_run_that_did_not_complete_fails_the_case_without_a_status(status: RunStatus, error_type: str | None, found: str) -> None:
     """Sans ``status``, un run échoué, annulé ou en pause ne passe pas, même si le reste tient."""
     expect = Expect(not_contains=("boum",), not_called=("envoyer",))
     outcome = Outcome(status=status, text="", data=None, error_type=error_type)
@@ -614,9 +597,7 @@ def test_a_run_that_did_not_complete_fails_the_case_without_a_status(
     results = check(expect, outcome)
 
     assert len(results) == expect.count + 1
-    assert [(r.label, r.passed, r.detail, r.kind) for r in results if not r.passed] == [
-        ("statut completed (par défaut)", False, found, "status")
-    ]
+    assert [(r.label, r.passed, r.detail, r.kind) for r in results if not r.passed] == [("statut completed (par défaut)", False, found, "status")]
     # Un run qui a abouti n'a pas ce contrôle de plus.
     done = check(expect, replace(outcome, status=RunStatus.COMPLETED, error_type=None))
     assert len(done) == expect.count and all(r.passed for r in done)
@@ -632,9 +613,7 @@ def test_an_explicit_status_alone_decides_the_status() -> None:
         ("statut failed", True),
         ("ne contient pas « boum »", True),
     ]
-    assert [(r.label, r.passed, r.detail) for r in autre if not r.passed] == [
-        ("statut completed", False, "failed (model.x)")
-    ]
+    assert [(r.label, r.passed, r.detail) for r in autre if not r.passed] == [("statut completed", False, "failed (model.x)")]
 
 
 # --- Le monde pendant une éval ---------------------------------------------------------------
@@ -686,9 +665,7 @@ async def test_an_approval_is_granted_only_when_nothing_leaves() -> None:
     for call_id, outil, nom in (("c1", lire, "lire"), ("c2", poster, "poster")):
         appel = PendingCall(call_id=call_id, name=nom, arguments={"x": 1})
         outils.serves(outil, appel, RunId("r1"))
-        decisions[nom] = await outils.approve(
-            RunId("r1"), PendingApproval(call_id=call_id, tool_name=nom)
-        )
+        decisions[nom] = await outils.approve(RunId("r1"), PendingApproval(call_id=call_id, tool_name=nom))
     assert outils.fates == {("r1", "c1"): "run", ("r1", "c2"): "refused"}
     assert isinstance(decisions["lire"], Rejected) and "personne" in decisions["lire"].reason
     assert isinstance(decisions["poster"], Approved) and decisions["poster"].by == "éval"
@@ -716,9 +693,7 @@ async def test_a_double_receives_the_resolved_arguments(labo: Path) -> None:
     [recu] = check(Expect.model_validate({"called": [_envoi("87")]}), _issue(run.tools))
     [ecrit] = check(Expect.model_validate({"called": [_envoi("result:1")]}), _issue(run.tools))
     assert recu.passed and not ecrit.passed
-    assert ecrit.detail == (
-        'arguments reçus : {"destinataire": "87"} (écrits : {"destinataire": {"$ref": "result:1"}})'
-    )
+    assert ecrit.detail == ('arguments reçus : {"destinataire": "87"} (écrits : {"destinataire": {"$ref": "result:1"}})')
 
 
 POLITIQUES = '''
@@ -773,13 +748,9 @@ async def test_called_reads_what_a_policy_sent_in_place(labo: Path) -> None:
     assert calcul.written is None
 
 
-async def test_a_subagent_runs_and_its_tools_are_intercepted(
-    tree: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_subagent_runs_and_its_tools_are_intercepted(tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tree()
-    (path.parent / "doublures_arbre.py").write_text(
-        "def calcul(expr: str) -> str:\n    return 'doublé : ' + expr\n", encoding="utf-8"
-    )
+    (path.parent / "doublures_arbre.py").write_text("def calcul(expr: str) -> str:\n    return 'doublé : ' + expr\n", encoding="utf-8")
     target = path.parent / "suite.yaml"
     target.write_text(
         yaml.safe_dump(
@@ -882,9 +853,7 @@ async def test_variants_compare_models_and_configs(labo: Path) -> None:
     assert "Relance faite." in texte
 
 
-def test_the_eval_report_shows_a_text_without_obeying_it(
-    labo: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_eval_report_shows_a_text_without_obeying_it(labo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Le texte d'un attendu qui tombe se montre ; ses caractères de contrôle n'agissent pas."""
     config = yaml.safe_load(labo.read_text(encoding="utf-8"))
     [principal] = [model for model in config["models"] if model["id"] == "MAIN"]
@@ -961,9 +930,7 @@ async def test_the_eval_judge_notes_outside_the_run(labo: Path) -> None:
 
 
 @pytest.mark.parametrize(("outils", "note"), [(["calculer"], True), ([], False)])
-async def test_the_eval_judge_sees_the_named_tool_results(
-    labo: Path, outils: list[str], note: bool
-) -> None:
+async def test_the_eval_judge_sees_the_named_tool_results(labo: Path, outils: list[str], note: bool) -> None:
     """Avec ``tool_results``, le juge voit ce que les outils ont rendu dans le run ; sans, non."""
     juge = {
         "model": "VOIT",
@@ -976,12 +943,8 @@ async def test_the_eval_judge_sees_the_named_tool_results(
 
 async def test_the_eval_judge_reads_results_errors_and_absences() -> None:
     """Chaque appel de l'outil nommé, erreurs comprises ; un outil sans résultat le dit."""
-    modele = ScriptedModel(
-        tool_call_message(("v1", "verdict", VERDICT_PLEIN["tool_calls"][0]["arguments"]))
-    )
-    juge = EvalJudgeClient(
-        ModelSpec.model_validate({"id": "J", "sdk": "fake", "model": "j"}), modele
-    )
+    modele = ScriptedModel(tool_call_message(("v1", "verdict", VERDICT_PLEIN["tool_calls"][0]["arguments"])))
+    juge = EvalJudgeClient(ModelSpec.model_validate({"id": "J", "sdk": "fake", "model": "j"}), modele)
     rendu = Outcome(
         status=RunStatus.COMPLETED,
         text="Fait : 87.",
@@ -1116,9 +1079,7 @@ async def test_the_cap_stops_further_runs(labo: Path) -> None:
         ({}, {"variants": ["absente"]}, "variante inconnu(s) : absente"),
     ],
 )
-async def test_a_suite_that_cannot_be_played_is_refused(
-    labo: Path, changes: dict[str, Any], options: dict[str, Any], message: str
-) -> None:
+async def test_a_suite_that_cannot_be_played_is_refused(labo: Path, changes: dict[str, Any], options: dict[str, Any], message: str) -> None:
     with pytest.raises(EvalError, match=message.replace("(", r"\(").replace(")", r"\)")):
         await jouer(suite(labo, **changes), **options)
     assert lignes(labo.parent / "boite.txt") == []
@@ -1280,9 +1241,7 @@ async def test_a_replay_case_replays_each_recorded_run(labo: Path) -> None:
     assert "  ok       rejeu (2/2 run(s) rejoué(s) à l'identique)" in render_eval(report)
     # Ni envoi, ni doublure : le journal sert l'appel d'envoi.
     assert lignes(labo.parent / "boite.txt") == lignes(labo.parent / "doubles.txt") == []
-    assert {e.run_id for e in _journal(journaux / "base--calcul--1.jsonl")} >= {
-        report.runs[0].run_id
-    }
+    assert {e.run_id for e in _journal(journaux / "base--calcul--1.jsonl")} >= {report.runs[0].run_id}
 
 
 async def test_a_replay_case_says_where_todays_config_diverges(labo: Path) -> None:
@@ -1360,13 +1319,9 @@ async def test_what_a_replay_case_cannot_replay_fails_it(labo: Path) -> None:
     relance = _journal(journaux / "base--relance--1.jsonl")
     # Un run fini, et un autre arrêté juste après sa demande.
     pause = [*relance, *(e for e in calcul if e.seq <= calcul[0].seq + 1)]
-    (journaux / "pause.jsonl").write_text(
-        "".join(f"{e.model_dump_json()}\n" for e in pause), encoding="utf-8"
-    )
+    (journaux / "pause.jsonl").write_text("".join(f"{e.model_dump_json()}\n" for e in pause), encoding="utf-8")
     ailleurs = [e.model_copy(update={"agent": "autre"}) for e in calcul]
-    (journaux / "zz-autre.jsonl").write_text(
-        "".join(f"{e.model_dump_json()}\n" for e in ailleurs), encoding="utf-8"
-    )
+    (journaux / "zz-autre.jsonl").write_text("".join(f"{e.model_dump_json()}\n" for e in ailleurs), encoding="utf-8")
     report = await jouer(suite(labo, cases=[REJEU]))
     erreurs = {r.journal: r.error for r in report.runs if r.error is not None}
     assert set(erreurs) == {
@@ -1376,9 +1331,7 @@ async def test_what_a_replay_case_cannot_replay_fails_it(labo: Path) -> None:
     }
     assert "ligne 1 : pas un événement" in str(erreurs["journaux/casse.jsonl"])
     assert "inachevé au journal" in str(erreurs["journaux/pause.jsonl"])
-    assert (
-        erreurs["journaux/zz-autre.jsonl"] == "journal de l'agent 'autre' — la suite évalue 'demo'"
-    )
+    assert erreurs["journaux/zz-autre.jsonl"] == "journal de l'agent 'autre' — la suite évalue 'demo'"
     # Les runs sains passent toujours, celui du journal mêlé compris.
     assert sum(1 for r in report.runs if r.passed) == 3 and not report.passed
     rendu = "\n".join(render_eval(report))
@@ -1650,15 +1603,12 @@ async def test_a_bench_run_poses_its_state_and_a_fake_poses_like_its_tool(labo: 
     assert [r.messages[-1].text for r in modele.requests] == [
         '<session_state>\n{"destinataire":"martin"}\n</session_state>',
         '<session_state>\n{"calcul":"fait","destinataire":"martin"}\n</session_state>',
-        '<session_state>\n{"calcul":"fait","destinataire":"martin","envoye":true}\n'
-        "</session_state>",
+        '<session_state>\n{"calcul":"fait","destinataire":"martin","envoye":true}\n</session_state>',
     ]
 
 
 async def test_an_instance_serves_provided_models_and_leaves_them_open(labo: Path) -> None:
-    calcul = ScriptedModel(
-        tool_call_message(("c1", "calculer", {"expr": "2+2"})), Message.assistant("2 + 2 = 4.")
-    )
+    calcul = ScriptedModel(tool_call_message(("c1", "calculer", {"expr": "2+2"})), Message.assistant("2 + 2 = 4."))
     fourni = Ferme(calcul)
     with pytest.raises(ConfigError, match="non déclarés : ABSENT"):
         Loom(load_config(labo), models={"ABSENT": fourni})
@@ -1671,14 +1621,8 @@ async def test_an_instance_serves_provided_models_and_leaves_them_open(labo: Pat
 
 async def test_an_instance_evaluates_with_its_provided_models(labo: Path) -> None:
     """Les clients fournis servent à l'éval — l'agent et le juge — et restent à l'appelant."""
-    calcul = Ferme(
-        ScriptedModel(
-            tool_call_message(("c1", "calculer", {"expr": "2+2"})), Message.assistant("Quatre.")
-        )
-    )
-    notes: dict[str, JsonValue] = {
-        "criteria": [{"name": "fidele", "score": 1.0, "reason": "Vu par le client fourni."}]
-    }
+    calcul = Ferme(ScriptedModel(tool_call_message(("c1", "calculer", {"expr": "2+2"})), Message.assistant("Quatre.")))
+    notes: dict[str, JsonValue] = {"criteria": [{"name": "fidele", "score": 1.0, "reason": "Vu par le client fourni."}]}
     juge = Ferme(ScriptedModel(tool_call_message(("v1", "verdict", notes))))
     lue = EvalSuite.model_validate(
         {
@@ -1691,9 +1635,7 @@ async def test_an_instance_evaluates_with_its_provided_models(labo: Path) -> Non
         report = await loom.evaluate(lue)
     [run] = report.runs
     assert run.passed, [c for c in run.checks if not c.passed]
-    assert [c.detail for c in run.checks if c.label.startswith("juge")] == [
-        "note 1.00 — Vu par le client fourni."
-    ]
+    assert [c.detail for c in run.checks if c.label.startswith("juge")] == ["note 1.00 — Vu par le client fourni."]
     assert not calcul.closed and not juge.closed
 
 
@@ -1755,9 +1697,7 @@ async def test_the_command_says_0_1_or_2(labo: Path, capsys: pytest.CaptureFixtu
 def _appelle(outil: str) -> Any:
     from loom_ia.replay import EvalCase
 
-    return EvalCase.model_validate(
-        {"name": "relance", "input": RELANCE, "expect": {"called": [outil]}}
-    )
+    return EvalCase.model_validate({"name": "relance", "input": RELANCE, "expect": {"called": [outil]}})
 
 
 def _envoi(destinataire: str) -> dict[str, Any]:

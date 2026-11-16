@@ -66,10 +66,7 @@ class _EventFields(DomainModel):
         fields = cast(dict[str, object], data)
         version = fields.get("schema_version", SCHEMA_VERSION)
         if version != SCHEMA_VERSION:
-            raise ValueError(
-                f"Version de schéma d'événement non prise en charge : {version!r} "
-                f"(attendue : {SCHEMA_VERSION})"
-            )
+            raise ValueError(f"Version de schéma d'événement non prise en charge : {version!r} (attendue : {SCHEMA_VERSION})")
         return fields
 
     @model_validator(mode="after")
@@ -88,9 +85,7 @@ class _EventFields(DomainModel):
         }
         for name, value in expected.items():
             if actual[name] != value:
-                raise ValueError(
-                    f"Champ {name!r} incohérent avec le payload : {actual[name]!r} ≠ {value!r}"
-                )
+                raise ValueError(f"Champ {name!r} incohérent avec le payload : {actual[name]!r} ≠ {value!r}")
         return self
 
 

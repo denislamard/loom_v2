@@ -70,9 +70,7 @@ def test_an_unknown_profile_names_where_it_came_from(monkeypatch: pytest.MonkeyP
         chosen_profile(None)
 
 
-def test_the_loaded_config_carries_the_profile_that_applies(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_loaded_config_carries_the_profile_that_applies(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(PROFILE_ENV, raising=False)
     path = demo(profile="dev")
     assert load_config(path).profile == "dev"
@@ -226,9 +224,7 @@ async def test_a_pausing_agent_on_a_volatile_journal_is_tolerated_in_dev(
         assert loom.context("demo") is not None
 
 
-async def test_the_dev_warning_of_a_volatile_journal_names_each_tenant(
-    atelier: Callable[..., Path], caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_the_dev_warning_of_a_volatile_journal_names_each_tenant(atelier: Callable[..., Path], caplog: pytest.LogCaptureFixture) -> None:
     """Test M4 du 23/10 : l'avertissement revenait par client monté, sans le nommer."""
     volatile: dict[str, Any] = {"events": {"backend": "memory"}}
     path = atelier(storage=volatile, tenants=[{"id": "default"}, {"id": "dupont"}])
@@ -277,15 +273,11 @@ async def test_a_judge_declared_for_prod_is_skipped_elsewhere_and_says_so(
 # --- Ce que la ligne de commande en dit --------------------------------------
 
 
-def test_validate_says_which_profile_applies(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_validate_says_which_profile_applies(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     from loom_ia.access.cli import main
 
     monkeypatch.delenv(PROFILE_ENV, raising=False)
-    path = str(
-        demo(profile="dev", profiles={"prod": {"storage": {"events": {"backend": "memory"}}}})
-    )
+    path = str(demo(profile="dev", profiles={"prod": {"storage": {"events": {"backend": "memory"}}}}))
     assert main(["--config", path, "validate"]) == 0
     sans = capsys.readouterr().out
     assert "  Profil       dev (par config) — assoupli\n  Surcharges   prod\n" in sans
@@ -329,9 +321,7 @@ def test_an_official_anthropic_model_with_vision_is_told_about_tool_result_media
     assert "tool_result_media: true" in warning
 
 
-async def test_the_capability_warning_does_not_stop_prod(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_the_capability_warning_does_not_stop_prod(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     monkeypatch.setenv("CLE_ESSAI", "sk-essai")
     path = demo(models=[MODEL, VOIT], security={"api_keys": []})
     async with Loom.from_config(path, profile="prod"):
@@ -339,9 +329,7 @@ async def test_the_capability_warning_does_not_stop_prod(
     assert any("tool_result_media" in r.getMessage() for r in caplog.records)
 
 
-def test_validate_shows_the_capability_warning(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_capability_warning(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--config", str(demo(models=[MODEL, VOIT])), "validate", "--no-keys"]) == 0
     out = capsys.readouterr().out
     assert "⚠ Modèle 'VOIT'" in out and "  sdk anthropic avec vision" in out
@@ -372,9 +360,7 @@ def test_an_official_model_without_api_key_env_is_told(demo: ConfigFactory) -> N
     ]
 
 
-def test_validate_shows_the_missing_key(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_shows_the_missing_key(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = demo(models=[MODEL, SANS_CLE])
     assert main(["--config", str(path), "validate", "--no-keys"]) == 0
     out = capsys.readouterr().out

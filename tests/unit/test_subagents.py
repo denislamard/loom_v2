@@ -85,16 +85,12 @@ def calculer(expr: str) -> str:
 
 @pytest.fixture(params=["memory", "jsonl"])
 async def store(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[EventStore]:
-    instance: EventStore = (
-        InMemoryEventStore() if request.param == "memory" else JsonlEventStore(tmp_path)
-    )
+    instance: EventStore = InMemoryEventStore() if request.param == "memory" else JsonlEventStore(tmp_path)
     yield instance
     await instance.aclose()
 
 
-def child_context(
-    store: EventStore, model: ScriptedModel, *tools: object, name: str = "verificateur"
-) -> RunContext:
+def child_context(store: EventStore, model: ScriptedModel, *tools: object, name: str = "verificateur") -> RunContext:
     return RunContext(
         agent=name,
         store=store,
@@ -131,11 +127,7 @@ async def session(store: EventStore, state: RunState) -> list[Event]:
 
 
 def payloads[P](events: list[Event], kind: type[P], run_id: RunId | None = None) -> list[P]:
-    return [
-        e.payload
-        for e in events
-        if isinstance(e.payload, kind) and (run_id is None or e.run_id == run_id)
-    ]
+    return [e.payload for e in events if isinstance(e.payload, kind) and (run_id is None or e.run_id == run_id)]
 
 
 # --- Aller-retour ------------------------------------------------------------------
@@ -177,9 +169,7 @@ async def test_subagent_round_trip(store: EventStore) -> None:
     )
     assert child.status is RunStatus.COMPLETED and child.iterations == 2
     # Le span racine de l'enfant est rattaché à l'appel du parent.
-    call_event = next(
-        e for e in events if isinstance(e.payload, ToolCalled) and e.run_id == state.run_id
-    )
+    call_event = next(e for e in events if isinstance(e.payload, ToolCalled) and e.run_id == state.run_id)
     assert child.parent_span_id == call_event.span_id
 
     # Le parent attend l'enfant : tool.called, tout le run enfant, puis tool.completed.
@@ -260,9 +250,7 @@ async def test_a_child_that_only_produced_files_has_answered(store: EventStore) 
         tool_call_message(("c1", "verifier", {"message": "Photographie."})),
         Message.assistant("Photo prise."),
     )
-    child_model = ScriptedModel(
-        tool_call_message(("k1", "photographier", {})), Message.assistant(" ")
-    )
+    child_model = ScriptedModel(tool_call_message(("k1", "photographier", {})), Message.assistant(" "))
     child = replace(
         child_context(store, child_model, photographier),
         tools=ToolExecutor([calculer, photographier], artifacts=InMemoryArtifactStore()),
@@ -271,9 +259,7 @@ async def test_a_child_that_only_produced_files_has_answered(store: EventStore) 
     state = await drive(ctx, (await begin_run(ctx, "Fais photographier.")).run_id)
     [completed] = payloads(await session(store, state), ToolCompleted, state.run_id)
     assert not completed.output.is_error
-    assert [b.name for b in completed.output.blocks if isinstance(b, ArtifactRefBlock)] == [
-        "chantier.png"
-    ]
+    assert [b.name for b in completed.output.blocks if isinstance(b, ArtifactRefBlock)] == ["chantier.png"]
 
 
 async def test_failed_child_becomes_an_error_result(store: EventStore) -> None:
@@ -321,20 +307,14 @@ async def test_subagents_run_in_parallel_in_one_journal(store: EventStore) -> No
 # --- Profondeur -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("max_depth", "offered"), [(1, ["calculer"]), (2, ["calculer", "verifier"])]
-)
+@pytest.mark.parametrize(("max_depth", "offered"), [(1, ["calculer"]), (2, ["calculer", "verifier"])])
 async def test_depth_masks_subagents(max_depth: int, offered: list[str]) -> None:
     store = InMemoryEventStore()
     agents: dict[str, RunContext] = {}
     child_model = ScriptedModel(Message.assistant("Vu."))
     # L'agent vérificateur peut s'appeler lui-même : la profondeur borne la boucle.
-    agents["verificateur"] = child_context(
-        store, child_model, verifier(agents, max_depth=max_depth)
-    )
-    main_model = ScriptedModel(
-        tool_call_message(("c1", "verifier", {"message": "Vérifie."})), Message.assistant("Ok.")
-    )
+    agents["verificateur"] = child_context(store, child_model, verifier(agents, max_depth=max_depth))
+    main_model = ScriptedModel(tool_call_message(("c1", "verifier", {"message": "Vérifie."})), Message.assistant("Ok."))
     ctx = parent_context(store, main_model, verifier(agents, max_depth=max_depth))
     await drive(ctx, (await begin_run(ctx, "?")).run_id)
     assert [t.name for t in child_model.requests[0].tools] == offered
@@ -366,9 +346,7 @@ async def test_cancelling_the_parent_cancels_the_child_which_is_then_resumed(
         tool_call_message(("c1", "verifier", {"message": "Vérifie."})),
         Message.assistant("Vérifié après reprise."),
     )
-    child_model = ScriptedModel(
-        tool_call_message(("k1", "attendre", {})), Message.assistant("Tout est bon.")
-    )
+    child_model = ScriptedModel(tool_call_message(("k1", "attendre", {})), Message.assistant("Tout est bon."))
     agents = {"verificateur": child_context(store, child_model, attendre)}
     ctx = parent_context(store, main_model, verifier(agents))
     started = await begin_run(ctx, "?")
@@ -392,9 +370,7 @@ async def test_cancelling_the_parent_cancels_the_child_which_is_then_resumed(
     assert state.output == Message.assistant("Vérifié après reprise.")
     events = await session(store, state)
     # Le même enfant est repris : un seul run.started enfant, même identifiant.
-    children = [
-        e.run_id for e in events if isinstance(e.payload, RunStarted) and e.run_id != state.run_id
-    ]
+    children = [e.run_id for e in events if isinstance(e.payload, RunStarted) and e.run_id != state.run_id]
     assert children == [first_call.child_run_id]
     calls = payloads(events, ToolCalled, state.run_id)
     assert [(c.resumed, c.child_run_id) for c in calls] == [
@@ -413,12 +389,8 @@ class CrashOnToolCompleted:
         self.inner = inner
         self.crashed = False
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
-        if not self.crashed and any(
-            isinstance(d.payload, ToolCompleted) and d.agent == "demo" for d in drafts
-        ):
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
+        if not self.crashed and any(isinstance(d.payload, ToolCompleted) and d.agent == "demo" for d in drafts):
             self.crashed = True
             raise RuntimeError("plantage simulé")
         return await self.inner.append(drafts, expected_seq=expected_seq)
@@ -480,11 +452,7 @@ def write(tmp_path: Path, **changes: Any) -> Path:
                 "model": "main-1",
                 "params": {
                     "script": [
-                        {
-                            "tool_calls": [
-                                {"name": "verifier", "arguments": {"message": "Vérifie 2 + 2."}}
-                            ]
-                        },
+                        {"tool_calls": [{"name": "verifier", "arguments": {"message": "Vérifie 2 + 2."}}]},
                         {"text": "Vérifié : 4."},
                     ]
                 },
@@ -550,9 +518,7 @@ async def test_standalone_agents_mount_their_subagents(tmp_path: Path) -> None:
 def test_cli_lists_subagents(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = str(write(tmp_path))
     assert main(["--config", path, "validate"]) == 0
-    assert "  demo · MAIN · 0 outil Python · sous-agent : verifier (verificateur)\n" in (
-        capsys.readouterr().out
-    )
+    assert "  demo · MAIN · 0 outil Python · sous-agent : verifier (verificateur)\n" in (capsys.readouterr().out)
     assert main(["--config", path, "run", "demo", "2 + 2 ?", "--stream"]) == 0
     captured = capsys.readouterr()
     assert "· verifier(message='Vérifie 2 + 2.')" in captured.err
@@ -569,9 +535,7 @@ def test_subagent_needs_a_description(tmp_path: Path) -> None:
         load_config(path)
 
 
-async def test_closing_standalone_subagents_closes_every_one_even_if_a_client_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_closing_standalone_subagents_closes_every_one_even_if_a_client_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Le premier sous-agent qui échoue à se fermer n'épargne pas le second."""
     refs = [
         {"agent": "verificateur", "name": "verifier"},

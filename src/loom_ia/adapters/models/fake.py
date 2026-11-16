@@ -164,14 +164,12 @@ class FakeModel:
         else:
             raise ModelError(
                 "invalid_request",
-                f"Script du modèle {self.spec.id!r} épuisé : réponse n°{turn + 1} demandée, "
-                f"{len(script)} prévue(s) avec ces outils",
+                f"Script du modèle {self.spec.id!r} épuisé : réponse n°{turn + 1} demandée, {len(script)} prévue(s) avec ces outils",
             )
         if reply.error is not None:
             error = ModelError(
                 reply.error,
-                f"Panne simulée par le script du modèle {self.spec.id!r} "
-                f"(réponse n°{turn + 1} : {reply.error})",
+                f"Panne simulée par le script du modèle {self.spec.id!r} (réponse n°{turn + 1} : {reply.error})",
             )
             self._deposit(request, None, error.message)
             raise error
@@ -181,8 +179,7 @@ class FakeModel:
         if request.tool_choice == "required" and request.tools and not message.tool_calls:
             raise ModelError(
                 "invalid_request",
-                f"Script du modèle {self.spec.id!r} : réponse n°{turn + 1} sans appel d'outil, "
-                "alors que la requête en impose un (tool_choice: required)",
+                f"Script du modèle {self.spec.id!r} : réponse n°{turn + 1} sans appel d'outil, alors que la requête en impose un (tool_choice: required)",
             )
         usage = Usage(
             input_tokens=len(request.model_dump_json()) // CHARS_PER_TOKEN,
@@ -230,13 +227,7 @@ def _engine_note(message: Message, *, first: bool) -> bool:
     Le state n'est jamais le premier message (``first``) : la demande le précède.
     Un message de rôle qui commence par sa section ``<session_state>`` est une demande.
     """
-    return (
-        _moved_images(message)
-        or _repair(message)
-        or message.text == FINALIZE_HINT
-        or (is_session_state(message) and not first)
-        or is_system_note(message)
-    )
+    return _moved_images(message) or _repair(message) or message.text == FINALIZE_HINT or (is_session_state(message) and not first) or is_system_note(message)
 
 
 def _last_user_text(request: ModelRequest) -> str:
@@ -254,8 +245,5 @@ def _message(reply: FakeReply, turn: int) -> Message:
         blocks.append(ReasoningBlock(text=reply.reasoning))
     if reply.text or not reply.tool_calls:
         blocks.append(TextBlock(text=reply.text))
-    blocks += [
-        ToolCallBlock(call_id=f"fake_{turn}_{i}", name=call.name, arguments=call.arguments)
-        for i, call in enumerate(reply.tool_calls)
-    ]
+    blocks += [ToolCallBlock(call_id=f"fake_{turn}_{i}", name=call.name, arguments=call.arguments) for i, call in enumerate(reply.tool_calls)]
     return Message(role="assistant", blocks=tuple(blocks))

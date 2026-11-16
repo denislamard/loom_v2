@@ -43,9 +43,7 @@ class Reports(Protocol):
     def warn(self, said: str) -> None: ...
 
 
-def convert(
-    value: Scalar, kind: ColumnType, where: str, problems: Reports, zone: ZoneInfo
-) -> Stored:
+def convert(value: Scalar, kind: ColumnType, where: str, problems: Reports, zone: ZoneInfo) -> Stored:
     """La valeur à écrire pour une colonne de ce type ; ``None`` et une erreur si impossible.
 
     ``zone`` : le fuseau où passe une date-heure qui en porte un.
@@ -59,9 +57,7 @@ def convert(
         return None
 
 
-def _convert(
-    value: Scalar, kind: ColumnType, where: str, problems: Reports, zone: ZoneInfo
-) -> Stored:
+def _convert(value: Scalar, kind: ColumnType, where: str, problems: Reports, zone: ZoneInfo) -> Stored:
     match kind:
         case "text":
             return str(value)
@@ -84,10 +80,7 @@ def _convert(
         case "percent":
             number = _number(value, percent=True)
             if abs(number) > 1:
-                problems.warn(
-                    f"{where} : {value!r} affiché {number:.0%} — un pourcentage se donne en "
-                    "fraction (0.15 pour 15 %)"
-                )
+                problems.warn(f"{where} : {value!r} affiché {number:.0%} — un pourcentage se donne en fraction (0.15 pour 15 %)")
             return number
         case "date":
             return _date(value)

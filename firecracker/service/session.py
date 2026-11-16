@@ -99,9 +99,7 @@ def safe_join(root: Path, rel: str) -> Path:
     # prefixe de comparaison serait la cible du lien, pas le dossier de la session —
     # tout chemin sous cette cible passerait pour « dedans ».
     if os.path.islink(root):
-        raise ExecdError(
-            "bad_path", "le dossier de base est un lien symbolique", path=rel, reason="symlink"
-        )
+        raise ExecdError("bad_path", "le dossier de base est un lien symbolique", path=rel, reason="symlink")
 
     target = root.joinpath(*parts)
 
@@ -134,9 +132,7 @@ async def _read_block(stream: asyncio.StreamReader, abandon: asyncio.Event | Non
         leaving.cancel()
 
 
-async def drain_bounded(
-    stream: asyncio.StreamReader, cap: int, abandon: asyncio.Event | None = None
-) -> tuple[str, bool]:
+async def drain_bounded(stream: asyncio.StreamReader, cap: int, abandon: asyncio.Event | None = None) -> tuple[str, bool]:
     """Lit un flux jusqu'a EOF en ne conservant que `cap` octets.
 
     Il faut CONTINUER a lire meme au-dela du plafond : arreter remplirait le
@@ -413,9 +409,7 @@ class Session:
                     reading = asyncio.ensure_future(self.conn.read_frame())
 
                 try:
-                    reply, out_body = await self._watched(
-                        self.dispatch(method, header, body), reading
-                    )
+                    reply, out_body = await self._watched(self.dispatch(method, header, body), reading)
                 except _ConnectionEnded:
                     # Le job est arrete ; la cause de la fin de lecture decide
                     # de la suite : une fermeture est une sortie normale, une
@@ -486,9 +480,7 @@ class Session:
         }
         handler = handlers.get(method) if isinstance(method, str) else None
         if handler is None:
-            raise ExecdError(
-                "protocol", f"methode inconnue : {method!r}", expected=sorted(handlers), got=method
-            )
+            raise ExecdError("protocol", f"methode inconnue : {method!r}", expected=sorted(handlers), got=method)
         if method == "file.get" and self.state != "DONE":
             raise ExecdError(
                 "protocol",
@@ -532,8 +524,7 @@ class Session:
             if ext in NATIVE_EXTENSIONS:
                 raise ExecdError(
                     "native_not_allowed",
-                    "extension native refusee : le code natif vient du socle de "
-                    "l'image, pas du canal de transfert",
+                    "extension native refusee : le code natif vient du socle de l'image, pas du canal de transfert",
                     path=rel,
                     ext=ext,
                 )
@@ -575,9 +566,7 @@ class Session:
                 fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
             except OSError as exc:
                 if exc.errno in (errno.ELOOP, errno.EMLINK):
-                    raise ExecdError(
-                        "bad_path", "la cible est un lien symbolique", path=rel, reason="symlink"
-                    ) from exc
+                    raise ExecdError("bad_path", "la cible est un lien symbolique", path=rel, reason="symlink") from exc
                 raise
             handle = os.fdopen(fd, "wb")
             self._open_files[key] = handle
@@ -661,9 +650,7 @@ class Session:
         try:
             resolved = limits_mod.resolve(header.get("limits"))
         except limits_mod.LimitError as exc:
-            raise ExecdError(
-                "limit_exceeded", str(exc), limit=exc.limit, value=exc.value, ceiling=exc.floor
-            ) from exc
+            raise ExecdError("limit_exceeded", str(exc), limit=exc.limit, value=exc.value, ceiling=exc.floor) from exc
 
         # Les handles encore ouverts sont fermes : un fichier pousse sans eof
         # doit etre lisible par le tool, pas rester dans le tampon.
@@ -829,9 +816,7 @@ class Session:
         if payload.get("ok"):
             try:
                 # sha256 sur des fichiers volumineux : purement CPU, hors boucle.
-                payload["outputs"], payload["outputs_skipped"] = await asyncio.to_thread(
-                    self._scan_outputs, lim["out_files"]
-                )
+                payload["outputs"], payload["outputs_skipped"] = await asyncio.to_thread(self._scan_outputs, lim["out_files"])
             except ExecdError as exc:
                 merged = exc.as_payload()
                 merged.update(stdout=stdout, stderr=stderr, duration_ms=duration_ms)
@@ -841,9 +826,7 @@ class Session:
     @staticmethod
     def _signal_error(rc: int | None, lim: dict) -> ExecdError:
         if rc == -signal.SIGXCPU:
-            return ExecdError(
-                "timeout", f"depassement de cpu_ms ({lim['cpu_ms']} ms)", limit="cpu_ms"
-            )
+            return ExecdError("timeout", f"depassement de cpu_ms ({lim['cpu_ms']} ms)", limit="cpu_ms")
         if rc == -signal.SIGXFSZ:
             return ExecdError(
                 "limit_exceeded",
@@ -854,12 +837,8 @@ class Session:
         if rc == -signal.SIGKILL:
             # Nous n'avons pas tue (le timeout wall est traite en amont) : reste
             # le tueur OOM du noyau, qui ne laisse aucune trace exploitable.
-            return ExecdError(
-                "oom", "processus tue par le noyau (memoire)", mem_bytes=lim["mem_bytes"]
-            )
-        return ExecdError(
-            "runner_failure", f"runner sorti en {rc} sans result.json exploitable", exit_code=rc
-        )
+            return ExecdError("oom", "processus tue par le noyau (memoire)", mem_bytes=lim["mem_bytes"])
+        return ExecdError("runner_failure", f"runner sorti en {rc} sans result.json exploitable", exit_code=rc)
 
     @staticmethod
     def _with_streams(err: ExecdError, stderr: str) -> dict:
@@ -882,8 +861,7 @@ class Session:
         if len(raw) > limits_mod.RESULT_LIMIT:
             raise ExecdError(
                 "limit_exceeded",
-                f"resultat trop gros : result.json fait {size} octets"
-                f" (plafond {limits_mod.RESULT_LIMIT})",
+                f"resultat trop gros : result.json fait {size} octets (plafond {limits_mod.RESULT_LIMIT})",
                 limit="result_bytes",
                 value=size,
                 ceiling=limits_mod.RESULT_LIMIT,

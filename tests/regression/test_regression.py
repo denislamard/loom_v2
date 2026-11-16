@@ -75,11 +75,7 @@ def test_each_case_has_its_journal_and_nothing_else(path: Path) -> None:
         case = attendus[fichier.name]
         assert run.finished and run.agent == suite.agent
         assert run.tenant_id == (suite.tenant_of(case) or DEFAULT_TENANT)
-        [started] = [
-            e.payload
-            for e in events
-            if isinstance(e.payload, RunStarted) and e.run_id == run.run_id
-        ]
+        [started] = [e.payload for e in events if isinstance(e.payload, RunStarted) and e.run_id == run.run_id]
         assert started.state == case.state
 
 

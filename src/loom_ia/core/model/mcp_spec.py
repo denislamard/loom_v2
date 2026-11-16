@@ -71,12 +71,8 @@ class McpServerSpec(DomainModel):
         own, other = (stdio, http) if self.transport == "stdio" else (http, stdio)
         required = "command" if self.transport == "stdio" else "url"
         if not own[required]:
-            raise ValueError(
-                f"Serveur {self.name!r} : {required!r} obligatoire en {self.transport}"
-            )
+            raise ValueError(f"Serveur {self.name!r} : {required!r} obligatoire en {self.transport}")
         misplaced = [key for key, value in other.items() if value]
         if misplaced:
-            raise ValueError(
-                f"Serveur {self.name!r} : {', '.join(misplaced)} sans effet en {self.transport}"
-            )
+            raise ValueError(f"Serveur {self.name!r} : {', '.join(misplaced)} sans effet en {self.transport}")
         return self

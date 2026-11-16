@@ -135,15 +135,11 @@ class ReplayBook:
 
     responses: list[_Response] = field(default_factory=list[_Response])
     # Par run et ``call_id`` : un identifiant d'appel n'est unique que dans son run.
-    tools: dict[tuple[str, str], ToolCallRecord] = field(
-        default_factory=dict[tuple[str, str], ToolCallRecord]
-    )
+    tools: dict[tuple[str, str], ToolCallRecord] = field(default_factory=dict[tuple[str, str], ToolCallRecord])
     approvals: dict[tuple[str, str], ApprovalGranted | ApprovalRejected | ApprovalExpired] = field(
         default_factory=dict[tuple[str, str], ApprovalGranted | ApprovalRejected | ApprovalExpired]
     )
-    answers: dict[tuple[str, str], QuestionAnswered | QuestionExpired] = field(
-        default_factory=dict[tuple[str, str], QuestionAnswered | QuestionExpired]
-    )
+    answers: dict[tuple[str, str], QuestionAnswered | QuestionExpired] = field(default_factory=dict[tuple[str, str], QuestionAnswered | QuestionExpired])
     fallbacks: list[ModelFellBack] = field(default_factory=list[ModelFellBack])
     divergence: Divergence | None = None
     # La panne de modèle sur laquelle le run racine s'est arrêté, s'il s'est
@@ -166,15 +162,11 @@ class ReplayBook:
         for event in events:
             match event.payload:
                 case ModelResponded() as responded:
-                    entry = _Response(
-                        seq=event.seq, run_id=event.run_id, role=event.role, payload=responded
-                    )
+                    entry = _Response(seq=event.seq, run_id=event.run_id, role=event.role, payload=responded)
                     book.responses.append(entry)
                     book._by_hash.setdefault(responded.request_hash, deque()).append(entry)
                 case ToolCalled() as called:
-                    book.tools[event.run_id, called.call_id] = ToolCallRecord(
-                        run_id=event.run_id, called=called
-                    )
+                    book.tools[event.run_id, called.call_id] = ToolCallRecord(run_id=event.run_id, called=called)
                 case ToolCompleted() as completed if (
                     event.run_id,
                     completed.call_id,
@@ -230,11 +222,7 @@ class ReplayBook:
         pas partie, ses appels de modèle se comptent avec les réponses. Les
         appels d'un sous-run lu tel quel non plus (variante).
         """
-        return [
-            t
-            for t in self.tools.values()
-            if not t.served and _servable(t) and t.run_id not in self.read_runs
-        ]
+        return [t for t in self.tools.values() if not t.served and _servable(t) and t.run_id not in self.read_runs]
 
     def read_through(self, record: ToolCallRecord) -> None:
         """Le sous-run de cet appel, et les siens, sont lus au journal, pas refaits."""
@@ -314,10 +302,7 @@ class ReplayBook:
         where = f"appel de modèle n°{rank} ({role} au journal) : la requête a changé"
         recorded = expected.payload.request_parts
         if not recorded:
-            detail = (
-                "empreinte différente ; ce journal est antérieur aux empreintes par partie "
-                "(6.2a), la partie qui diffère ne peut pas être dite"
-            )
+            detail = "empreinte différente ; ce journal est antérieur aux empreintes par partie (6.2a), la partie qui diffère ne peut pas être dite"
             changed: tuple[str, ...] = ()
         else:
             now = request.request_parts()
@@ -325,10 +310,7 @@ class ReplayBook:
             said = [_PART_LABELS[part] for part in changed]
             detail = "ce qui diffère : " + (", ".join(said) if said else "rien de visible")
             if "messages" in changed:
-                detail += (
-                    f" ({recorded.get('messages_count', '?')} message(s) au journal, "
-                    f"{now['messages_count']} maintenant)"
-                )
+                detail += f" ({recorded.get('messages_count', '?')} message(s) au journal, {now['messages_count']} maintenant)"
         if self.fallbacks and exact:
             detail += (
                 " — le run d'origine avait basculé sur un secours "
@@ -353,13 +335,7 @@ class ReplayBook:
         """
         wanted = dict(arguments)
         for record in self.tools.values():
-            if (
-                not record.served
-                and not record.reserved
-                and _servable(record)
-                and record.called.tool_name == name
-                and record.called.arguments == wanted
-            ):
+            if not record.served and not record.reserved and _servable(record) and record.called.tool_name == name and record.called.arguments == wanted:
                 record.reserved = True
                 return record
         return None
@@ -369,16 +345,10 @@ class ReplayBook:
         completed = record.completed
         assert completed is not None
         record.served = True
-        consumption = (
-            Consumption(usage=completed.usage, cost_usd=completed.cost_usd)
-            if completed.usage is not None
-            else None
-        )
+        consumption = Consumption(usage=completed.usage, cost_usd=completed.cost_usd) if completed.usage is not None else None
         return completed.output, consumption
 
-    def tool_output(
-        self, run_id: str, call_id: str, name: str, arguments: Mapping[str, JsonValue]
-    ) -> tuple[ToolOutput, Consumption | None]:
+    def tool_output(self, run_id: str, call_id: str, name: str, arguments: Mapping[str, JsonValue]) -> tuple[ToolOutput, Consumption | None]:
         if self.diverged:
             return ToolOutput.error(STOPPED), None
         recorded = self.tools.get((run_id, call_id))
@@ -398,11 +368,7 @@ class ReplayBook:
                 Divergence(
                     kind="tool",
                     where=f"appel d'outil {name} ({call_id}) : il diffère du journal",
-                    detail=(
-                        f"outil {called.tool_name!r} au journal"
-                        if called.tool_name != name
-                        else "mêmes outil et identifiant, autres arguments"
-                    ),
+                    detail=(f"outil {called.tool_name!r} au journal" if called.tool_name != name else "mêmes outil et identifiant, autres arguments"),
                 )
             )
             return ToolOutput.error(f"rejeu : appel {name} différent du journal"), None
@@ -445,10 +411,7 @@ class ReplayBook:
                 self.diverge(
                     Divergence(
                         kind="approval",
-                        where=(
-                            f"demande d'approbation de {pending.tool_name} "
-                            f"({pending.call_id}) : absente du journal"
-                        ),
+                        where=(f"demande d'approbation de {pending.tool_name} ({pending.call_id}) : absente du journal"),
                     )
                 )
                 return Rejected(reason="rejeu : demande absente du journal", by="rejeu")
@@ -517,9 +480,7 @@ class ReplayModelClient(AnsweringClient):
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
         """Pour qui lirait le flux : les morceaux de la réponse du journal."""
         response = await self.answer(request)
-        for chunk in message_to_chunks(
-            response.message, usage=response.usage, stop_reason=response.stop_reason
-        ):
+        for chunk in message_to_chunks(response.message, usage=response.usage, stop_reason=response.stop_reason):
             yield chunk
 
     async def aclose(self) -> None:

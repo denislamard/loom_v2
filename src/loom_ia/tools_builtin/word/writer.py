@@ -130,9 +130,7 @@ FIRST_HEADER_PART: Final = "header2.xml"
 FIRST_FOOTER_PART: Final = "footer2.xml"
 
 
-def _parts_listed(
-    charts: int, media: list[Picture], body_media: int, bands: Sequence[tuple[str, str, str]]
-) -> tuple[str, str]:
+def _parts_listed(charts: int, media: list[Picture], body_media: int, bands: Sequence[tuple[str, str, str]]) -> tuple[str, str]:
     """Types de contenu et relations du corps : ceux d'un document sans graphique, image
     ni en-tête, à l'octet près, plus une partie et une relation par graphique, par image
     du corps (``body_media`` premières), et par en-tête ou pied ajouté
@@ -141,40 +139,26 @@ def _parts_listed(
         return CONTENT_TYPES, DOCUMENT_RELS
     formats = sorted({picture.format for picture in media})
     defaults = "".join(f'<Default Extension="{fmt}" ContentType="image/{fmt}"/>' for fmt in formats)
-    types = "".join(
-        f'<Override PartName="/word/charts/chart{n}.xml" ContentType="{_CHART_TYPE}"/>'
-        for n in range(1, charts + 1)
-    ) + "".join(
-        f'<Override PartName="/word/{part}" ContentType="{_CT}.{kind}+xml"/>'
-        for _, kind, part in bands
+    types = "".join(f'<Override PartName="/word/charts/chart{n}.xml" ContentType="{_CHART_TYPE}"/>' for n in range(1, charts + 1)) + "".join(
+        f'<Override PartName="/word/{part}" ContentType="{_CT}.{kind}+xml"/>' for _, kind, part in bands
     )
     relations = (
-        "".join(
-            f'<Relationship Id="rIdChart{n}" Type="{_TYPE}/chart" Target="charts/chart{n}.xml"/>'
-            for n in range(1, charts + 1)
-        )
+        "".join(f'<Relationship Id="rIdChart{n}" Type="{_TYPE}/chart" Target="charts/chart{n}.xml"/>' for n in range(1, charts + 1))
         + "".join(
-            f'<Relationship Id="rIdImage{n}" Type="{_TYPE}/image" '
-            f'Target="media/image{n}.{picture.extension}"/>'
+            f'<Relationship Id="rIdImage{n}" Type="{_TYPE}/image" Target="media/image{n}.{picture.extension}"/>'
             for n, picture in enumerate(media[:body_media], start=1)
         )
-        + "".join(
-            f'<Relationship Id="{ident}" Type="{_TYPE}/{kind}" Target="{part}"/>'
-            for ident, kind, part in bands
-        )
+        + "".join(f'<Relationship Id="{ident}" Type="{_TYPE}/{kind}" Target="{part}"/>' for ident, kind, part in bands)
     )
     xml_default = '<Default Extension="xml" ContentType="application/xml"/>'
     return (
-        CONTENT_TYPES.replace(xml_default, xml_default + defaults).replace(
-            "</Types>", types + "</Types>"
-        ),
+        CONTENT_TYPES.replace(xml_default, xml_default + defaults).replace("</Types>", types + "</Types>"),
         DOCUMENT_RELS.replace("</Relationships>", relations + "</Relationships>"),
     )
 
 
 APP: Final = (
-    _HEAD + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/'
-    'extended-properties"><Application>loom-ia</Application></Properties>'
+    _HEAD + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>loom-ia</Application></Properties>'
 )
 SETTINGS: Final = (
     _HEAD + f'<w:settings xmlns:w="{_W}">'
@@ -261,9 +245,7 @@ def _runs(
             body.used.add(look.HYPERLINK)
             relation = body.relation(run.link, part)
             said += (
-                f'<w:hyperlink r:id="{relation}" w:history="1">'
-                + "".join(_one(piece, bold=bold, size=size, link=True) for piece in group)
-                + "</w:hyperlink>"
+                f'<w:hyperlink r:id="{relation}" w:history="1">' + "".join(_one(piece, bold=bold, size=size, link=True) for piece in group) + "</w:hyperlink>"
             )
             continue
         index += 1
@@ -284,14 +266,9 @@ def _footnote(body: _Body, note: Inline) -> str:
     body.footnotes[number - 1] = (
         f'<w:footnote w:id="{number}"><w:p><w:pPr><w:pStyle w:val="{look.FOOTNOTE_TEXT}"/>'
         f'</w:pPr><w:r><w:rPr><w:rStyle w:val="{look.FOOTNOTE_REFERENCE}"/></w:rPr>'
-        '<w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>'
-        + _runs(body, note, part="footnotes")
-        + "</w:p></w:footnote>"
+        '<w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>' + _runs(body, note, part="footnotes") + "</w:p></w:footnote>"
     )
-    return (
-        f'<w:r><w:rPr><w:rStyle w:val="{look.FOOTNOTE_REFERENCE}"/></w:rPr>'
-        f'<w:footnoteReference w:id="{number}"/></w:r>'
-    )
+    return f'<w:r><w:rPr><w:rStyle w:val="{look.FOOTNOTE_REFERENCE}"/></w:rPr><w:footnoteReference w:id="{number}"/></w:r>'
 
 
 def _reference(body: _Body, run: Run, *, bold: bool, size: int | None) -> str:
@@ -332,10 +309,7 @@ def _paragraph(style: str, content: str, extra: str = "") -> str:
 
 def _spacer(twips: int) -> str:
     """Un paragraphe vide de ``twips`` de haut : un espace avant, sans texte à relire."""
-    return (
-        f'<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="{twips}" '
-        'w:lineRule="exact"/></w:pPr></w:p>'
-    )
+    return f'<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="{twips}" w:lineRule="exact"/></w:pPr></w:p>'
 
 
 def _after(points: float) -> str:
@@ -355,6 +329,8 @@ def _sides(value: tuple[float, float, float, float] | None) -> tuple[int, int, i
     """Un ``padding`` (cm, en haut, à droite, en bas, à gauche), en twips."""
     top, right, bottom, left = value or (0.0, 0.0, 0.0, 0.0)
     return cm_twips(top), cm_twips(right), cm_twips(bottom), cm_twips(left)
+
+
 _JC: Final = {"left": "left", "center": "center", "right": "right"}
 
 
@@ -423,11 +399,7 @@ def _caption(body: _Body, kind: str, runs: Inline, style_id: str = "Caption") ->
     prefix = ""
     if body.style.look("caption").numbered:
         number = body.numbers[kind] = body.numbers.get(kind, 0) + 1
-        prefix = (
-            _run(f"{kind} ")
-            + f'<w:fldSimple w:instr=" SEQ {kind} \\* ARABIC "><w:r><w:t>{number}</w:t></w:r>'
-            "</w:fldSimple>" + _run(" — ")
-        )
+        prefix = _run(f"{kind} ") + f'<w:fldSimple w:instr=" SEQ {kind} \\* ARABIC "><w:r><w:t>{number}</w:t></w:r></w:fldSimple>' + _run(" — ")
     return _paragraph(style_id, prefix + _plain_runs(runs))
 
 
@@ -496,11 +468,7 @@ def _table(
     said = (
         (_spacer(look.twips(tables.space_before)) if tables.space_before else "")
         + "<w:tbl><w:tblPr>"
-        + (
-            '<w:tblW w:w="5000" w:type="pct"/>'
-            if full_width
-            else f'<w:tblW w:w="{full}" w:type="dxa"/>'
-        )
+        + ('<w:tblW w:w="5000" w:type="pct"/>' if full_width else f'<w:tblW w:w="{full}" w:type="dxa"/>')
         + (f'<w:jc w:val="{look.jc(position)}"/>' if position != "left" else "")
         + "<w:tblBorders>"
         + "".join(f"<w:{side} {border}/>" for side, border in _table_borders(tables))
@@ -528,18 +496,10 @@ def _table(
     lines = {"header": header, "total": total, "subtotal": subtotal}
 
     # Une ligne d'émargement : au moins sa hauteur, pour signer.
-    tall = (
-        f'<w:trHeight w:val="{round(tables.row_height * CM)}" w:hRule="atLeast"/>'
-        if tables.row_height
-        else ""
-    )
+    tall = f'<w:trHeight w:val="{round(tables.row_height * CM)}" w:hRule="atLeast"/>' if tables.row_height else ""
 
     def row(cells: Sequence[str | Inline], kind: str = "body", band: bool = False) -> str:
-        props = (
-            "<w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>"
-            if kind == "header"
-            else (f"<w:trPr><w:cantSplit/>{tall if kind == 'body' else ''}</w:trPr>")
-        )
+        props = "<w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>" if kind == "header" else (f"<w:trPr><w:cantSplit/>{tall if kind == 'body' else ''}</w:trPr>")
         said = f"<w:tr>{props}"
         own = written[kind]
         line_look = lines.get(kind)
@@ -564,9 +524,7 @@ def _table(
                 content = _runs(body, text, size=size)
             said += (
                 f'<w:tc><w:tcPr><w:tcW w:w="{widths[index]}" w:type="dxa"/>{top}'
-                f"{_cell_fill(filled)}{_valign(tables)}</w:tcPr>"
-                + _paragraph(paragraph_style, content, f'<w:jc w:val="{_JC[align]}"/>')
-                + "</w:tc>"
+                f"{_cell_fill(filled)}{_valign(tables)}</w:tcPr>" + _paragraph(paragraph_style, content, f'<w:jc w:val="{_JC[align]}"/>') + "</w:tc>"
             )
         return said + "</w:tr>"
 
@@ -577,9 +535,7 @@ def _table(
         return (
             "<w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc><w:tcPr>"
             f'<w:tcW w:w="{full}" w:type="dxa"/><w:gridSpan w:val="{len(widths)}"/>'
-            f"{_cell_fill(grouped.fill)}{_valign(grouped)}</w:tcPr>"
-            + _paragraph(look.TABLE_GROUP, _runs(body, label))
-            + "</w:tc></w:tr>"
+            f"{_cell_fill(grouped.fill)}{_valign(grouped)}</w:tcPr>" + _paragraph(look.TABLE_GROUP, _runs(body, label)) + "</w:tc></w:tr>"
         )
 
     if table.headers:
@@ -610,9 +566,7 @@ def _image(body: _Body, block: ImageOut, width: int, caption: str = "Caption") -
     """Une image, réduite à la place disponible (une colonne, une cellule), et sa légende."""
     room = width * 2540 // 1440
     if block.width > room:
-        block = dataclasses.replace(
-            block, width=room, height=max(1, block.height * room // block.width)
-        )
+        block = dataclasses.replace(block, width=room, height=max(1, block.height * room // block.width))
     body.drawings += 1
     relation = f"rIdImage{body.picture(block.picture)}"
     said = image.inline(relation, body.drawings, block, keep_next=bool(block.caption))
@@ -653,9 +607,7 @@ def _layout(
         box = framed.get(index)
         frame = (
             "<w:tcBorders>"
-            + "".join(
-                f"<w:{side} {_border(box.border)}/>" for side in ("top", "left", "bottom", "right")
-            )
+            + "".join(f"<w:{side} {_border(box.border)}/>" for side in ("top", "left", "bottom", "right"))
             + "</w:tcBorders>"
             + _cell_fill(box.fill)
             if box is not None
@@ -762,25 +714,17 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
             continue
         match block:
             case TitleOut(runs=runs):
-                said += _paragraph(
-                    "Title", _plain_runs(runs), '<w:jc w:val="center"/>' if layout.cover else ""
-                )
+                said += _paragraph("Title", _plain_runs(runs), '<w:jc w:val="center"/>' if layout.cover else "")
             case HeadingOut(level=level, runs=runs):
                 content = _plain_runs(runs)
                 mark = body.marks.get(id(block))
                 if mark is not None:
                     number, name = mark
-                    content = (
-                        f'<w:bookmarkStart w:id="{number}" w:name="{name}"/>{content}'
-                        f'<w:bookmarkEnd w:id="{number}"/>'
-                    )
+                    content = f'<w:bookmarkStart w:id="{number}" w:name="{name}"/>{content}<w:bookmarkEnd w:id="{number}"/>'
                 rank = body.ranks.get(id(block), 0)
                 if rank in body.targeted:
                     number = REF_MARKS + rank
-                    content = (
-                        f'<w:bookmarkStart w:id="{number}" w:name="{REF_MARK}{rank}"/>{content}'
-                        f'<w:bookmarkEnd w:id="{number}"/>'
-                    )
+                    content = f'<w:bookmarkStart w:id="{number}" w:name="{REF_MARK}{rank}"/>{content}<w:bookmarkEnd w:id="{number}"/>'
                 heading = _style_id(body, f"heading{level}", block.style, layout)
                 said += _paragraph(heading, content)
             case ParagraphOut(runs=runs):
@@ -790,32 +734,21 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
                 body.used.update((look.CHECK, look.CHECK_2))
                 for entry in entries:
                     said += _checkbox(body, look.CHECK, entry.checked, entry.runs, None)
-                    said += "".join(
-                        _checkbox(body, look.CHECK_2, child.checked, child.runs, None)
-                        for child in entry.children
-                    )
+                    said += "".join(_checkbox(body, look.CHECK_2, child.checked, child.runs, None) for child in entry.children)
             case ListOut(ordered=ordered, entries=entries):
                 deep = any(child.children for entry in entries for child in entry.children)
                 body.lists.append((ordered, deep))
                 number = len(body.lists)
                 items = _style_id(body, "list", block.style, layout)
-                said += "".join(
-                    _list_items(body, number, 0, entry, align, items) for entry in entries
-                )
+                said += "".join(_list_items(body, number, 0, entry, align, items) for entry in entries)
             case TableOut():
                 name = block.style or layout.styles.get("table") or "table"
                 text = body.word(name)
                 if text in (look.INVOICE_TOTALS, look.ATTENDANCE):
                     body.used.add(text)
-                said += _table(
-                    body, block, width, style.look(name), cell_style=text, caption=caption
-                )
+                said += _table(body, block, width, style.look(name), cell_style=text, caption=caption)
             case NoteOut(title=title, runs=runs):
-                head = (
-                    _run(title, "<w:rPr><w:b/><w:bCs/></w:rPr>") + "<w:r><w:br/></w:r>"
-                    if title
-                    else ""
-                )
+                head = _run(title, "<w:rPr><w:b/><w:bCs/></w:rPr>") + "<w:r><w:br/></w:r>" if title else ""
                 note = _style_id(body, "note", block.style, layout)
                 said += _paragraph(note, head + _runs(body, runs))
             case QuoteOut(runs=runs, source=source):
@@ -886,19 +819,13 @@ def _signature(body: _Body, block: SignatureOut, width: int) -> str:
         + "</w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>"
     )
     for index, (signer, cell) in enumerate(zip(block.signers, widths, strict=True)):
-        gap = (
-            f'<w:tcMar><w:right w:w="{body.style.distances.beside_gap}" w:type="dxa"/></w:tcMar>'
-            if index < count - 1
-            else ""
-        )
+        gap = f'<w:tcMar><w:right w:w="{body.style.distances.beside_gap}" w:type="dxa"/></w:tcMar>' if index < count - 1 else ""
         content = _paragraph(look.SIGNER, _run(signer))
         if block.mention:
             content += _paragraph(look.MENTION, _run(block.mention))
         labels = body.style.labels
         content += _paragraph("Normal", _run(labels.date), f'<w:spacing w:after="{_DATE_SPACE}"/>')
-        content += _paragraph(
-            "Normal", _run(labels.signature), f'<w:spacing w:after="{sign}"/>'
-        )
+        content += _paragraph("Normal", _run(labels.signature), f'<w:spacing w:after="{sign}"/>')
         said += f'<w:tc><w:tcPr><w:tcW w:w="{cell}" w:type="dxa"/>{gap}</w:tcPr>{content}</w:tc>'
     return said + "</w:tr></w:tbl>" + _after(body.style.look("table").space_after or 0)
 
@@ -921,9 +848,7 @@ def _contents(body: _Body, width: int) -> str:
         '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
     )
     end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
-    tabs = (
-        f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{width}"/></w:tabs>' if pages else ""
-    )
+    tabs = f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{width}"/></w:tabs>' if pages else ""
     said = _paragraph(look.TOC_HEADING, _run(style.labels.contents))
     if not body.toc:
         return said + _paragraph(look.TOC_LEVELS[0], begin + end)
@@ -1005,21 +930,14 @@ def _footnotes(notes: Sequence[str]) -> str:
         f"<w:r><w:{kind}/></w:r></w:p></w:footnote>"
         for number, kind in ((-1, "separator"), (0, "continuationSeparator"))
     )
-    return (
-        _HEAD
-        + f"<w:footnotes xmlns:w={quoteattr(_W)} xmlns:r={quoteattr(_R)}>"
-        + separators
-        + "".join(notes)
-        + "</w:footnotes>"
-    )
+    return _HEAD + f"<w:footnotes xmlns:w={quoteattr(_W)} xmlns:r={quoteattr(_R)}>" + separators + "".join(notes) + "</w:footnotes>"
 
 
 def _link_relations(body: _Body, part: str, *, bare: bool = False) -> str:
     """Les relations des liens d'une partie : vers leur adresse, hors du document ;
     ``bare`` : sans l'enveloppe (ajoutées aux relations du corps)."""
     said = "".join(
-        f'<Relationship Id="rIdLink{n}" Type="{_TYPE}/hyperlink" Target={quoteattr(address)} '
-        'TargetMode="External"/>'
+        f'<Relationship Id="rIdLink{n}" Type="{_TYPE}/hyperlink" Target={quoteattr(address)} TargetMode="External"/>'
         for n, address in enumerate(body.links.get(part, []), start=1)
     )
     return said if bare else _HEAD + f'<Relationships xmlns="{_REL}">{said}</Relationships>'
@@ -1036,9 +954,7 @@ def _list_items(body: _Body, number: int, level: int, entry: Entry, align: str, 
     """Un élément de liste, et sa sous-liste, au niveau suivant."""
     numbering = f'<w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{number}"/></w:numPr>'
     said = _paragraph(style, _runs(body, entry.runs), numbering + align)
-    return said + "".join(
-        _list_items(body, number, level + 1, child, align, style) for child in entry.children
-    )
+    return said + "".join(_list_items(body, number, level + 1, child, align, style) for child in entry.children)
 
 
 def _fields(body: _Body, block: FieldsOut, width: int) -> str:
@@ -1136,11 +1052,7 @@ def _units(body: _Body, groups: Sequence[_Group]) -> list[_Unit]:
     while index < len(groups):
         group = groups[index]
         together = [group]
-        while (
-            group.row is not None
-            and index + len(together) < len(groups)
-            and groups[index + len(together)].row == group.row
-        ):
+        while group.row is not None and index + len(together) < len(groups) and groups[index + len(together)].row == group.row:
             together.append(groups[index + len(together)])
         index += len(together)
         landscape = style.landscape or group.layout.landscape
@@ -1161,10 +1073,7 @@ def _marked(group: _Group, content: str) -> str:
     if group.position is None:
         return content
     number = SECTION_MARKS + group.position
-    mark = (
-        f'<w:bookmarkStart w:id="{number}" w:name="_loom_s{group.position}"/>'
-        f'<w:bookmarkEnd w:id="{number}"/>'
-    )
+    mark = f'<w:bookmarkStart w:id="{number}" w:name="_loom_s{group.position}"/><w:bookmarkEnd w:id="{number}"/>'
     found = _FIRST_PARAGRAPH.search(content)
     if found is None:  # une section a toujours un paragraphe ; sinon, devant elle
         return mark + content
@@ -1241,14 +1150,10 @@ def _sections(units: Sequence[_Unit], style: Style) -> list[_Section]:
             current.landscape,
             current.columns,
         ) or previous.cover:
-            continuous = (
-                unit.landscape == current.landscape and not previous.cover and not unit.page_break
-            )
+            continuous = unit.landscape == current.landscape and not previous.cover and not unit.page_break
             if not continuous and current.columns > 1:
                 sections.append(_Section(current.landscape, 1, "continuous"))
-            sections.append(
-                _Section(unit.landscape, unit.columns, "continuous" if continuous else "nextPage")
-            )
+            sections.append(_Section(unit.landscape, unit.columns, "continuous" if continuous else "nextPage"))
         elif unit.page_break:
             current.xml.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
         sections[-1].xml.append(unit.xml)
@@ -1277,9 +1182,7 @@ def _section_properties(style: Style, section: _Section, bands: _Bands, first: b
     if title_page:
         header = style.header
         footer = style.footer
-        keep_header = (
-            bands.header and not section.first_page_blank and (header is None or header.first_page)
-        )
+        keep_header = bands.header and not section.first_page_blank and (header is None or header.first_page)
         keep_footer = not section.first_page_blank and (footer is None or footer.first_page)
         refs += (
             '<w:headerReference w:type="first" r:id="'
@@ -1289,11 +1192,7 @@ def _section_properties(style: Style, section: _Section, bands: _Bands, first: b
             + '"/>'
         )
     width, height = style.page
-    size = (
-        f'<w:pgSz w:w="{height}" w:h="{width}" w:orient="landscape"/>'
-        if section.landscape
-        else f'<w:pgSz w:w="{width}" w:h="{height}"/>'
-    )
+    size = f'<w:pgSz w:w="{height}" w:h="{width}" w:orient="landscape"/>' if section.landscape else f'<w:pgSz w:w="{width}" w:h="{height}"/>'
     top, bottom, left, right = style.margins
     distances = style.distances
     return (
@@ -1303,11 +1202,7 @@ def _section_properties(style: Style, section: _Section, bands: _Bands, first: b
         + f'<w:pgMar w:top="{top}" w:right="{right}" w:bottom="{bottom}" '
         f'w:left="{left}" w:header="{distances.header_distance}" '
         f'w:footer="{distances.footer_distance}" w:gutter="0"/>'
-        + (
-            f'<w:cols w:num="{section.columns}" w:space="{distances.column_gap}"/>'
-            if section.columns > 1
-            else ""
-        )
+        + (f'<w:cols w:num="{section.columns}" w:space="{distances.column_gap}"/>' if section.columns > 1 else "")
         + ("<w:titlePg/>" if title_page else "")
         + "</w:sectPr>"
     )
@@ -1315,9 +1210,7 @@ def _section_properties(style: Style, section: _Section, bands: _Bands, first: b
 
 def _blank_first_page(style: Style, sections: Sequence[_Section]) -> bool:
     """La première page sans en-tête ni pied : page de garde, ou ``first_page: false``."""
-    return bool(sections and sections[0].first_page_blank) or any(
-        band is not None and not band.first_page for band in (style.header, style.footer)
-    )
+    return bool(sections and sections[0].first_page_blank) or any(band is not None and not band.first_page for band in (style.header, style.footer))
 
 
 def _document(prepared: Prepared, body: _Body) -> tuple[str, _Bands]:
@@ -1337,15 +1230,12 @@ def _document(prepared: Prepared, body: _Body) -> tuple[str, _Bands]:
         else:
             said += properties
     return (
-        _HEAD + f"<w:document xmlns:w={quoteattr(_W)} xmlns:r={quoteattr(_R)}>"
-        f"<w:body>{said}</w:body></w:document>",
+        _HEAD + f"<w:document xmlns:w={quoteattr(_W)} xmlns:r={quoteattr(_R)}><w:body>{said}</w:body></w:document>",
         bands,
     )
 
 
-def _band_parts(
-    body: _Body, bands: _Bands
-) -> tuple[list[tuple[str, str | bytes]], list[tuple[str, str, str]]]:
+def _band_parts(body: _Body, bands: _Bands) -> tuple[list[tuple[str, str | bytes]], list[tuple[str, str, str]]]:
     """Les parties d'en-tête et de pied de page, leurs relations propres (un logo), et
     leurs relations dans le corps (identifiant, type, partie)."""
     style = body.style
@@ -1409,20 +1299,14 @@ def _band_parts(
         parts.append(("word/_rels/footer1.xml.rels", rels))
     if bands.title_page:
         body.used.add(look.HEADER)
-        parts.append(
-            (f"word/{FIRST_HEADER_PART}", look.band_xml("hdr", None, title="", width=width))
-        )
-        parts.append(
-            (f"word/{FIRST_FOOTER_PART}", look.band_xml("ftr", None, title="", width=width))
-        )
+        parts.append((f"word/{FIRST_HEADER_PART}", look.band_xml("hdr", None, title="", width=width)))
+        parts.append((f"word/{FIRST_FOOTER_PART}", look.band_xml("ftr", None, title="", width=width)))
         listed.append(("rIdHeader2", "header", FIRST_HEADER_PART))
         listed.append(("rIdFooter2", "footer", FIRST_FOOTER_PART))
     return parts, listed
 
 
-def render(
-    prepared: Prepared, style: Style | None = None, template: Template | None = None
-) -> bytes:
+def render(prepared: Prepared, style: Style | None = None, template: Template | None = None) -> bytes:
     """Le fichier .docx, le même octet pour octet pour un même document et un même style
     (le style maison, sans style) ; ``template`` : le modèle que le document suit."""
     style = style or house()
@@ -1440,9 +1324,7 @@ def render(
             notes += (("word/_rels/footnotes.xml.rels", _link_relations(body, "footnotes")),)
     types, relations = _parts_listed(len(body.charts), body.media, body_media, listed)
     if body.links.get("document"):
-        relations = relations.replace(
-            "</Relationships>", _link_relations(body, "document", bare=True) + "</Relationships>"
-        )
+        relations = relations.replace("</Relationships>", _link_relations(body, "document", bare=True) + "</Relationships>")
     language = look.LANGUAGES[style.language]
     font = style.look("body").font or ""
     parts: tuple[tuple[str, str | bytes], ...] = (
@@ -1460,23 +1342,15 @@ def render(
         ("word/settings.xml", SETTINGS_NOTES if body.footnotes else SETTINGS),
         *notes,
         *band_parts,
-        *(
-            (f"word/charts/chart{n}.xml", chart.part(c, style.chart, font, language))
-            for n, c in enumerate(body.charts, start=1)
-        ),
-        *(
-            (f"word/media/image{n}.{p.extension}", p.data)
-            for n, p in enumerate(body.media, start=1)
-        ),
+        *((f"word/charts/chart{n}.xml", chart.part(c, style.chart, font, language)) for n, c in enumerate(body.charts, start=1)),
+        *((f"word/media/image{n}.{p.extension}", p.data) for n, p in enumerate(body.media, start=1)),
     )
     raw = io.BytesIO()
     with zipfile.ZipFile(raw, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, content in parts:
             entry = zipfile.ZipInfo(name, date_time=ZIP_DATE)
             # Une image est déjà compressée : rangée telle quelle, sans temps perdu.
-            entry.compress_type = (
-                zipfile.ZIP_STORED if isinstance(content, bytes) else zipfile.ZIP_DEFLATED
-            )
+            entry.compress_type = zipfile.ZIP_STORED if isinstance(content, bytes) else zipfile.ZIP_DEFLATED
             entry.external_attr = 0o600 << 16
             archive.writestr(entry, content if isinstance(content, bytes) else content.encode())
     return raw.getvalue()

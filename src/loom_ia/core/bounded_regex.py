@@ -122,17 +122,13 @@ def _bounded[F: Callable[..., Any]](function: F, **names: object) -> F:
     """
     original = cast(types.FunctionType, function)
     namespace: dict[str, Any] = {**original.__globals__, "re": _BoundedRe, **names}
-    clone = types.FunctionType(
-        original.__code__, namespace, original.__name__, original.__defaults__, original.__closure__
-    )
+    clone = types.FunctionType(original.__code__, namespace, original.__name__, original.__defaults__, original.__closure__)
     # La récursion appelle la copie, pas l'original.
     namespace[original.__name__] = clone
     return cast(F, clone)
 
 
-def _clone(
-    module: types.ModuleType, name: str, **names: object
-) -> tuple[Callable[..., Any], Callable[..., Any]]:
+def _clone(module: types.ModuleType, name: str, **names: object) -> tuple[Callable[..., Any], Callable[..., Any]]:
     """Une fonction de ``jsonschema`` et sa copie à délai."""
     original = _function(module, name)
     return original, _bounded(original, **names)
@@ -140,9 +136,7 @@ def _clone(
 
 _find_additional = _bounded(_function(_utils, "find_additional_properties"))
 _find_evaluated = _bounded(_function(_utils, "find_evaluated_property_keys_by_schema"))
-_find_evaluated_2019 = _bounded(
-    _function(_legacy_keywords, "find_evaluated_property_keys_by_schema")
-)
+_find_evaluated_2019 = _bounded(_function(_legacy_keywords, "find_evaluated_property_keys_by_schema"))
 
 # Chaque fonction de ``jsonschema`` qui cherche un motif, avec sa copie à délai.
 _CLONES: Final[Mapping[Callable[..., Any], Callable[..., Any]]] = dict(
@@ -167,9 +161,7 @@ _CLONES: Final[Mapping[Callable[..., Any], Callable[..., Any]]] = dict(
 @cache
 def _bounded_class(base: type[Validator]) -> type[Validator]:
     """La classe de validation ``base``, dont les mots-clés de motif ont un délai."""
-    swapped = {
-        word: _CLONES[function] for word, function in base.VALIDATORS.items() if function in _CLONES
-    }
+    swapped = {word: _CLONES[function] for word, function in base.VALIDATORS.items() if function in _CLONES}
     extend = _function(validators, "extend")
     return cast(type[Validator], extend(base, validators=swapped))
 
@@ -225,11 +217,7 @@ def unresolved_references(schema: Mapping[str, Any]) -> list[str]:
     def walk(resolver: Any, node: Resource[Any]) -> None:
         resolver = resolver.in_subresource(node)
         contents = node.contents
-        reference = (
-            cast(Mapping[str, object], contents).get("$ref")
-            if isinstance(contents, Mapping)
-            else None
-        )
+        reference = cast(Mapping[str, object], contents).get("$ref") if isinstance(contents, Mapping) else None
         if isinstance(reference, str):
             try:
                 resolver.lookup(reference)

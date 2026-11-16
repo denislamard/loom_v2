@@ -37,23 +37,12 @@ def png(
         return (b"\x00" + bytes([fill]) * ((columns * bits + 7) // 8)) * count
 
     if interlace:
-        raw = b"".join(
-            rows((width - x0 + dx - 1) // dx, (height - y0 + dy - 1) // dy)
-            for x0, dx, y0, dy in _ADAM7
-            if width > x0 and height > y0
-        )
+        raw = b"".join(rows((width - x0 + dx - 1) // dx, (height - y0 + dy - 1) // dy) for x0, dx, y0, dy in _ADAM7 if width > x0 and height > y0)
     else:
         raw = rows(width, height)
     header = width.to_bytes(4) + height.to_bytes(4) + bytes([depth, color, 0, 0, interlace])
     plte = chunk(b"PLTE", b"\x1f\x38\x64" * 256) if color == 3 and palette else b""
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", header)
-        + plte
-        + extra
-        + chunk(b"IDAT", zlib.compress(raw))
-        + chunk(b"IEND", b"")
-    )
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + plte + extra + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
 
 
 def _exif(orientation: int, *, big: bool = False) -> bytes:

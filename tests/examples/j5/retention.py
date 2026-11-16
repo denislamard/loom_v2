@@ -166,16 +166,8 @@ def bornee(
     tenants = tuple(
         tenant.model_copy(
             update={
-                "retention": Borne(events_days=bornes[tenant.id])
-                if tenant.id in bornes
-                else tenant.retention,
-                "storage": tenant.storage.model_copy(
-                    update={
-                        "events": tenant.storage.events.model_copy(
-                            update={"path": dossier / "events" / tenant.id}
-                        )
-                    }
-                )
+                "retention": Borne(events_days=bornes[tenant.id]) if tenant.id in bornes else tenant.retention,
+                "storage": tenant.storage.model_copy(update={"events": tenant.storage.events.model_copy(update={"path": dossier / "events" / tenant.id})})
                 if tenant.storage is not None
                 else None,
             }
@@ -204,10 +196,7 @@ def montre(report: RetentionReport) -> None:
         verbe = "à effacer" if report.dry_run else "effacée"
         print(f"  {partie.session_id} ({partie.tenant_id}) {verbe} — {', '.join(connu)}")
     faites = "seraient effacées" if report.dry_run else "effacées"
-    print(
-        f"  → {len(report.swept)} session(s) {faites}, {report.events} événement(s) ; "
-        f"{report.kept} gardée(s) sur {report.scanned} regardée(s)"
-    )
+    print(f"  → {len(report.swept)} session(s) {faites}, {report.events} événement(s) ; {report.kept} gardée(s) sur {report.scanned} regardée(s)")
 
 
 # --- Cas 1 : la borne ---------------------------------------------------------
@@ -224,9 +213,7 @@ async def borne(args: argparse.Namespace, controle: Controle) -> None:
         vivante = session("vivante")
         async with Loom(config) as loom:
             for ou in (dormante, vivante):
-                result = await loom.run(
-                    agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN
-                )
+                result = await loom.run(agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN)
                 print(f"  {ou} : run {result.status}")
 
             # Une des deux est vieillie de 90 jours : ses lignes sont réécrites
@@ -246,8 +233,7 @@ async def borne(args: argparse.Namespace, controle: Controle) -> None:
                 "\n  seule la session dormante dépasse la borne : "
                 + controle.tient(
                     "la borne n'a pas trié les sessions sur leur dernière écriture",
-                    [partie.session_id for partie in blanc.swept] == [dormante]
-                    and (blanc.kept, blanc.scanned) == (1, 2),
+                    [partie.session_id for partie in blanc.swept] == [dormante] and (blanc.kept, blanc.scanned) == (1, 2),
                 )
             )
             print(
@@ -258,10 +244,7 @@ async def borne(args: argparse.Namespace, controle: Controle) -> None:
                 )
             )
             restantes = [record.session_id for record in await loom.sessions(tenant_id=MARTIN)]
-            print(
-                "  et rien n'a été supprimé : "
-                + controle.tient("l'essai à blanc a supprimé quelque chose", len(restantes) == 2)
-            )
+            print("  et rien n'a été supprimé : " + controle.tient("l'essai à blanc a supprimé quelque chose", len(restantes) == 2))
 
             titre("Le balayage pour de bon, la session vivante épargnée")
             fichiers_avant = _fichiers(Path(dossier))
@@ -338,9 +321,7 @@ async def clients(args: argparse.Namespace, controle: Controle) -> None:
             "  chaque client perd ses sessions selon sa borne : "
             + controle.tient(
                 "la borne d'un client n'a pas été suivie",
-                [partie.session_id for partie in fait.swept] == [places[MARTIN]]
-                and restantes[MARTIN] == 0
-                and restantes[DUPONT] == 1,
+                [partie.session_id for partie in fait.swept] == [places[MARTIN]] and restantes[MARTIN] == 0 and restantes[DUPONT] == 1,
             )
         )
 
@@ -414,9 +395,7 @@ async def scelle(args: argparse.Namespace, controle: Controle) -> None:
         titre("Un journal scellé, puis la clé s'en va")
         ou = session("scelle")
         async with Loom(config, environ=avec) as loom:
-            result = await loom.run(
-                agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN
-            )
+            result = await loom.run(agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN)
             print(f"  run {result.status}, journal scellé")
 
         sans = {name: value for name, value in os.environ.items() if name != CLE}
@@ -467,9 +446,7 @@ def _inachevee(fichier: Path, session_id: SessionId) -> int:
     """Écrit un journal dont le run s'arrête après son premier événement."""
     scribe = RunJournal(session_id=session_id, tenant_id=MARTIN, agent="relance")
     scribe.start("Relance interrompue")
-    lignes = [
-        draft.to_event(seq).model_dump_json() for seq, draft in enumerate(scribe.take(), start=1)
-    ]
+    lignes = [draft.to_event(seq).model_dump_json() for seq, draft in enumerate(scribe.take(), start=1)]
     fichier.parent.mkdir(parents=True, exist_ok=True)
     fichier.write_text("\n".join(lignes) + "\n", encoding="utf-8")
     return len(lignes)
@@ -489,9 +466,7 @@ async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="La rétention : effacer les sessions dormantes, et rien d'autre"
-    )
+    parser = argparse.ArgumentParser(description="La rétention : effacer les sessions dormantes, et rien d'autre")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     args = parser.parse_args(argv)

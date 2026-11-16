@@ -40,10 +40,7 @@ from loom_ia.tools_builtin.memory.service import Extracted
 WEB_EXTRA: Final = "memory-web"
 WEB_MODULES: Final = ("bs4", "markdownify")
 
-_NOISE: Final = (
-    "nav, footer, script, style, noscript, iframe, svg, form, template, "
-    "[aria-hidden='true'], [role='navigation']"
-)
+_NOISE: Final = "nav, footer, script, style, noscript, iframe, svg, form, template, [aria-hidden='true'], [role='navigation']"
 _INLINE_TAGS: Final = ("span", "strong", "b", "em", "i", "code", "a", "small", "abbr", "time")
 _HEADINGS: Final = ("h1", "h2", "h3", "h4", "h5", "h6")
 # Ce qu'une définition (``<dd>``) peut contenir sans tenir sur une ligne.
@@ -82,9 +79,7 @@ def extract_from_html(html: str, url: str) -> Extracted:
             node.decompose()
     _separate_glued_inlines(soup, bs4.NavigableString)
     root = soup.find("main") or soup.find("article") or soup.find("body") or soup
-    converter = markdownify.MarkdownConverter(
-        heading_style="ATX", strip=["img", "a"], bullets="-", code_language=""
-    )
+    converter = markdownify.MarkdownConverter(heading_style="ATX", strip=["img", "a"], bullets="-", code_language="")
     text = _tidy(str(converter.convert_soup(root)))
     if not text:
         raise ToolError(f"Aucun contenu exploitable dans {url}.")
@@ -169,11 +164,7 @@ def _figures_as_text(soup: Any) -> None:
             continue
         kept = soup.new_tag("div")
         for drawing in drawings:
-            said = [
-                text
-                for part in (drawing.find("title"), drawing.find("desc"))
-                if part is not None and (text := _flat(part))
-            ]
+            said = [text for part in (drawing.find("title"), drawing.find("desc")) if part is not None and (text := _flat(part))]
             if said:
                 paragraph = soup.new_tag("p")
                 paragraph.string = " — ".join(said)
@@ -227,9 +218,7 @@ def _separate_glued_inlines(soup: Any, text_type: type) -> None:
         following = element.next_sibling
         if isinstance(following, text_type):
             tail = str(following)
-            if tail and (
-                (ends_word and tail[0].isupper()) or (ends_sentence and tail[0].isalpha())
-            ):
+            if tail and ((ends_word and tail[0].isupper()) or (ends_sentence and tail[0].isalpha())):
                 following.replace_with(" " + tail)
             if tail:
                 continue

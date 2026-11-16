@@ -86,9 +86,7 @@ def _run(atelier: Path, vm_id: str, **extra: str) -> subprocess.CompletedProcess
         ("é", "chroot/temoin"),
     ],
 )
-def test_a_vm_id_that_is_not_alphanumeric_is_refused_before_anything_is_removed(
-    atelier: Path, vm_id: str, cible: str
-) -> None:
+def test_a_vm_id_that_is_not_alphanumeric_is_refused_before_anything_is_removed(atelier: Path, vm_id: str, cible: str) -> None:
     """Un ``VM_ID`` comme ``..`` ne vise plus ce que le ``rm -rf`` de la jail effacerait."""
     temoin = atelier.parent / cible
     temoin.parent.mkdir(parents=True, exist_ok=True)
@@ -108,10 +106,7 @@ def test_a_valid_vm_id_builds_the_jail_with_every_drive(atelier: Path) -> None:
     assert (jail / "rootfs.ext4").read_bytes() == b"rootfs"
     # Le disque de données est posé lui aussi, et chaque drive pointe vers le sien.
     assert (jail / "data.ext4").read_bytes() == b"data"
-    drives = {
-        d["drive_id"]: d["path_on_host"]
-        for d in json.loads((jail / "vm-config.json").read_text())["drives"]
-    }
+    drives = {d["drive_id"]: d["path_on_host"] for d in json.loads((jail / "vm-config.json").read_text())["drives"]}
     assert drives == {"rootfs": "rootfs.ext4", "data": "data.ext4"}
     assert oct((jail / "data.ext4").stat().st_mode & 0o777) == "0o600"
     assert "agent-01" in (atelier / "jailer.args").read_text()

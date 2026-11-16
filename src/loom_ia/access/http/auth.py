@@ -152,17 +152,14 @@ def throttle(caller: Caller, window: RateWindow, *, access: Access = "rest") -> 
     seconds = max(1, math.ceil(waiting))
     raise refusal(
         status.HTTP_429_TOO_MANY_REQUESTS,
-        f"Clé {key.id!r} : {key.rate_limit.per_minute} requêtes par minute dépassées, "
-        f"réessayer dans {seconds} s",
+        f"Clé {key.id!r} : {key.rate_limit.per_minute} requêtes par minute dépassées, réessayer dans {seconds} s",
         caller=caller,
         access=access,
         headers={"Retry-After": str(seconds)},
     )
 
 
-def require(
-    caller: Caller, permission: Permission, agent: str | None = None, *, call_id: str | None = None
-) -> None:
+def require(caller: Caller, permission: Permission, agent: str | None = None, *, call_id: str | None = None) -> None:
     """Vérifie la permission demandée, et sur l'agent visé s'il y en a un.
 
     Le refus dit ce qui manque — un rôle qui n'a pas la permission, ou une clé

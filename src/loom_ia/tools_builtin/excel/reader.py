@@ -124,10 +124,7 @@ def check_suffix(path: str) -> None:
     lowered = path.lower()
     for suffix, name in OTHER_FORMATS.items():
         if lowered.endswith(suffix):
-            raise ToolError(
-                f"{path} : format {name} non lu — l'enregistrer en .xlsx depuis Excel "
-                "ou LibreOffice."
-            )
+            raise ToolError(f"{path} : format {name} non lu — l'enregistrer en .xlsx depuis Excel ou LibreOffice.")
     if not lowered.endswith(READABLE):
         raise ToolError(f"{path} : seuls les classeurs .xlsx et .xlsm sont lus.")
 
@@ -147,19 +144,14 @@ def _check_archive(data: bytes, where: str) -> None:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
         # Un classeur protégé par mot de passe est un conteneur OLE, pas un zip.
-        raise ToolError(
-            f"{where} : pas un classeur .xlsx lisible (fichier vide, renommé, ou protégé "
-            "par mot de passe)."
-        ) from None
+        raise ToolError(f"{where} : pas un classeur .xlsx lisible (fichier vide, renommé, ou protégé par mot de passe).") from None
     with archive:
         members = archive.infolist()
         if len(members) > MAX_MEMBERS:
             raise ToolError(f"{where} : {len(members)} fichiers dans le classeur, refusé.")
         total = sum(member.file_size for member in members)
         if total > MAX_UNCOMPRESSED:
-            raise ToolError(
-                f"{where} : {total} octets une fois décompressé, au-delà de {MAX_UNCOMPRESSED}."
-            )
+            raise ToolError(f"{where} : {total} octets une fois décompressé, au-delà de {MAX_UNCOMPRESSED}.")
         if "xl/workbook.xml" not in {member.filename for member in members}:
             raise ToolError(f"{where} : pas un classeur Excel (xl/workbook.xml absent).")
         for member in members:
@@ -220,8 +212,7 @@ def xml_safety() -> str | None:
             lxml = ".".join(map(str, lxml_version))
             libxml2 = ".".join(map(str, libxml2_version))
             return (
-                f"lxml {lxml} / libxml2 {libxml2} : lxml 5.0 et libxml2 2.11 ou plus attendus "
-                "(entités XML) ; mettre lxml à jour, ou poser OPENPYXL_LXML=False"
+                f"lxml {lxml} / libxml2 {libxml2} : lxml 5.0 et libxml2 2.11 ou plus attendus (entités XML) ; mettre lxml à jour, ou poser OPENPYXL_LXML=False"
             )
     return None
 
@@ -280,9 +271,7 @@ def overview(data: bytes, where: str) -> dict[str, JsonValue]:
 def _preview(ws: Any) -> list[list[JsonValue]]:
     rows = [
         [_json(value, PREVIEW_CHARS)[0] for value in values]
-        for values in ws.iter_rows(
-            min_row=1, max_row=PREVIEW_ROWS, max_col=PREVIEW_COLUMNS, values_only=True
-        )
+        for values in ws.iter_rows(min_row=1, max_row=PREVIEW_ROWS, max_col=PREVIEW_COLUMNS, values_only=True)
     ]
     return _trimmed(rows, [[value is not None for value in row] for row in rows])
 
@@ -310,9 +299,7 @@ def _bounds(cells: str | None) -> tuple[int, int, int, int]:
     )
 
 
-def read_range(
-    data: bytes, where: str, sheet: str, cells: str | None, max_rows: int
-) -> tuple[Read, str]:
+def read_range(data: bytes, where: str, sheet: str, cells: str | None, max_rows: int) -> tuple[Read, str]:
     """Les cellules d'une plage ; sans plage, la feuille depuis A1. Et l'état de l'onglet."""
     check_archive(data, where)
     first_column, first_row, last_column, last_row = _bounds(cells)
@@ -349,10 +336,7 @@ def read_range(
                 if len(raw) == wanted:
                     break
             # Une ligne non vide plus bas, même après des lignes vides : la lecture est coupée.
-            more = budget_hit or any(
-                any(cell.value is not None for cell in row[: shown_last - first_column + 1])
-                for _, row in cells_rows
-            )
+            more = budget_hit or any(any(cell.value is not None for cell in row[: shown_last - first_column + 1]) for _, row in cells_rows)
         finally:
             book.close()
         has_formula = any(_is_formula(cell) for row in raw for cell in row)
@@ -362,11 +346,7 @@ def read_range(
             else [[cell.value for cell in row] for row in raw]
         )
     found = _read(raw, cached, first_row, first_column)
-    columns_cut_after = (
-        get_column_letter(shown_last)
-        if wide and (beyond or (declared_last or 0) > shown_last)
-        else None
-    )
+    columns_cut_after = get_column_letter(shown_last) if wide and (beyond or (declared_last or 0) > shown_last) else None
     return (
         Read(
             first_row=first_row,
@@ -408,11 +388,9 @@ def _cached(
         ws = _sheet(book, sheet, where)
         _reset(ws)
         last_row = first_row + max(count, 1) - 1
-        return [
-            [cell.value for cell in row]
-            for number, row in _iter(ws, 1, first_column, last_column, last_row, deadline, where)
-            if number >= first_row
-        ][:count]
+        return [[cell.value for cell in row] for number, row in _iter(ws, 1, first_column, last_column, last_row, deadline, where) if number >= first_row][
+            :count
+        ]
     finally:
         book.close()
 
@@ -431,9 +409,7 @@ def _iter(
     Depuis la ligne 1 pour une plage plus bas : openpyxl parcourt les lignes
     avant ``min_row`` sans rendre la main ; compter soi-même permet de s'arrêter.
     """
-    rows = ws.iter_rows(
-        min_row=first_row, max_row=last_row, min_col=first_column, max_col=last_column
-    )
+    rows = ws.iter_rows(min_row=first_row, max_row=last_row, min_col=first_column, max_col=last_column)
     for number, row in enumerate(rows, start=first_row):
         if number % 1_000 == 0:
             _in_time(deadline, where)
@@ -443,10 +419,7 @@ def _iter(
 def _in_time(deadline: float, where: str) -> None:
     """Un fil d'exécution ne s'annule pas : la lecture s'arrête d'elle-même à l'échéance."""
     if time.monotonic() > deadline:
-        raise ToolError(
-            f"{where} : lecture arrêtée après {READ_DEADLINE:g} s ; viser une plage plus "
-            "proche du début, ou un classeur plus petit."
-        )
+        raise ToolError(f"{where} : lecture arrêtée après {READ_DEADLINE:g} s ; viser une plage plus proche du début, ou un classeur plus petit.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,9 +430,7 @@ class _Found:
     cut_cells: int
 
 
-def _read(
-    raw: list[tuple[Any, ...]], cached: list[list[Any]], first_row: int, first_column: int
-) -> _Found:
+def _read(raw: list[tuple[Any, ...]], cached: list[list[Any]], first_row: int, first_column: int) -> _Found:
     rows: list[list[JsonValue]] = []
     written: list[list[bool]] = []
     formulas: dict[str, str] = {}
@@ -566,9 +537,7 @@ def records(data: bytes, where: str, sheet: str | None) -> list[dict[str, JsonVa
                 values = _source_rows(cached_ws, deadline, where)
             finally:
                 cached_book.close()
-    headers = [
-        None if cell.value is None else _text(cell.value) for cell in (raw[0] if raw else ())
-    ]
+    headers = [None if cell.value is None else _text(cell.value) for cell in (raw[0] if raw else ())]
     named = [h for h in headers if h is not None]
     doubles = sorted({h for h in named if named.count(h) > 1})
     if doubles:
@@ -590,8 +559,7 @@ def records(data: bytes, where: str, sheet: str | None) -> list[dict[str, JsonVa
         found.append(record)
     if missing:
         raise ToolError(
-            f"{where} : {missing} formule(s) sans valeur calculée dans la source ; l'ouvrir et "
-            "l'enregistrer dans Excel ou LibreOffice, ou la donner en CSV."
+            f"{where} : {missing} formule(s) sans valeur calculée dans la source ; l'ouvrir et l'enregistrer dans Excel ou LibreOffice, ou la donner en CSV."
         )
     return found
 

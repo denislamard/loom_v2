@@ -116,15 +116,7 @@ class BoundPolicy:
 
 # Ce qu'une politique fournie journalise de son propre travail : appel et verdict
 # d'un juge (secours et disjoncteur compris), limite de budget atteinte.
-type TracedEvent = (
-    ModelExchanged
-    | ModelRetried
-    | ModelFellBack
-    | CircuitOpened
-    | ModelResponded
-    | JudgeEvaluated
-    | BudgetExceeded
-)
+type TracedEvent = ModelExchanged | ModelRetried | ModelFellBack | CircuitOpened | ModelResponded | JudgeEvaluated | BudgetExceeded
 type Trace = Callable[[TracedEvent], None]
 type PolicyEvent = PolicyDecided | GuardChecked | TracedEvent
 
@@ -138,9 +130,7 @@ class TracingPolicy(ABC):
     """
 
     @abstractmethod
-    async def decide_traced(
-        self, subject: PolicySubject, context: PolicyContext, trace: Trace
-    ) -> Decision: ...
+    async def decide_traced(self, subject: PolicySubject, context: PolicyContext, trace: Trace) -> Decision: ...
 
     async def decide(self, subject: PolicySubject, context: PolicyContext) -> Decision:
         """Décision seule, sans journal (hors du moteur)."""
@@ -247,19 +237,14 @@ class Policies:
                     decision = await self._decide(bound, current, context, traced.append)
                 finally:
                     decided += traced
-                    decided += [
-                        _checked(bound, check, call_id, context) for check in context.checks
-                    ]
+                    decided += [_checked(bound, check, call_id, context) for check in context.checks]
                 if decision.kind in ignore:
                     continue
                 if isinstance(decision, Replace):
                     current = _replaced(current, decision.value, check_arguments)
                 limit = bound.max_attempts
                 if isinstance(decision, Retry) and limit is not None and context.attempt >= limit:
-                    decision = Fail(
-                        f"{limit} réparation(s) demandée(s) sans succès ; "
-                        f"dernier diagnostic : {decision.feedback}"
-                    )
+                    decision = Fail(f"{limit} réparation(s) demandée(s) sans succès ; dernier diagnostic : {decision.feedback}")
             except PolicyFailure as exc:
                 # Un juge que le rejeu arrête n'est pas en panne (J6.2b).
                 logger.log(
@@ -271,9 +256,7 @@ class Policies:
                     extra={"run_id": state.run_id},
                 )
                 if bound.on_error == "allow":
-                    decided.append(
-                        _event(bound, point, CONTINUE, call_id, context, str(exc), error=True)
-                    )
+                    decided.append(_event(bound, point, CONTINUE, call_id, context, str(exc), error=True))
                     continue
                 failed = Fail(f"politique {bound.name} en erreur : {exc}")
                 decided.append(_event(bound, point, failed, call_id, context, error=True))
@@ -296,9 +279,7 @@ class Policies:
             return Verdict(decision, current, tuple(decided), bound.name)
         return Verdict(CONTINUE, current, tuple(decided))
 
-    async def _decide(
-        self, bound: BoundPolicy, subject: PolicySubject, context: PolicyContext, trace: Trace
-    ) -> Decision:
+    async def _decide(self, bound: BoundPolicy, subject: PolicySubject, context: PolicyContext, trace: Trace) -> Decision:
         """Décision de la politique, contrôlée ; lève ``PolicyFailure``."""
         scope = asyncio.timeout(bound.timeout)
         policy = bound.policy
@@ -343,14 +324,10 @@ def _replaced(subject: PolicySubject, value: object, check: ArgumentsCheck | Non
             try:
                 arguments = _ARGUMENTS.validate_python(value)
             except ValidationError as exc:
-                raise PolicyFailure(
-                    f"Replace : objet JSON attendu ({exc.error_count()} erreur(s))"
-                ) from exc
+                raise PolicyFailure(f"Replace : objet JSON attendu ({exc.error_count()} erreur(s))") from exc
             problem = check(arguments) if check is not None else None
             if problem is not None:
-                raise PolicyFailure(
-                    f"Replace : arguments refusés par le schéma de l'outil. {problem}"
-                )
+                raise PolicyFailure(f"Replace : arguments refusés par le schéma de l'outil. {problem}")
             return dataclasses.replace(subject, arguments=arguments)
         case AfterTool():
             if not isinstance(value, ToolOutput):
@@ -366,9 +343,7 @@ def _replaced(subject: PolicySubject, value: object, check: ArgumentsCheck | Non
             raise PolicyFailure(f"Replace impossible au point {subject.point}")
 
 
-def _checked(
-    bound: BoundPolicy, check: GuardCheck, call_id: str | None, context: PolicyContext
-) -> GuardChecked:
+def _checked(bound: BoundPolicy, check: GuardCheck, call_id: str | None, context: PolicyContext) -> GuardChecked:
     """``guard.checked`` d'un contrôle enregistré par une politique."""
     return GuardChecked(
         guard=check.guard,

@@ -143,9 +143,7 @@ def drafts() -> list[EventDraft]:
 # --- Le bus traverse ----------------------------------------------------------
 
 
-async def test_a_subscriber_sees_what_another_instance_writes(
-    bus_storage: dict[str, Any], tmp_path: Path
-) -> None:
+async def test_a_subscriber_sees_what_another_instance_writes(bus_storage: dict[str, Any], tmp_path: Path) -> None:
     """Deux journaux notifiants, deux bus, un seul journal : la forme de deux process.
 
     Chacun a **sa** connexion au bus, comme deux process l'auraient : ce qui
@@ -172,9 +170,7 @@ async def test_a_subscriber_sees_what_another_instance_writes(
 # --- La connexion d'écoute tombe ----------------------------------------------
 
 
-async def test_a_bus_whose_listening_connection_is_cut_does_not_wait_forever(
-    bus_storage: dict[str, Any], tmp_path: Path
-) -> None:
+async def test_a_bus_whose_listening_connection_is_cut_does_not_wait_forever(bus_storage: dict[str, Any], tmp_path: Path) -> None:
     """Une écoute coupée par le serveur lève une erreur, au lieu de rester suspendue."""
     config = load_config(write_config(tmp_path, bus_storage, tool=False))
     bus = create_bus(config)
@@ -309,9 +305,7 @@ async def test_concurrent_postgres_publications_all_go_out(postgres_dsn: str) ->
 # --- Le SSE suit un run d'ailleurs --------------------------------------------
 
 
-def test_sse_follows_a_run_piloted_in_another_process(
-    bus_storage: dict[str, Any], tmp_path: Path
-) -> None:
+def test_sse_follows_a_run_piloted_in_another_process(bus_storage: dict[str, Any], tmp_path: Path) -> None:
     # Essai synchrone, comme les autres essais à sous-process : le flux SSE,
     # lui, est lu dans sa propre boucle.
     path = write_config(tmp_path, bus_storage, tool=True)
@@ -356,9 +350,7 @@ async def _following(store: NotifyingEventStore) -> AsyncGenerator[None]:
 
 
 def _notice(seq: int) -> Notice:
-    return Notice(
-        tenant_id=DEFAULT_TENANT, session_id=SESSION, first_seq=seq, last_seq=seq, source="x"
-    )
+    return Notice(tenant_id=DEFAULT_TENANT, session_id=SESSION, first_seq=seq, last_seq=seq, source="x")
 
 
 async def _terminate(dsn: str, pattern: str) -> None:
@@ -368,8 +360,7 @@ async def _terminate(dsn: str, pattern: str) -> None:
     admin = await asyncpg.connect(dsn)
     try:
         cut = await admin.fetch(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-            "WHERE pid <> pg_backend_pid() AND query ILIKE $1",
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND query ILIKE $1",
             pattern,
         )
     finally:
@@ -426,11 +417,7 @@ def _types(root: Path) -> list[str]:
     path = root / DEFAULT_TENANT / f"{SESSION}.jsonl"
     if not path.is_file():
         return []
-    return [
-        str(json.loads(line).get("type"))
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
+    return [str(json.loads(line).get("type")) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
 async def _sse(http: httpx2.AsyncClient, url: str, *, limit: float) -> list[str]:

@@ -310,9 +310,7 @@ async def _fetch(jobs: Jobs, execution: Execution, policy: FilePolicy) -> _Fetch
         total += len(data)
         name = _shown(output.path)
         blocks.append(InlineDataBlock(media_type=media_type_of(name, data), data=data, name=name))
-    left += [
-        f"{_shown(path)} : lien ou fichier spécial, ignoré" for path in execution.outputs_skipped
-    ]
+    left += [f"{_shown(path)} : lien ou fichier spécial, ignoré" for path in execution.outputs_skipped]
     return _Fetched(tuple(blocks), tuple(left))
 
 
@@ -343,15 +341,11 @@ class _Run:
         execution, _ = await self._execute(name, code, arguments, fetch=False)
         return execution
 
-    async def produce(
-        self, name: str, code: str, arguments: Mapping[str, object]
-    ) -> tuple[Execution, _Fetched]:
+    async def produce(self, name: str, code: str, arguments: Mapping[str, object]) -> tuple[Execution, _Fetched]:
         """Comme ``execute``, puis rapatrie ce que le job a écrit dans ``out/``."""
         return await self._execute(name, code, arguments, fetch=True)
 
-    async def _execute(
-        self, name: str, code: str, arguments: Mapping[str, object], *, fetch: bool
-    ) -> tuple[Execution, _Fetched]:
+    async def _execute(self, name: str, code: str, arguments: Mapping[str, object], *, fetch: bool) -> tuple[Execution, _Fetched]:
         # Dépôt, appel et rapatriement d'un seul tenant : deux appels parallèles
         # du run ne s'intercalent pas (execd n'en exécute qu'un à la fois de
         # toute façon), et le job suivant ne vide pas out/ avant le transfert.
@@ -371,9 +365,7 @@ class _Run:
             if self.loaded.get(name) != digest:
                 await self.jobs.put_code(f"{name}.py", code.encode())
                 self.loaded[name] = digest
-            execution = await self.jobs.exec(
-                f"{name}:{name}", args=dict(arguments), limits=self.limits or None
-            )
+            execution = await self.jobs.exec(f"{name}:{name}", args=dict(arguments), limits=self.limits or None)
             if not fetch or not execution.ok:
                 return execution, _Fetched()
             if self.files is None:
@@ -453,9 +445,7 @@ class Catalog:
                 "forged_by": forged.forged_by,
                 "forged_at": forged.forged_at,
             }
-            (fresh / MANIFEST).write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-            )
+            (fresh / MANIFEST).write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             if target.exists():
                 old = folder / f".{forged.name}.{uuid.uuid4().hex}.old"
                 target.rename(old)
@@ -486,9 +476,7 @@ class Catalog:
                 description=str(data.get("description", "")),
                 input_schema=schema,
                 code=code,
-                examples=tuple(
-                    cast(dict[str, JsonValue], e) for e in examples if isinstance(e, dict)
-                ),
+                examples=tuple(cast(dict[str, JsonValue], e) for e in examples if isinstance(e, dict)),
                 forged_by=str(data.get("forged_by", "")),
                 forged_at=str(data.get("forged_at", "")),
             )
@@ -513,9 +501,7 @@ def _decoded(value: JsonValue, field: str) -> JsonValue:
     try:
         return cast(JsonValue, json.loads(value, parse_constant=_not_json))
     except json.JSONDecodeError as exc:
-        raise _ShapeError(
-            f"{field} : texte JSON illisible — {exc.msg} (ligne {exc.lineno}, colonne {exc.colno})"
-        ) from None
+        raise _ShapeError(f"{field} : texte JSON illisible — {exc.msg} (ligne {exc.lineno}, colonne {exc.colno})") from None
     except ValueError as exc:
         raise _ShapeError(f"{field} : texte JSON illisible — {exc}") from None
 
@@ -524,9 +510,7 @@ def _not_json(constant: str) -> None:
     raise ValueError(f"{constant} n'est pas une valeur JSON")
 
 
-def check_forged(
-    name: str, input_schema: dict[str, JsonValue], code: str, examples: Sequence[JsonValue]
-) -> list[tuple[dict[str, JsonValue], JsonValue]]:
+def check_forged(name: str, input_schema: dict[str, JsonValue], code: str, examples: Sequence[JsonValue]) -> list[tuple[dict[str, JsonValue], JsonValue]]:
     """Ce que l'hôte peut dire d'un outil sans l'exécuter ; ``ToolError`` au premier défaut.
 
     Rend les exemples sous forme (arguments, attendu). Un défaut de forme
@@ -534,17 +518,11 @@ def check_forged(
     compris — est un ``_ShapeError``.
     """
     if re.fullmatch(NAME_PATTERN, name) is None:
-        raise ToolError(
-            f"name {name!r} : un identifiant Python en minuscules est attendu "
-            "(lettres, chiffres, _ ; 48 caractères au plus, une lettre d'abord)"
-        )
+        raise ToolError(f"name {name!r} : un identifiant Python en minuscules est attendu (lettres, chiffres, _ ; 48 caractères au plus, une lettre d'abord)")
     if name in (FORGE, CALL) or keyword.iskeyword(name):
         raise ToolError(f"name {name!r} : nom réservé")
     if name in sys.stdlib_module_names:
-        raise ToolError(
-            f"name {name!r} : c'est un module de la bibliothèque standard, que le "
-            "module de l'outil masquerait ; choisis un autre nom"
-        )
+        raise ToolError(f"name {name!r} : c'est un module de la bibliothèque standard, que le module de l'outil masquerait ; choisis un autre nom")
     try:
         check_schema(input_schema)
     except SchemaError as exc:
@@ -558,9 +536,7 @@ def check_forged(
     _check_signature(name, code, set(properties), {str(r) for r in required})
 
     if not 1 <= len(examples) <= MAX_EXAMPLES:
-        raise _ShapeError(
-            f"examples : de 1 à {MAX_EXAMPLES} exemples attendus, {len(examples)} reçu(s)"
-        )
+        raise _ShapeError(f"examples : de 1 à {MAX_EXAMPLES} exemples attendus, {len(examples)} reçu(s)")
     validator = bounded_validator(input_schema)
     pairs: list[tuple[dict[str, JsonValue], JsonValue]] = []
     for index, raw in enumerate(examples, start=1):
@@ -571,13 +547,9 @@ def check_forged(
         try:
             validator.validate(arguments)
         except ValidationError as exc:
-            raise _ShapeError(
-                f"exemple {index} : ses arguments ne suivent pas input_schema — {exc.message}"
-            ) from None
+            raise _ShapeError(f"exemple {index} : ses arguments ne suivent pas input_schema — {exc.message}") from None
         except RegexTimeout as exc:
-            raise ToolError(
-                f"exemple {index} : input_schema ne peut pas être appliqué — {exc}"
-            ) from None
+            raise ToolError(f"exemple {index} : input_schema ne peut pas être appliqué — {exc}") from None
         pairs.append((arguments, example["expected"]))
     return pairs
 
@@ -587,36 +559,22 @@ def _check_signature(name: str, code: str, properties: set[str], required: set[s
         tree = ast.parse(code, filename=f"{name}.py")
     except SyntaxError as exc:
         raise ToolError(f"code : erreur de syntaxe ligne {exc.lineno} — {exc.msg}") from None
-    found = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name
-    ]
+    found = [node for node in tree.body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name]
     if not found:
         raise ToolError(f"code : pas de fonction {name}() au premier niveau du module")
     args = found[-1].args
     if args.posonlyargs or args.vararg is not None:
-        raise ToolError(
-            f"code : {name}() reçoit ses arguments par nom — ni paramètre positionnel "
-            "seul (/), ni *args"
-        )
+        raise ToolError(f"code : {name}() reçoit ses arguments par nom — ni paramètre positionnel seul (/), ni *args")
     named = [*args.args, *args.kwonlyargs]
     params = {arg.arg for arg in named}
     # Les derniers de args ont les défauts ; kw_defaults vaut None sans défaut.
     with_default = {arg.arg for arg in args.args[len(args.args) - len(args.defaults) :]}
-    with_default |= {
-        arg.arg
-        for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True)
-        if default is not None
-    }
+    with_default |= {arg.arg for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True) if default is not None}
     if args.kwarg is None and (missing := sorted(properties - params)):
-        raise _ShapeError(
-            f"code : {name}() ne reçoit pas {', '.join(missing)}, que input_schema propose"
-        )
+        raise _ShapeError(f"code : {name}() ne reçoit pas {', '.join(missing)}, que input_schema propose")
     if unsure := sorted(params - with_default - required):
         raise _ShapeError(
-            f"code : {name}() exige {', '.join(unsure)}, que input_schema ne rend pas "
-            "obligatoire (required) — donne-lui une valeur par défaut, ou exige-le"
+            f"code : {name}() exige {', '.join(unsure)}, que input_schema ne rend pas obligatoire (required) — donne-lui une valeur par défaut, ou exige-le"
         )
 
 
@@ -651,10 +609,7 @@ def _mismatch_hint(expected: object, result: object) -> str:
             pass
         else:
             if same_json(decoded, result):
-                return (
-                    " (`expected` est le texte JSON de la valeur rendue : "
-                    "donne la valeur elle-même)"
-                )
+                return " (`expected` est le texte JSON de la valeur rendue : donne la valeur elle-même)"
     wanted, got = _json_kind(expected), _json_kind(result)
     return f" (attendu {wanted}, obtenu {got})" if wanted != got else ""
 
@@ -701,9 +656,7 @@ def _failure(execution: Execution) -> str:
     if detail:
         lines.append(json.dumps(detail, ensure_ascii=False, default=str))
     if kind == "import_error":
-        lines.append(
-            "La VM n'a que la bibliothèque standard de Python : rien d'autre ne s'importe."
-        )
+        lines.append("La VM n'a que la bibliothèque standard de Python : rien d'autre ne s'importe.")
     if streams := _streams(execution):
         lines.append(streams)
     return "\n".join(lines)
@@ -789,9 +742,7 @@ class _ForgeTool:
             schema = _decoded(arguments["input_schema"], "input_schema")
             examples = _decoded(arguments["examples"], "examples")
             if not isinstance(schema, dict):
-                raise _ShapeError(
-                    "input_schema : un objet JSON est attendu (un schéma de type object)"
-                )
+                raise _ShapeError("input_schema : un objet JSON est attendu (un schéma de type object)")
             if not isinstance(examples, list):
                 raise _ShapeError("examples : une liste JSON est attendue")
             pairs = check_forged(name, schema, code, examples)
@@ -801,37 +752,28 @@ class _ForgeTool:
             objects = [f for f in _TEXT_FIELDS if not isinstance(arguments[f], str)]
             if not objects:
                 raise
-            raise ToolError(
-                f"{exc.message} (si ton format d'appel déforme les objets imbriqués, donne "
-                f"{' et '.join(objects)} en texte JSON)"
-            ) from None
+            raise ToolError(f"{exc.message} (si ton format d'appel déforme les objets imbriqués, donne {' et '.join(objects)} en texte JSON)") from None
         for index, (example, expected) in enumerate(pairs, start=1):
             try:
                 execution = await self.run.execute(name, code, example)
             except _ERRORS as exc:
                 return _unavailable(exc)
             if not execution.ok:
-                return ToolOutput.error(
-                    f"Outil {name} refusé — exemple {index} {json.dumps(example)} :\n"
-                    + _failure(execution)
-                )
+                return ToolOutput.error(f"Outil {name} refusé — exemple {index} {json.dumps(example)} :\n" + _failure(execution))
             if not same_json(execution.result, expected):
                 got = json.dumps(execution.result, ensure_ascii=False)
                 wanted = json.dumps(expected, ensure_ascii=False)
                 streams = _streams(execution)
                 return ToolOutput.error(
                     f"Outil {name} refusé — exemple {index} {json.dumps(example)} : "
-                    f"attendu {wanted}, obtenu {got}{_mismatch_hint(expected, execution.result)}"
-                    + (f"\n{streams}" if streams else "")
+                    f"attendu {wanted}, obtenu {got}{_mismatch_hint(expected, execution.result)}" + (f"\n{streams}" if streams else "")
                 )
         forged = Forged(
             name=name,
             description=str(arguments["description"]).strip(),
             input_schema=schema,
             code=code,
-            examples=tuple(
-                {"arguments": example, "expected": expected} for example, expected in pairs
-            ),
+            examples=tuple({"arguments": example, "expected": expected} for example, expected in pairs),
             forged_by=str(context.run_id),
             forged_at=datetime.now(UTC).isoformat(timespec="milliseconds"),
         )
@@ -846,9 +788,7 @@ class _ForgeTool:
             f"Appelable dans ce run par call (name: {name}), et comme outil à part "
             "entière au run suivant."
         )
-        return ToolOutput(
-            blocks=(TextBlock(text=said),), data={"name": name, "examples": len(pairs)}
-        )
+        return ToolOutput(blocks=(TextBlock(text=said),), data={"name": name, "examples": len(pairs)})
 
 
 @dataclass(frozen=True, slots=True)
@@ -899,14 +839,12 @@ def _forge_spec(limits: Mapping[str, int], files: FilePolicy | None) -> ToolSpec
                 "name": {"type": "string", "pattern": f"^{NAME_PATTERN}$"},
                 "description": {"type": "string", "minLength": 1},
                 "input_schema": {
-                    "description": "Schéma JSON (type object) des arguments de l'outil, "
-                    "en objet ou en texte JSON.",
+                    "description": "Schéma JSON (type object) des arguments de l'outil, en objet ou en texte JSON.",
                     "anyOf": [{"type": "object"}, {"type": "string"}],
                 },
                 "code": {"type": "string", "minLength": 1},
                 "examples": {
-                    "description": f"De 1 à {MAX_EXAMPLES} exemples (arguments, expected), "
-                    "en liste ou en texte JSON.",
+                    "description": f"De 1 à {MAX_EXAMPLES} exemples (arguments, expected), en liste ou en texte JSON.",
                     "anyOf": [
                         {
                             "type": "array",
@@ -1096,9 +1034,7 @@ def forge_source(
     """La fabrique du point d'entrée ``forge`` : vérifie ``params``, ne démarre rien."""
     unknown = sorted(set(params) - {"vm_dir", "catalog_dir", "limits", "files"})
     if unknown:
-        raise ValueError(
-            f"params inconnus : {', '.join(unknown)} (vm_dir, catalog_dir, limits, files)"
-        )
+        raise ValueError(f"params inconnus : {', '.join(unknown)} (vm_dir, catalog_dir, limits, files)")
     vm_dir = _folder(params, "vm_dir", base_dir)
     catalog_dir = _folder(params, "catalog_dir", base_dir)
     if catalog_dir.exists() and not catalog_dir.is_dir():

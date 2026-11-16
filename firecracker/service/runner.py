@@ -191,9 +191,7 @@ def load_entrypoint(entrypoint: str, code_dir: Path):
     except (ImportError, ValueError):
         spec = None
     if spec is None:
-        available = sorted(
-            p.stem for p in code_dir.glob("*.py") if not p.name.startswith("_")
-        ) + sorted(
+        available = sorted(p.stem for p in code_dir.glob("*.py") if not p.name.startswith("_")) + sorted(
             p.name for p in code_dir.iterdir() if p.is_dir() and (p / "__init__.py").exists()
         )
         raise ExecError(
@@ -223,9 +221,7 @@ def load_entrypoint(entrypoint: str, code_dir: Path):
 
     func = getattr(module, func_name, None)
     if func is None:
-        exported = sorted(
-            n for n in vars(module) if not n.startswith("_") and callable(vars(module)[n])
-        )
+        exported = sorted(n for n in vars(module) if not n.startswith("_") and callable(vars(module)[n]))
         raise ExecError(
             "code_invalid",
             f"fonction {func_name!r} absente du module {module_name!r}",
@@ -369,9 +365,7 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
                 expected=f"{job['entrypoint'].split(':')[-1]}{signature}",
                 got=sorted(args),
             )
-        return error(
-            "tool_raised", str(exc), type="TypeError", traceback=clean_traceback(exc, code_dir)
-        )
+        return error("tool_raised", str(exc), type="TypeError", traceback=clean_traceback(exc, code_dir))
     except ModuleNotFoundError as exc:
         # Import TARDIF, ecrit dans le corps de la fonction. Le modele produit
         # frequemment ce style. Le classer en tool_raised priverait l'hote du

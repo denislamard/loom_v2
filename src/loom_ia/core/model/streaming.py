@@ -92,9 +92,7 @@ class ModelRequest(DomainModel):
             "system": dumped["system"],
             "tools": dumped["tools"],
             "messages": dumped["messages"],
-            "settings": {
-                key: dumped[key] for key in ("tool_choice", "max_tokens", "params", "output_schema")
-            },
+            "settings": {key: dumped[key] for key in ("tool_choice", "max_tokens", "params", "output_schema")},
         }
         parts = {name: _short_hash(value) for name, value in groups.items()}
         # Le nombre de messages se lit en clair : « 5 au journal, 6 maintenant »
@@ -170,14 +168,7 @@ class StreamReset(DomainModel):
 
 
 type ModelChunk = Annotated[
-    TextDelta
-    | ReasoningDelta
-    | ToolCallStarted
-    | ToolArgsDelta
-    | ToolCallEnded
-    | UsageDelta
-    | Stopped
-    | StreamReset,
+    TextDelta | ReasoningDelta | ToolCallStarted | ToolArgsDelta | ToolCallEnded | UsageDelta | Stopped | StreamReset,
     Field(discriminator="type"),
 ]
 
@@ -271,12 +262,7 @@ class ResponseAccumulator:
     def result(self, *, model_id: str, provider: str) -> ModelResponse:
         self._flush_text()
         self._flush_reasoning()
-        blocks = _distinct_call_ids(
-            tuple(
-                p.block() if isinstance(p, _PendingCall) else self._stamped(p, model_id)
-                for p in self._parts
-            )
-        )
+        blocks = _distinct_call_ids(tuple(p.block() if isinstance(p, _PendingCall) else self._stamped(p, model_id) for p in self._parts))
         if not blocks:
             blocks = (TextBlock(text=""),)
         has_calls = any(isinstance(b, ToolCallBlock) for b in blocks)
@@ -296,9 +282,7 @@ class ResponseAccumulator:
 
     def _flush_reasoning(self) -> None:
         if self._reasoning is not None:
-            self._parts.append(
-                ReasoningBlock(text="".join(self._reasoning), provider_meta=self._reasoning_meta)
-            )
+            self._parts.append(ReasoningBlock(text="".join(self._reasoning), provider_meta=self._reasoning_meta))
             self._reasoning = None
             self._reasoning_meta = {}
 
@@ -353,17 +337,11 @@ def message_to_chunks(
             case ReasoningBlock(text=text, provider_meta=meta):
                 parts = _split(text, fragment_size)
                 last = len(parts) - 1
-                chunks += [
-                    ReasoningDelta(text=part, start=i == 0, provider_meta=meta if i == last else {})
-                    for i, part in enumerate(parts)
-                ]
+                chunks += [ReasoningDelta(text=part, start=i == 0, provider_meta=meta if i == last else {}) for i, part in enumerate(parts)]
             case ToolCallBlock(call_id=call_id, name=name, arguments=arguments):
                 chunks.append(ToolCallStarted(index=index, call_id=call_id, name=name))
                 raw = json.dumps(arguments, ensure_ascii=False)
-                chunks += [
-                    ToolArgsDelta(index=index, json_fragment=part)
-                    for part in _split(raw, fragment_size)
-                ]
+                chunks += [ToolArgsDelta(index=index, json_fragment=part) for part in _split(raw, fragment_size)]
                 chunks.append(ToolCallEnded(index=index))
                 index += 1
             case _:

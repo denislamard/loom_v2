@@ -28,30 +28,19 @@ from loom_ia.tools_builtin.memory_params import RetrievalSpec
 RRF_K: Final = 2
 
 
-def selected(
-    index: Sequence[IndexedChunk], project: str | None, tags: Collection[str]
-) -> list[IndexedChunk]:
+def selected(index: Sequence[IndexedChunk], project: str | None, tags: Collection[str]) -> list[IndexedChunk]:
     """Les passages du projet (tous sans projet) qui portent tous les tags demandés."""
     wanted = frozenset(tags)
-    return [
-        chunk
-        for chunk in index
-        if (project is None or chunk.project == project) and wanted <= chunk.tags
-    ]
+    return [chunk for chunk in index if (project is None or chunk.project == project) and wanted <= chunk.tags]
 
 
-def fused(
-    query: Embedding, pool: Sequence[IndexedChunk], spec: RetrievalSpec
-) -> list[IndexedChunk]:
+def fused(query: Embedding, pool: Sequence[IndexedChunk], spec: RetrievalSpec) -> list[IndexedChunk]:
     """Les candidats à passer au reranker, du meilleur au moins bon."""
     if not pool:
         return []
     dense_scores = [math.sumprod(query.dense, chunk.dense) for chunk in pool]
     weights = dict(zip(query.sparse.indices, query.sparse.values, strict=True))
-    lexical_scores = [
-        sum(weight * chunk.sparse.get(token, 0.0) for token, weight in weights.items())
-        for chunk in pool
-    ]
+    lexical_scores = [sum(weight * chunk.sparse.get(token, 0.0) for token, weight in weights.items()) for chunk in pool]
     fusion: dict[int, float] = {}
     for scores, keep_zero in ((dense_scores, True), (lexical_scores, False)):
         order = sorted(range(len(pool)), key=lambda i: (-scores[i], _key(pool[i])))
@@ -74,9 +63,7 @@ def hits(
     if len(candidates) != len(scores):
         raise ValueError("candidats et scores de longueurs différentes")
     threshold = spec.min_score if min_score is None else min_score
-    ranked = sorted(
-        zip(candidates, scores, strict=True), key=lambda pair: (-pair[1], _key(pair[0]))
-    )
+    ranked = sorted(zip(candidates, scores, strict=True), key=lambda pair: (-pair[1], _key(pair[0])))
     per_doc: dict[str, int] = {}
     found: list[Hit] = []
     for chunk, score in ranked:

@@ -199,11 +199,7 @@ class Controle:
 def enonce(quoi: str, texte: str, largeur: int = 96) -> None:
     """Imprime un message long sur plusieurs lignes, sans rien en couper."""
     marge = " " * len(quoi)
-    lignes = [
-        morceau
-        for bloc in texte.splitlines()
-        for morceau in textwrap.wrap(bloc, largeur - len(quoi)) or [""]
-    ]
+    lignes = [morceau for bloc in texte.splitlines() for morceau in textwrap.wrap(bloc, largeur - len(quoi)) or [""]]
     for numero, ligne in enumerate(lignes or [""]):
         print(f"{quoi if numero == 0 else marge}{ligne}")
 
@@ -216,9 +212,7 @@ def installe(site: Path, paquet: str, module: str, code: str, points: dict[str, 
     (site / f"{module}.py").write_text(code.lstrip(), encoding="utf-8")
     info = site / f"{paquet.replace('-', '_')}-0.1.dist-info"
     info.mkdir()
-    (info / "METADATA").write_text(
-        f"Metadata-Version: 2.1\nName: {paquet}\nVersion: 0.1\n", encoding="utf-8"
-    )
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {paquet}\nVersion: 0.1\n", encoding="utf-8")
     lignes = "".join(f"{nom} = {cible}\n" for nom, cible in points.items())
     (info / "entry_points.txt").write_text(f"[{GROUP}]\n{lignes}", encoding="utf-8")
     invalidate_caches()
@@ -233,9 +227,7 @@ def ecrit_config(dossier: Path, source: dict[str, Any], *, reel: bool = False) -
     """
     base = dossier / "relance"
     (base / "agents").mkdir(parents=True)
-    (base / "carnet.json").write_text(
-        json.dumps(CARNET, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    (base / "carnet.json").write_text(json.dumps(CARNET, ensure_ascii=False, indent=2), encoding="utf-8")
     m3 = load_config(J4 / "loom.yaml").model_spec("M3_MAIN")
     simule: dict[str, Any] = {
         "id": "FAKE_MAIN",
@@ -247,12 +239,7 @@ def ecrit_config(dossier: Path, source: dict[str, Any], *, reel: bool = False) -
                     "text": "Je cherche le devis.",
                     "tool_calls": [{"name": OUTIL, "arguments": {"numero": NUMERO}}],
                 },
-                {
-                    "text": (
-                        "Le devis D-2026-042 de Mme Martin porte sur le remplacement d'un "
-                        "chauffe-eau de 200 L, pour 1 840 € TTC ; il est en attente."
-                    )
-                },
+                {"text": ("Le devis D-2026-042 de Mme Martin porte sur le remplacement d'un chauffe-eau de 200 L, pour 1 840 € TTC ; il est en attente.")},
             ]
         },
     }
@@ -269,13 +256,8 @@ def ecrit_config(dossier: Path, source: dict[str, Any], *, reel: bool = False) -
         "tool_sources": [source],
         "telemetry": {"logging": {"level": "WARNING"}},
     }
-    (base / "loom.yaml").write_text(
-        yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
-    systeme = (
-        "Tu réponds aux questions d'un artisan sur ses devis. Cherche le devis avec "
-        f"{OUTIL} avant de répondre, et réponds en une ou deux phrases."
-    )
+    (base / "loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    systeme = f"Tu réponds aux questions d'un artisan sur ses devis. Cherche le devis avec {OUTIL} avant de répondre, et réponds en une ou deux phrases."
     nom, modele = ("relance_reel", m3.id) if reel else ("relance", "FAKE_MAIN")
     agent = {
         "name": nom,
@@ -284,9 +266,7 @@ def ecrit_config(dossier: Path, source: dict[str, Any], *, reel: bool = False) -
         "max_iterations": 4,
         "tools": [{"source": "carnet"}],
     }
-    (base / "agents" / f"{nom}.yaml").write_text(
-        yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    (base / "agents" / f"{nom}.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return base / "loom.yaml"
 
 
@@ -340,9 +320,7 @@ def chemin(site: Path, modules: tuple[str, ...]) -> Generator[None]:
 async def cas_source(args: argparse.Namespace, dossier: Path, controle: Controle) -> None:
     site = dossier / "site"
     site.mkdir()
-    info = installe(
-        site, "carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"}
-    )
+    info = installe(site, "carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"})
     fichier = ecrit_config(dossier, CARNET_SOURCE, reel=args.reel)
     agent = "relance_reel" if args.reel else "relance"
     print(f"  paquet : carnet-devis 0.1, installé dans {site.name}/ (dossier temporaire)")
@@ -359,9 +337,7 @@ async def cas_source(args: argparse.Namespace, dossier: Path, controle: Controle
             "carnet_devis : "
             + controle.tient(
                 "source : le paquet n'est pas listé, ou il a été importé trop tôt",
-                [(p.package, p.value) for p in trouves]
-                == [("carnet-devis", "carnet_devis:fabrique")]
-                and "carnet_devis" not in sys.modules,
+                [(p.package, p.value) for p in trouves] == [("carnet-devis", "carnet_devis:fabrique")] and "carnet_devis" not in sys.modules,
             )
         )
 
@@ -376,10 +352,7 @@ async def cas_source(args: argparse.Namespace, dossier: Path, controle: Controle
                 and "Sources      carnet → point d'entrée carnet" in sortie
                 and "carnet · carnet-devis 0.1 · utilisé" in sortie
                 # La branche de la source, dans l'arbre de l'agent : son nom, ses outils.
-                and any(
-                    ligne.lstrip("│├└ ").startswith("carnet ") and OUTIL in ligne
-                    for ligne in sortie.splitlines()
-                ),
+                and any(ligne.lstrip("│├└ ").startswith("carnet ") and OUTIL in ligne for ligne in sortie.splitlines()),
             )
         )
 
@@ -389,26 +362,19 @@ async def cas_source(args: argparse.Namespace, dossier: Path, controle: Controle
                 result = await loom.run(agent, DEMANDE, user="dev")
                 runs.append(result)
                 titre(f"Run {numero} de {agent} : {DEMANDE}")
-                print(
-                    f"  statut : {result.status.value}"
-                    + (f" ({result.error})" if result.error else "")
-                )
+                print(f"  statut : {result.status.value}" + (f" ({result.error})" if result.error else ""))
                 enonce("  texte  : ", result.text or "(vide)")
                 events = await loom.events(result.run_id, session_id=result.session_id)
                 appels = [e.payload for e in events if isinstance(e.payload, ToolCalled)]
                 print(f"  appels d'outil ({len(appels)}) :")
                 for appel in appels:
-                    print(
-                        f"    {appel.tool_name}({json.dumps(appel.arguments, ensure_ascii=False)})"
-                    )
+                    print(f"    {appel.tool_name}({json.dumps(appel.arguments, ensure_ascii=False)})")
                 if not args.reel:
                     print(
                         f"  le run est allé au bout, après {OUTIL}({NUMERO}) : "
                         + controle.tient(
                             f"source : le run {numero} ne rend pas ce qui est annoncé",
-                            result.status == RunStatus.COMPLETED
-                            and [(a.tool_name, a.arguments) for a in appels]
-                            == [(OUTIL, {"numero": NUMERO})],
+                            result.status == RunStatus.COMPLETED and [(a.tool_name, a.arguments) for a in appels] == [(OUTIL, {"numero": NUMERO})],
                         )
                     )
             journal = sys.modules["carnet_devis"].JOURNAL
@@ -425,16 +391,13 @@ async def cas_source(args: argparse.Namespace, dossier: Path, controle: Controle
                 # Un vrai modèle tombé (clé, réseau) : le rejeu d'une panne n'éprouve
                 # pas la source, il n'y a rien à exiger.
                 print("  le run 1 n'est pas allé au bout : son rejeu n'éprouve pas la source")
-                controle.saute(
-                    "source (le run 1 n'est pas allé au bout : rejeu non exigé)", partie=True
-                )
+                controle.saute("source (le run 1 n'est pas allé au bout : rejeu non exigé)", partie=True)
             else:
                 print(
                     "  rejoué à l'identique, et l'outil du paquet n'a pas été rappelé : "
                     + controle.tient(
                         "source : le rejeu n'est pas identique, ou il a rappelé l'outil",
-                        rapport.identical
-                        and not any(ligne.startswith("appel ") for ligne in ajoutes),
+                        rapport.identical and not any(ligne.startswith("appel ") for ligne in ajoutes),
                     )
                 )
         titre("Ce que la source a vécu, du montage à la fermeture de l'instance")
@@ -457,17 +420,13 @@ async def cas_source(args: argparse.Namespace, dossier: Path, controle: Controle
             )
         )
     if args.reel:
-        controle.saute(
-            "source (en --reel, ce que rendent les runs est montré, pas exigé)", partie=True
-        )
+        controle.saute("source (en --reel, ce que rendent les runs est montré, pas exigé)", partie=True)
 
 
 async def cas_absent(args: argparse.Namespace, dossier: Path, controle: Controle) -> None:
     site = dossier / "site"
     site.mkdir()
-    installe(
-        site, "carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"}
-    )
+    installe(site, "carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"})
     installe(site, "carnet-casse", "carnet_casse", CASSE, {"casse": "carnet_casse:fabrique"})
     essais = [
         (
@@ -506,9 +465,7 @@ async def cas_absent(args: argparse.Namespace, dossier: Path, controle: Controle
 async def cas_doublon(args: argparse.Namespace, dossier: Path, controle: Controle) -> None:
     site = dossier / "site"
     site.mkdir()
-    installe(
-        site, "carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"}
-    )
+    installe(site, "carnet-devis", "carnet_devis", CARNET_DEVIS, {"carnet": "carnet_devis:fabrique"})
     # Le second paquet ne doit jamais être importé : s'il l'était, son import
     # échouerait, et le message le dirait.
     installe(

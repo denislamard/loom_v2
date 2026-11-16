@@ -105,9 +105,7 @@ class PostgresPoolSettings(DomainModel):
     @model_validator(mode="after")
     def _check_sizes(self) -> Self:
         if self.min_size > self.max_size:
-            raise ValueError(
-                f"Pool Postgres : min_size ({self.min_size}) dépasse max_size ({self.max_size})"
-            )
+            raise ValueError(f"Pool Postgres : min_size ({self.min_size}) dépasse max_size ({self.max_size})")
         return self
 
 
@@ -132,17 +130,13 @@ class EventsStorage(DomainModel):
         if "pool" in self.model_fields_set and self.backend not in DSN_BACKENDS:
             raise ValueError(f"Journal {self.backend!r} : 'pool' n'a pas de sens")
         if self.backend not in EVENT_BACKENDS:
-            raise ValueError(
-                f"Journal {self.backend!r} : seuls {', '.join(EVENT_BACKENDS)} "
-                "sont disponibles à ce jalon"
-            )
+            raise ValueError(f"Journal {self.backend!r} : seuls {', '.join(EVENT_BACKENDS)} sont disponibles à ce jalon")
         if self.backend in FILE_BACKENDS and self.path is None:
             raise ValueError(f"Journal {self.backend!r} : 'path' est obligatoire")
         if self.backend in DSN_BACKENDS:
             if self.dsn_env is None:
                 raise ValueError(
-                    f"Journal {self.backend!r} : 'dsn_env' est obligatoire — le nom de la "
-                    "variable d'environnement qui porte le DSN, jamais le DSN lui-même"
+                    f"Journal {self.backend!r} : 'dsn_env' est obligatoire — le nom de la variable d'environnement qui porte le DSN, jamais le DSN lui-même"
                 )
             if self.path is not None:
                 raise ValueError(f"Journal {self.backend!r} : 'path' n'a pas de sens")
@@ -199,10 +193,7 @@ class IdempotencyStorage(DomainModel):
         if "pool" in self.model_fields_set and self.backend != "postgres":
             raise ValueError(f"Magasin d'idempotence {self.backend!r} : 'pool' n'a pas de sens")
         if self.backend not in IDEMPOTENCY_BACKENDS:
-            raise ValueError(
-                f"Magasin d'idempotence {self.backend!r} : seuls "
-                f"{', '.join(IDEMPOTENCY_BACKENDS)} sont disponibles à ce jalon"
-            )
+            raise ValueError(f"Magasin d'idempotence {self.backend!r} : seuls {', '.join(IDEMPOTENCY_BACKENDS)} sont disponibles à ce jalon")
         if self.backend == "sqlite" and self.path is None:
             raise ValueError("Magasin d'idempotence 'sqlite' : 'path' est obligatoire")
         if self.backend != "sqlite" and self.path is not None:
@@ -216,8 +207,7 @@ class IdempotencyStorage(DomainModel):
             raise ValueError(f"Magasin d'idempotence {self.backend!r} : 'dsn_env' n'a pas de sens")
         if self.backend == "redis" and self.url_env is None:
             raise ValueError(
-                "Magasin d'idempotence 'redis' : 'url_env' est obligatoire — le nom de la "
-                "variable d'environnement qui porte l'URL, jamais l'URL elle-même"
+                "Magasin d'idempotence 'redis' : 'url_env' est obligatoire — le nom de la variable d'environnement qui porte l'URL, jamais l'URL elle-même"
             )
         if self.backend != "redis" and self.url_env is not None:
             raise ValueError(f"Magasin d'idempotence {self.backend!r} : 'url_env' n'a pas de sens")
@@ -250,10 +240,7 @@ class QueueStorage(DomainModel):
     @model_validator(mode="after")
     def _check_backend(self) -> Self:
         if self.backend not in QUEUE_BACKENDS:
-            raise ValueError(
-                f"File {self.backend!r} : seuls {', '.join(QUEUE_BACKENDS)} "
-                "sont disponibles à ce jalon"
-            )
+            raise ValueError(f"File {self.backend!r} : seuls {', '.join(QUEUE_BACKENDS)} sont disponibles à ce jalon")
         if self.brokered and "max_running" in self.model_fields_set:
             raise ValueError(
                 f"File {self.backend!r} : 'max_running' ne vaut que pour la file en mémoire — "
@@ -261,8 +248,7 @@ class QueueStorage(DomainModel):
             )
         if self.backend == "rabbitmq" and self.url_env is None:
             raise ValueError(
-                "File 'rabbitmq' : 'url_env' est obligatoire — le nom de la variable "
-                "d'environnement qui porte l'URL du courtier, jamais l'URL elle-même"
+                "File 'rabbitmq' : 'url_env' est obligatoire — le nom de la variable d'environnement qui porte l'URL du courtier, jamais l'URL elle-même"
             )
         if self.backend != "rabbitmq" and self.url_env is not None:
             raise ValueError(f"File {self.backend!r} : 'url_env' n'a pas de sens")
@@ -291,10 +277,7 @@ class BusStorage(DomainModel):
     @model_validator(mode="after")
     def _check_backend(self) -> Self:
         if self.backend not in BUS_BACKENDS:
-            raise ValueError(
-                f"Bus {self.backend!r} : seuls {', '.join(BUS_BACKENDS)} "
-                "sont disponibles à ce jalon"
-            )
+            raise ValueError(f"Bus {self.backend!r} : seuls {', '.join(BUS_BACKENDS)} sont disponibles à ce jalon")
         attendu = {"postgres": "dsn_env", "redis": "url_env"}.get(self.backend)
         # La clé de trop d'abord : elle dit mieux la confusion qu'une clé
         # manquante (``url_env`` pour un bus Postgres, par exemple).
@@ -305,8 +288,7 @@ class BusStorage(DomainModel):
         if attendu is not None and getattr(self, attendu) is None:
             porte = "le DSN" if attendu == "dsn_env" else "l'URL"
             raise ValueError(
-                f"Bus {self.backend!r} : {attendu!r} est obligatoire — le nom de la variable "
-                f"d'environnement qui porte {porte}, jamais {porte} elle-même"
+                f"Bus {self.backend!r} : {attendu!r} est obligatoire — le nom de la variable d'environnement qui porte {porte}, jamais {porte} elle-même"
             )
         return self
 
@@ -402,16 +384,13 @@ class StorageConfig(DomainModel):
         if artifacts.backend == "memory" and artifacts.path is not None:
             raise ValueError("Artefacts 'memory' : 'path' n'a pas de sens")
         if artifacts.backend == "local" and artifacts.path is None and self.events.path is None:
-            raise ValueError(
-                "Artefacts 'local' : 'path' est obligatoire quand le journal n'est pas en fichiers"
-            )
+            raise ValueError("Artefacts 'local' : 'path' est obligatoire quand le journal n'est pas en fichiers")
         if self.events.backend in DSN_BACKENDS and artifacts.backend is None:
             # Un journal durable qui laisserait les artefacts en mémoire
             # garderait la trace de fichiers disparus à la fermeture : le
             # piège est trop silencieux pour un défaut.
             raise ValueError(
-                f"Journal {self.events.backend!r} : déclarer 'storage.artifacts' — 'local' "
-                "avec son 'path', ou 'memory' si les artefacts n'ont pas à survivre"
+                f"Journal {self.events.backend!r} : déclarer 'storage.artifacts' — 'local' avec son 'path', ou 'memory' si les artefacts n'ont pas à survivre"
             )
         return self
 
@@ -448,10 +427,7 @@ class StateLimits(DomainModel):
     @model_validator(mode="after")
     def _check_sizes(self) -> Self:
         if self.max_value_bytes > self.max_total_bytes:
-            raise ValueError(
-                f"sessions.state : max_value_bytes ({self.max_value_bytes}) dépasse "
-                f"max_total_bytes ({self.max_total_bytes})"
-            )
+            raise ValueError(f"sessions.state : max_value_bytes ({self.max_value_bytes}) dépasse max_total_bytes ({self.max_total_bytes})")
         return self
 
 
@@ -527,9 +503,7 @@ class LoggingConfig(DomainModel):
     def _check_level(self) -> Self:
         known = logging.getLevelNamesMapping()
         if self.level.upper() not in known:
-            raise ValueError(
-                f"Niveau de log {self.level!r} inconnu (attendus : {', '.join(known)})"
-            )
+            raise ValueError(f"Niveau de log {self.level!r} inconnu (attendus : {', '.join(known)})")
         return self
 
 
@@ -548,10 +522,7 @@ class TelemetryConfig(DomainModel):
         if _declares(data, "bus"):
             # Prévu ici par la conception, réalisé ailleurs : le bus est un
             # stockage partagé entre process (5.3c), pas un réglage d'export.
-            raise ValueError(
-                "'telemetry.bus' : le bus se déclare dans 'storage.bus' (5.3c) ; la file d'un "
-                "abonné n'a pas de borne réglable"
-            )
+            raise ValueError("'telemetry.bus' : le bus se déclare dans 'storage.bus' (5.3c) ; la file d'un abonné n'a pas de borne réglable")
         return data
 
 
@@ -612,9 +583,7 @@ class TenantSpec(DomainModel):
                 raise ValueError(f"Client {self.id!r} : nom d'agent invalide : {agent!r}")
         for source, target in self.models.items():
             if source == target:
-                raise ValueError(
-                    f"Client {self.id!r} : le modèle {source!r} se remplace par lui-même"
-                )
+                raise ValueError(f"Client {self.id!r} : le modèle {source!r} se remplace par lui-même")
         if self.storage is not None and self.storage.encryption is not None:
             # Le sceau est une propriété du déploiement, la clé est celle du
             # client : les mélanger ferait de « scellé » une question à poser
@@ -717,15 +686,10 @@ class AccessRole(DomainModel):
         if "self_approve" in self.permissions and "approve" not in self.permissions:
             # self_approve étend approve aux demandes de ses propres runs (D-7) :
             # seule, elle n'ouvrirait rien, et se lirait pourtant comme un droit.
-            raise ValueError(
-                f"{label} : 'self_approve' sans 'approve' — elle ne vaut que dans le même rôle "
-                "qu'approve"
-            )
+            raise ValueError(f"{label} : 'self_approve' sans 'approve' — elle ne vaut que dans le même rôle qu'approve")
         if "act_as" in self.permissions and not self.act_as_roles:
             # Une passerelle sans borne agirait au nom de n'importe qui, gérant compris (D-5b).
-            raise ValueError(
-                f"{label} : 'act_as' demande 'act_as_roles', les rôles que ce rôle peut endosser"
-            )
+            raise ValueError(f"{label} : 'act_as' demande 'act_as_roles', les rôles que ce rôle peut endosser")
         if self.act_as_roles and "act_as" not in self.permissions:
             raise ValueError(f"{label} : 'act_as_roles' sans la permission 'act_as'")
         if self.id in self.act_as_roles:
@@ -790,8 +754,7 @@ class ApiKey(DomainModel):
         # plutôt qu'à chaque requête.
         if not FINGERPRINT.fullmatch(self.hash):
             raise ValueError(
-                f"Empreinte de clé attendue sous la forme '{ALGORITHM}:' suivie de 64 chiffres "
-                "hexadécimaux minuscules, telle que 'loom keys create' la donne"
+                f"Empreinte de clé attendue sous la forme '{ALGORITHM}:' suivie de 64 chiffres hexadécimaux minuscules, telle que 'loom keys create' la donne"
             )
         return self
 
@@ -870,9 +833,7 @@ class SecurityConfig(DomainModel):
 
     def permissions_of(self, user_id: str) -> frozenset[Permission]:
         """Permissions que l'un au moins des rôles de l'utilisateur porte, tous agents confondus."""
-        return frozenset(
-            permission for role in self.roles_of(user_id) for permission in role.permissions
-        )
+        return frozenset(permission for role in self.roles_of(user_id) for permission in role.permissions)
 
 
 class HttpServer(DomainModel):
@@ -993,9 +954,7 @@ class LoomConfig(DomainModel):
     profile: Profile | None = None
     # Surcharges partielles par profil, fusionnées au chargement : les objets
     # en profondeur, les listes remplacées.
-    profiles: dict[Profile, dict[str, JsonValue]] = Field(
-        default_factory=dict[Profile, dict[str, JsonValue]]
-    )
+    profiles: dict[Profile, dict[str, JsonValue]] = Field(default_factory=dict[Profile, dict[str, JsonValue]])
     # Dossier du fichier de config, posé au chargement : les modules voisins
     # sont importables et les chemins relatifs s'y rapportent. Hors du schéma
     # publié (``loom schema``) : on ne l'écrit pas (test M1 du 21/10).
@@ -1060,16 +1019,10 @@ class LoomConfig(DomainModel):
         les mêmes contrôles que la configuration d'origine (L1, #34).
         """
         if self.version != SCHEMA_VERSION:
-            raise ValueError(
-                f"Version de config {self.version!r} non prise en charge "
-                f"(attendue : {SCHEMA_VERSION})"
-            )
+            raise ValueError(f"Version de config {self.version!r} non prise en charge (attendue : {SCHEMA_VERSION})")
         _reject_doubles("Agent", [agent.name for agent in self.agents])
         if any(agent.name == COMPACTION_AGENT for agent in self.agents):
-            raise ValueError(
-                f"Agent {COMPACTION_AGENT!r} : ce nom est réservé à l'agent interne de "
-                "compaction, produit par 'sessions.compaction'"
-            )
+            raise ValueError(f"Agent {COMPACTION_AGENT!r} : ce nom est réservé à l'agent interne de compaction, produit par 'sessions.compaction'")
         compaction = self.sessions.compaction
         if compaction is not None:
             self._check_chain(f"Compaction ({COMPACTION_AGENT})", (compaction.model,))
@@ -1080,10 +1033,7 @@ class LoomConfig(DomainModel):
             # Le MCP publie des outils à un LLM tiers, sur le réseau : sans
             # clé, n'importe qui les appellerait. Le stdio, lui, n'a pas de
             # clé, mais c'est le process qui l'a lancé qui décide.
-            raise ValueError(
-                "'server.mcp.http' expose les agents comme outils : déclarer au moins une "
-                "clé dans 'security.api_keys' (loom keys create)"
-            )
+            raise ValueError("'server.mcp.http' expose les agents comme outils : déclarer au moins une clé dans 'security.api_keys' (loom keys create)")
         self._check_tenants()
         servers = [server.name for server in self.mcp_servers]
         _reject_doubles("Serveur MCP", servers)
@@ -1091,27 +1041,18 @@ class LoomConfig(DomainModel):
             for ref in agent.mcp_tools:
                 if ref.mcp not in servers:
                     declared = ", ".join(servers) or "aucun"
-                    raise ValueError(
-                        f"Agent {agent.name!r} : serveur MCP {ref.mcp!r} non déclaré "
-                        f"dans mcp_servers (serveurs : {declared})"
-                    )
+                    raise ValueError(f"Agent {agent.name!r} : serveur MCP {ref.mcp!r} non déclaré dans mcp_servers (serveurs : {declared})")
         sources = [source.name for source in self.tool_sources]
         _reject_doubles("Nom de source d'outils", sources)
         # Un même nom dirait deux choses au journal (``tool.source_unavailable``).
         shared = sorted(set(sources) & set(servers))
         if shared:
-            raise ValueError(
-                f"Source d'outils et serveur MCP de même nom : {', '.join(shared)} "
-                "(le journal ne saurait pas lequel est indisponible)"
-            )
+            raise ValueError(f"Source d'outils et serveur MCP de même nom : {', '.join(shared)} (le journal ne saurait pas lequel est indisponible)")
         for agent in self.agents:
             for ref in agent.source_tools:
                 if ref.source not in sources:
                     declared = ", ".join(sources) or "aucune"
-                    raise ValueError(
-                        f"Agent {agent.name!r} : source d'outils {ref.source!r} non déclarée "
-                        f"dans tool_sources (sources : {declared})"
-                    )
+                    raise ValueError(f"Agent {agent.name!r} : source d'outils {ref.source!r} non déclarée dans tool_sources (sources : {declared})")
         _reject_doubles("Modèle", [spec.id for spec in self.models])
         for agent in self.agents:
             # Un orchestrateur qui a des outils les appelle : son modèle et ses secours aussi.
@@ -1153,19 +1094,14 @@ class LoomConfig(DomainModel):
             for ref in agent.subagents:
                 if ref.budget_share is not None and not self.budget_of(agent.name).run.limited:
                     raise ValueError(
-                        f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : budget_share "
-                        "demande un budget du run (max_cost, max_tokens ou max_calls)"
+                        f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : budget_share demande un budget du run (max_cost, max_tokens ou max_calls)"
                     )
                 target = agents.get(ref.agent)
                 if target is None:
-                    raise ValueError(
-                        f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : agent "
-                        f"{ref.agent!r} non déclaré (agents : {', '.join(agents)})"
-                    )
+                    raise ValueError(f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : agent {ref.agent!r} non déclaré (agents : {', '.join(agents)})")
                 if not (ref.description or target.description):
                     raise ValueError(
-                        f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : description "
-                        f"manquante (ni dans la référence ni dans l'agent {ref.agent!r})"
+                        f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : description manquante (ni dans la référence ni dans l'agent {ref.agent!r})"
                     )
 
     def _check_state(self, agent: AgentSpec) -> None:
@@ -1179,11 +1115,7 @@ class LoomConfig(DomainModel):
         for key, declared in agent.state.items():
             given = [("default", declared.default)] if declared.default is not None else []
             # Une valeur ``null`` efface la clé : elle ne pèse rien dans le state.
-            given += [
-                (f"from, outil {source.tool!r} : value", source.value)
-                for source in declared.sources
-                if source.path is None and source.value is not None
-            ]
+            given += [(f"from, outil {source.tool!r} : value", source.value) for source in declared.sources if source.path is None and source.value is not None]
             for label, value in given:
                 size = state_size(value)
                 if size > limits.max_value_bytes:
@@ -1191,16 +1123,11 @@ class LoomConfig(DomainModel):
                         f"Agent {agent.name!r}, state {key!r} : {label} fait {size} octets, "
                         f"au-delà de sessions.state.max_value_bytes ({limits.max_value_bytes})"
                     )
-        defaults: dict[str, JsonValue] = {
-            key: declared.default
-            for key, declared in agent.state.items()
-            if declared.default is not None
-        }
+        defaults: dict[str, JsonValue] = {key: declared.default for key, declared in agent.state.items() if declared.default is not None}
         size = state_size(defaults)
         if defaults and size > limits.max_total_bytes:
             raise ValueError(
-                f"Agent {agent.name!r}, state : les valeurs par défaut font {size} octets, "
-                f"au-delà de sessions.state.max_total_bytes ({limits.max_total_bytes})"
+                f"Agent {agent.name!r}, state : les valeurs par défaut font {size} octets, au-delà de sessions.state.max_total_bytes ({limits.max_total_bytes})"
             )
 
     def _check_security(self) -> None:
@@ -1219,10 +1146,7 @@ class LoomConfig(DomainModel):
                 )
                 if not given
             )
-            raise ValueError(
-                f"Aucun {missing} : loom exige au moins un rôle d'accès et un utilisateur. "
-                f"Configuration minimale :\n{MINIMAL_SECURITY}"
-            )
+            raise ValueError(f"Aucun {missing} : loom exige au moins un rôle d'accès et un utilisateur. Configuration minimale :\n{MINIMAL_SECURITY}")
         self._check_audit(security.audit)
         _reject_doubles("Rôle d'accès", [role.id for role in security.roles])
         _reject_doubles("Utilisateur", [user.id for user in security.users])
@@ -1233,38 +1157,26 @@ class LoomConfig(DomainModel):
         def declared(label: str, role: str) -> AccessRole:
             found = roles.get(role)
             if found is None:
-                raise ValueError(
-                    f"{label} : rôle d'accès {role!r} non déclaré dans security.roles "
-                    f"(rôles : {', '.join(roles)})"
-                )
+                raise ValueError(f"{label} : rôle d'accès {role!r} non déclaré dans security.roles (rôles : {', '.join(roles)})")
             return found
 
         for role in security.roles:
             label = f"Rôle d'accès {role.id!r}"
             for agent in role.agents if agents else ():
                 if agent not in agents:
-                    raise ValueError(
-                        f"{label} : agent {agent!r} non déclaré "
-                        f"(agents : {', '.join(sorted(agents)) or 'aucun'})"
-                    )
+                    raise ValueError(f"{label} : agent {agent!r} non déclaré (agents : {', '.join(sorted(agents)) or 'aucun'})")
             for endorsed in role.act_as_roles:
                 if "act_as" in declared(f"{label}, act_as_roles", endorsed).permissions:
                     # Endosser un rôle qui endosse à son tour : une passerelle
                     # agirait au nom de quelqu'un au nom de quelqu'un d'autre.
-                    raise ValueError(
-                        f"{label}, act_as_roles : {endorsed!r} a lui-même 'act_as' — "
-                        "on n'agit pas au nom d'autrui en chaîne"
-                    )
+                    raise ValueError(f"{label}, act_as_roles : {endorsed!r} a lui-même 'act_as' — on n'agit pas au nom d'autrui en chaîne")
         for user in security.users:
             for role in user.roles:
                 declared(f"Utilisateur {user.id!r}", role)
         users = {user.id for user in security.users}
         for key in security.api_keys:
             if key.user not in users:
-                raise ValueError(
-                    f"Clé {key.id!r} : utilisateur {key.user!r} non déclaré dans security.users "
-                    f"(utilisateurs : {', '.join(sorted(users))})"
-                )
+                raise ValueError(f"Clé {key.id!r} : utilisateur {key.user!r} non déclaré dans security.users (utilisateurs : {', '.join(sorted(users))})")
         self._check_local_user(users)
         for agent in self.agents:
             for permission, cited in agent.access.listed():
@@ -1274,26 +1186,15 @@ class LoomConfig(DomainModel):
                     if permission not in role.permissions:
                         # Une liste ne donne rien : elle restreint ceux qui ont
                         # déjà la permission. Un rôle sans elle n'y ferait rien.
-                        raise ValueError(
-                            f"{label} : le rôle {role_id!r} est cité pour {permission!r}, "
-                            "permission qu'il n'a pas"
-                        )
+                        raise ValueError(f"{label} : le rôle {role_id!r} est cité pour {permission!r}, permission qu'il n'a pas")
                     if not role.allows(agent.name):
-                        raise ValueError(
-                            f"{label} : le rôle {role_id!r} est borné à d'autres agents "
-                            f"({', '.join(role.agents)})"
-                        )
+                        raise ValueError(f"{label} : le rôle {role_id!r} est borné à d'autres agents ({', '.join(role.agents)})")
 
     def _check_audit(self, audit: AuditConfig | None) -> None:
         """Le fichier des refus : obligatoire, et hors des dossiers de clients du journal."""
         if audit is None:
-            raise ValueError(
-                "Aucun security.audit : loom exige le fichier où il écrit les refus d'accès. "
-                f"Par exemple, sous security :\n{MINIMAL_AUDIT}"
-            )
-        journals = [self.storage.events] + [
-            tenant.storage.events for tenant in self.tenants if tenant.storage is not None
-        ]
+            raise ValueError(f"Aucun security.audit : loom exige le fichier où il écrit les refus d'accès. Par exemple, sous security :\n{MINIMAL_AUDIT}")
+        journals = [self.storage.events] + [tenant.storage.events for tenant in self.tenants if tenant.storage is not None]
         for events in journals:
             if events.backend != "jsonl" or events.path is None:
                 continue
@@ -1313,19 +1214,12 @@ class LoomConfig(DomainModel):
             return
         label = f"'server.http.user' ({http.user!r})"
         if http.user not in users:
-            raise ValueError(
-                f"{label} : utilisateur non déclaré dans security.users "
-                f"(utilisateurs : {', '.join(sorted(users))})"
-            )
+            raise ValueError(f"{label} : utilisateur non déclaré dans security.users (utilisateurs : {', '.join(sorted(users))})")
         if http.host not in LOOPBACK_HOSTS:
-            raise ValueError(
-                f"{label} : réservé à une instance sur la boucle locale ; l'API écoute sur "
-                f"{http.host}, où chacun doit présenter sa clé"
-            )
+            raise ValueError(f"{label} : réservé à une instance sur la boucle locale ; l'API écoute sur {http.host}, où chacun doit présenter sa clé")
         if self.security.api_keys:
             raise ValueError(
-                f"{label} : des clés sont déclarées — une requête sans clé serait refusée, "
-                "ou passerait au nom de cet utilisateur : choisir l'un ou l'autre"
+                f"{label} : des clés sont déclarées — une requête sans clé serait refusée, ou passerait au nom de cet utilisateur : choisir l'un ou l'autre"
             )
         if self.server.mcp.http:
             raise ValueError(f"{label} : incompatible avec 'server.mcp.http', qui exige des clés")
@@ -1348,9 +1242,7 @@ class LoomConfig(DomainModel):
             label = f"Déclencheur {trigger.name!r}"
             if agents and trigger.agent not in agents:
                 declared = ", ".join(sorted(agents)) or "aucun"
-                raise ValueError(
-                    f"{label} : agent {trigger.agent!r} non déclaré (agents : {declared})"
-                )
+                raise ValueError(f"{label} : agent {trigger.agent!r} non déclaré (agents : {declared})")
             for source in trigger.templates:
                 try:
                     Template.parse(source)
@@ -1371,50 +1263,30 @@ class LoomConfig(DomainModel):
         for tenant in self.tenants:
             for agent in tenant.agents if agents else ():
                 if agent not in agents:
-                    raise ValueError(
-                        f"Client {tenant.id!r} : agent {agent!r} non déclaré "
-                        f"(agents : {', '.join(sorted(agents)) or 'aucun'})"
-                    )
+                    raise ValueError(f"Client {tenant.id!r} : agent {agent!r} non déclaré (agents : {', '.join(sorted(agents)) or 'aucun'})")
             for source, target in tenant.models.items():
                 for model, which in ((source, "modèle"), (target, "modèle de remplacement")):
                     if model not in models:
-                        raise ValueError(
-                            f"Client {tenant.id!r} : {which} {model!r} non déclaré "
-                            f"(modèles : {', '.join(sorted(models)) or 'aucun'})"
-                        )
+                        raise ValueError(f"Client {tenant.id!r} : {which} {model!r} non déclaré (modèles : {', '.join(sorted(models)) or 'aucun'})")
         if not self.tenants:
             return
         declared = {tenant.id for tenant in self.tenants}
         for user in self.security.users:
             if user.tenant not in declared:
-                raise ValueError(
-                    f"Utilisateur {user.id!r} : client {user.tenant!r} non déclaré "
-                    f"(clients : {', '.join(sorted(declared))})"
-                )
+                raise ValueError(f"Utilisateur {user.id!r} : client {user.tenant!r} non déclaré (clients : {', '.join(sorted(declared))})")
 
-    def _check_chain(
-        self, label: str, chain: tuple[str, ...], *, vision: bool = False, tools: bool = False
-    ) -> None:
+    def _check_chain(self, label: str, chain: tuple[str, ...], *, vision: bool = False, tools: bool = False) -> None:
         """Modèles d'une chaîne de secours déclarés, avec les capacités exigées (B9, #10)."""
         ids = [spec.id for spec in self.models]
         for position, model in enumerate(chain):
             which = "modèle" if position == 0 else "modèle de secours"
             if model not in ids:
-                raise ValueError(
-                    f"{label} : {which} {model!r} non déclaré "
-                    f"(modèles connus : {', '.join(ids) or 'aucun'})"
-                )
+                raise ValueError(f"{label} : {which} {model!r} non déclaré (modèles connus : {', '.join(ids) or 'aucun'})")
             capabilities = self.model_spec(model).capabilities
             if vision and not capabilities.vision:
-                raise ValueError(
-                    f"{label} : il reçoit les pièces jointes, mais le {which} {model!r} "
-                    "n'a pas la capacité vision (capabilities.vision: true)"
-                )
+                raise ValueError(f"{label} : il reçoit les pièces jointes, mais le {which} {model!r} n'a pas la capacité vision (capabilities.vision: true)")
             if tools and not capabilities.tools:
-                raise ValueError(
-                    f"{label} : il appelle des outils, mais le {which} {model!r} ne sait pas "
-                    "le faire (capabilities.tools: false)"
-                )
+                raise ValueError(f"{label} : il appelle des outils, mais le {which} {model!r} ne sait pas le faire (capabilities.tools: false)")
 
     def _check_telemetry(self) -> None:
         """Un contenu capturé doit avoir où aller (6.1a).
@@ -1426,18 +1298,11 @@ class LoomConfig(DomainModel):
         """
         if self.telemetry.exporters:
             return
-        wanting = [
-            str(tenant.id)
-            for tenant in self.tenants
-            if tenant.telemetry.capture.exports == "content"
-        ]
+        wanting = [str(tenant.id) for tenant in self.tenants if tenant.telemetry.capture.exports == "content"]
         if self.telemetry.capture.exports == "content":
             wanting.insert(0, "la racine")
         if wanting:
-            raise ValueError(
-                f"Télémétrie : capture 'content' ({', '.join(wanting)}) sans collecteur — "
-                "déclarer 'telemetry.exporters', ou revenir à 'metadata'"
-            )
+            raise ValueError(f"Télémétrie : capture 'content' ({', '.join(wanting)}) sans collecteur — déclarer 'telemetry.exporters', ou revenir à 'metadata'")
 
     @property
     def all_agents(self) -> tuple[AgentSpec, ...]:

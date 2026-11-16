@@ -126,9 +126,7 @@ async def test_evaluation_metrics_and_threshold(tmp_path: Path) -> None:
         GoldenCase(query="traductions ARB flutter", doc_id=ids["arb"], title="x"),
         GoldenCase(query="sujet inconnu", doc_id="00000000-0000-0000-0000-000000000000"),
     ]
-    golden.write_text(
-        "".join(case.model_dump_json(exclude_none=True) + "\n" for case in cases), encoding="utf-8"
-    )
+    golden.write_text("".join(case.model_dump_json(exclude_none=True) + "\n" for case in cases), encoding="utf-8")
     loaded = load_golden(golden)
     assert len(loaded) == 4 and loaded[2].title == "x"
     report = await evaluate(memory, loaded, k=10)
@@ -175,9 +173,7 @@ async def test_off_topic_questions_place_the_threshold_between_noise_and_answers
         (0.1236, 0.1234, (True, 0.1235)),
     ],
 )
-def test_the_suggested_threshold(
-    lowest: float | None, highest: float | None, expected: tuple[bool | None, float | None]
-) -> None:
+def test_the_suggested_threshold(lowest: float | None, highest: float | None, expected: tuple[bool | None, float | None]) -> None:
     separable, suggested = maintenance._threshold(lowest, highest)  # pyright: ignore[reportPrivateUsage]
     assert separable is expected[0]
     assert suggested == pytest.approx(expected[1]) if expected[1] is not None else suggested is None
@@ -207,14 +203,10 @@ def memory_config(demo: ConfigFactory, **root: Any) -> Path:
         "models": {"kind": "fake"},
         "actions": ["search", "add_text"],
     }
-    return demo(
-        agents=[demo_agent(name="assistant", tools=[tool]), demo_agent()], storage=JSONL, **root
-    )
+    return demo(agents=[demo_agent(name="assistant", tools=[tool]), demo_agent()], storage=JSONL, **root)
 
 
-def test_the_cli_exports_imports_reindexes_and_evaluates(
-    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_exports_imports_reindexes_and_evaluates(demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = memory_config(demo)
     _, ids = asyncio.run(filled(tmp_path / "memoire.db"))
     config = ["--config", str(path)]
@@ -228,9 +220,7 @@ def test_the_cli_exports_imports_reindexes_and_evaluates(
     assert main([*config, "memory", "reindex", "assistant"]) == 0
     assert "3 document(s) réindexé(s)" in capsys.readouterr().out
     golden = tmp_path / "golden.jsonl"
-    golden.write_text(
-        json.dumps({"query": "docker qdrant", "doc_id": ids["qdrant"]}) + "\n", encoding="utf-8"
-    )
+    golden.write_text(json.dumps({"query": "docker qdrant", "doc_id": ids["qdrant"]}) + "\n", encoding="utf-8")
     assert main([*config, "memory", "eval", "assistant", str(golden)]) == 0
     out = capsys.readouterr().out
     assert "ok       #1" in out and "1 cas — recall@1 1.00" in out
@@ -242,15 +232,10 @@ def test_the_cli_exports_imports_reindexes_and_evaluates(
     out = capsys.readouterr().out
     assert "--     hors  0.000  recette du bœuf bourguignon" in out
     assert "1 cas, 1 hors sujet — recall@1 1.00" in out
-    assert (
-        "min_score suggéré : 0.5 (entre le hors-sujet le plus fort, 0.0, "
-        "et la réponse attendue la plus faible, 1.0 ; " in out
-    )
+    assert "min_score suggéré : 0.5 (entre le hors-sujet le plus fort, 0.0, et la réponse attendue la plus faible, 1.0 ; " in out
 
 
-def test_an_agent_without_memory_is_refused(
-    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_an_agent_without_memory_is_refused(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
     path = memory_config(demo)
     assert main(["--config", str(path), "memory", "reindex", "demo"]) == 2
     assert "L'agent 'demo' n'active pas loom.memory." in capsys.readouterr().err

@@ -66,10 +66,7 @@ def _block(content: types.ContentBlock) -> OutputBlock:
     match content:
         case types.TextContent(text=text):
             return TextBlock(text=text)
-        case (
-            types.ImageContent(mimeType=mime, data=data)
-            | types.AudioContent(mimeType=mime, data=data)
-        ):
+        case types.ImageContent(mimeType=mime, data=data) | types.AudioContent(mimeType=mime, data=data):
             return _inline(mime, data, None)
         case types.ResourceLink(uri=uri, name=name):
             return TextBlock(text=f"[ressource {name} : {uri}]")

@@ -157,9 +157,7 @@ def quatre(config: LoomConfig, agent: str) -> tuple[LoomConfig, dict[str, str]]:
     )
     mcp = config.server.mcp.model_copy(update={"http": True})
     server = config.server.model_copy(update={"mcp": mcp})
-    return config.model_copy(
-        update={"security": config.security.model_copy(update={"api_keys": keys}), "server": server}
-    ), jetons
+    return config.model_copy(update={"security": config.security.model_copy(update={"api_keys": keys}), "server": server}), jetons
 
 
 # --- Un vrai serveur, et un vrai client MCP ----------------------------------
@@ -185,9 +183,7 @@ async def serveur(loom: Loom) -> AsyncGenerator[str]:
 
 
 @asynccontextmanager
-async def session_mcp(
-    base: str, jeton: str
-) -> AsyncGenerator[tuple[ClientSession, InitializeResult]]:
+async def session_mcp(base: str, jeton: str) -> AsyncGenerator[tuple[ClientSession, InitializeResult]]:
     """Une session MCP ouverte sur le serveur, avec sa clé et ce qu'il annonce."""
     headers = {"Authorization": f"Bearer {jeton}"}
     async with httpx.AsyncClient(headers=headers, timeout=60, trust_env=False) as http:
@@ -245,10 +241,7 @@ async def index(scene: Scene) -> None:
         ressources = await session.list_resources()
         gabarits = await session.list_resource_templates()
         # Le titre compte ce que le serveur annonce : 6.2c y a ajouté la trace.
-        titre(
-            f"{len(ressources.resources)} index listés, "
-            f"{len(gabarits.resourceTemplates)} gabarits annoncés"
-        )
+        titre(f"{len(ressources.resources)} index listés, {len(gabarits.resourceTemplates)} gabarits annoncés")
         for entree in ressources.resources:
             print(f"  {entree.uri!s:<22}{entree.mimeType}  {entree.description}")
         for modele in gabarits.resourceTemplates:
@@ -270,9 +263,7 @@ async def index(scene: Scene) -> None:
         )
 
         titre("Un run lancé par l'outil, relu par les ressources")
-        lance = await session.call_tool(
-            agent, {"message": demande(DUPONT), "session_id": session_id}
-        )
+        lance = await session.call_tool(agent, {"message": demande(DUPONT), "session_id": session_id})
         structure = lance.structuredContent or {}
         run_id = RunId(str(structure.get("run_id")))
         print(f"  run {bref(run_id)} {structure.get('status')}")
@@ -297,8 +288,7 @@ async def index(scene: Scene) -> None:
         "\n  la ressource dit ce que l'accès Python dit : "
         + controle.tient(
             "la ressource et l'accès Python ne rendent pas la même page",
-            [r["run_id"] for r in page["runs"]] == [r.run_id for r in directe.runs]
-            and page["scanned"] == directe.scanned,
+            [r["run_id"] for r in page["runs"]] == [r.run_id for r in directe.runs] and page["scanned"] == directe.scanned,
         )
     )
     print(
@@ -327,14 +317,10 @@ async def index(scene: Scene) -> None:
         "  même journal, contenu en moins : "
         + controle.tient(
             "le journal masqué n'est pas le même journal",
-            [e["type"] for e in masque] == [e["type"] for e in journal]
-            and DEVIS[DUPONT] not in prive,
+            [e["type"] for e in masque] == [e["type"] for e in journal] and DEVIS[DUPONT] not in prive,
         )
     )
-    print(
-        "  et la relecture d'un run est masquée aussi : "
-        + controle.tient("la relecture masquée porte encore un texte", relu["text"] == "")
-    )
+    print("  et la relecture d'un run est masquée aussi : " + controle.tient("la relecture masquée porte encore un texte", relu["text"] == ""))
 
     titre("Une clé limitée à un agent : les runs oui, la liste des sessions non")
     async with session_mcp(base, jetons["bureau"]) as (session, _):
@@ -349,10 +335,7 @@ async def index(scene: Scene) -> None:
     print(f"  {RUNS:<22}{len(sienne['runs'])} run(s), agent(s) : {', '.join(vus)}")
     print(f"  {SESSIONS:<22}{sessions}")
     print(f"  {'la fiche':<22}{fiche_refusee}")
-    print(
-        "  l'index qu'elle ne peut pas lire n'est pas listé : "
-        + controle.tient("un index illisible est listé", listees == [RUNS])
-    )
+    print("  l'index qu'elle ne peut pas lire n'est pas listé : " + controle.tient("un index illisible est listé", listees == [RUNS]))
     print(
         "  et la liste des runs se filtre honnêtement : "
         + controle.tient(
@@ -360,10 +343,7 @@ async def index(scene: Scene) -> None:
             all(run["agent"] != agent for run in sienne["runs"]),
         )
     )
-    print(
-        "  la liste des sessions est refusée, pas filtrée : "
-        + controle.tient("la liste des sessions n'est pas refusée", "filtrée" in sessions)
-    )
+    print("  la liste des sessions est refusée, pas filtrée : " + controle.tient("la liste des sessions n'est pas refusée", "filtrée" in sessions))
 
 
 # --- Cas 2 : les octets d'un fichier ----------------------------------------
@@ -410,19 +390,13 @@ async def fichiers(scene: Scene) -> None:
             directs == PNG and par_alias == PNG,
         )
     )
-    print(
-        "  et le lien que loom rend n'est plus un lien mort : "
-        + controle.tient("l'URI du journal ne se lit pas telle quelle", media == "image/png")
-    )
+    print("  et le lien que loom rend n'est plus un lien mort : " + controle.tient("l'URI du journal ne se lit pas telle quelle", media == "image/png"))
 
     titre("Le fichier d'un autre client est introuvable, pas interdit")
     async with session_mcp(base, jetons["martin"]) as (session, _):
         chez_lui = await refuse(session, uri)
     print(f"  clé martin sur le fichier de Dupont → {chez_lui}")
-    print(
-        "  on n'apprend pas qu'il existe : "
-        + controle.tient("le refus dit autre chose qu'introuvable", "introuvable" in chez_lui)
-    )
+    print("  on n'apprend pas qu'il existe : " + controle.tient("le refus dit autre chose qu'introuvable", "introuvable" in chez_lui))
     print(f"\n  Borne de lecture : {loom.config.execution.attachments.max_bytes} octets")
     print("  (execution.attachments.max_bytes, faute d'une borne de lecture à part)")
 
@@ -461,9 +435,7 @@ async def arret(scene: Scene) -> None:
     await loom.drain()
     events = await loom.events(laisse, tenant_id=DUPONT)
     close = cloture(events)
-    signe = [
-        getattr(event.payload, "by", None) for event in events if event.type == "run.cancelled"
-    ]
+    signe = [getattr(event.payload, "by", None) for event in events if event.type == "run.cancelled"]
     print(f"  cancel sur {bref(laisse)} → cancelled={arrete}")
     print(f"  {'':<2}le journal se clôt sur {close or '(pas encore)'}")
     if signe:
@@ -476,8 +448,7 @@ async def arret(scene: Scene) -> None:
         "\n  la réponse de l'outil dit ce que le journal porte : "
         + controle.tient(
             f"cancelled={arrete} mais le journal se clôt sur {close!r}",
-            (arrete and close == "run.cancelled" and signe == [DUPONT])
-            or (not arrete and close == "run.completed" and not signe),
+            (arrete and close == "run.cancelled" and signe == [DUPONT]) or (not arrete and close == "run.completed" and not signe),
         )
     )
 
@@ -486,10 +457,7 @@ async def arret(scene: Scene) -> None:
         ailleurs = await session.call_tool("cancel", {"run_id": ran.run_id, "session_id": fini})
     print(f"  clé martin sur un run de Dupont → isError={bool(ailleurs.isError)}")
     print(f"  {'':<2}{dit(ailleurs)[:88]}")
-    print(
-        "  un run d'un autre client est introuvable : "
-        + controle.tient("une clé a pu arrêter le run d'un autre client", bool(ailleurs.isError))
-    )
+    print("  un run d'un autre client est introuvable : " + controle.tient("une clé a pu arrêter le run d'un autre client", bool(ailleurs.isError)))
     print("\n  Arrêter un run demande la permission `cancel` sur son agent, comme en REST ;")
     print("  c'est l'utilisateur de la clé qui signe l'arrêt.")
 
@@ -508,9 +476,7 @@ async def jouer(nom: str, scene: Scene) -> None:
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="Ressources MCP : le journal en lecture seule, et l'arrêt d'un run"
-    )
+    parser = argparse.ArgumentParser(description="Ressources MCP : le journal en lecture seule, et l'arrêt d'un run")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument("--session", default=None, help="préfixe des sessions")

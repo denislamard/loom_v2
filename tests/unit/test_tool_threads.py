@@ -42,9 +42,7 @@ class Disque:
         self.parti = threading.Event()
 
 
-def outils(
-    disque: Disque, *, on_unknown: UnknownState = "error", effects: SideEffects = "reversible"
-) -> list[AnyTool]:
+def outils(disque: Disque, *, on_unknown: UnknownState = "error", effects: SideEffects = "reversible") -> list[AnyTool]:
     @tool(name="ecrire", side_effects=effects, timeout=0.05, on_unknown=on_unknown)
     def ecrire(texte: str) -> str:
         """Écrit, une fois libéré (au plus 2 s)."""
@@ -187,9 +185,7 @@ async def test_past_the_grace_the_next_calls_are_returned_without_running() -> N
     disque = Disque()
     executor = ToolExecutor(outils(disque), grace=0.1)
 
-    events = await collect(
-        executor, appel("w", "ecrire", texte="v2"), appel("r", "lire"), appel("r2", "lire")
-    )
+    events = await collect(executor, appel("w", "ecrire", texte="v2"), appel("r", "lire"), appel("r2", "lire"))
 
     assert results(events) == {
         "r": NOT_RUN.format(tool="ecrire"),
@@ -362,9 +358,7 @@ print(f"sortie {time.monotonic() - started:.1f}", file=sys.stderr)
         encoding="utf-8",
     )
     started = time.monotonic()
-    done = subprocess.run(
-        [sys.executable, str(script)], capture_output=True, text=True, timeout=20, check=True
-    )
+    done = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=20, check=True)
     elapsed = time.monotonic() - started
 
     # Le process s'arrête sans attendre les 30 s du thread, qui est un démon.

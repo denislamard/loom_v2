@@ -27,10 +27,7 @@ from loom_ia.tools import ConfiguredTool, tool
 
 SPEC = ModelSpec(id="FAKE", sdk="fake", model="fake-1", retry=RetryPolicy(initial_delay=0))
 ARGUMENTS: dict[str, JsonValue] = {"client": "Dupont", "message": "Bonjour"}
-DECIDED = (
-    "C'est une décision, pas une panne : ne refais pas cet appel ; dis à l'utilisateur "
-    "ce qui a été refusé et pourquoi."
-)
+DECIDED = "C'est une décision, pas une panne : ne refais pas cet appel ; dis à l'utilisateur ce qui a été refusé et pourquoi."
 
 
 @tool
@@ -46,9 +43,7 @@ def test_the_refusal_says_who_decided_and_what_to_do() -> None:
     assert _refused("envoyer", "rejected", "pas maintenant", "denis") == (
         f"Appel à envoyer refusé à l'approbation par denis (motif : pas maintenant). {DECIDED}"
     )
-    assert (
-        _refused("envoyer", "rejected", "") == f"Appel à envoyer refusé à l'approbation. {DECIDED}"
-    )
+    assert _refused("envoyer", "rejected", "") == f"Appel à envoyer refusé à l'approbation. {DECIDED}"
     assert _refused("envoyer", "expired", "sans réponse avant 2026-10-19 18:25.") == (
         "Appel à envoyer non exécuté : personne ne l'a approuvé dans le délai imparti "
         "(sans réponse avant 2026-10-19 18:25). Ne le refais pas de toi-même ; dis à "
@@ -94,9 +89,7 @@ async def test_the_same_call_refused_once_is_not_asked_again() -> None:
     events = [e.payload for e in await store.read(state.context.tenant_id, state.session_id)]
     assert [e.call_id for e in events if isinstance(e, ApprovalRequested)] == ["c1", "c3"]
     results = {e.call_id: e.output for e in events if isinstance(e, ToolCompleted)}
-    assert results["c1"].as_text == (
-        f"Appel à envoyer refusé à l'approbation par denis (motif : pas maintenant). {DECIDED}"
-    )
+    assert results["c1"].as_text == (f"Appel à envoyer refusé à l'approbation par denis (motif : pas maintenant). {DECIDED}")
     assert results["c2"].is_error and results["c2"].as_text == (
         "Appel à envoyer non exécuté : le même appel, avec les mêmes arguments, a déjà été "
         "refusé à l'approbation par denis (motif : pas maintenant) dans ce tour (appel c1). "

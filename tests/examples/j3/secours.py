@@ -70,20 +70,14 @@ def with_outage(config: LoomConfig, agent: str, *, reel: bool) -> tuple[LoomConf
         changes["params"] = {"script": [{"error": "overloaded"}]}
     outage = config.model_spec(usual).model_copy(update=changes)
     main = spec.main.model_copy(update={"model": down, "fallbacks": (usual,)})
-    agents: list[AgentSpec] = [
-        a.model_copy(update={"main": main}) if a.name == agent else a for a in config.agents
-    ]
-    updated = config.model_copy(
-        update={"models": (*config.models, outage), "agents": tuple(agents)}
-    )
+    agents: list[AgentSpec] = [a.model_copy(update={"main": main}) if a.name == agent else a for a in config.agents]
+    updated = config.model_copy(update={"models": (*config.models, outage), "agents": tuple(agents)})
     return updated, down, usual
 
 
 def calls(events: list[Event]) -> str:
     """Appels de modèle du run, par rôle et par modèle."""
-    counted = Counter(
-        (e.role or "?", e.payload.model_id) for e in events if isinstance(e.payload, ModelResponded)
-    )
+    counted = Counter((e.role or "?", e.payload.model_id) for e in events if isinstance(e.payload, ModelResponded))
     return " · ".join(f"[{role}] {model} ({n})" for (role, model), n in counted.items())
 
 
@@ -110,10 +104,7 @@ async def main(argv: list[str]) -> int:
     apply_logging(config)
 
     print(f"> {args.question}")
-    print(
-        f"  orchestrateur : {down} (en panne) → secours {usual} ; disjoncteur : "
-        f"{DISJONCTEUR.failures} échecs de suite, écarté {DISJONCTEUR.cooldown:g} s\n"
-    )
+    print(f"  orchestrateur : {down} (en panne) → secours {usual} ; disjoncteur : {DISJONCTEUR.failures} échecs de suite, écarté {DISJONCTEUR.cooldown:g} s\n")
     results: list[RunResult] = []
     async with Loom(config) as loom:
         for number in range(1, args.runs + 1):
@@ -126,10 +117,7 @@ async def main(argv: list[str]) -> int:
             events = await loom.events(result.run_id)
             state = await loom.state(result.run_id)
             retried = sum(isinstance(e.payload, ModelRetried) for e in events)
-            print(
-                f"Run {number} · {result.status} · {result.iterations} itération(s) · "
-                f"{result.cost_usd:.5f} $ · tentatives ratées : {retried}"
-            )
+            print(f"Run {number} · {result.status} · {result.iterations} itération(s) · {result.cost_usd:.5f} $ · tentatives ratées : {retried}")
             progress = Progress()
             for event in events:
                 if isinstance(event.payload, ModelFellBack | CircuitOpened):

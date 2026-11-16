@@ -33,9 +33,7 @@ def _utc(now: datetime | None) -> datetime:
     if now is None:
         return datetime.now(UTC)
     if now.tzinfo is None:
-        raise ValueError(
-            f"Instant sans fuseau horaire : {now.isoformat()} (donner un datetime UTC)"
-        )
+        raise ValueError(f"Instant sans fuseau horaire : {now.isoformat()} (donner un datetime UTC)")
     return now.astimezone(UTC)
 
 

@@ -143,12 +143,7 @@ def delegue_script() -> list[dict[str, Any]]:
             "tool_calls": [
                 {
                     "name": "secretaire",
-                    "arguments": {
-                        "message": (
-                            "Envoie à mme.martin@example.com la relance du devis D-2026-042, "
-                            "objet « Votre devis D-2026-042 »."
-                        )
-                    },
+                    "arguments": {"message": ("Envoie à mme.martin@example.com la relance du devis D-2026-042, objet « Votre devis D-2026-042 ».")},
                 }
             ],
         },
@@ -211,13 +206,8 @@ def adjusted(
     base = "relance_reel" if reel else "relance"
     spec = next(a for a in config.agents if a.name == base)
     consigne = CONSIGNE_DELEGUE if delegue else CONSIGNE_ENVOI
-    main = spec.main.model_copy(
-        update={"system": prompt_text(spec.main) + consigne, "system_file": None}
-    )
-    roles = tuple(
-        role.model_copy(update={"terminal": False}) if role.name == "rediger_relance" else role
-        for role in spec.roles
-    )
+    main = spec.main.model_copy(update={"system": prompt_text(spec.main) + consigne, "system_file": None})
+    roles = tuple(role.model_copy(update={"terminal": False}) if role.name == "rediger_relance" else role for role in spec.roles)
     approval = ApprovalSettings(expires_in=delai) if delai is not None else ApprovalSettings()
     sensible = _outil_sensible()
     agent = spec.model_copy(
@@ -258,9 +248,7 @@ def _secretaire(spec: Any, sensible: Any, approval: ApprovalSettings, *, reel: b
         update={
             "name": SECRETAIRE_NOM,
             "description": "Envoie une relance déjà rédigée.",
-            "main": spec.main.model_copy(
-                update={"model": modele, "system": SECRETAIRE_SYSTEM, "system_file": None}
-            ),
+            "main": spec.main.model_copy(update={"model": modele, "system": SECRETAIRE_SYSTEM, "system_file": None}),
             "tools": (sensible,),
             "roles": (),
             "judges": (),
@@ -302,11 +290,7 @@ def outcome(result: RunResult) -> str:
 def envoi(events: list[Event]) -> str:
     """Ce que l'envoi est devenu : parti, refusé, ou jamais tenté."""
     appels = [e for e in events if e.type == "tool.called" and e.facets.get("tool_name") == ENVOI]
-    finis = [
-        e.payload
-        for e in events
-        if e.type == "tool.completed" and e.facets.get("tool_name") == ENVOI
-    ]
+    finis = [e.payload for e in events if e.type == "tool.completed" and e.facets.get("tool_name") == ENVOI]
     if not finis:
         return "jamais tenté"
     fini = finis[-1]
@@ -325,11 +309,7 @@ def demande(events: list[Event]) -> ApprovalRequested | None:
 
 def entete(events: list[Event]) -> None:
     """Ce que le run a fait avant de s'arrêter, et ce qu'il attend."""
-    faits = [
-        str(e.facets.get("tool_name"))
-        for e in events
-        if isinstance(e.payload, ToolCalled | ToolCompleted) and e.type == "tool.completed"
-    ]
+    faits = [str(e.facets.get("tool_name")) for e in events if isinstance(e.payload, ToolCalled | ToolCompleted) and e.type == "tool.completed"]
     print(f"  déjà fait : {', '.join(dict.fromkeys(faits)) or '—'}")
     asked = demande(events)
     if asked is not None:
@@ -447,11 +427,7 @@ async def jouer(nom: str, config: LoomConfig, session: SessionId) -> None:
         agent = next(
             a.name
             for a in config.agents
-            if a.name not in enfants
-            and (
-                any(getattr(t, "python", None) == ENVOI for t in a.tools)
-                or any(ref.agent == SECRETAIRE_NOM for ref in a.subagents)
-            )
+            if a.name not in enfants and (any(getattr(t, "python", None) == ENVOI for t in a.tools) or any(ref.agent == SECRETAIRE_NOM for ref in a.subagents))
         )
         if nom == "accord":
             await accord(loom, agent, session)

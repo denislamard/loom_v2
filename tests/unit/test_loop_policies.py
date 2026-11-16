@@ -104,23 +104,16 @@ def reset() -> None:
 
 @pytest.fixture(params=["memory", "jsonl"])
 async def store(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[EventStore]:
-    instance: EventStore = (
-        InMemoryEventStore() if request.param == "memory" else JsonlEventStore(tmp_path)
-    )
+    instance: EventStore = InMemoryEventStore() if request.param == "memory" else JsonlEventStore(tmp_path)
     yield instance
     await instance.aclose()
 
 
 def bind(*policies: FunctionPolicy, max_attempts: int = 1) -> Policies:
-    return Policies(
-        BoundPolicy(policy=p, name=p.name, points=p.points, max_attempts=max_attempts)
-        for p in policies
-    )
+    return Policies(BoundPolicy(policy=p, name=p.name, points=p.points, max_attempts=max_attempts) for p in policies)
 
 
-def context(
-    store: EventStore, model: ScriptedModel, policies: Policies, **options: object
-) -> RunContext:
+def context(store: EventStore, model: ScriptedModel, policies: Policies, **options: object) -> RunContext:
     defaults: dict[str, object] = {
         "tools": ToolExecutor([calculer, REDIGER]),
         "system": "Tu calcules.",
@@ -177,9 +170,7 @@ async def test_require_tool_replaces_the_first_request(store: EventStore) -> Non
         tool_call_message(("c1", "calculer", {"expr": "1+1"})),
         Message.assistant("2"),
     )
-    policies = Policies(
-        [BoundPolicy(policy=require_tool, name=require_tool.name, points=require_tool.points)]
-    )
+    policies = Policies([BoundPolicy(policy=require_tool, name=require_tool.name, points=require_tool.points)])
     state = await run(context(store, model, policies))
 
     assert state.status is RunStatus.COMPLETED
@@ -312,9 +303,7 @@ async def test_retry_after_the_final_answer_asks_for_a_repair(store: EventStore)
     repair = model.requests[1]
     assert repair.tool_choice == "none"
     assert [m.role for m in repair.messages] == ["user", "assistant", "user"]
-    assert repair.messages[-1].text == (
-        f"{REPAIR_PREFIX} (cite_le_resultat) : Donne le résultat du calcul."
-    )
+    assert repair.messages[-1].text == (f"{REPAIR_PREFIX} (cite_le_resultat) : Donne le résultat du calcul.")
     events = await journal(store, state)
     assert kinds(events)[5:] == [
         "policy:cite_le_resultat:retry",
@@ -489,9 +478,7 @@ async def test_before_tool_replaces_or_denies_calls(store: EventStore) -> None:
         return Replace({"expr": expr.replace(" ", "")}, reason="espaces retirés")
 
     model = scripted(
-        tool_call_message(
-            ("c1", "calculer", {"expr": "1 + 1"}), ("c2", "calculer", {"expr": "import os"})
-        ),
+        tool_call_message(("c1", "calculer", {"expr": "1 + 1"}), ("c2", "calculer", {"expr": "import os"})),
         Message.assistant("2"),
     )
     state = await run(context(store, model, bind(expressions)))
@@ -532,9 +519,7 @@ async def test_fail_before_a_tool_launches_nothing(store: EventStore) -> None:
     def coupe(subject: BeforeTool) -> Decision:
         return Fail("budget épuisé") if subject.call.call_id == "c2" else CONTINUE
 
-    model = scripted(
-        tool_call_message(("c1", "calculer", {"expr": "1"}), ("c2", "calculer", {"expr": "2"}))
-    )
+    model = scripted(tool_call_message(("c1", "calculer", {"expr": "1"}), ("c2", "calculer", {"expr": "2"})))
     state = await run(context(store, model, bind(coupe)))
 
     assert state.status is RunStatus.FAILED and executed == []
@@ -563,11 +548,7 @@ async def test_after_tool_replaces_or_refuses_results(store: EventStore) -> None
     state = await run(context(store, model, bind(verifie)))
 
     assert state.status is RunStatus.COMPLETED
-    outputs = {
-        e.payload.call_id: e.payload.output
-        for e in await journal(store, state)
-        if isinstance(e.payload, ToolCompleted)
-    }
+    outputs = {e.payload.call_id: e.payload.output for e in await journal(store, state) if isinstance(e.payload, ToolCompleted)}
     assert outputs["c1"] == ToolOutput.text("= 2")
     refused = outputs["c2"]
     assert refused.is_error
@@ -614,9 +595,7 @@ class CrashingStore:
         self.after = after
         self.crashed = False
 
-    async def append(
-        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
-    ) -> list[Event]:
+    async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
         events = await self.inner.append(drafts, expected_seq=expected_seq)
         if not self.crashed and any(self.after(e) for e in events):
             self.crashed = True
@@ -674,9 +653,7 @@ class Juge(TracingPolicy):
     points: frozenset[HookPoint] = frozenset({"on_output"})
     decisions: frozenset[DecisionKind] = frozenset()
 
-    async def decide_traced(
-        self, subject: PolicySubject, context: PolicyContext, trace: Trace
-    ) -> Decision:
+    async def decide_traced(self, subject: PolicySubject, context: PolicyContext, trace: Trace) -> Decision:
         trace(
             ModelResponded(
                 model_id="juge-1",
@@ -698,9 +675,7 @@ class Juge(TracingPolicy):
         ("transition", 1),
     ],
 )
-async def test_a_terminal_output_judged_on_output_resumes_after_a_crash(
-    store: EventStore, crash: str, judged: int
-) -> None:
+async def test_a_terminal_output_judged_on_output_resumes_after_a_crash(store: EventStore, crash: str, judged: int) -> None:
     """Le juge écrit après ``tool.completed`` : la reprise retrouve pourtant l'outil terminal."""
 
     def after(event: Event) -> bool:
@@ -709,9 +684,7 @@ async def test_a_terminal_output_judged_on_output_resumes_after_a_crash(
             return isinstance(payload, ModelResponded) and payload.judge is not None
         return isinstance(payload, RunTransitioned) and payload.to_state is RunStatus.COMPLETED
 
-    judges = Policies(
-        [BoundPolicy(policy=Juge(), name="juge", points=Juge.points, max_attempts=None)]
-    )
+    judges = Policies([BoundPolicy(policy=Juge(), name="juge", points=Juge.points, max_attempts=None)])
     model = scripted(tool_call_message(("c1", "rediger", {"sujet": "la pluie"})))
     crashing = CrashingStore(store, after)
     ctx = context(crashing, model, judges)  # pyright: ignore[reportArgumentType]
@@ -743,9 +716,7 @@ async def test_replaced_arguments_are_reused_on_resume(store: EventStore) -> Non
         return Replace({"expr": str(subject.arguments["expr"]).replace(" ", "")})
 
     crashing = CrashingStore(store, lambda e: isinstance(e.payload, ToolCalled))
-    model = scripted(
-        tool_call_message(("c1", "calculer", {"expr": "3 + 4"})), Message.assistant("7")
-    )
+    model = scripted(tool_call_message(("c1", "calculer", {"expr": "3 + 4"})), Message.assistant("7"))
     ctx = context(crashing, model, bind(sans_espaces))  # pyright: ignore[reportArgumentType]
     started = await begin_run(ctx, "3 + 4 ?")
     with pytest.raises(Crash):

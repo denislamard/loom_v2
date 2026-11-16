@@ -133,8 +133,7 @@ class ModelCapabilities(DomainModel):
     def _check_images(self) -> Self:
         if self.vision and "base64" not in self.image_input:
             raise ValueError(
-                "image_input : seul l'envoi en base64 est pris en charge pour l'instant "
-                "(url et file_id viendront avec le stockage distant) ; ajouter base64"
+                "image_input : seul l'envoi en base64 est pris en charge pour l'instant (url et file_id viendront avec le stockage distant) ; ajouter base64"
             )
         return self
 
@@ -167,10 +166,7 @@ class ModelSpec(DomainModel):
         if self.api is not None and self.sdk != "openai":
             raise ValueError(f"Modèle {self.id!r} : le champ 'api' n'existe que pour sdk: openai")
         if self.cache is not None and self.sdk == "openai":
-            raise ValueError(
-                f"Modèle {self.id!r} : 'cache' pose des points de cache pour sdk: anthropic ; "
-                "les API OpenAI et leurs compatibles cachent seules"
-            )
+            raise ValueError(f"Modèle {self.id!r} : 'cache' pose des points de cache pour sdk: anthropic ; les API OpenAI et leurs compatibles cachent seules")
         return self
 
     @property

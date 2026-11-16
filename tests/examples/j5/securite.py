@@ -81,9 +81,7 @@ def agent_de(args: argparse.Namespace) -> str:
 
 
 def declarees(config: LoomConfig, keys: tuple[ApiKey, ...]) -> LoomConfig:
-    return config.model_copy(
-        update={"security": config.security.model_copy(update={"api_keys": keys})}
-    )
+    return config.model_copy(update={"security": config.security.model_copy(update={"api_keys": keys})})
 
 
 def quatre(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
@@ -304,9 +302,7 @@ async def masquage(config: LoomConfig, agent: str, prefixe: str, controle: Contr
         titre("Le même run, relu par chacune")
         vues: dict[str, Any] = {}
         for nom in ("complete", "supervision"):
-            code, vues[nom] = await appel(
-                f"{base}/runs/{run_id}?session_id={session}", key=jetons[nom]
-            )
+            code, vues[nom] = await appel(f"{base}/runs/{run_id}?session_id={session}", key=jetons[nom])
             ligne = controle.code(f"GET runs/<id> ({nom})", 200, code, vues[nom])
             print(f"  GET …/runs/<id> (clé {nom}) → {ligne}")
         champs = ("status", "iterations", "cost_usd", "text", "data", "error_type")
@@ -334,13 +330,9 @@ async def masquage(config: LoomConfig, agent: str, prefixe: str, controle: Contr
             retires = sorted({champ for e in masques for champ in e["payload"]["redacted"]})
             print(f"  {nom:<12} {len(lignes)} événements, {len(masques)} masqués")
             print(f"  {'':<12} champs retirés : {', '.join(retires) or 'aucun'}")
-        print(
-            f"  Le numéro {DEVIS} apparaît {exports['complete'].count(DEVIS)} fois côté complete,"
-        )
+        print(f"  Le numéro {DEVIS} apparaît {exports['complete'].count(DEVIS)} fois côté complete,")
         print(f"  {exports['supervision'].count(DEVIS)} fois côté supervision.")
-        sans_texte = controle.tient(
-            "la relecture masquée porte encore un texte", vues["supervision"]["text"] == ""
-        )
+        sans_texte = controle.tient("la relecture masquée porte encore un texte", vues["supervision"]["text"] == "")
         print(f"  relecture masquée sans texte : {sans_texte}")
         sans_devis = controle.tient(
             "le numéro de devis est resté dans l'export masqué",
@@ -408,9 +400,7 @@ async def expiration(config: LoomConfig, agent: str, prefixe: str, controle: Con
         ligne = controle.code("GET agents, clé inconnue", 401, code, corps)
         print(f"  inconnue      → {ligne}")
         inconnue = str(corps.get("detail", "")) if code == 401 else ""
-        distincts = controle.tient(
-            "les deux 401 disent la même chose", bool(expiree) and expiree != inconnue
-        )
+        distincts = controle.tient("les deux 401 disent la même chose", bool(expiree) and expiree != inconnue)
         print(f"  deux 401 distincts : {distincts}")
     print(f"\n  CLI : uv run loom --config {shown(CONFIG)} validate  (montre l'état de chaque clé)")
     print(f"        uv run loom keys create app --tenant {DUPONT} --expires 90j --rate-limit 60")
@@ -430,9 +420,7 @@ async def jouer(nom: str, config: LoomConfig, agent: str, prefixe: str, controle
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="Clés d'API : portées, agents, expiration, contenu"
-    )
+    parser = argparse.ArgumentParser(description="Clés d'API : portées, agents, expiration, contenu")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument("--session", default=None, help="préfixe des sessions")

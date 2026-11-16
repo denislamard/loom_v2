@@ -73,9 +73,7 @@ class ServiceSettings(BaseModel):
         pattern=DEVICE_PATTERN,
         description="cuda (la carte), cuda:N (la carte N), cpu ou auto",
     )
-    fp16: bool = Field(
-        default=True, description="true : demi-précision sur la carte ; false : float32"
-    )
+    fp16: bool = Field(default=True, description="true : demi-précision sur la carte ; false : float32")
     offline: bool = Field(
         default=False,
         description="true : modèles lus dans le cache local de Hugging Face seulement, sans réseau",
@@ -102,17 +100,12 @@ class ServiceSettings(BaseModel):
         le=1.0,
         description="part de la carte permise, entre 0 et 1, à côté d'un LLM local (cuda)",
     )
-    log_level: LogLevel = Field(
-        default="INFO", description="niveau du journal : DEBUG, INFO, WARNING ou ERROR"
-    )
+    log_level: LogLevel = Field(default="INFO", description="niveau du journal : DEBUG, INFO, WARNING ou ERROR")
 
     @model_validator(mode="after")
     def _check(self) -> Self:
         if not is_loopback(self.host):
-            raise ValueError(
-                f"host {self.host!r} : seule la boucle locale est permise "
-                "(127.0.0.1, localhost, ::1) ; l'accès réseau viendra plus tard"
-            )
+            raise ValueError(f"host {self.host!r} : seule la boucle locale est permise (127.0.0.1, localhost, ::1) ; l'accès réseau viendra plus tard")
         if self.max_vram_fraction is not None and not self.device.startswith("cuda"):
             raise ValueError("max_vram_fraction ne vaut que sur une carte (device cuda)")
         return self
@@ -162,11 +155,7 @@ def load_settings(
     """
     environ = {} if environ is None else environ
     found = _from_file(config)
-    from_env = {
-        field: environ[env_name(field)].strip()
-        for field in ServiceSettings.model_fields
-        if environ.get(env_name(field), "").strip()
-    }
+    from_env = {field: environ[env_name(field)].strip() for field in ServiceSettings.model_fields if environ.get(env_name(field), "").strip()}
     found.update(from_env)
     found.update(options)
     sources = [str(config)] if config is not None else []
@@ -179,14 +168,9 @@ def load_settings(
         raise SettingsError(f"réglages refusés ({where}) : {_errors(exc, from_env)}") from exc
     known = [env_name(field) for field in ServiceSettings.model_fields]
     allowed = {*known, settings.token_env}
-    unknown = sorted(
-        name for name in environ if name.startswith(ENV_PREFIX) and name not in allowed
-    )
+    unknown = sorted(name for name in environ if name.startswith(ENV_PREFIX) and name not in allowed)
     if unknown:
-        raise SettingsError(
-            f"variable {ENV_PREFIX}* inconnue : {', '.join(unknown)} "
-            f"(connues : {', '.join(known)} ; et celle que nomme token_env)"
-        )
+        raise SettingsError(f"variable {ENV_PREFIX}* inconnue : {', '.join(unknown)} (connues : {', '.join(known)} ; et celle que nomme token_env)")
     return settings
 
 

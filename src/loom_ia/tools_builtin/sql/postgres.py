@@ -132,9 +132,7 @@ class PostgresDatabase:
                 attributes = statement.get_attributes()
                 if attributes:
                     result["columns"] = [attribute.name for attribute in attributes]
-                    result["returning"] = [
-                        row(tuple(r.values()), self.zone) for r in returned[: self.spec.max_rows]
-                    ]
+                    result["returning"] = [row(tuple(r.values()), self.zone) for r in returned[: self.spec.max_rows]]
                     if len(returned) > self.spec.max_rows:
                         result["truncated"] = True
                 results.append(result)
@@ -204,21 +202,16 @@ class PostgresDatabase:
         except ToolError:
             raise
         except _Failed as exc:
-            raise ToolError(
-                f"Instruction {exc.position} : {self._said(exc.error)} Rien n'est enregistré."
-            ) from exc
+            raise ToolError(f"Instruction {exc.position} : {self._said(exc.error)} Rien n'est enregistré.") from exc
         except asyncpg.PostgresError as exc:
             raise ToolError(self._said(exc)) from exc
         except (OSError, TimeoutError, asyncpg.InterfaceError) as exc:
-            raise ToolError(
-                f"Base {self.spec.name} injoignable ({type(exc).__name__}) : réessayer plus tard."
-            ) from exc
+            raise ToolError(f"Base {self.spec.name} injoignable ({type(exc).__name__}) : réessayer plus tard.") from exc
 
     async def _settings(self, conn: Held) -> None:
         timeout = str(int(self.spec.statement_timeout * 1000))
         await conn.execute(
-            "SELECT set_config('search_path', quote_ident($1), true), "
-            "set_config('statement_timeout', $2, true), set_config('lock_timeout', $2, true)",
+            "SELECT set_config('search_path', quote_ident($1), true), set_config('statement_timeout', $2, true), set_config('lock_timeout', $2, true)",
             self.schema,
             timeout,
         )
@@ -236,24 +229,16 @@ class PostgresDatabase:
                         server_settings={"application_name": "loom.sql"},
                     )
                 except (OSError, TimeoutError, asyncpg.PostgresError, ValueError) as exc:
-                    raise ToolError(
-                        f"Base {self.spec.name} injoignable ({type(exc).__name__}) : "
-                        "réessayer plus tard."
-                    ) from exc
+                    raise ToolError(f"Base {self.spec.name} injoignable ({type(exc).__name__}) : réessayer plus tard.") from exc
             pool = self._pool
             if not self._checked:
                 try:
                     async with pool.acquire() as conn:
                         await self._check(conn)
                 except (OSError, TimeoutError, asyncpg.InterfaceError) as exc:
-                    raise ToolError(
-                        f"Base {self.spec.name} injoignable ({type(exc).__name__}) : "
-                        "réessayer plus tard."
-                    ) from exc
+                    raise ToolError(f"Base {self.spec.name} injoignable ({type(exc).__name__}) : réessayer plus tard.") from exc
                 except asyncpg.PostgresError as exc:
-                    raise ToolError(
-                        f"Base {self.spec.name} : connexion refusée ({exc.sqlstate})."
-                    ) from exc
+                    raise ToolError(f"Base {self.spec.name} : connexion refusée ({exc.sqlstate}).") from exc
                 self._checked = True
         return pool
 
@@ -275,9 +260,7 @@ class PostgresDatabase:
         # has_schema_privilege lève sur un schéma absent : on regarde d'abord s'il existe.
         if await conn.fetchval("SELECT to_regnamespace(quote_ident($1))", self.schema) is None:
             raise ToolError(f"Base {name} : le schéma {self.schema} n'existe pas.")
-        creates = await conn.fetchval(
-            "SELECT has_schema_privilege(current_user, $1, 'CREATE')", self.schema
-        )
+        creates = await conn.fetchval("SELECT has_schema_privilege(current_user, $1, 'CREATE')", self.schema)
         granted = await conn.fetch(_PRIVILEGES_SQL, self.schema, list(self.catalog.rights))
         missing: list[str] = []
         extra: list[str] = []
@@ -321,14 +304,9 @@ class PostgresDatabase:
     def _said(self, exc: asyncpg.PostgresError) -> str:
         message = str(getattr(exc, "message", "") or exc)
         if isinstance(exc, asyncpg.exceptions.QueryCanceledError):
-            return (
-                f"Instruction arrêtée après {self.spec.statement_timeout:g} s (délai de la base)."
-            )
+            return f"Instruction arrêtée après {self.spec.statement_timeout:g} s (délai de la base)."
         if isinstance(exc, asyncpg.exceptions.LockNotAvailableError):
-            return (
-                f"Verrou non obtenu en {self.spec.statement_timeout:g} s : une autre "
-                "transaction tient ces lignes ; réessayer plus tard."
-            )
+            return f"Verrou non obtenu en {self.spec.statement_timeout:g} s : une autre transaction tient ces lignes ; réessayer plus tard."
         if isinstance(exc, asyncpg.exceptions.InsufficientPrivilegeError):
             return f"Accès refusé par la base : {message}."
         if isinstance(exc, asyncpg.exceptions.ReadOnlySQLTransactionError):
@@ -348,9 +326,7 @@ class _Failed(Exception):
 
 async def _init(conn: asyncpg.Connection[asyncpg.Record]) -> None:
     for name in ("json", "jsonb"):
-        await conn.set_type_codec(
-            name, schema="pg_catalog", encoder=_json_dumps, decoder=json.loads, format="text"
-        )
+        await conn.set_type_codec(name, schema="pg_catalog", encoder=_json_dumps, decoder=json.loads, format="text")
 
 
 def _json_dumps(value: object) -> str:
@@ -369,10 +345,7 @@ def _affected(status: str | None, returned: int) -> int:
 def convert(params: Sequence[ParamValue], types: Sequence[Type], zone: ZoneInfo) -> list[object]:
     if len(params) != len(types):
         raise ToolError(f"{len(types)} paramètre(s) attendu(s), {len(params)} donné(s).")
-    return [
-        _value(value, expected, zone, f"${index}")
-        for index, (value, expected) in enumerate(zip(params, types, strict=True), start=1)
-    ]
+    return [_value(value, expected, zone, f"${index}") for index, (value, expected) in enumerate(zip(params, types, strict=True), start=1)]
 
 
 def _value(value: ParamValue, expected: Type, zone: ZoneInfo, where: str) -> object:
@@ -452,9 +425,7 @@ def _scalar(value: ParamValue, name: str, expected: Type, zone: ZoneInfo) -> obj
         case "interval":
             return _interval(value)
         case _:
-            raise ToolError(
-                f"type {name} non converti : le caster en texte dans le SQL ($n::text::{name})."
-            )
+            raise ToolError(f"type {name} non converti : le caster en texte dans le SQL ($n::text::{name}).")
 
 
 _ISO_DURATION: Final = re.compile(
@@ -468,9 +439,7 @@ def _interval(value: str) -> timedelta:
     if found is None or value.strip().upper() in ("P", "PT"):
         raise ToolError(f"{value!r} : une durée ISO 8601 (P1DT2H) ou des secondes est attendue.")
     parts = {key: float(found.group(key) or 0) for key in "wdhms"}
-    return timedelta(
-        weeks=parts["w"], days=parts["d"], hours=parts["h"], minutes=parts["m"], seconds=parts["s"]
-    )
+    return timedelta(weeks=parts["w"], days=parts["d"], hours=parts["h"], minutes=parts["m"], seconds=parts["s"])
 
 
 # --- Catalogue -------------------------------------------------------------------------

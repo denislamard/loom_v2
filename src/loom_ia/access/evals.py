@@ -145,11 +145,7 @@ async def evaluate(
                             runs += await _replayed(loom, suite, case, variant, journals[case.name])
                             continue
                         for attempt in range(1, suite.repeat + 1):
-                            runs.append(
-                                await _play(
-                                    loom, suite, case, variant, attempt, tools, judge, runs, export
-                                )
-                            )
+                            runs.append(await _play(loom, suite, case, variant, attempt, tools, judge, runs, export))
     finally:
         if judge is not None:
             await judge.aclose()
@@ -162,9 +158,7 @@ async def evaluate(
         runs=tuple(runs),
         max_cost_usd=suite.max_cost_usd,
         judge_model=suite.judge.model if suite.judge is not None else None,
-        replays=tuple(
-            c.name for c in suite.cases if c.replay is not None and c.name in chosen_cases
-        ),
+        replays=tuple(c.name for c in suite.cases if c.replay is not None and c.name in chosen_cases),
     )
 
 
@@ -176,19 +170,14 @@ def _base(suite: EvalSuite, config: LoomConfig | None, profile: str | None) -> L
     if path is not None:
         return load_config(path, profile=profile)
     if config is None:
-        raise EvalError(
-            f"Suite {suite.title!r} : aucune config — la désigner ('config:' dans la suite) "
-            "ou évaluer depuis une instance"
-        )
+        raise EvalError(f"Suite {suite.title!r} : aucune config — la désigner ('config:' dans la suite) ou évaluer depuis une instance")
     return config
 
 
 def _chosen(what: str, declared: Sequence[str], asked: Sequence[str]) -> set[str]:
     unknown = sorted(set(asked) - set(declared))
     if unknown:
-        raise EvalError(
-            f"{what} inconnu(s) : {', '.join(unknown)} (déclarés : {', '.join(declared)})"
-        )
+        raise EvalError(f"{what} inconnu(s) : {', '.join(unknown)} (déclarés : {', '.join(declared)})")
     return set(asked) if asked else set(declared)
 
 
@@ -225,26 +214,17 @@ def _judge(
     declared = {spec.id: spec for spec in base.models}
     spec = declared.get(suite.judge.model)
     if spec is None:
-        raise EvalError(
-            f"Juge d'éval : modèle {suite.judge.model!r} non déclaré dans la config "
-            f"(modèles : {', '.join(declared) or 'aucun'})"
-        )
+        raise EvalError(f"Juge d'éval : modèle {suite.judge.model!r} non déclaré dans la config (modèles : {', '.join(declared) or 'aucun'})")
     if provided is not None and spec.id in provided:
         return EvalJudgeClient(spec, provided[spec.id], owned=False)
     try:
-        client = create_model_client(
-            spec, environ=environ if secrets is None else secrets.secrets(DEFAULT_TENANT)
-        )
+        client = create_model_client(spec, environ=environ if secrets is None else secrets.secrets(DEFAULT_TENANT))
     except ValueError as exc:
-        raise EvalError(
-            f"Juge d'éval : le modèle {spec.id} ne peut pas être appelé — {exc}"
-        ) from exc
+        raise EvalError(f"Juge d'éval : le modèle {spec.id} ne peut pas être appelé — {exc}") from exc
     return EvalJudgeClient(spec, client)
 
 
-def _variant_config(
-    suite: EvalSuite, base: LoomConfig, variant: EvalVariant, profile: str | None
-) -> LoomConfig:
+def _variant_config(suite: EvalSuite, base: LoomConfig, variant: EvalVariant, profile: str | None) -> LoomConfig:
     path = suite.resolved(variant.config)
     config = base if path is None else load_config(path, profile=profile)
     try:
@@ -253,43 +233,28 @@ def _variant_config(
         raise EvalError(f"Variante {variant.name} : {exc}") from exc
 
 
-def _check_launch(
-    config: LoomConfig, suite: EvalSuite, variant: EvalVariant, chosen: set[str]
-) -> None:
+def _check_launch(config: LoomConfig, suite: EvalSuite, variant: EvalVariant, chosen: set[str]) -> None:
     """L'agent existe dans la config de la variante, et chaque client des cas joués peut le
     lancer."""
     names = AgentRegistry.from_config(config).names
     if suite.agent not in names:
-        raise EvalError(
-            f"Variante {variant.name} : l'agent {suite.agent!r} n'est pas dans la config "
-            f"(agents : {', '.join(sorted(names)) or 'aucun'})"
-        )
+        raise EvalError(f"Variante {variant.name} : l'agent {suite.agent!r} n'est pas dans la config (agents : {', '.join(sorted(names)) or 'aucun'})")
     played = (c for c in suite.cases if c.replay is None and c.name in chosen)
     for tenant in dict.fromkeys(suite.tenant_of(c) or DEFAULT_TENANT for c in played):
         _check_tenant(config, suite, variant, tenant)
 
 
-def _check_tenant(
-    config: LoomConfig, suite: EvalSuite, variant: EvalVariant, tenant: TenantId
-) -> None:
+def _check_tenant(config: LoomConfig, suite: EvalSuite, variant: EvalVariant, tenant: TenantId) -> None:
     if not config.tenants:
         if tenant != DEFAULT_TENANT:
-            raise EvalError(
-                f"Variante {variant.name} : client {tenant!r} inconnu — la config ne déclare "
-                "aucun client"
-            )
+            raise EvalError(f"Variante {variant.name} : client {tenant!r} inconnu — la config ne déclare aucun client")
         return
     declared = {spec.id: spec for spec in config.tenants}
     spec = declared.get(tenant)
     if spec is None:
-        raise EvalError(
-            f"Variante {variant.name} : client {tenant!r} inconnu (clients : {', '.join(declared)})"
-        )
+        raise EvalError(f"Variante {variant.name} : client {tenant!r} inconnu (clients : {', '.join(declared)})")
     if spec.agents and suite.agent not in spec.agents:
-        raise EvalError(
-            f"Variante {variant.name} : l'agent {suite.agent!r} n'est pas ouvert au client "
-            f"{tenant!r}"
-        )
+        raise EvalError(f"Variante {variant.name} : l'agent {suite.agent!r} n'est pas ouvert au client {tenant!r}")
 
 
 def _check_tools(
@@ -319,8 +284,7 @@ def _check_tools(
     unknown = [n for n in judged if n not in known and not n.startswith(prefixes)]
     if unknown:
         raise EvalError(
-            f"Variante {variant.name} : le juge voit les résultats d'un outil inconnu, "
-            f"{unknown[0]!r} (outils : {', '.join(sorted(known)) or 'aucun'})"
+            f"Variante {variant.name} : le juge voit les résultats d'un outil inconnu, {unknown[0]!r} (outils : {', '.join(sorted(known)) or 'aucun'})"
         )
 
 
@@ -354,9 +318,7 @@ async def _play(
         return replace(played, skipped=CAP_REACHED.format(spent=spent, cap=cap))
     tenant = suite.tenant_of(case)
     try:
-        result = await loom.run(
-            suite.agent, case.request, tenant=tenant, state=case.state, user=UNCHECKED
-        )
+        result = await loom.run(suite.agent, case.request, tenant=tenant, state=case.state, user=UNCHECKED)
     except Exception as exc:
         # Une éval dit ce qui a cassé et continue : le rapport le porte.
         logger.warning("Éval %s/%s : le run n'a pas pu aller au bout", variant.name, case.name)
@@ -373,15 +335,9 @@ async def _play(
         tool_results = suite.judge.tool_results if suite.judge is not None else ()
         judgment = await judge.judge(criteria, case.request, outcome, tool_results)
         judge_cost = judgment.cost_usd
-        checks += (
-            judged(judgment.scores)
-            if judgment.error is None
-            else unjudged(criteria, judgment.error)
-        )
+        checks += judged(judgment.scores) if judgment.error is None else unjudged(criteria, judgment.error)
     if export is not None:
-        await _export(
-            loom, result, tenant_id, export / f"{variant.name}--{case.name}--{attempt}.jsonl"
-        )
+        await _export(loom, result, tenant_id, export / f"{variant.name}--{case.name}--{attempt}.jsonl")
     return replace(
         played,
         run_id=result.run_id,
@@ -431,9 +387,7 @@ def _shown(suite: EvalSuite, path: Path) -> str:
     return str(path)
 
 
-async def _replayed(
-    loom: Loom, suite: EvalSuite, case: EvalCase, variant: EvalVariant, loaded: _Loaded
-) -> list[EvalRun]:
+async def _replayed(loom: Loom, suite: EvalSuite, case: EvalCase, variant: EvalVariant, loaded: _Loaded) -> list[EvalRun]:
     """Un cas de rejeu : chaque run de ses journaux, rejoué à l'identique sur cette variante."""
     if not loaded:
         return [
@@ -519,11 +473,7 @@ async def run_outcome(
 
     ``state`` : le state de la session après le run (``Loom.session_state``).
     """
-    done = {
-        (event.run_id, event.payload.call_id): event.payload.output
-        for event in events
-        if isinstance(event.payload, ToolCompleted)
-    }
+    done = {(event.run_id, event.payload.call_id): event.payload.output for event in events if isinstance(event.payload, ToolCompleted)}
     received = await received_arguments(events, artifacts)
     uses: list[ToolUse] = []
     for event in events:
@@ -553,9 +503,7 @@ async def run_outcome(
     )
 
 
-async def received_arguments(
-    events: Sequence[Event], artifacts: ArtifactStore | None = None
-) -> dict[tuple[str, str], dict[str, JsonValue]]:
+async def received_arguments(events: Sequence[Event], artifacts: ArtifactStore | None = None) -> dict[tuple[str, str], dict[str, JsonValue]]:
     """Ce que chaque outil de l'arbre a reçu, par run et ``call_id`` (décision du 06/10).
 
     Comme l'exécuteur : les références ``$ref`` résolues sur les résultats du
