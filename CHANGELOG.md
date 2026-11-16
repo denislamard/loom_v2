@@ -2,6 +2,8 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.22 - non publiée
+
 ## 2.0.21 - publiée
 
 ### Documents : le format des styles (`docs/style_format.md`)
