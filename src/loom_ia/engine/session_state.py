@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""State de la session côté moteur : clés déclarées, écritures des outils (option C).
+"""State de la session côté moteur : clés déclarées, écritures des outils (option C, ``docs/state-et-context.md``).
 
 Les clés viennent de la config (``state:``) ; le montage les traduit en
 ``StateRules``, que l'exécuteur applique au résultat réussi de chaque outil,
@@ -7,24 +7,29 @@ après les politiques ``after_tool`` et avant le déport :
 
 - les sources ``from`` de l'outil donnent chacune une valeur, lue dans les
   données du résultat (``path``, pointeur JSON) ou fixe (``value``). Ce que
-  l'outil écrit lui-même (``ToolOutput.state``) l'emporte sur une même clé (D12) ;
-- chaque écriture est contrôlée : clé déclarée, schéma (D6), taille de la
-  valeur et du state de la session (D7). ``None`` efface la clé.
+  l'outil écrit lui-même (``ToolOutput.state``) l'emporte sur une même clé
+  (décision D12 du state de session) ;
+- chaque écriture est contrôlée : clé déclarée, schéma (décision D6), taille
+  de la valeur et du state de la session (décision D7). ``None`` efface la clé.
 
 Une écriture refusée n'est pas posée, les autres le sont, et le résultat reste
 un succès : l'outil a pu produire son effet, et le dire en erreur pousserait
 le modèle à le refaire. Le refus est gardé dans le résultat
 (``ToolOutput.state_refused``), que le modèle lit à sa suite, et dit au log
-(D8, décision du 14/10).
+(décision D8 du state de session, du 14/10).
 
 Le state que l'application pose à l'ouverture d'un run suit les mêmes
 contrôles, mais un refus y refuse le run, avant tout écrit (``StateRefused``) ;
-de même une clé ``required`` restée sans valeur (D13).
+de même une clé ``required`` restée sans valeur (décision D13).
 
 L'orchestrateur qui déclare ``main.context`` reçoit le state en dernier message
-de chaque requête (D4, ``state_message``), jamais journalisé comme message, et,
+de chaque requête (décision D4, ``state_message``), jamais journalisé comme message, et,
 dans son prompt système, ce que désigne chaque clé (``StateRules.hint``) : le
 système ne change pas d'un appel à l'autre, seul le bloc de fin est payé hors cache.
+
+Les codes D1 à D13 sont les décisions du state de session (``fonctions.md``,
+point 51, et ``docs/state-et-context.md``) ; S1 à S8 celles du state v2, et
+E2 un écart relevé par son analyse (``docs/state_v2_analyse.md``).
 """
 
 import copy
@@ -53,23 +58,30 @@ from loom_ia.engine.roles import tagged
 
 logger = logging.getLogger(__name__)
 
-# Qui peut demander une écriture (state v2, S1) : l'application à l'ouverture d'un
-# run, un outil (sources ``from`` ou ``ToolOutput.state``), le modèle (``loom.state``).
 type StateWriter = Literal["app", "tools", "model"]
+"""Qui peut demander une écriture (décision S1 du state v2).
+
+L'application à l'ouverture d'un run, un outil (sources ``from`` ou
+``ToolOutput.state``), le modèle (``loom.state``).
+"""
 DEFAULT_WRITERS: Final = frozenset[StateWriter]({"app", "tools"})
+"""Écrivains d'une clé qui n'en déclare pas : l'application et les outils."""
 
-# Tailles par défaut (D7), en octets de JSON compact : celles de ``sessions.state``.
 DEFAULT_MAX_VALUE_BYTES: Final = 1024
+"""Taille maximale d'une valeur, en octets de JSON compact (décision D7 du state de session, ``sessions.state``)."""
 DEFAULT_MAX_TOTAL_BYTES: Final = 4096
+"""Taille maximale de tout le state de la session, en octets de JSON compact (décision D7)."""
 
-# Début de la consigne du prompt système d'un orchestrateur qui reçoit le state ;
-# suit une ligne par clé montrée, avec ce qu'elle désigne.
 STATE_HINT: Final = (
     "La fin de chaque requête donne l'état courant de la session, entre balises "
     f"<{SESSION_STATE_TAG}> : un objet JSON tenu à jour par l'application et les outils. "
     f"Seul le dernier bloc <{SESSION_STATE_TAG}> de la requête fait foi ; une clé absente "
     "n'a pas de valeur. Clés :"
 )
+"""Début de la consigne du prompt système d'un orchestrateur qui reçoit le state.
+
+Suit une ligne par clé montrée, avec ce qu'elle désigne.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +89,14 @@ class StateSourceRule:
     """Ce que pose un résultat réussi de l'outil : ``path`` dans ses données, ou ``value``.
 
     ``on_missing`` : ``ignore`` ne dit rien d'un ``path`` absent du résultat, que
-    ``refuse`` compte comme une écriture refusée (D8).
+    ``refuse`` compte comme une écriture refusée (décision D8 du state de session).
+
+    Config : ``state.<clé>.from.<outil>``.
+
+    Attributes:
+        path: Pointeur JSON (RFC 6901) dans les données du résultat.
+        value: Valeur fixe, si ``path`` n'est pas donné.
+        on_missing: ``refuse`` ou ``ignore`` un ``path`` absent du résultat.
     """
 
     path: str | None = None
@@ -89,9 +108,21 @@ class StateSourceRule:
 class StateKeyRule:
     """Une clé déclarée : son schéma, ce qu'elle désigne, ses sources par outil, son défaut.
 
-    ``required`` : un run racine ne s'ouvre pas tant qu'elle n'a pas de valeur (D13) ;
-    ni un outil ni le modèle ne peuvent l'effacer (E2). ``writers`` : qui peut
-    demander une écriture (S1) ; par défaut l'application et les outils.
+    ``required`` : un run racine ne s'ouvre pas tant qu'elle n'a pas de valeur
+    (décision D13 du state de session) ; ni un outil ni le modèle ne peuvent
+    l'effacer (écart E2 du state v2). ``writers`` : qui peut demander une
+    écriture (décision S1 du state v2) ; par défaut l'application et les outils.
+
+    Config : ``state.<clé>``.
+
+    Attributes:
+        schema: JSON Schema de la valeur.
+        description: Ce que désigne la clé, montré à l'orchestrateur.
+        sources: Sources ``from``, par nom d'outil.
+        required: Vrai si un run racine ne s'ouvre pas sans valeur.
+        default: Valeur lue en l'absence de valeur ; jamais écrite. Exclut
+            ``required``.
+        writers: Qui peut demander une écriture.
     """
 
     schema: Mapping[str, JsonValue]
@@ -103,9 +134,15 @@ class StateKeyRule:
 
 
 class StateRefused(ValueError):
-    """State refusé à l'ouverture d'un run (D6, D7, D13) : rien n'est écrit.
+    """State refusé à l'ouverture d'un run (décisions D6, D7 et D13 du state de session) : rien n'est écrit.
 
     ``problems`` : un motif par ligne, qui nomme la clé.
+
+    Args:
+        problems: Les motifs.
+
+    Attributes:
+        problems: Les motifs, un par clé refusée.
     """
 
     def __init__(self, problems: Sequence[str]) -> None:
@@ -118,7 +155,16 @@ class StateRefused(ValueError):
 
 
 class StateRules:
-    """Clés du state que déclare un agent, et limites du state de la session (D6, D7)."""
+    """Clés du state que déclare un agent, et limites du state de la session (décisions D6 et D7 du state de session).
+
+    Attributes:
+        keys: Les clés déclarées, dans l'ordre de la config.
+        model_tool: Nom sous lequel ``loom.state`` est monté : ses écritures
+            sont celles du modèle (décisions S1 et B4 du state v2). Le moteur
+            ne connaît pas l'outil, le montage le lui nomme.
+        max_value_bytes: Taille maximale d'une valeur, en octets.
+        max_total_bytes: Taille maximale du state de la session, en octets.
+    """
 
     def __init__(
         self,
@@ -128,9 +174,15 @@ class StateRules:
         max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
         model_tool: str | None = None,
     ) -> None:
+        """Prépare les validateurs des schémas et les sources par outil.
+
+        Args:
+            keys: Les clés déclarées.
+            max_value_bytes: Taille maximale d'une valeur, en octets.
+            max_total_bytes: Taille maximale du state, en octets.
+            model_tool: Nom de ``loom.state`` dans l'agent, s'il est monté.
+        """
         self.keys: dict[str, StateKeyRule] = dict(keys or {})
-        # Nom sous lequel ``loom.state`` est monté : ses écritures sont celles du
-        # modèle (S1, B4). Le moteur ne connaît pas l'outil, le montage le lui nomme.
         self.model_tool = model_tool
         self.max_value_bytes = max_value_bytes
         self.max_total_bytes = max_total_bytes
@@ -153,7 +205,11 @@ class StateRules:
         return f"StateRules({', '.join(self.keys)})"
 
     def writes(self, tool: str) -> bool:
-        """Vrai si une source ``from`` désigne cet outil."""
+        """Vrai si une source ``from`` désigne cet outil.
+
+        Args:
+            tool: Nom de l'outil.
+        """
         return tool in self._sources
 
     def visible(self, values: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
@@ -164,6 +220,12 @@ class StateRules:
         avertissement : jamais une erreur ; la valeur par défaut de la clé la
         remplace, s'il y en a une. La copie rendue est en lecture seule ; la
         modifier ne touche à rien d'autre.
+
+        Args:
+            values: Le state de la session.
+
+        Returns:
+            Les valeurs des clés déclarées, en lecture seule.
         """
         shown: dict[str, JsonValue] = {}
         for name, rule in self.keys.items():
@@ -181,10 +243,18 @@ class StateRules:
     def opening(self, posed: Mapping[str, JsonValue], session: Mapping[str, JsonValue]) -> list[str]:
         """Ce qui empêche d'ouvrir un run avec ce state posé par l'application ; vide sinon.
 
-        Chaque écriture est contrôlée comme celle d'un outil (D6, D7), ``None``
-        effaçant la clé. Puis chaque clé ``required`` doit avoir une valeur dans
-        le state qui en résulte, ``session`` étant celui des runs précédents
-        (D13) : une valeur gardée qui ne tient plus son schéma ne compte pas.
+        Chaque écriture est contrôlée comme celle d'un outil (décisions D6 et
+        D7 du state de session), ``None`` effaçant la clé. Puis chaque clé
+        ``required`` doit avoir une valeur dans le state qui en résulte,
+        ``session`` étant celui des runs précédents (décision D13) : une
+        valeur gardée qui ne tient plus son schéma ne compte pas.
+
+        Args:
+            posed: Le state posé par l'application.
+            session: Le state de la session avant le run.
+
+        Returns:
+            Les motifs de refus, un par clé ; vide si le run peut s'ouvrir.
         """
         problems: list[str] = []
         accepted: dict[str, JsonValue] = {}
@@ -211,6 +281,9 @@ class StateRules:
         """Clés que reçoit l'orchestrateur : celles nommées, ou toutes si aucune ne l'est.
 
         Dans l'ordre de leur déclaration.
+
+        Args:
+            keys: Clés nommées par ``main.context`` ; vide : toutes.
         """
         return tuple(name for name in self.keys if not keys or name in keys)
 
@@ -219,6 +292,13 @@ class StateRules:
 
         Elle ne dépend que de la config : le préfixe de la requête, et son cache,
         ne bougent pas quand le state change.
+
+        Args:
+            keys: Clés nommées par ``main.context`` ; vide : toutes.
+
+        Returns:
+            ``STATE_HINT`` suivi d'une ligne par clé montrée, et d'un paragraphe
+            sur ``loom.state`` si une clé est écrite par le modèle.
         """
         lines = [STATE_HINT]
         for name in self.shown(keys):
@@ -243,13 +323,23 @@ class StateRules:
         les écritures posées par l'appel ``call_id`` y sont reportées. Chaque
         appel est ainsi jugé sur ce que la session gardera vraiment, quel que
         soit l'ordre d'arrivée des résultats, et le lot ne dépasse pas la limite
-        à lui tous (D7, D9).
+        à lui tous (décisions D7 et D9 du state de session).
+
+        Args:
+            tool: Nom de l'outil.
+            output: Son résultat réussi.
+            tally: Le state du lot, mis à jour.
+            call_id: L'appel.
+
+        Returns:
+            Le résultat, ``state`` réduit aux écritures retenues et
+            ``state_refused`` portant les motifs des refus.
         """
         given: dict[str, JsonValue] = {}
         refused: list[str] = []
         for name, source in self._sources.get(tool, ()):
             if name in output.state:
-                # L'outil a écrit lui-même cette clé : sa valeur l'emporte (D12).
+                # L'outil a écrit lui-même cette clé : sa valeur l'emporte (décision D12 du state de session).
                 continue
             if source.path is None:
                 given[name] = source.value
@@ -294,7 +384,10 @@ class StateRules:
         return output.model_copy(update={"state": accepted, "state_refused": tuple(refused)})
 
     def _forbidden(self, name: str, value: JsonValue, writer: StateWriter) -> str | None:
-        """Pourquoi cet écrivain ne peut pas poser cette valeur (S1, E2), ou None.
+        """Pourquoi cet écrivain ne peut pas poser cette valeur, ou ``None``.
+
+        Écrivain absent des ``writers`` de la clé (décision S1 du state v2), ou
+        effacement d'une clé ``required`` (écart E2 du state v2).
 
         Une clé non déclarée est laissée à ``_problem``, qui le dit.
         """
@@ -309,7 +402,10 @@ class StateRules:
         return None
 
     def _problem(self, name: str, value: JsonValue) -> str | None:
-        """Pourquoi cette valeur ne peut pas être posée sous cette clé, ou None."""
+        """Pourquoi cette valeur ne peut pas être posée sous cette clé, ou ``None``.
+
+        Clé non déclarée, schéma non tenu, ou valeur trop grosse.
+        """
         validator = self._validators.get(name)
         if validator is None:
             return "clé non déclarée dans 'state'"
@@ -330,24 +426,36 @@ class StateRules:
 
 
 def keeps_state(state: RunState) -> bool:
-    """Vrai pour un run racine ordinaire : seul lui lit et écrit le state de la session (D3)."""
+    """Vrai pour un run racine ordinaire : seul lui lit et écrit le state de la session (décision D3 du state de session).
+
+    Un sous-run et un run de compaction ne le lisent ni ne l'écrivent.
+
+    Args:
+        state: L'état du run.
+    """
     return state.parent_run_id is None and state.kind == "normal"
 
 
 def state_message(values: Mapping[str, JsonValue]) -> Message:
-    """Le state que reçoit l'orchestrateur, en message de fin de requête (D4).
+    """Le state que reçoit l'orchestrateur, en message de fin de requête (décision D4 du state de session).
 
     Envoyé à chaque appel, même vide (``{}``) : le dernier message de la requête
     est toujours lui, jamais une demande ou un résultat d'outil qui l'imiterait
-    (D4 amendé le 14/10). JSON compact aux clés triées, à tous les niveaux : un
+    (décision D4 amendée le 14/10). JSON compact aux clés triées, à tous les niveaux : un
     même state donne un même texte, donc une même requête. La balise est
     échappée dans les valeurs, qui ne peuvent ni fermer le bloc ni en ouvrir un autre.
+
+    Args:
+        values: Le state montré.
+
+    Returns:
+        Un message ``user`` : ``<session_state>{…}</session_state>``.
     """
     return Message.user(tagged(SESSION_STATE_TAG, state_json(dict(values))))
 
 
 class BatchTally:
-    """Le state que la session gardera d'un lot d'appels, compté dans l'ordre des appels (D7, D9).
+    """Le state que la session gardera d'un lot d'appels, compté dans l'ordre des appels (décisions D7 et D9 du state de session).
 
     Il part du state au début du lot. S'y ajoutent les écritures de chaque appel
     soldé, rangées à son rang dans la réponse du modèle — et non dans l'ordre où
@@ -357,6 +465,10 @@ class BatchTally:
 
     ``ranks`` : le rang de chaque appel du lot ; un appel absent se range après,
     dans l'ordre où il est reporté.
+
+    Args:
+        base: Le state au début du lot.
+        ranks: Rang de chaque appel du lot, par ``call_id``.
     """
 
     def __init__(self, base: Mapping[str, JsonValue] | None = None, ranks: Mapping[str, int] | None = None) -> None:
@@ -365,11 +477,24 @@ class BatchTally:
         self._writes: dict[str, dict[str, JsonValue]] = {}
 
     def record(self, call_id: str, writes: Mapping[str, JsonValue]) -> None:
-        """Les écritures retenues de l'appel ``call_id``."""
+        """Reporte les écritures retenues de l'appel ``call_id``.
+
+        Args:
+            call_id: L'appel.
+            writes: Ses écritures ; ``None`` efface la clé.
+        """
         self._writes[call_id] = dict(writes)
 
     def state(self, call_id: str | None = None, writes: Mapping[str, JsonValue] | None = None) -> dict[str, JsonValue]:
-        """Le state du lot ; avec ``call_id``, comme si cet appel écrivait aussi ``writes``."""
+        """Le state du lot ; avec ``call_id``, comme si cet appel écrivait aussi ``writes``.
+
+        Args:
+            call_id: Appel à essayer, ou ``None``.
+            writes: Ses écritures.
+
+        Returns:
+            Le state, écritures appliquées dans l'ordre des rangs.
+        """
         recorded = dict(self._writes)
         if call_id is not None:
             recorded[call_id] = dict(writes or {})
@@ -379,7 +504,12 @@ class BatchTally:
         return result
 
     def overridden(self, call_id: str, name: str) -> bool:
-        """Vrai si un appel suivant du lot, déjà soldé, écrit aussi ``name`` : il l'emporte."""
+        """Vrai si un appel suivant du lot, déjà soldé, écrit aussi ``name`` : il l'emporte.
+
+        Args:
+            call_id: L'appel.
+            name: La clé.
+        """
         mine = self._rank(call_id, self._writes)
         return any(name in writes and self._rank(other, self._writes) > mine for other, writes in self._writes.items() if other != call_id)
 
@@ -392,7 +522,7 @@ class BatchTally:
 
 
 def _merged(values: Mapping[str, JsonValue], writes: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
-    """Le state après ces écritures : ``None`` efface la clé (D10)."""
+    """Le state après ces écritures : ``None`` efface la clé (décision D10 du state de session)."""
     result = dict(values)
     for name, value in writes.items():
         if value is None:
@@ -427,6 +557,13 @@ def pointed(data: JsonValue, path: str) -> JsonValue | _Absent:
 
     Un résultat sans données n'a rien à montrer, même pour ``""``. Un indice de
     liste s'écrit en chiffres, sans zéro en tête.
+
+    Args:
+        data: Les données du résultat.
+        path: Le pointeur (``""`` : tout ; ``/a/0/b`` : un chemin).
+
+    Returns:
+        La valeur ; ``_ABSENT`` si le chemin n'existe pas.
     """
     if data is None:
         return _ABSENT

@@ -12,6 +12,7 @@ Plusieurs familles de codes se recouvrent. Pendant la réécriture, chaque occur
 | `J1` à `J5` | **Fonction** de la famille J, Coûts et budgets. **Jalon** J1 à J6 (`jalons.md`). | Un passage sur les tokens, les coûts ou les budgets désigne une fonction : « (fonction J4) ». Avec une phase (`J4.1`, `J6.3b`), c'est un jalon : « (jalon J4.1) ». |
 | `#n` | **Point** *n* à trancher de `fonctions.md` (1 à 52). **Entrée** `#00n` du backlog. | Sans zéros de tête, c'est un point : « (point 18) ». Avec trois chiffres (`#015`), c'est le backlog : « (backlog #015) ». |
 | `M1` | **Fonction** M1, configuration déclarative (`fonctions.md`). **Règle** M1 de l'analyse moteur du state : une réponse écrite avec `loom.state` termine le run (`docs/state_analyse_moteur.md`). | Dans un passage sur `loom.state` ou la fin d'un run (`core/projections/history.py`, `engine/loop.py`), c'est la règle : « (règle M1, `docs/state_analyse_moteur.md`) ». Ailleurs, la fonction. |
+| `S1` à `S8`, `E2`, `E4`, `B4` du state v2 | **Décisions** S1 à S8 du state v2 (`docs/state-et-context.md`, tableau des décisions) ; **écarts** E*n* et **blocages** B*n* relevés par son analyse (`docs/state_v2_analyse.md`). `E2` et `B4` sont aussi des fonctions (familles E et B). | Dans un passage sur le state de session (`engine/session_state.py`, `engine/executor.py`, `writers`, `loom.state`) : « (décision S1 du state v2) », « (écart E2 du state v2) », « (décision B4 du state v2) ». Ailleurs, la fonction. |
 
 ### Décisions des analyses d'impact (`D-n`, `B-n`)
 

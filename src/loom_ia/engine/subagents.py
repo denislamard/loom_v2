@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Sous-agents : un agent appelé comme un outil, dans un run enfant (C5, #4).
+"""Sous-agents : un agent appelé comme un outil, dans un run enfant (fonction C5, point 4).
 
 L'orchestrateur appelle un sous-agent avec un seul argument, ``message`` : la
 demande qu'il lui adresse, comme à n'importe quel agent. Le sous-agent tourne
@@ -30,6 +30,9 @@ Clore le parent — délai dépassé, ``cancel``, échec d'une politique, d'un m
 ou d'un outil — est autre chose : plus rien ne reprendra l'enfant, qui est alors
 annulé avec lui (``run.cancelled``, ``reason: parent``), avant le parent et dans
 la même écriture, au lieu de rester ouvert au journal.
+
+Config : ``agents.<nom>.subagents`` de l'agent appelant (nom de l'outil,
+agent, description, ``budget_share``) et son ``max_depth``.
 """
 
 from collections.abc import AsyncGenerator, Callable
@@ -65,8 +68,8 @@ from loom_ia.engine.delegated import (
 from loom_ia.engine.loop import ParentRun, RunContext, begin_run, drive
 from loom_ia.engine.writer import SessionWriter
 
-# Mention ajoutée à la description d'un sous-agent.
 AGENT_HINT: Final = "Sous-agent : il ne reçoit que `message`, sans la conversation ni les résultats précédents ; mets-y tout ce dont il a besoin."
+"""Mention ajoutée à la description d'un sous-agent, montrée au modèle."""
 
 MESSAGE_SCHEMA: Final[dict[str, JsonValue]] = {
     "type": "object",
@@ -80,39 +83,61 @@ MESSAGE_SCHEMA: Final[dict[str, JsonValue]] = {
     "required": ["message"],
     "additionalProperties": False,
 }
+"""Schéma des arguments d'un sous-agent : un seul champ, ``message``, chaîne non vide."""
 
-# Contexte d'exécution d'un agent de la config, par son nom.
 type AgentResolver = Callable[[str], RunContext]
+"""Contexte d'exécution d'un agent de la config, par son nom."""
 
 
 @dataclass(frozen=True, kw_only=True)
 class SubAgentDefinition:
-    """Un sous-agent tel que le moteur l'appelle."""
+    """Un sous-agent tel que le moteur l'appelle.
 
-    # Nom de l'outil vu par l'orchestrateur.
+    Attributes:
+        name: Nom de l'outil vu par l'orchestrateur.
+        agent: Agent de la config qui fait le travail.
+        description: Description de l'outil ; ``AGENT_HINT`` y est ajouté.
+        max_depth: ``max_depth`` de l'agent appelant : profondeur au-delà de
+            laquelle le sous-agent est masqué.
+        budget_share: Part de ce qui reste au budget du run appelant, donnée à
+            l'enfant (fonction J4) ; ``None`` : pas de part, l'enfant n'a que
+            ses propres limites.
+        parent_budget: Limites du run de l'agent appelant (sa config) ; s'y
+            ajoute sa propre part reçue.
+        side_effects: Effets du sous-agent, ceux des outils de son agent ; ils
+            décident de l'ordre des appels d'un même tour. ``irreversible`` à
+            défaut de déclaration.
+    """
+
     name: str
-    # Agent de la config qui fait le travail.
     agent: str
     description: str
-    # ``max_depth`` de l'agent appelant : profondeur au-delà de laquelle il est masqué.
     max_depth: int = 1
-    # Part de ce qui reste au budget du run appelant, donnée à l'enfant (J4).
     budget_share: float | None = None
-    # Limites du run de l'agent appelant (sa config) ; s'y ajoute sa propre part reçue.
     parent_budget: RunBudget | None = None
-    # Effets du sous-agent, ceux des outils de son agent ; ils décident de l'ordre
-    # des appels d'un même tour. ``irreversible`` à défaut de déclaration.
     side_effects: SideEffects = "irreversible"
 
 
-# États dans lesquels un enfant attend quelqu'un : son parent attend avec lui.
 _WAITING: Final = frozenset({RunStatus.PAUSED, RunStatus.WAITING_CHILD})
+"""États dans lesquels un enfant attend quelqu'un : son parent attend avec lui."""
 
 
 class AgentTool(DelegatedTool):
-    """Outil qui confie la demande à un autre agent, dans un run enfant."""
+    """Outil qui confie la demande à un autre agent, dans un run enfant.
+
+    L'outil est déclaré idempotent : un appel interrompu reprend l'enfant au
+    lieu de le relancer.
+
+    Args:
+        definition: Le sous-agent.
+        agents: Donne le contexte d'exécution d'un agent de la config.
+
+    Attributes:
+        definition: Le sous-agent.
+    """
 
     def __init__(self, definition: SubAgentDefinition, agents: AgentResolver) -> None:
+        """Construit la description de l'outil."""
         self.definition = definition
         self._agents = agents
         description = definition.description
@@ -130,15 +155,18 @@ class AgentTool(DelegatedTool):
 
     @property
     def spec(self) -> ToolSpec:
+        """Description de l'outil : celle du sous-agent, ``AGENT_HINT`` et le schéma ``message``."""
         return self._spec
 
     def __repr__(self) -> str:
         return f"AgentTool({self.definition.name!r}, agent {self.definition.agent!r})"
 
     def available(self, run: RunView) -> bool:
+        """Vrai si la profondeur du run appelant est inférieure à ``max_depth``."""
         return run.state.depth < self.definition.max_depth
 
     def child_run_id(self, call: PendingCall) -> RunId:
+        """L'enfant déjà choisi pour cet appel (reprise), sinon un nouvel identifiant."""
         return call.child_run_id or new_run_id()
 
     def _budget(self, parent: RunState) -> tuple[bool, RunBudget | None]:
@@ -155,6 +183,25 @@ class AgentTool(DelegatedTool):
     async def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
     ) -> AsyncGenerator[DelegatedPayload | Consumption | ToolOutput | Waiting]:
+        """Lance l'enfant s'il n'existe pas encore, puis le fait avancer jusqu'à son arrêt.
+
+        L'enfant écrit dans le journal du parent, sans diffusion en direct.
+        S'il n'a pas encore d'événement, il est commencé avec le message, le
+        contexte du parent et sa part de budget.
+
+        Args:
+            arguments: ``message``, la demande adressée au sous-agent.
+            context: Contexte de l'appel ; ``call_id`` désigne l'enfant dans
+                ``run.children``.
+            run: La vue du run parent.
+
+        Yields:
+            ``Waiting`` si l'enfant attend une décision humaine (fonction
+            H4, point 17) ; sinon sa consommation, puis le résultat : sa
+            réponse finale avec les fichiers produits par ses outils, ou une
+            erreur (« Le sous-agent <nom> a échoué (<type>) : … », « … n'a rien
+            répondu », « Budget du run atteint : … »).
+        """
         name = self.definition.name
         child_id = run.children[context.call_id]
         parent = run.state
@@ -188,7 +235,7 @@ class AgentTool(DelegatedTool):
         final = await drive(ctx, child_id, session_id=session, tenant_id=tenant, writer=writer)
         if final.status in _WAITING:
             # L'enfant attend une décision humaine : l'appel n'a pas de
-            # résultat, et le parent l'attend avec lui (H4, #17).
+            # résultat, et le parent l'attend avec lui (fonction H4, point 17).
             yield Waiting(call_id=context.call_id, run_id=child_id)
             return
         yield Consumption(usage=final.usage, cost_usd=final.cost_usd)

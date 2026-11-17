@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Magasin d'idempotence adossé au journal du run (#18, #49).
+"""Magasin d'idempotence adossé au journal du run (points 18 et 49).
 
 Il n'a pas d'autre stockage que le journal : la trace est durable dès que le
 journal l'est, et il n'y a rien à installer. En contrepartie il ne porte que
 des **clés techniques** — celles d'un appel précis, ``hash(run_id, call_id)``.
 Une clé métier doit être vue depuis un autre run, et le journal d'un run ne
-l'est pas (magasin partagé, J4.4b).
+l'est pas (magasin partagé, jalon J4.4b).
 
 La réservation, elle, est déjà au journal : c'est le ``tool.called`` de
 l'appel, écrit avant son exécution. ``reserve`` n'a donc rien à écrire, et
-c'est la règle de reprise (#18) qui décide du sort d'un appel commencé sans
+c'est la règle de reprise (point 18) qui décide du sort d'un appel commencé sans
 résultat. Ce que ce magasin ajoute, c'est l'autre moitié : un appel rejoué
 dont l'effet **a** eu lieu rend le résultat mémorisé au lieu de le refaire.
 
-La concession (#27) garantit un seul pilote par run : deux exécutions
+La concession (point 27) garantit un seul pilote par run : deux exécutions
 simultanées du même appel ne peuvent pas se produire, et ``reserve`` n'a donc
 pas à les départager.
 
@@ -39,12 +39,17 @@ from loom_ia.core.model import IdempotencyRecord, RunId, SessionId, SpanId, Tena
 from loom_ia.core.ports import KeyScope
 from loom_ia.engine.writer import SessionWriter
 
-# Un enregistrement du journal ne périme pas : il vaut tant que le run existe.
 _FOREVER = timedelta(days=365 * 100)
+"""Validité donnée à un enregistrement : il ne périme pas, il vaut tant que le run existe."""
 
 
 class JournalIdempotency:
-    """``IdempotencyStore`` qui lit et écrit dans le journal du run."""
+    """``IdempotencyStore`` qui lit et écrit dans le journal du run.
+
+    L'exécuteur en crée une instance par appel d'un outil décoré
+    ``@idempotent`` dont la clé est technique. L'enregistrement est un
+    événement ``idempotency.recorded`` (clé, appel, outil, résultat).
+    """
 
     def __init__(
         self,
@@ -56,6 +61,20 @@ class JournalIdempotency:
         span_id: SpanId | None = None,
         parent_span_id: SpanId | None = None,
     ) -> None:
+        """Prépare le magasin d'un appel.
+
+        Args:
+            writer: Écrivain de la session : lecture du journal et écriture
+                immédiate de l'enregistrement.
+            scope: Run de l'appel ; donne le ``run_id`` et les champs communs
+                des événements.
+            call_id: Identifiant de l'appel d'outil.
+            tool_name: Nom de l'outil.
+            span_id: Span de l'appel : l'enregistrement se range sous lui,
+                comme son ``tool.called`` ; sans lui, il tombe sur le span
+                racine du run.
+            parent_span_id: Span de l'étape qui contient l'appel.
+        """
         self._writer = writer
         self._scope = scope
         self._call_id = call_id
@@ -80,7 +99,14 @@ class JournalIdempotency:
         Relit les événements du run à chaque appel : c'est le prix d'un
         magasin sans stockage propre, et il se paie une fois par appel d'outil
         décoré. Une clé seulement réservée n'est pas ici — elle est au
-        ``tool.called``, que la reprise (#18) consulte de son côté.
+        ``tool.called``, que la reprise (point 18) consulte de son côté.
+
+        Args:
+            key: Clé technique de l'appel.
+
+        Returns:
+            Le dernier enregistrement du run sous cette clé, au statut
+            ``completed`` et sans péremption ; ``None`` s'il n'y en a pas.
         """
         events = await self._writer.store.read(self._writer.tenant_id, self._writer.session_id, run_id=self._run_id)
         recorded = [payload for event in events if isinstance(payload := event.payload, IdempotencyRecorded) and payload.key == key]
@@ -94,12 +120,33 @@ class JournalIdempotency:
         )
 
     async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
-        """Toujours vrai : le ``tool.called`` de l'appel tient lieu de réservation."""
+        """Toujours vrai : le ``tool.called`` de l'appel tient lieu de réservation.
+
+        Args:
+            key: Clé technique de l'appel (non utilisée).
+            ttl: Durée de la réservation (non utilisée).
+            scope: Portée de la clé (non utilisée : le chargement refuse une
+                clé métier).
+            holder: Jeton du détenteur, retenu pour ``complete``.
+
+        Returns:
+            ``True``.
+        """
         self._holder = holder
         return True
 
     async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
-        """Écrit l'effet au journal du run, sous sa clé."""
+        """Écrit l'effet au journal du run, sous sa clé, tout de suite.
+
+        Args:
+            key: Clé technique de l'appel.
+            result: Résultat de l'effet, rendu enregistrable
+                (``recordable``).
+            ttl: Durée de vie (non utilisée : l'enregistrement vaut tant que
+                le run existe).
+            holder: Jeton du détenteur : s'il diffère de celui de
+                ``reserve``, rien n'est écrit.
+        """
         if holder is not None and self._holder is not None and holder != self._holder:
             return
         await self._writer.append(

@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Rôles délégués (C1 à C3, #12, #13).
+"""Rôles délégués (fonctions C1 à C3, points 12 et 13).
 
 Un rôle est un outil que l'orchestrateur appelle : un seul appel de modèle,
 avec son propre prompt système et ses réglages, sur un message construit à
 partir de ses arguments et du contexte qu'il déclare. Il ne reçoit rien
 d'autre : ni l'historique, ni les outils de l'orchestrateur.
 
-Contexte déclarable (#12) : ``user_input`` (la demande de l'utilisateur, mot
+Contexte déclarable (point 12) : ``user_input`` (la demande de l'utilisateur, mot
 pour mot), ``caller_context`` (le contexte de l'appelant), ``tool_results``
 (tous les résultats réussis des outils nommés, dans l'ordre des appels, en
 entier même s'ils ont été déportés) et ``attachments`` (les pièces jointes du
@@ -16,11 +16,11 @@ l'orchestrateur reçoit une erreur qui lui dit quoi faire d'abord.
 State de la session (``session_state``, entier ou certaines clés) : tel que
 les outils le lisent au début du lot — clés déclarées, valeurs par défaut
 comprises —, en JSON compact aux clés triées ; ``{}`` s'il est vide, et dans
-un sous-run, qui ne le reçoit pas (D3). Un template cite le state entier
+un sous-run, qui ne le reçoit pas (décision D3 du state de session). Un template cite le state entier
 (``context.session_state``) ou une clé (``context.session_state.<clé>``) ;
 une clé sans valeur y donne une chaîne vide.
 
-Rôle vision (C4) : un rôle qui déclare ``attachments`` reçoit les images
+Rôle vision (fonction C4) : un rôle qui déclare ``attachments`` reçoit les images
 jointes à la demande, à la suite de son texte ; son modèle les voit s'il a la
 capacité ``vision``. Sans pièce jointe dans le run, il est masqué à
 l'orchestrateur.
@@ -41,14 +41,14 @@ au lieu d'être ignoré sans bruit.
 Appel : ``model.retried`` et ``model.responded`` sont journalisés dans le span
 de l'appel, avec son ``call_id``. Une erreur du modèle, après ses nouvelles
 tentatives, ou une sortie vide deviennent un résultat d'erreur pour
-l'orchestrateur (D5).
+l'orchestrateur (fonction D5).
 
-Réparation (#20) : un rôle rend aussi l'échange qui a produit sa sortie. Si
+Réparation (point 20) : un rôle rend aussi l'échange qui a produit sa sortie. Si
 une politique la refuse (contrat de sortie…), le même modèle reçoit, à la
 suite de sa conversation, sa réponse puis le diagnostic, et répond de
 nouveau ; chaque réponse est journalisée dans le span de l'appel.
 
-Secours (B4, #10) : un rôle peut déclarer ses ``fallbacks``. Une bascule
+Secours (fonction B4, point 10) : un rôle peut déclarer ses ``fallbacks``. Une bascule
 (``model.fell_back``) est journalisée dans le span de l'appel ; le run garde
 ensuite le secours pour ce rôle (adhérence), et le modèle qui a répondu est
 celui qui répare.
@@ -56,9 +56,14 @@ celui qui répare.
 Diffusion (backlog #009) : un rôle terminal appelé seul diffuse sa sortie en
 direct quand l'agent diffuse en ``live`` (``RunView.on_chunk``).
 
-Schéma natif (B9) : un rôle sous contrat avec schéma le transmet dans sa
+Schéma natif (fonction B9) : un rôle sous contrat avec schéma le transmet dans sa
 requête (``output_schema``) ; l'adaptateur le donne au fournisseur si le
 modèle a la capacité ``native_json``.
+
+Config : ``roles.<nom>`` (``description``, ``model``, ``fallbacks``,
+``system`` ou ``system_file``, ``input_schema``, ``input_template``,
+``context``, ``terminal``, ``timeout``, ``output``, ``max_tokens``,
+``params``), branché par un agent dans ``roles:``.
 """
 
 import html
@@ -101,8 +106,6 @@ from loom_ia.engine.transcript import transcript
 
 logger = logging.getLogger(__name__)
 
-# Balises des blocs de contexte que reçoivent les rôles, les juges et le juge
-# d'éval, et du state de la session que reçoit l'orchestrateur (D4).
 TAGS: Final = (
     "criteria",
     "user_input",
@@ -115,36 +118,53 @@ TAGS: Final = (
     "output",
     SESSION_STATE_TAG,
 )
-# Le ``<`` qui ouvre ou ferme l'une d'elles, même espacé ou en majuscules.
-_OWN_TAG: Final = re.compile(rf"<(?=\s*/?\s*(?:{'|'.join(TAGS)})\b)", re.IGNORECASE)
+"""Balises des blocs de contexte.
 
-# Mention ajoutée à la description d'un rôle qui déclare du contexte.
+Ceux que reçoivent les rôles, les juges et le juge d'éval, et le state de la
+session que reçoit l'orchestrateur (décision D4 du state de session).
+"""
+_OWN_TAG: Final = re.compile(rf"<(?=\s*/?\s*(?:{'|'.join(TAGS)})\b)", re.IGNORECASE)
+"""Le ``<`` qui ouvre ou ferme l'une d'elles, même espacé ou en majuscules."""
+
 CONTEXT_HINT: Final = "Reçoit déjà, inutile de les transmettre"
-# Consigne ajoutée au prompt système d'un rôle sans template qui reçoit le
-# state ; suit une ligne par clé, avec ce qu'elle désigne. Avec un template,
-# c'est son texte qui présente les valeurs.
+"""Mention ajoutée à la description d'un rôle qui déclare du contexte."""
 ROLE_STATE_HINT: Final = (
     f"La section <{SESSION_STATE_TAG}> de ta demande donne l'état courant de la session : "
     "un objet JSON tenu à jour par l'application et les outils. Une clé absente n'a pas "
     "de valeur."
 )
+"""Consigne ajoutée au prompt système d'un rôle sans template qui reçoit le state.
+
+Suit une ligne par clé, avec ce qu'elle désigne. Avec un template, c'est son
+texte qui présente les valeurs.
+"""
 
 
 type ContextScope = Literal["run", "session"]
+"""Où chercher les résultats d'un outil : le run seul, ou aussi la session."""
 
 
 @dataclass(frozen=True, slots=True)
 class ToolResults:
-    """Contexte ``tool_results`` : résultats des outils nommés."""
+    """Contexte ``tool_results`` : résultats des outils nommés.
+
+    Attributes:
+        tools: Les outils nommés.
+        scope: ``run`` ; ``session`` : à défaut de résultat dans le run, le
+            dernier de la session.
+    """
 
     tools: tuple[str, ...]
-    # ``session`` : à défaut de résultat dans le run, le dernier de la session.
     scope: ContextScope = "run"
 
 
 @dataclass(frozen=True, slots=True)
 class LastTurns:
-    """Contexte ``last_turns`` : derniers tours de la session (un tour = un run)."""
+    """Contexte ``last_turns`` : derniers tours de la session (un tour = un run).
+
+    Attributes:
+        count: Nombre de tours reçus.
+    """
 
     count: int
 
@@ -155,6 +175,10 @@ class SessionState:
 
     ``described`` : chaque clé que reçoit le rôle, avec ce qu'elle désigne ; un
     rôle sans template les lit dans son prompt système (``ROLE_STATE_HINT``).
+
+    Attributes:
+        keys: Les clés nommées ; vide : toutes.
+        described: Chaque clé reçue, avec ce qu'elle désigne.
     """
 
     keys: tuple[str, ...] = ()
@@ -162,8 +186,9 @@ class SessionState:
 
 
 type ContextItem = Literal["user_input", "caller_context", "attachments", "session_summary"] | ToolResults | LastTurns
-# Contexte d'un rôle : celui d'un juge, et le state de la session.
+"""Contexte déclarable par un juge (et par un rôle)."""
 type RoleContextItem = ContextItem | SessionState
+"""Contexte d'un rôle : celui d'un juge, et le state de la session."""
 
 
 def _empty_object() -> dict[str, JsonValue]:
@@ -172,27 +197,56 @@ def _empty_object() -> dict[str, JsonValue]:
 
 @dataclass(frozen=True, kw_only=True)
 class RoleDefinition:
-    """Un rôle tel que le moteur l'exécute : prompt lu, template analysé."""
+    """Un rôle tel que le moteur l'exécute : prompt lu, template analysé.
+
+    Attributes:
+        name: Nom de l'outil vu par l'orchestrateur.
+        description: Description du rôle ; le contexte reçu y est ajouté.
+        system: Prompt système du rôle.
+        input_schema: Schéma des arguments. Sans ``additionalProperties``
+            déclaré, les arguments non prévus sont refusés.
+        template: ``input_template`` analysé ; ``None`` : blocs balisés.
+        context: Contexte reçu, dans l'ordre déclaré.
+        terminal: Vrai si sa sortie devient la réponse finale du run
+            (fonction C3).
+        timeout: Délai de l'appel, en secondes ; sans lui, ceux du modèle et
+            son retry le bornent.
+        output: Contrat de sortie du rôle (fonction E5) : réparé par son
+            propre modèle.
+        max_tokens: Réglage propre au rôle (fonction B6) : remplace celui du
+            modèle.
+        params: Paramètres propres au rôle, par-dessus ceux du modèle.
+    """
 
     name: str
     description: str
     system: str = ""
-    # Sans ``additionalProperties`` déclaré, les arguments non prévus sont refusés.
     input_schema: dict[str, JsonValue] = field(default_factory=_empty_object)
     template: Template | None = None
     context: tuple[RoleContextItem, ...] = ()
     terminal: bool = False
-    # Délai de l'appel ; sans lui, ceux du modèle et son retry le bornent.
     timeout: float | None = None
-    # Contrat de sortie du rôle (E5) : réparé par son propre modèle.
     output: OutputContract | None = None
-    # Réglages propres au rôle (B6) : remplacent ceux du modèle.
     max_tokens: int | None = None
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
 
 class RoleTool(DelegatedTool):
-    """Outil qui délègue l'appel à un rôle."""
+    """Outil qui délègue l'appel à un rôle.
+
+    L'outil est sans effet (``side_effects: none``) ; son délai et ``terminal``
+    viennent du rôle.
+
+    Attributes:
+        definition: Le rôle.
+        system: Prompt système envoyé : celui du rôle, et la consigne du state
+            s'il le reçoit.
+        model: Client du modèle du rôle.
+        model_spec: Définition du modèle du rôle.
+        fallbacks: Secours du modèle du rôle, dans l'ordre (fonction B4,
+            point 10).
+        breakers: Disjoncteurs partagés de l'instance.
+    """
 
     def __init__(
         self,
@@ -203,12 +257,19 @@ class RoleTool(DelegatedTool):
         fallbacks: Sequence[ModelLink] = (),
         breakers: CircuitBreakers | None = None,
     ):
+        """Construit la description de l'outil.
+
+        Args:
+            definition: Le rôle.
+            model: Client du modèle du rôle.
+            model_spec: Définition du modèle du rôle.
+            fallbacks: Secours, dans l'ordre.
+            breakers: Disjoncteurs partagés de l'instance.
+        """
         self.definition = definition
-        # Prompt système envoyé : celui du rôle, et la consigne du state s'il le reçoit.
         self.system = _with_state_hint(definition)
         self.model = model
         self.model_spec = model_spec
-        # Secours du modèle du rôle, dans l'ordre (B4, #10).
         self.fallbacks = tuple(fallbacks)
         self.breakers = breakers
         self._spec = ToolSpec(
@@ -224,6 +285,7 @@ class RoleTool(DelegatedTool):
 
     @property
     def spec(self) -> ToolSpec:
+        """Description de l'outil : nom, description complétée, schéma strict."""
         return self._spec
 
     def __repr__(self) -> str:
@@ -231,18 +293,34 @@ class RoleTool(DelegatedTool):
 
     @property
     def wants_attachments(self) -> bool:
+        """Vrai si le rôle déclare le contexte ``attachments``."""
         return "attachments" in self.definition.context
 
     def available(self, run: RunView) -> bool:
-        """Un rôle qui attend les pièces jointes est masqué quand le run n'en a pas (C4)."""
+        """Un rôle qui attend les pièces jointes est masqué quand le run n'en a pas (fonction C4)."""
         return not self.wants_attachments or bool(run.state.attachments)
 
     async def check(self, arguments: dict[str, JsonValue], run: RunView) -> str | None:
+        """Le motif de refus de ``message``, s'il y en a un : le rôle n'est alors pas appelé."""
         built = await self.message(arguments, run)
         return built if isinstance(built, str) else None
 
     async def message(self, arguments: dict[str, JsonValue], run: RunView) -> Message | str:
-        """Message envoyé au rôle, ou motif de refus destiné à l'orchestrateur."""
+        """Message envoyé au rôle, ou motif de refus destiné à l'orchestrateur.
+
+        Avec un template, son rendu (variables ``args`` et ``context``) ; sans,
+        un bloc balisé par contexte, dans l'ordre déclaré, puis
+        ``<arguments>``. Les pièces jointes suivent le texte.
+
+        Args:
+            arguments: Arguments de l'orchestrateur.
+            run: La vue du run.
+
+        Returns:
+            Le message ``user`` ; sinon le motif : pas de pièce jointe, pas
+            encore de résultat d'un outil nommé (« appelle d'abord cet
+            outil »), résultat illisible, ou rien à envoyer.
+        """
         role = self.definition
         sections: list[str] = []
         values: dict[str, JsonValue] = {}
@@ -315,7 +393,11 @@ class RoleTool(DelegatedTool):
         return Message(role="user", blocks=(TextBlock(text=text), *files))
 
     def chain(self, run: RunView) -> ModelChain:
-        """Modèle du rôle et ses secours, avec les réglages du rôle (B6)."""
+        """Modèle du rôle et ses secours, avec les réglages du rôle (fonction B6).
+
+        Args:
+            run: La vue du run : diffusion en direct et magasin de fichiers.
+        """
         role = self.definition
         return ModelChain(
             links=(ModelLink(self.model_spec, self.model), *self.fallbacks),
@@ -328,13 +410,26 @@ class RoleTool(DelegatedTool):
         )
 
     async def run(self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
+        """Un appel de modèle sur le message du rôle, sur le modèle courant du rôle (adhérence).
+
+        Args:
+            arguments: Arguments de l'orchestrateur.
+            context: Contexte de l'appel.
+            run: La vue du run.
+
+        Yields:
+            Les événements de l'appel (avec ``call_id``), le ``model.responded``,
+            l'échange, puis la sortie : le texte du modèle, ou une erreur
+            (« Le rôle <nom> n'a pas pu répondre (model.<genre>) : … », « … n'a
+            rien produit »).
+        """
         role = self.definition
         built = await self.message(arguments, run)
         if isinstance(built, str):
             yield ToolOutput.error(built)
             return
         chain = self.chain(run)
-        # Adhérence (#10) : après une bascule, le run reste sur le secours du rôle.
+        # Adhérence (point 10) : après une bascule, le run reste sur le secours du rôle.
         current = run.state.models.get(role.name)
         spec = chain.link(current).spec
         request = ModelRequest(
@@ -358,7 +453,22 @@ class RoleTool(DelegatedTool):
         context: ToolContext,
         run: RunView,
     ) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
-        """Modèle qui a répondu, même conversation : sa réponse, puis le diagnostic (#20)."""
+        """Modèle qui a répondu, même conversation : sa réponse, puis le diagnostic (point 20).
+
+        Le diagnostic est un message ``user`` « <REPAIR_PREFIX> (<politique>) :
+        <diagnostic> ». Une sortie déjà diffusée est effacée par un
+        ``StreamReset``.
+
+        Args:
+            exchange: L'échange de la sortie refusée.
+            feedback: Diagnostic de la politique.
+            policy: Nom de la politique.
+            context: Contexte de l'appel.
+            run: La vue du run.
+
+        Yields:
+            Comme ``run``.
+        """
         diagnostic = Message.user(f"{REPAIR_PREFIX} ({policy}) : {feedback}")
         request = exchange.request.model_copy(update={"messages": (*exchange.request.messages, exchange.answer, diagnostic)})
         if run.on_chunk is not None:
@@ -375,6 +485,12 @@ class RoleTool(DelegatedTool):
         """Un appel du rôle, secours compris : ses événements, l'échange, puis la sortie.
 
         ``request`` est construite pour le modèle ``current`` de la chaîne.
+
+        Une erreur du modèle devient un résultat d'erreur ; les appels d'outils
+        de la réponse sont écartés.
+
+        Raises:
+            RuntimeError: La chaîne s'est terminée sans réponse ni erreur.
         """
         role = self.definition
         started = time.perf_counter()
@@ -388,7 +504,7 @@ class RoleTool(DelegatedTool):
                         yield outcome.model_copy(update={"call_id": context.call_id})
         except ModelError as exc:
             # Erreur classée du fournisseur : son message suffit, sans pile d'appels.
-            # Un arrêt voulu par le client (rejeu) n'est pas une panne (J6.2b).
+            # Un arrêt voulu par le client (rejeu) n'est pas une panne (jalon J6.2b).
             logger.log(
                 logging.DEBUG if stopped_by_client(exc) else logging.WARNING,
                 "Échec du rôle %s (modèle %s) : model.%s — %s",
@@ -421,7 +537,15 @@ class RoleTool(DelegatedTool):
 
 
 def described(definition: RoleDefinition) -> str:
-    """Description vue par l'orchestrateur : celle du rôle, puis le contexte qu'il reçoit."""
+    """Description vue par l'orchestrateur : celle du rôle, puis le contexte qu'il reçoit.
+
+    Args:
+        definition: Le rôle.
+
+    Returns:
+        La description, suivie de « Reçoit déjà, inutile de les transmettre :
+        … » si le rôle déclare du contexte.
+    """
     received: list[str] = []
     for item in definition.context:
         match item:
@@ -461,20 +585,34 @@ def _with_state_hint(definition: RoleDefinition) -> str:
 
 
 def strict_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    """Schéma d'entrée qui refuse les arguments non prévus, sauf choix contraire déclaré."""
+    """Schéma d'entrée qui refuse les arguments non prévus, sauf choix contraire déclaré.
+
+    Args:
+        schema: Le schéma déclaré.
+
+    Returns:
+        Le schéma, avec ``additionalProperties: false`` s'il ne le déclare pas.
+    """
     if "additionalProperties" in schema:
         return schema
     return {**schema, "additionalProperties": False}
 
 
 def user_input(state: RunState) -> str:
-    """Demande de l'utilisateur qui a lancé le run, mot pour mot."""
+    """Demande de l'utilisateur qui a lancé le run, mot pour mot.
+
+    Args:
+        state: L'état du run.
+
+    Returns:
+        Le texte du premier message ``user`` ; vide s'il n'y en a pas.
+    """
     first = next((m for m in state.messages if m.role == "user"), None)
     return first.text if first is not None else ""
 
 
 def tagged(tag: str, body: str, **attributes: str) -> str:
-    """Bloc de contexte balisé, tel qu'un rôle ou un juge le reçoit.
+    r"""Bloc de contexte balisé, tel qu'un rôle ou un juge le reçoit.
 
     Le corps vient souvent d'ailleurs — un résultat d'outil, une page web, un
     e-mail — et ne doit pas pouvoir fermer sa section ni en ouvrir une autre :
@@ -484,6 +622,14 @@ def tagged(tag: str, body: str, **attributes: str) -> str:
     ``&lt;`` ; le reste du texte est rendu tel quel, et un texte ordinaire ne
     change pas — ni la requête, ni son ``request_hash``. Les valeurs d'attributs
     (nom d'un outil, référence) sont échappées comme en HTML.
+
+    Args:
+        tag: La balise.
+        body: Le corps.
+        **attributes: Attributs de la balise ouvrante.
+
+    Returns:
+        ``<tag attrs>\n<corps>\n</tag>``.
     """
     attrs = "".join(f' {name}="{html.escape(value, quote=True)}"' for name, value in attributes.items())
     return f"<{tag}{attrs}>\n{_OWN_TAG.sub('&lt;', body)}\n</{tag}>"

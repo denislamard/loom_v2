@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Fichiers dans les appels de modèle : références résolues selon les capacités (#14).
+"""Fichiers dans les appels de modèle : références résolues selon les capacités (point 14).
 
 Le journal et le ``RunState`` ne portent que des références
 (``ArtifactRefBlock``). Juste avant l'appel, chaque référence est remplacée
@@ -24,7 +24,7 @@ une erreur ferait échouer le run à chaque appel suivant, puisque l'image
 reste dans l'historique. Une pièce jointe refusée, elle, reste une erreur :
 celui qui l'a jointe peut en joindre une autre.
 
-Images des tours précédents (F4, ``sessions.media.keep_images``) : par
+Images des tours précédents (fonction F4, ``sessions.media.keep_images``) : par
 défaut (``all``), toutes sont résolues comme celles du run, à chaque appel.
 Avec ``last_run``, l'historique de la session les remplace par une note
 avant de former la requête (``earlier_images``) ; seules les images du run en
@@ -54,9 +54,11 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import ArtifactNotFound, ArtifactStore, ModelError
 
-# Tokens comptés par image dans l'estimation de la fenêtre de contexte (B7) :
-# ordre de grandeur d'une image d'un mégapixel chez Anthropic.
 IMAGE_TOKENS: Final = 1600
+"""Tokens comptés par image dans l'estimation de la fenêtre de contexte (fonction B7).
+
+Ordre de grandeur d'une image d'un mégapixel chez Anthropic.
+"""
 
 
 def size_label(size: int | None) -> str:
@@ -77,12 +79,21 @@ def describe(block: ArtifactRefBlock) -> str:
 
 
 def earlier_images(messages: Sequence[Message]) -> list[Message]:
-    """Historique où chaque image d'un tour précédent devient une mention (F4).
+    """Historique où chaque image d'un tour précédent devient une mention (fonction F4).
 
     Pièce jointe ou image rendue par un outil : le modèle apprend qu'elle a
     existé (nom, type, taille) sans la recevoir ; elle n'est pas relue dans le
     stockage. Les autres fichiers gardent leur référence, que la résolution
     mentionne déjà.
+
+    Utilisé avec ``sessions.media.keep_images: last_run``.
+
+    Args:
+        messages: L'historique de la session, avant le run en cours.
+
+    Returns:
+        Les messages ; chaque image devient une « [Note du système : ce
+        message contenait l'image … Elle a été retirée de l'historique …] ».
     """
     return [_without_images(message) for message in messages]
 
@@ -93,7 +104,18 @@ def has_refs(messages: Sequence[Message]) -> bool:
 
 
 class MediaResolver:
-    """Remplace les références de fichiers d'une requête, pour un modèle donné."""
+    """Remplace les références de fichiers d'une requête, pour un modèle donné.
+
+    Args:
+        spec: Le modèle : ``capabilities.vision``, ``image_formats``,
+            ``max_image_bytes``, ``tool_result_media``.
+        store: Magasin de fichiers où lire les images ; ``None`` : une image
+            à envoyer est une erreur.
+
+    Attributes:
+        spec: Le modèle.
+        store: Magasin de fichiers.
+    """
 
     def __init__(self, spec: ModelSpec, store: ArtifactStore | None) -> None:
         self.spec = spec
@@ -104,11 +126,34 @@ class MediaResolver:
         return self.spec.capabilities.vision and is_image(block.media_type)
 
     def images(self, request: ModelRequest) -> int:
-        """Nombre d'images que le modèle recevra (estimation de la fenêtre)."""
+        """Nombre d'images que le modèle recevra (estimation de la fenêtre).
+
+        Args:
+            request: La requête, références non résolues.
+        """
         return sum(1 for message in request.messages for block in _refs(message.blocks) if self.sees(block))
 
     async def resolve(self, request: ModelRequest) -> ModelRequest:
-        """Requête prête à partir ; lève ``ModelError`` si une image est inutilisable."""
+        """Requête prête à partir, chaque référence remplacée selon les capacités du modèle.
+
+        Une image vue par le modèle devient ses octets (``InlineDataBlock``) ;
+        un autre fichier, ou une image que le modèle ne voit pas, une mention
+        « [fichier …] » ou « [image … : non visible par ce modèle] ». Les
+        images d'un résultat d'outil que le modèle n'accepte pas là partent
+        dans un message ``user`` placé après les résultats du tour.
+
+        Args:
+            request: La requête, références non résolues.
+
+        Returns:
+            La requête résolue ; la même s'il n'y a pas de référence.
+
+        Raises:
+            ModelError: ``invalid_request`` pour une pièce jointe au format ou
+                à la taille refusés par le modèle, ou introuvable dans le
+                stockage. Une image rendue par un outil n'en lève pas : elle
+                devient une mention qui dit pourquoi.
+        """
         if not has_refs(request.messages):
             return request
         messages: list[Message] = []
@@ -145,6 +190,18 @@ class MediaResolver:
         return resolved
 
     async def _resolved(self, block: ArtifactRefBlock, verb: str, *, refused_as_text: bool = False) -> TextBlock | InlineDataBlock:
+        """Une référence résolue : octets de l'image, ou mention.
+
+        Args:
+            block: La référence.
+            verb: Origine dite dans la mention (« jointe », « rendue »…).
+            refused_as_text: Vrai pour une image rendue par un outil : un
+                refus devient une mention au lieu d'une erreur.
+
+        Raises:
+            ModelError: Image refusée (format, taille) ou illisible, si
+                ``refused_as_text`` est faux, ou introuvable.
+        """
         if not self.sees(block):
             if is_image(block.media_type):
                 return TextBlock(text=f"[image {verb} {describe(block)} : non visible par ce modèle]")
@@ -184,7 +241,7 @@ class MediaResolver:
 def _earlier(block: ArtifactRefBlock, holder: str, origin: str = "") -> TextBlock:
     # La mention prend la place de l'image : sans dire que celle-ci était là à ce
     # tour, le modèle croit n'avoir reçu que ce texte, et désavoue la description
-    # qu'il en a faite (tests G3 du 20/10, deux textes essayés). Rien ne dit « vue » :
+    # qu'il en a faite (essai de la fonction G3, 20/10, deux textes essayés). Rien ne dit « vue » :
     # ce serait faux pour un modèle sans vision.
     return TextBlock(
         text=f"[Note du système : {holder} l'image {describe(block)}{origin}. Elle a été retirée "
@@ -194,6 +251,7 @@ def _earlier(block: ArtifactRefBlock, holder: str, origin: str = "") -> TextBloc
 
 
 def _without_images(message: Message) -> Message:
+    """Le message, chaque image (pièce jointe ou rendue par un outil) remplacée par une note."""
     if not any(is_image(block.media_type) for block in _refs(message.blocks)):
         return message
     blocks: list[ContentBlock] = []
@@ -221,6 +279,12 @@ class ConversationFiles:
     relit que ceux-là : nommer un fichier d'une autre session, ou deviner un
     condensé, ne mène à rien. Une référence d'un autre client ou d'une autre
     session (un message construit par l'application, par exemple) est ignorée.
+
+    Args:
+        messages: Les messages de la conversation.
+        store: Magasin de fichiers où les relire.
+        tenant: Client de la session.
+        session: Session ; seules ses références sont retenues.
     """
 
     def __init__(self, messages: Sequence[Message], store: ArtifactStore, *, tenant: str, session: str) -> None:
@@ -242,7 +306,16 @@ class ConversationFiles:
         return (location.tenant, location.session) == self._place
 
     def find(self, name: str) -> ArtifactRefBlock | None:
-        """Le plus récent du nom donné ; à défaut, celui dont c'est le nom dans le stockage."""
+        """Le plus récent du nom donné ; à défaut, celui dont c'est le nom dans le stockage.
+
+        Args:
+            name: Nom du fichier (``name`` de la référence, ou dernier segment
+                de son URI).
+
+        Returns:
+            La référence ; ``None`` si aucun fichier de la conversation ne
+            porte ce nom.
+        """
         found = self._all()
         named = [ref for ref in found if ref.name == name]
         if named:
@@ -250,9 +323,23 @@ class ConversationFiles:
         return next((ref for ref in reversed(found) if ref.uri.rsplit("/", 1)[-1] == name), None)
 
     def names(self) -> tuple[str, ...]:
+        """Noms des fichiers de la conversation, sans doublon, dans l'ordre d'apparition."""
         return tuple(dict.fromkeys(ref.name or ref.uri.rsplit("/", 1)[-1] for ref in self._all()))
 
     async def read(self, file: ArtifactRefBlock, *, max_bytes: int) -> bytes:
+        """Octets d'un fichier de la conversation.
+
+        Args:
+            file: La référence, obtenue par ``find``.
+            max_bytes: Taille maximale acceptée, en octets.
+
+        Returns:
+            Le contenu du fichier.
+
+        Raises:
+            ValueError: Fichier plus gros que ``max_bytes``.
+            LookupError: Fichier absent du stockage.
+        """
         if file.size is not None and file.size > max_bytes:
             raise ValueError(f"{describe(file)} : au-delà de {size_label(max_bytes)}")
         try:

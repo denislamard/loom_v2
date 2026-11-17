@@ -16,20 +16,33 @@ from pydantic import JsonValue, ValidationError
 from loom_ia.core.model import TextBlock, ToolOutput
 from loom_ia.core.model.question import PendingQuestion, Question, QuestionReply
 
-# Un message libre est routé vers la question même s'il parle d'autre chose
-# (D-3) : sans cette consigne, le modèle y répond et repose sa question en
-# texte, et le run se termine sans question ouverte (essai Haiku, ask-06).
-# La demande de départ répétée est nommée : Haiku la prenait pour une
-# nouvelle demande et finissait sur la question écrite en texte (ask-12).
 OFF_TOPIC = (
     "Si ce message ne répond pas à ta question (autre sujet, ou ta demande de départ "
     "répétée), traite-le si besoin, puis repose ta question avec ask, jamais dans ta "
     "réponse en texte : le run se terminerait sans attendre la réponse."
 )
+"""Consigne ajoutée à une réponse en message libre.
+
+Un message libre est routé vers la question même s'il parle d'autre chose
+(décision D-3 de l'attente d'une réponse, ``docs/wait_answer.md``) : sans cette
+consigne, le modèle y répond et repose sa question en texte, et le run se
+termine sans question ouverte (essai Haiku, ask-06). La demande de départ
+répétée est nommée : Haiku la prenait pour une nouvelle demande et finissait
+sur la question écrite en texte (ask-12).
+"""
 
 
 def asked(arguments: Mapping[str, JsonValue]) -> tuple[Question, ...] | str:
-    """Les questions de l'appel, ou ce qui ne va pas (pour le modèle)."""
+    """Les questions de l'appel ``ask``, ou ce qui ne va pas.
+
+    Args:
+        arguments: Arguments de l'appel ; ``questions`` doit être une liste
+            non vide d'objets ``Question``.
+
+    Returns:
+        Les questions validées ; sinon le message d'erreur destiné au modèle
+        (« Donner 'questions' : … » ou « Question invalide (<champ>) : … »).
+    """
     given = arguments.get("questions")
     if not isinstance(given, list) or not given:
         return "Donner 'questions' : une liste d'au moins une question."
@@ -42,6 +55,7 @@ def asked(arguments: Mapping[str, JsonValue]) -> tuple[Question, ...] | str:
 
 
 def expiry(expires_in: float | None) -> datetime | None:
+    """Échéance d'une question : maintenant plus ``expires_in`` secondes, ou ``None`` sans délai."""
     return None if expires_in is None else datetime.now(UTC) + timedelta(seconds=expires_in)
 
 
@@ -57,6 +71,13 @@ def reply_problem(pending: PendingQuestion, reply: QuestionReply) -> str | None:
     422 REST, refus de la CLI). Avant, « 1 réponse(s) pour 2 question(s) » ne
     disait ni lesquelles ni comment répondre (essai réel t-2000 du 02/11).
     Il ne part ni au modèle ni au journal.
+
+    Args:
+        pending: La question en attente.
+        reply: La réponse reçue : ``text`` libre ou ``answers`` par question.
+
+    Returns:
+        Le message qui dit ce qui ne va pas ; ``None`` si la réponse convient.
     """
     if (reply.answers is None) == (reply.text is None):
         return "une réponse donne soit 'answers' (une par question), soit 'text'"
@@ -80,7 +101,15 @@ def _count(n: int, word: str) -> str:
 
 
 def named_question(number: int, question: Question) -> str:
-    """« question 2 (Acompte) », ou « question 2 » sans intitulé."""
+    """« question 2 (Acompte) », ou « question 2 » sans intitulé.
+
+    Args:
+        number: Rang de la question, à partir de 1.
+        question: La question.
+
+    Returns:
+        Le nom à afficher.
+    """
     header = (question.header or "").strip()
     return f"question {number} ({header})" if header else f"question {number}"
 
@@ -101,7 +130,18 @@ def _names(questions: Sequence[Question]) -> str:
 
 
 def answered_output(pending: PendingQuestion) -> ToolOutput:
-    """Ce que le modèle reçoit : chaque question avec sa réponse, ou le message libre."""
+    """Ce que le modèle reçoit : chaque question avec sa réponse, ou le message libre.
+
+    Args:
+        pending: La question en attente, réponse comprise (``reply`` non
+            vide).
+
+    Returns:
+        Le résultat de l'appel ``ask``. Texte « Réponse de l'utilisateur :
+        - <question> → <valeurs> » et ``data`` ``{"answers": [{"question",
+        "answer"}]}`` ; pour un message libre, le texte suivi de
+        ``OFF_TOPIC`` et ``data`` ``{"reply": <texte>}``.
+    """
     reply = pending.reply
     assert reply is not None
     data: dict[str, JsonValue]
@@ -120,6 +160,17 @@ def answered_output(pending: PendingQuestion) -> ToolOutput:
 
 
 def expired_output(pending: PendingQuestion) -> ToolOutput:
+    """Résultat en erreur rendu au modèle quand la question a expiré sans réponse.
+
+    Il lui dit de ne pas reposer la question de lui-même et de continuer sans
+    l'information, ou de dire ce qui manque.
+
+    Args:
+        pending: La question expirée.
+
+    Returns:
+        Le résultat de l'appel ``ask``, en erreur.
+    """
     return ToolOutput.error(
         "L'utilisateur n'a pas répondu dans le délai. Ne repose pas la question de toi-même ; "
         "continue sans cette information si tu le peux, sinon dis-lui ce qui manque."
@@ -132,4 +183,5 @@ def summary(questions: Sequence[Question]) -> str:
 
 
 def as_json(questions: Sequence[Question]) -> str:
+    """Les questions en JSON (champs vides omis), pour l'affichage d'un accès."""
     return json.dumps([q.model_dump(mode="json", exclude_none=True) for q in questions], ensure_ascii=False)

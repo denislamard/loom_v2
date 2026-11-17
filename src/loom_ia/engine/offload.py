@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Gros résultats d'outils : déport dans le stockage d'artefacts (#16, D6).
+"""Gros résultats d'outils : déport dans le stockage d'artefacts (point 16, fonction D6).
 
 Au-delà du seuil de l'outil (``offload_over``, en caractères de ce que le
 modèle verrait), le contenu complet part dans le stockage d'artefacts et le
@@ -12,6 +12,9 @@ seulement après un premier déport dans le run, ou transmet le résultat entier
 à un rôle par ``$ref`` sans le lire.
 
 Sans stockage d'artefacts, le résultat est simplement tronqué.
+
+Réglages : ``offload_over`` d'un outil, ou ``execution.tools.offload_over``
+pour tous (50 000 caractères par défaut).
 """
 
 import json
@@ -30,20 +33,35 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import ArtifactNotFound, ToolContext, ToolError
 from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, RunView
 
-# Seuil par défaut, en caractères (§17.6 ``execution.tools.offload_over``).
 DEFAULT_OFFLOAD_OVER: Final = 50_000
-# Taille de l'aperçu, en caractères.
+"""Seuil de déport par défaut, en caractères (conception §17.6, ``execution.tools.offload_over``)."""
 PREVIEW_CHARS: Final = 2_000
+"""Taille maximale de l'aperçu, en caractères."""
 PREVIEW_KEYS: Final = 20
+"""Nombre de clés d'un objet JSON montrées dans l'aperçu."""
 PREVIEW_ITEMS: Final = 3
+"""Nombre d'éléments d'une liste JSON montrés dans l'aperçu."""
 
 ARTIFACT_READ: Final = "artifact_read"
+"""Nom de l'outil intégré qui lit un résultat déporté."""
 READ_LIMIT: Final = 20_000
+"""Nombre de caractères lus par ``artifact_read`` si ``limit`` n'est pas donné."""
 READ_MAX: Final = 50_000
+"""Valeur maximale de ``limit`` pour ``artifact_read``."""
 
 
 def visible_text(output: ToolOutput) -> str:
-    """Ce que le modèle verrait d'un résultat : ses textes et ses JSON, ou ``data``."""
+    """Ce que le modèle verrait d'un résultat : ses textes et ses JSON, ou ``data``.
+
+    C'est sur sa longueur que se mesure le seuil ``offload_over``.
+
+    Args:
+        output: Le résultat de l'outil.
+
+    Returns:
+        Les textes et les JSON des blocs, une ligne par bloc ; ``data`` en
+        JSON si le résultat n'a pas de blocs.
+    """
     parts: list[str] = []
     for block in output.blocks:
         match block:
@@ -59,14 +77,35 @@ def visible_text(output: ToolOutput) -> str:
 
 
 def full_content(output: ToolOutput) -> tuple[str, str]:
-    """Contenu complet à ranger, et son type : ``data`` en JSON s'il existe, sinon le texte."""
+    """Contenu complet à ranger, et son type : ``data`` en JSON s'il existe, sinon le texte.
+
+    Args:
+        output: Le résultat de l'outil.
+
+    Returns:
+        Le contenu et son type MIME (``application/json`` ou
+        ``text/plain``).
+    """
     if output.data is not None:
         return _json(output.data), "application/json"
     return visible_text(output), "text/plain"
 
 
 def offloaded(output: ToolOutput, *, uri: str, content: str, refs: bool) -> ToolOutput:
-    """Résultat réduit à un aperçu et à la référence de son contenu complet."""
+    """Résultat réduit à un aperçu et à la référence de son contenu complet.
+
+    Args:
+        output: Le résultat d'origine.
+        uri: Référence du contenu rangé (``artifact://…``).
+        content: Le contenu complet, pour en dire la longueur.
+        refs: Vrai si le run accepte les références ``$ref`` : la note dit
+            alors comment transmettre le résultat entier.
+
+    Returns:
+        Un résultat dont le texte est l'aperçu suivi d'une note « [Résultat
+        déporté : … outil artifact_read avec ref=…] », avec les fichiers, le
+        statut d'erreur et le state d'origine, et ``offloaded`` à ``uri``.
+    """
     value: JsonValue = output.data if output.data is not None else content
     kind = "JSON" if output.data is not None else "texte"
     hint = (
@@ -88,7 +127,16 @@ def offloaded(output: ToolOutput, *, uri: str, content: str, refs: bool) -> Tool
 
 
 def truncated(output: ToolOutput, limit: int) -> ToolOutput:
-    """Résultat tronqué au seuil, faute de stockage d'artefacts."""
+    """Résultat tronqué au seuil, faute de stockage d'artefacts.
+
+    Args:
+        output: Le résultat d'origine.
+        limit: Nombre de caractères gardés.
+
+    Returns:
+        Un résultat dont le texte est coupé à ``limit``, suivi d'une note
+        « [Résultat tronqué : …] ».
+    """
     text = visible_text(output)
     note = f"\n\n[Résultat tronqué : {limit} caractères montrés sur {len(text)}, aucun stockage d'artefacts pour conserver le reste.]"
     return ToolOutput(
@@ -101,7 +149,17 @@ def truncated(output: ToolOutput, limit: int) -> ToolOutput:
 
 
 def preview(value: JsonValue) -> str:
-    """Début d'un texte, ou structure d'un JSON."""
+    """Début d'un texte, ou structure d'un JSON.
+
+    Args:
+        value: Le contenu.
+
+    Returns:
+        Un texte : ses 2 000 premiers caractères ; un objet : ses 20
+        premières clés avec la nature de chaque valeur ; une liste : sa
+        longueur et ses 3 premiers éléments. Toujours coupé à 2 000
+        caractères.
+    """
     match value:
         case str():
             return _cut(value, PREVIEW_CHARS)
@@ -120,9 +178,16 @@ def preview(value: JsonValue) -> str:
 
 
 class ArtifactReadTool(DelegatedTool):
-    """Outil intégré ``artifact_read`` : lit un résultat déporté par morceaux."""
+    """Outil intégré ``artifact_read`` : lit un résultat déporté par morceaux.
+
+    Arguments du modèle : ``ref`` (référence ``artifact://…``), ``offset``
+    (premier caractère, 0 par défaut), ``limit`` (nombre de caractères,
+    20 000 par défaut, 50 000 au plus). Exposé seulement si le run a un
+    magasin de fichiers et a déjà déporté un résultat.
+    """
 
     def __init__(self) -> None:
+        """Construit la description de l'outil."""
         self._spec = ToolSpec(
             name=ARTIFACT_READ,
             description=(
@@ -156,12 +221,20 @@ class ArtifactReadTool(DelegatedTool):
 
     @property
     def spec(self) -> ToolSpec:
+        """Description de ``artifact_read`` montrée au modèle."""
         return self._spec
 
     def available(self, run: RunView) -> bool:
+        """Vrai si le run a un magasin de fichiers et au moins un résultat déporté."""
         return run.artifacts is not None and run.state.offloaded
 
     async def check(self, arguments: dict[str, JsonValue], run: RunView) -> str | None:
+        """Refuse une référence qui n'est pas un résultat déporté de ce run.
+
+        Returns:
+            « Référence inconnue : … » avec la liste des résultats déportés du
+            run ; ``None`` si la référence est connue.
+        """
         ref = arguments.get("ref")
         record = run.state.artifact(ref) if isinstance(ref, str) else None
         if record is not None and record.origin == "offload":
@@ -170,6 +243,15 @@ class ArtifactReadTool(DelegatedTool):
         return f"Référence inconnue : {ref!r}. Résultats déportés de ce run : {', '.join(known)}."
 
     async def run(self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView) -> AsyncGenerator[DelegatedPayload | ToolOutput]:
+        """Lit le morceau demandé.
+
+        Yields:
+            Un seul résultat : « [Caractères <début> à <fin> sur <total> ;
+            suite : offset=<fin>] » suivi du morceau, ou « fin du contenu ».
+
+        Raises:
+            ToolError: Pas de magasin de fichiers, ou référence introuvable.
+        """
         ref = str(arguments["ref"])
         offset = _integer(arguments.get("offset"), 0)
         limit = _integer(arguments.get("limit"), READ_LIMIT)

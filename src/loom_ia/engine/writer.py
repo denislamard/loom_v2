@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Écrivain d'une session : tous ses runs écrivent par lui (#4, #22).
+"""Écrivain d'une session : tous ses runs écrivent par lui (points 4 et 22).
 
 Chaque écriture annonce le dernier ``seq`` qu'elle connaît (écriture
 optimiste) : deux écrivains indépendants sur la même session se
@@ -32,7 +32,7 @@ levant. C'est ce que fait la concession d'un run : si un autre worker l'a prise
 entre-temps, la rejouer derrière lui ferait deux pilotes pour un run.
 
 Le pilote d'un run qui tient sa concession écrit par une vue de l'écrivain
-(``held``), qui partage sa position et son verrou (#27). Toute écriture
+(``held``), qui partage sa position et son verrou (point 27). Toute écriture
 reprise sur la session — la sienne, celle d'un autre run, celle de la
 compaction — fait passer sous les yeux des pilotes ce qui s'est écrit depuis.
 S'ils y voient un autre worker prendre la concession de leur run, ils l'ont
@@ -47,7 +47,7 @@ après la clôture. Ce qui ne vient pas du pilote — un arrêt, une décision
 d'approbation, la compaction — passe par l'écrivain lui-même et n'est pas
 concerné.
 
-La compaction écrit sans contrôle de séquence (``checked=False``, #23) : son
+La compaction écrit sans contrôle de séquence (``checked=False``, point 23) : son
 événement ne couvre que des événements anciens, et son worker ne partage aucun
 écrivain avec les runs en cours.
 """
@@ -73,20 +73,38 @@ from loom_ia.core.ports import EventStore, SequenceConflict
 
 logger = logging.getLogger(__name__)
 
-# Écritures refusées d'affilée avant d'abandonner : au-delà, ce n'est plus un
-# croisement mais un journal écrit sans répit par ailleurs.
 MAX_ATTEMPTS: Final = 5
-# Écrivains gardés par le registre ; au-delà, le moins récemment utilisé est
-# oublié (un run qui le tient encore continue de s'en servir).
+"""Écritures refusées d'affilée avant d'abandonner.
+
+Au-delà, ce n'est plus un croisement mais un journal écrit sans répit par
+ailleurs.
+"""
 MAX_WRITERS: Final = 256
+"""Écrivains gardés par le registre.
+
+Au-delà, le moins récemment utilisé est oublié (un run qui le tient encore
+continue de s'en servir).
+"""
 
 
-# Ce qui clôt un run : écrit ailleurs, il rend nos brouillons sur ce run caducs.
 _CLOSING: Final = (RunCompleted, RunFailed, RunCancelled)
+"""Ce qui clôt un run : écrit ailleurs, il rend nos brouillons sur ce run caducs."""
 
 
 class RunMoved(RuntimeError):
-    """Un autre process a clos un run que cet écrivain écrivait : rien n'a été écrit."""
+    """Un autre process a clos un run que cet écrivain écrivait : rien n'a été écrit.
+
+    ``drive`` s'arrête alors sur ce que dit le journal.
+
+    Args:
+        run_ids: Les runs du lot refusé.
+        events: Les clôtures écrites ailleurs (``run.completed``,
+            ``run.failed``, ``run.cancelled``).
+
+    Attributes:
+        run_ids: Les runs du lot refusé.
+        events: Les clôtures écrites ailleurs.
+    """
 
     def __init__(self, run_ids: frozenset[RunId], events: Sequence[Event]) -> None:
         said = ", ".join(f"{e.run_id} ({e.type}, seq {e.seq})" for e in events)
@@ -96,11 +114,21 @@ class RunMoved(RuntimeError):
 
 
 class ClaimConflict(RuntimeError):
-    """Un autre pilote tient la concession de ce run (#27).
+    """Un autre pilote tient la concession de ce run (point 27).
 
     Levée avant de piloter, si sa concession est vivante. Levée aussi en plein
     pilotage, par la vue du pilote (``SessionWriter.held``), dès qu'un autre
     worker l'a prise : il a pu la rendre depuis, ``lease_until`` est alors passé.
+
+    Args:
+        run_id: Le run.
+        worker_id: Le worker qui tient la concession.
+        until: Fin de sa concession.
+
+    Attributes:
+        run_id: Le run.
+        worker_id: Le worker qui tient la concession.
+        lease_until: Fin de sa concession.
     """
 
     def __init__(self, run_id: RunId, worker_id: str, until: datetime) -> None:
@@ -112,17 +140,24 @@ class ClaimConflict(RuntimeError):
 
 @dataclass(eq=False, slots=True)
 class _Tenure:
-    """Concession qu'un pilote de ce process tient sur un run, et ce qu'il en reste."""
+    """Concession qu'un pilote de ce process tient sur un run, et ce qu'il en reste.
+
+    Attributes:
+        run_id: Le run.
+        worker_id: Le worker du pilote.
+        taken: Dernière concession prise par un autre worker depuis la
+            nôtre : la perte.
+        closed: Clôture du run écrite ailleurs.
+    """
 
     run_id: RunId
     worker_id: str
-    # Dernière concession prise par un autre worker depuis la nôtre : la perte.
     taken: RunClaim | None = None
-    # Clôture du run écrite ailleurs.
     closed: tuple[Event, ...] = ()
 
     @property
     def lost(self) -> bool:
+        """Vrai si le run a été pris par un autre worker ou clos ailleurs."""
         return self.taken is not None or bool(self.closed)
 
     def witness(self, landed: Sequence[Event]) -> None:
@@ -146,11 +181,17 @@ class _Tenure:
 
 @dataclass(eq=False, slots=True)
 class _Shared:
-    """Ce que l'écrivain d'une session partage avec les vues de ses pilotes."""
+    """Ce que l'écrivain d'une session partage avec les vues de ses pilotes.
+
+    Attributes:
+        last_seq: Dernier ``seq`` connu de la session.
+        lock: Verrou qui ordonne les écritures.
+        tenures: Concessions tenues par les pilotes en cours : chaque reprise
+            les leur montre.
+    """
 
     last_seq: int
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    # Concessions tenues par les pilotes en cours : chaque reprise les leur montre.
     tenures: set[_Tenure] = field(default_factory=set[_Tenure])
 
 
@@ -160,6 +201,15 @@ class RunExists(ValueError):
     C'est une ``ValueError``, comme l'a toujours été « le run existe déjà ».
     ``session_id`` nomme la session qui le détient quand ce n'est pas celle
     demandée : un ``run_id`` choisi par l'appelant est unique chez son client.
+
+    Args:
+        run_id: Le run.
+        session_id: Session qui détient le run, si ce n'est pas celle
+            demandée.
+
+    Attributes:
+        run_id: Le run.
+        session_id: Session qui détient le run, ou ``None``.
     """
 
     def __init__(self, run_id: RunId, session_id: SessionId | None = None) -> None:
@@ -170,7 +220,23 @@ class RunExists(ValueError):
 
 
 class SessionWriter:
-    """Écritures ordonnées dans le journal d'une session."""
+    """Écritures ordonnées dans le journal d'une session.
+
+    Un seul écrivain par session et par instance (``SessionWriters``) : le
+    run, ses sous-agents et les runs parallèles de la session écrivent par
+    lui.
+
+    Args:
+        store: Le journal.
+        tenant_id: Client de la session.
+        session_id: La session.
+        last_seq: Dernier ``seq`` connu de la session.
+
+    Attributes:
+        store: Le journal.
+        tenant_id: Client de la session.
+        session_id: La session.
+    """
 
     def __init__(self, store: EventStore, tenant_id: TenantId, session_id: SessionId, last_seq: int) -> None:
         self.store = store
@@ -187,11 +253,22 @@ class SessionWriter:
 
     @last_seq.setter
     def last_seq(self, seq: int) -> None:
+        """Avance la position commune à l'écrivain et à ses vues."""
         self._shared.last_seq = seq
 
     @classmethod
     async def open(cls, store: EventStore, tenant_id: TenantId, session_id: SessionId) -> Self:
-        """Écrivain qui part du dernier événement de la session."""
+        """Écrivain qui part du dernier événement de la session.
+
+        Args:
+            store: Le journal.
+            tenant_id: Client de la session.
+            session_id: La session.
+
+        Returns:
+            Un écrivain neuf, non partagé ; ``SessionWriters.open`` rend celui
+            de l'instance.
+        """
         return cls(store, tenant_id, session_id, await store.last_seq(tenant_id, session_id))
 
     @contextmanager
@@ -206,6 +283,13 @@ class SessionWriter:
         rien écrire, et cela jusqu'au bout ; dès que le run a été clos ailleurs,
         de même avec ``RunMoved``. Le pilote, ses sous-runs et ses traces
         d'idempotence écrivent par elle.
+
+        Args:
+            run_id: Le run piloté.
+            worker_id: Le worker du pilote.
+
+        Yields:
+            La vue ; la concession est oubliée à la sortie du bloc.
         """
         tenure = _Tenure(run_id, worker_id)
         view = SessionWriter(self.store, self.tenant_id, self.session_id, self.last_seq)
@@ -248,6 +332,24 @@ class SessionWriter:
         Une vue de pilote (``held``) dont la concession a été prise lève
         ``ClaimConflict``, et dont le run a été clos ailleurs ``RunMoved`` :
         elle n'écrit rien.
+
+        Args:
+            drafts: Les brouillons, dans l'ordre.
+            checked: Faux pour écrire sans contrôle de séquence (compaction).
+            opens: Le run que le lot ouvre, s'il en ouvre un.
+            guard: Examen de ce qui s'est écrit depuis la position ; lève pour
+                renoncer.
+            since: Dernier ``seq`` lu par l'appelant avant de décider.
+
+        Returns:
+            Les événements écrits, numérotés ; la position avance jusqu'au
+            dernier.
+
+        Raises:
+            RunExists: Le run à ouvrir a déjà des événements.
+            RunMoved: Un run du lot a été clos ailleurs.
+            ClaimConflict: La concession de la vue a été prise.
+            SequenceConflict: Écriture refusée ``MAX_ATTEMPTS`` fois d'affilée.
         """
         batch = list(drafts)
         async with self._shared.lock:
@@ -339,7 +441,13 @@ class SessionWriter:
 
 
 class SessionWriters:
-    """Registre des écrivains d'une instance : un par session."""
+    """Registre des écrivains d'une instance : un par session.
+
+    Les moins récemment utilisés sont oubliés au-delà de ``max_writers``.
+
+    Args:
+        max_writers: Nombre d'écrivains gardés.
+    """
 
     def __init__(self, max_writers: int = MAX_WRITERS) -> None:
         self._writers: dict[tuple[TenantId, SessionId], SessionWriter] = {}
@@ -347,7 +455,18 @@ class SessionWriters:
         self._max = max_writers
 
     async def open(self, store: EventStore, tenant_id: TenantId, session_id: SessionId) -> SessionWriter:
-        """Écrivain de cette session, créé au premier appel."""
+        """Écrivain de cette session, créé au premier appel.
+
+        Un écrivain gardé pour un autre journal (``store``) est remplacé.
+
+        Args:
+            store: Le journal.
+            tenant_id: Client de la session.
+            session_id: La session.
+
+        Returns:
+            L'écrivain partagé de la session.
+        """
         key = (tenant_id, session_id)
         async with self._lock:
             writer = self._writers.pop(key, None)
@@ -359,10 +478,16 @@ class SessionWriters:
             return writer
 
     def forget(self, tenant_id: TenantId, session_id: SessionId) -> None:
-        """Oublie l'écrivain d'une session supprimée (F7)."""
+        """Oublie l'écrivain d'une session supprimée (fonction F7).
+
+        Args:
+            tenant_id: Client de la session.
+            session_id: La session.
+        """
         self._writers.pop((tenant_id, session_id), None)
 
     def clear(self) -> None:
+        """Oublie tous les écrivains."""
         self._writers.clear()
 
     def __len__(self) -> int:
