@@ -44,22 +44,24 @@ __all__ = [
     "read_frame",
 ]
 
-# Version du protocole parlée par ce client ; hello la vérifie.
 PROTOCOL: Final = 1
-# Bornes de cadrage d'execd : au-delà, c'est un défaut de protocole.
+"""Version du protocole parlée par ce client ; hello la vérifie."""
 MAX_HEADER: Final = 1 << 20
+"""Bornes de cadrage d'execd : au-delà, c'est un défaut de protocole."""
 MAX_BODY: Final = 8 << 20
-# Taille des morceaux envoyés et demandés.
+"""Taille maximale du corps d'une trame (voir ``MAX_HEADER``) ; l'invité peut en annoncer une autre au hello."""
 CHUNK: Final = 1 << 20
-# Délai d'une requête courte : hello, put, get, reset.
+"""Taille des morceaux envoyés et demandés."""
 REQUEST_TIMEOUT: Final = 30.0
-# wall_ms qu'execd applique quand on ne demande rien.
+"""Délai d'une requête courte : hello, put, get, reset."""
 DEFAULT_WALL_MS: Final = 30_000
-# Marge ajoutée au wall_ms d'un job : attente derrière les jobs des autres
-# sessions (execd n'en exécute qu'un à la fois) et 5 s de mise à mort.
+"""wall_ms qu'execd applique quand on ne demande rien."""
 EXEC_MARGIN: Final = 30.0
-# Ce que get_file accepte de rapatrier par défaut.
+"""Marge ajoutée au wall_ms d'un job : attente derrière les jobs des autres
+sessions (execd n'en exécute qu'un à la fois) et 5 s de mise à mort.
+"""
 MAX_FILE: Final = 16 << 20
+"""Ce que get_file accepte de rapatrier par défaut."""
 
 
 class ProtocolError(Exception):
@@ -78,23 +80,39 @@ class ExecdError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Hello:
-    """Ce que l'invité annonce à l'ouverture de la session."""
+    """Ce que l'invité annonce à l'ouverture de la session.
+
+    Attributes:
+        protocol: Version du protocole d'execd.
+        session_id: Identifiant de la session chez execd.
+        python: Version de Python dans l'invité, et du service.
+        runner: Exécuteur des jobs, tel qu'execd l'annonce.
+        max_body: Taille maximale du corps d'une trame.
+        max_code_bytes: Taille maximale d'un module déposé.
+        max_upload_total: Taille maximale de ce qu'une session dépose en tout.
+        ceilings: Plafonds des limites d'un job : au-delà, execd ramène au
+            plafond.
+    """
 
     protocol: int
     session_id: str
-    # Version de Python dans l'invité, et du service.
     python: str
     runner: str
     max_body: int
     max_code_bytes: int
     max_upload_total: int
-    # Plafonds des limites d'un job : au-delà, execd ramène au plafond.
     ceilings: Mapping[str, int]
 
 
 @dataclass(frozen=True, slots=True)
 class Output:
-    """Un fichier produit par le job dans ``out/``."""
+    """Un fichier produit par le job dans ``out/``.
+
+    Attributes:
+        path: Chemin dans ``out/``.
+        size: Taille, en octets.
+        sha256: Empreinte SHA-256 du contenu.
+    """
 
     path: str
     size: int
@@ -103,22 +121,34 @@ class Output:
 
 @dataclass(frozen=True, slots=True)
 class Execution:
-    """Le compte rendu d'un ``tool.exec``."""
+    """Le compte rendu d'un ``tool.exec``.
+
+    Attributes:
+        ok: Le job a réussi.
+        result: Valeur JSON rendue par le point d'entrée, si ok.
+        error: Pourquoi le job a échoué, si pas ok.
+        stdout: Sortie standard du job.
+        stderr: Sortie d'erreur du job.
+        stdout_truncated: Sortie standard coupée par l'invité.
+        stderr_truncated: Sortie d'erreur coupée par l'invité.
+        duration_ms: Durée du job, en millisecondes.
+        limits_applied: Limites réellement appliquées par l'invité (après
+            plafonnement).
+        outputs: Fichiers écrits dans ``out/``.
+        outputs_skipped: Entrées de out/ ignorées : liens symboliques, fichiers
+            spéciaux.
+    """
 
     ok: bool
-    # Valeur JSON rendue par le point d'entrée, si ok.
     result: object = None
-    # Pourquoi le job a échoué, si pas ok.
     error: ExecdError | None = None
     stdout: str = ""
     stderr: str = ""
     stdout_truncated: bool = False
     stderr_truncated: bool = False
     duration_ms: int | None = None
-    # Limites réellement appliquées par l'invité (après plafonnement).
     limits_applied: Mapping[str, int] = field(default_factory=dict[str, int])
     outputs: tuple[Output, ...] = ()
-    # Entrées de out/ ignorées : liens symboliques, fichiers spéciaux.
     outputs_skipped: tuple[str, ...] = ()
 
 
@@ -205,6 +235,7 @@ def _outputs(value: object) -> tuple[Output, ...]:
 
 
 def _execution(reply: Mapping[str, object]) -> Execution:
+    """Le compte rendu d'un ``tool.exec``, lu dans la réponse d'execd."""
     ok = reply.get("ok") is True
     return Execution(
         ok=ok,
@@ -281,6 +312,7 @@ class Session:
 
     @property
     def closed(self) -> bool:
+        """Vrai si la session est fermée."""
         return self._closed
 
     async def __aenter__(self) -> Self:
@@ -385,6 +417,17 @@ class Session:
         *,
         wait: float = REQUEST_TIMEOUT,
     ) -> tuple[dict[str, object], bytes]:
+        """Une requête et sa réponse, sous verrou, dans le délai ``wait``.
+
+        Un délai dépassé, une trame illisible, une connexion perdue ou une réponse
+        désynchronisée (``seq``) ferment la session ; une annulation la coupe
+        sur-le-champ.
+
+        Raises:
+            TimeoutError: Pas de réponse dans le délai.
+            ProtocolError: Session fermée, trame illisible, connexion perdue ou
+                réponse désynchronisée.
+        """
         async with self._lock:
             if self._closed:
                 raise ProtocolError(f"{method} : session fermée")
@@ -418,7 +461,6 @@ class Session:
             return reply, data
 
 
-# Valeur provisoire, le temps du hello.
 _NO_HELLO: Final = Hello(
     protocol=0,
     session_id="",
@@ -429,3 +471,4 @@ _NO_HELLO: Final = Hello(
     max_upload_total=0,
     ceilings={},
 )
+"""Valeur provisoire, le temps du hello."""

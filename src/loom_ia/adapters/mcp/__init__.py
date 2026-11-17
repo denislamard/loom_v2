@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Client MCP : serveurs référencés par les agents comme sources d'outils (#19, D3).
+"""Client MCP : serveurs référencés par les agents comme sources d'outils (point 19, fonction D3).
 
 Demande l'extra ``mcp`` ; le montage n'importe ce module que si la config
 déclare des serveurs.

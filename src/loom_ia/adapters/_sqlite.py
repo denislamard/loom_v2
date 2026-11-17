@@ -12,8 +12,8 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-# Patience laissée à la bascule en WAL : celle du ``busy_timeout`` des adaptateurs.
 WAL_PATIENCE: Final = 5.0
+"""Patience laissée à la bascule en WAL : celle du ``busy_timeout`` des adaptateurs."""
 
 
 async def enable_wal(connection: aiosqlite.Connection) -> None:

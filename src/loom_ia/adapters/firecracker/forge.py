@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""La source ``forge`` : des outils forgés par les agents, exécutés dans la VM (J6.4c).
+"""La source ``forge`` : des outils forgés par les agents, exécutés dans la VM (jalon J6.4c).
 
 Un agent **forge** un outil — un nom, une description, un schéma d'entrée, le
 code d'un module qui définit une fonction du même nom, des exemples — puis
@@ -118,21 +118,23 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# Les deux outils fixes de la source ; aucun outil forgé ne peut porter leur nom.
 FORGE: Final = "forge"
+"""Les deux outils fixes de la source ; aucun outil forgé ne peut porter leur nom."""
 CALL: Final = "call"
-# Ce qui accompagne le code d'un outil dans son dossier du catalogue.
+"""Nom de l'outil ``call`` de la source (voir ``FORGE``)."""
 MANIFEST: Final = "outil.json"
-# Nom d'outil forgé : un identifiant Python en minuscules. Il devient le nom
-# du module et de la fonction ; préfixé par loom, il tient dans les 64
-# caractères des API.
+"""Ce qui accompagne le code d'un outil dans son dossier du catalogue."""
 NAME_PATTERN: Final = r"[a-z][a-z0-9_]{0,47}"
-# Identifiant de client admis comme nom de dossier.
+"""Nom d'outil forgé : un identifiant Python en minuscules. Il devient le nom
+du module et de la fonction ; préfixé par loom, il tient dans les 64
+caractères des API.
+"""
 TENANT_PATTERN: Final = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}"
+"""Identifiant de client admis comme nom de dossier."""
 MAX_EXAMPLES: Final = 10
-# Ce que le modèle voit de stdout et de stderr, chacun (début et fin).
+"""Exemples qu'un outil forgé donne au plus ; il en faut au moins un."""
 SHOWN: Final = 4000
-# Clés de ``limits`` qu'execd connaît.
+"""Ce que le modèle voit de stdout et de stderr, chacun (début et fin)."""
 LIMIT_KEYS: Final = (
     "wall_ms",
     "cpu_ms",
@@ -142,26 +144,29 @@ LIMIT_KEYS: Final = (
     "nproc",
     "out_files",
 )
-# wall_ms qu'execd applique quand on ne demande rien.
+"""Clés de ``limits`` qu'execd connaît."""
 DEFAULT_WALL_MS: Final = 30_000
-# Attente du boot de la VM et d'execd, au premier appel d'un run (secondes).
+"""wall_ms qu'execd applique quand on ne demande rien."""
 BOOT_WAIT: Final = 60.0
-# Rapatriement des fichiers de out/ : plafond d'un fichier (params ``files``),
-# et temps laissé au transfert dans le délai de l'outil (secondes).
+"""Attente du boot de la VM et d'execd, au premier appel d'un run (secondes)."""
 MAX_FILE_CEILING: Final = 64 << 20
+"""Plafond de ``files.max_file_bytes`` : ce qu'un fichier rapatrié de out/ peut peser au plus."""
 MAX_TOTAL_CEILING: Final = 256 << 20
-# out_files : ce qu'execd accepte au plus dans out/ (son plafond).
+"""Plafond de ``files.max_total_bytes`` : ce que les fichiers rapatriés d'un appel peuvent peser ensemble."""
 MAX_FILES_CEILING: Final = 512
+"""out_files : ce qu'execd accepte au plus dans out/ (son plafond)."""
 FETCH_WAIT: Final = 30.0
-# Échéance du transfert lui-même, prise dans FETCH_WAIT (le reste : marge).
+"""Temps ajouté au délai de l'outil pour rapatrier les fichiers de out/, en secondes."""
 FETCH_BUDGET: Final = 25.0
-# Nom de fichier montré, et lignes « non rapatriés » montrées au plus.
+"""Échéance du transfert lui-même, prise dans FETCH_WAIT (le reste : marge)."""
 MAX_NAME: Final = 200
+"""Longueur au plus d'un nom de fichier montré au modèle."""
 SHOWN_LEFT: Final = 20
+"""Lignes « non rapatriés » montrées au plus au modèle."""
 
 _ERRORS: Final = (VmError, ProtocolError, ExecdError, TimeoutError, OSError)
-# Les champs de ``forge`` admis aussi en texte JSON.
 _TEXT_FIELDS: Final = ("input_schema", "examples")
+"""Les champs de ``forge`` admis aussi en texte JSON."""
 
 
 # ---------------------------------------------------------------------- #
@@ -173,12 +178,18 @@ class Jobs(Protocol):
     """Ce que la source demande d'une session execd (``Session`` le fait)."""
 
     @property
-    def closed(self) -> bool: ...
+    def closed(self) -> bool:
+        """Vrai si la session est fermée."""
+        ...
 
     @property
-    def hello(self) -> Hello: ...
+    def hello(self) -> Hello:
+        """Ce que l'invité a annoncé à l'ouverture."""
+        ...
 
-    async def put_code(self, path: str, data: bytes) -> None: ...
+    async def put_code(self, path: str, data: bytes) -> None:
+        """Dépose un module dans ``code/`` de la session."""
+        ...
 
     async def exec(
         self,
@@ -188,11 +199,17 @@ class Jobs(Protocol):
         limits: Mapping[str, int] | None = None,
         env: Mapping[str, str] | None = None,
         wait: float | None = None,
-    ) -> Execution: ...
+    ) -> Execution:
+        """Exécute ``module:fonction`` dans la VM et rend son compte rendu."""
+        ...
 
-    async def get_file(self, path: str, *, max_bytes: int) -> bytes: ...
+    async def get_file(self, path: str, *, max_bytes: int) -> bytes:
+        """Rapatrie un fichier de la session, ``max_bytes`` octets au plus."""
+        ...
 
-    async def close(self) -> None: ...
+    async def close(self) -> None:
+        """Ferme la session : execd arrête le job et efface son dossier."""
+        ...
 
 
 class Runner(Protocol):
@@ -217,6 +234,11 @@ class VmRunner:
         self._lock = asyncio.Lock()
 
     async def session(self) -> Session:
+        """Une session execd neuve ; la VM est démarrée si elle ne tourne pas, et attendue ``BOOT_WAIT`` secondes au plus.
+
+        Raises:
+            VmError: ``EXECD_PORT`` absent de ``vm.env``, ou démarrage raté.
+        """
         port = self.vm.execd_port
         if port is None:
             raise VmError(f"{self.vm.name} : EXECD_PORT absent de vm.env")
@@ -229,6 +251,7 @@ class VmRunner:
         return await Session.open(reader, writer)
 
     async def aclose(self) -> None:
+        """Arrête la VM si c'est cette source qui l'a démarrée."""
         if self.started:
             how = await self.vm.stop()
             logger.info("VM %s arrêtée (%s)", self.vm.name, how)
@@ -237,7 +260,15 @@ class VmRunner:
 
 @dataclass(frozen=True, slots=True)
 class FilePolicy:
-    """Ce qu'un appel rapatrie de ``out/`` (params ``files``)."""
+    """Ce qu'un appel rapatrie de ``out/`` (params ``files``).
+
+    Attributes:
+        max_files: Fichiers rapatriés au plus par appel (plafond : 512).
+        max_file_bytes: Taille au plus d'un fichier, en octets (plafond : 64
+            Mio).
+        max_total_bytes: Taille au plus de l'ensemble, en octets (plafond : 256
+            Mio ; au moins ``max_file_bytes``).
+    """
 
     max_files: int = 10
     max_file_bytes: int = 16 << 20
@@ -245,6 +276,7 @@ class FilePolicy:
 
 
 DEFAULT_FILES: Final = FilePolicy()
+"""Rapatriement sans ``files`` dans les params : 10 fichiers, 16 Mio chacun, 32 Mio en tout."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,13 +358,23 @@ def _megas(size: int) -> str:
 
 @dataclass(slots=True)
 class _Run:
-    """Ce que les outils d'un run partagent : sa session, ouverte au premier appel."""
+    """Ce que les outils d'un run partagent : sa session, ouverte au premier appel.
+
+    Attributes:
+        runner: D'où vient la session.
+        limits: Limites d'un job, passées à execd.
+        files: Ce qui est rapatrié de out/ ; ``None`` : rien.
+        jobs: La session execd, ouverte au premier appel.
+        loaded: Empreinte du code déposé par module, pour ne le renvoyer qu'au
+            changement.
+        lock: Un appel du run à la fois : dépôt, exécution et rapatriement d'un
+            seul tenant.
+    """
 
     runner: Runner
     limits: Mapping[str, int]
     files: FilePolicy | None = None
     jobs: Jobs | None = None
-    # Empreinte du code déposé par module, pour ne le renvoyer qu'au changement.
     loaded: dict[str, str] = field(default_factory=dict[str, str])
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -346,6 +388,12 @@ class _Run:
         return await self._execute(name, code, arguments, fetch=True)
 
     async def _execute(self, name: str, code: str, arguments: Mapping[str, object], *, fetch: bool) -> tuple[Execution, _Fetched]:
+        """Un appel d'outil forgé, d'un seul tenant, sous verrou.
+
+        Ouvre la session au premier appel (refusée si ``limits`` dépasse les
+        plafonds de la VM), dépose le module s'il a changé, exécute ``name:name``,
+        puis rapatrie les fichiers de out/ si ``fetch``.
+        """
         # Dépôt, appel et rapatriement d'un seul tenant : deux appels parallèles
         # du run ne s'intercalent pas (execd n'en exécute qu'un à la fois de
         # toute façon), et le job suivant ne vide pas out/ avant le transfert.
@@ -373,6 +421,7 @@ class _Run:
             return execution, await _fetch(self.jobs, execution, self.files)
 
     async def close(self) -> None:
+        """Ferme la session execd du run, si elle est ouverte."""
         if self.jobs is not None:
             await self.jobs.close()
 
@@ -384,14 +433,23 @@ class _Run:
 
 @dataclass(frozen=True, slots=True)
 class Forged:
-    """Un outil du catalogue."""
+    """Un outil du catalogue.
+
+    Attributes:
+        name: Nom de l'outil, celui du module et de sa fonction.
+        description: Description lue par le modèle.
+        input_schema: Schéma JSON de ses arguments.
+        code: Code du module.
+        examples: Exemples passés à la forge : ``arguments`` et ``expected``.
+        forged_by: Run qui l'a forgé.
+        forged_at: Quand il a été forgé (ISO 8601, UTC).
+    """
 
     name: str
     description: str
     input_schema: dict[str, JsonValue]
     code: str
     examples: tuple[dict[str, JsonValue], ...]
-    # Run qui l'a forgé, et quand (ISO 8601, UTC).
     forged_by: str
     forged_at: str
 
@@ -403,6 +461,7 @@ class Catalog:
         self.root = root
 
     def folder(self, tenant: str) -> Path:
+        """Dossier du catalogue d'un client ; ``ValueError`` si son identifiant ne peut pas nommer un dossier."""
         if re.fullmatch(TENANT_PATTERN, tenant) is None:
             raise ValueError(f"client {tenant!r} : nom inutilisable comme dossier du catalogue")
         return self.root / tenant
@@ -422,6 +481,7 @@ class Catalog:
         return found
 
     def get(self, tenant: str, name: str) -> Forged | None:
+        """Un outil du catalogue du client ; ``None`` s'il n'existe pas, ou si son nom est hors format."""
         if re.fullmatch(NAME_PATTERN, name) is None:
             return None
         entry = self.folder(tenant) / name
@@ -458,6 +518,7 @@ class Catalog:
             raise
 
     def _read(self, entry: Path) -> Forged | None:
+        """Lit le dossier d'un outil (son code et ``outil.json``) ; ``None``, avec un avertissement, s'il est illisible."""
         name = entry.name
         try:
             if re.fullmatch(NAME_PATTERN, name) is None:
@@ -555,6 +616,15 @@ def check_forged(name: str, input_schema: dict[str, JsonValue], code: str, examp
 
 
 def _check_signature(name: str, code: str, properties: set[str], required: set[str]) -> None:
+    """Vérifie, sans l'exécuter, la fonction ``name`` du code.
+
+    Elle doit être définie au premier niveau, recevoir ses arguments par nom
+    (ni ``/`` ni ``*args``), recevoir chaque propriété d'``input_schema`` (sauf
+    avec ``**kwargs``), et n'exiger que des propriétés requises par le schéma.
+
+    Raises:
+        ToolError: Erreur de syntaxe, fonction absente ou signature refusée.
+    """
     try:
         tree = ast.parse(code, filename=f"{name}.py")
     except SyntaxError as exc:
@@ -646,6 +716,7 @@ def _kept_in_vm(execution: Execution) -> tuple[str, ...]:
 
 
 def _failure(execution: Execution) -> str:
+    """Ce que le modèle lit d'un job en échec : genre et message de l'erreur, trace, détail, un rappel pour un import refusé, puis stdout et stderr."""
     error = execution.error
     kind, message = (error.kind, error.message) if error is not None else ("inconnu", "")
     lines = [f"Échec dans la VM ({kind}) : {message}"]
@@ -663,6 +734,12 @@ def _failure(execution: Execution) -> str:
 
 
 def _output(execution: Execution, fetched: _Fetched) -> ToolOutput:
+    """Le résultat d'un appel d'outil forgé ; une erreur pour un job en échec.
+
+    Le texte porte la valeur JSON rendue, stdout et stderr, et les fichiers non
+    rapatriés ; suivent les fichiers rapatriés en blocs de données. ``data``
+    porte la valeur rendue.
+    """
     if not execution.ok:
         return ToolOutput.error(_failure(execution))
     parts = [json.dumps(execution.result, ensure_ascii=False)]
@@ -708,6 +785,7 @@ FORGE_DESCRIPTION: Final = (
     "valeur rendue. Un outil du même nom est remplacé. L'outil forgé s'appelle "
     "aussitôt par `call`, et apparaît comme outil à part entière au run suivant."
 )
+"""Description de l'outil ``forge`` lue par le modèle ; un mot sur les fichiers s'y ajoute quand ils sont rapatriés."""
 
 
 def _files_hint(files: FilePolicy) -> str:
@@ -727,15 +805,31 @@ CALL_DESCRIPTION: Final = (
     "selon son schéma) ; il s'exécute dans la VM. Sert à appeler dans ce run un outil "
     "qu'on vient de forger, avant qu'il n'apparaisse comme outil à part entière."
 )
+"""Description de l'outil ``call`` lue par le modèle."""
 
 
 @dataclass(frozen=True, slots=True)
 class _ForgeTool:
+    """L'outil ``forge`` d'un run.
+
+    Attributes:
+        catalog: Le catalogue des outils forgés.
+        run: Ce que les outils du run partagent (session execd).
+        spec: Définition de l'outil lue par le modèle.
+    """
+
     catalog: Catalog
     run: _Run
     spec: ToolSpec
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Forge un outil, ou le remplace.
+
+        Les contrôles de l'hôte d'abord, puis chaque exemple exécuté dans la VM et
+        comparé à ``expected`` ; au premier écart, l'outil est refusé et le modèle
+        apprend pourquoi. Accepté, il est écrit au catalogue du client.
+        ``input_schema`` et ``examples`` sont admis en texte JSON.
+        """
         name = str(arguments["name"])
         code = str(arguments["code"])
         try:
@@ -793,11 +887,25 @@ class _ForgeTool:
 
 @dataclass(frozen=True, slots=True)
 class _CallTool:
+    """L'outil ``call`` d'un run.
+
+    Attributes:
+        catalog: Le catalogue des outils forgés.
+        run: Ce que les outils du run partagent (session execd).
+        spec: Définition de l'outil lue par le modèle.
+    """
+
     catalog: Catalog
     run: _Run
     spec: ToolSpec
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Appelle un outil du catalogue du client : arguments validés par son schéma, exécution dans la VM, fichiers de out/ rapatriés.
+
+        Raises:
+            ToolError: Outil inconnu (le catalogue est cité), ou arguments refusés
+                par son schéma.
+        """
         name = str(arguments["name"])
         given = cast(dict[str, JsonValue], arguments.get("arguments") or {})
         forged = self.catalog.get(str(context.tenant_id), name)
@@ -818,11 +926,20 @@ class _CallTool:
 
 @dataclass(frozen=True, slots=True)
 class _ForgedTool:
+    """Un outil du catalogue, monté comme outil à part entière.
+
+    Attributes:
+        forged: L'outil du catalogue.
+        run: Ce que les outils du run partagent (session execd).
+        spec: Définition de l'outil lue par le modèle.
+    """
+
     forged: Forged
     run: _Run
     spec: ToolSpec
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Exécute l'outil forgé dans la VM et rapatrie les fichiers de out/."""
         try:
             return _output(*await self.run.produce(self.forged.name, self.forged.code, arguments))
         except _ERRORS as exc:
@@ -830,6 +947,11 @@ class _ForgedTool:
 
 
 def _forge_spec(limits: Mapping[str, int], files: FilePolicy | None) -> ToolSpec:
+    """La définition de l'outil ``forge`` : description, schéma et délai.
+
+    La description dit les fichiers s'ils sont rapatriés ; le délai couvre le
+    boot et ``MAX_EXAMPLES`` exécutions.
+    """
     return ToolSpec(
         name=FORGE,
         description=FORGE_DESCRIPTION + (_files_hint(files) if files is not None else ""),
@@ -870,6 +992,7 @@ def _forge_spec(limits: Mapping[str, int], files: FilePolicy | None) -> ToolSpec
 
 
 def _call_spec(limits: Mapping[str, int]) -> ToolSpec:
+    """La définition de l'outil ``call`` : nom et arguments, et le délai d'une exécution avec rapatriement."""
     return ToolSpec(
         name=CALL,
         description=CALL_DESCRIPTION,
@@ -936,6 +1059,15 @@ class ForgeSource:
         limits: Mapping[str, int],
         files: FilePolicy | None = DEFAULT_FILES,
     ) -> None:
+        """Prépare la source, sans démarrer la VM.
+
+        Args:
+            name: Nom de la source.
+            catalog: Le catalogue des outils forgés.
+            runner: D'où viennent les sessions execd.
+            limits: Limites d'un job (``wall_ms``, ``cpu_ms``…).
+            files: Ce qui est rapatrié de out/ ; ``None`` : rien.
+        """
         self.name = name
         self.required = False
         self.catalog = catalog
@@ -948,6 +1080,19 @@ class ForgeSource:
 
     @asynccontextmanager
     async def open(self, context: SourceContext) -> AsyncGenerator[Sequence[Tool]]:
+        """Les outils d'un run : ``forge``, ``call``, et ceux du catalogue forgés avant le début du run.
+
+        La session execd du run s'ouvre au premier appel et se ferme à la sortie.
+
+        Args:
+            context: Le contexte du run.
+
+        Yields:
+            Les outils du run.
+
+        Raises:
+            SourceUnavailable: Catalogue illisible.
+        """
         try:
             catalog = self.catalog.list(str(context.tenant_id))
         except (OSError, ValueError) as exc:
@@ -970,6 +1115,7 @@ class ForgeSource:
                 await run.close()
 
     async def aclose(self) -> None:
+        """Arrête la VM si la source l'a démarrée."""
         await self.runner.aclose()
 
 

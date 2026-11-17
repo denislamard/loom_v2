@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Le SQL du stockage Postgres : tables, index, rôle et politiques (F5, #5).
+"""Le SQL du stockage Postgres : tables, index, rôle et politiques (fonction F5, point 5).
 
 Ce module ne contient que du texte. Il ne connaît pas ``asyncpg``, et c'est
 voulu : ``loom storage sql`` imprime le DDL sur une machine où le pilote n'est
@@ -36,32 +36,36 @@ tienne même si loom se connecte avec le rôle qui a créé les tables.
 import re
 from typing import Final
 
-# Les tables portent leur préfixe plutôt qu'un schéma : elles cohabitent avec
-# celles de l'application dans la base que le DSN désigne. Un client qui veut
-# son propre schéma déclare son propre ``dsn_env``, dont le rôle a son
-# ``search_path`` (§7.3).
 EVENTS_TABLE: Final = "loom_events"
+"""Les tables portent leur préfixe plutôt qu'un schéma : elles cohabitent avec
+celles de l'application dans la base que le DSN désigne. Un client qui veut
+son propre schéma déclare son propre ``dsn_env``, dont le rôle a son
+``search_path`` (conception §7.3).
+"""
 IDEMPOTENCY_TABLE: Final = "loom_idempotency"
-# Version du schéma de chaque composant (``events``), pour que le DDL sache ce
-# qui est déjà appliqué. Elle appartient au propriétaire ; le rôle applicatif
-# peut la lire, pas l'écrire.
+"""Table du magasin d'idempotence partagé."""
 SCHEMA_TABLE: Final = "loom_schema"
+"""Version du schéma de chaque composant (``events``), pour que le DDL sache ce
+qui est déjà appliqué. Elle appartient au propriétaire ; le rôle applicatif
+peut la lire, pas l'écrire.
+"""
 
-# Réglage de transaction qui porte le client courant. Le point est
-# obligatoire : Postgres n'accepte un réglage inconnu de lui que préfixé.
 TENANT_SETTING: Final = "loom.tenant_id"
+"""Réglage de transaction qui porte le client courant. Le point est obligatoire
+: Postgres n'accepte un réglage inconnu de lui que préfixé.
+"""
 
 POLICY: Final = "loom_events_tenant"
+"""Nom de la politique de lignes de la table des événements."""
 
-# Rôle applicatif par défaut : celui que crée le DDL et que prend chaque
-# connexion. ``storage.events.role: null`` s'en passe — la politique tient
-# quand même, par ``FORCE``, mais le journal redevient modifiable.
 DEFAULT_ROLE: Final = "loom_app"
+"""Rôle applicatif par défaut : celui que crée le DDL et que prend chaque
+connexion. ``storage.events.role: null`` s'en passe — la politique tient
+quand même, par ``FORCE``, mais le journal redevient modifiable.
+"""
 
 _NAME: Final = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 
-# En tête du DDL, parce que la politique se remarque le jour où l'on veut lire
-# la table à la main ou la sauvegarder, et que ce jour-là on cherche loin.
 HEADER: Final = """\
 -- Stockage Postgres de loom (sortie de « loom storage sql »).
 --
@@ -78,6 +82,9 @@ HEADER: Final = """\
 --     GRANT USAGE ON SCHEMA public TO loom_admin;
 --     GRANT SELECT ON ALL TABLES IN SCHEMA public TO loom_admin;
 -- Une sauvegarde physique (pg_basebackup, instantané de volume) n'est pas concernée."""
+"""En tête du DDL, parce que la politique se remarque le jour où l'on veut lire
+la table à la main ou la sauvegarder, et que ce jour-là on cherche loin.
+"""
 
 
 def check_name(name: str) -> str:
@@ -126,6 +133,7 @@ DO $$ BEGIN
         WITH CHECK (tenant_id = current_setting('{TENANT_SETTING}', true));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;"""
+"""Table des événements, ses index et sa politique de lignes ; sans effet sur ce qui existe déjà."""
 
 SCHEMA_DDL: Final = f"""\
 CREATE TABLE IF NOT EXISTS {SCHEMA_TABLE} (
@@ -133,6 +141,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA_TABLE} (
     version    integer     NOT NULL,
     applied_at timestamptz NOT NULL DEFAULT now()
 );"""
+"""Table des versions du schéma."""
 
 
 def _migration(component: str, version: int, body: str) -> str:
@@ -153,19 +162,18 @@ DO $mig$ BEGIN
 END $mig$;"""
 
 
-# Version du schéma de l'idempotence que ce loom attend : en deçà, l'ouverture migre.
 IDEMPOTENCY_SCHEMA_VERSION: Final = 2
+"""Version du schéma de l'idempotence que ce loom attend : en deçà, l'ouverture migre."""
 
-# ``holder`` est le jeton du détenteur de la clé : ``complete`` et ``release``
-# qui en présentent un ne touchent que la ligne encore à lui. La colonne est
-# nullable. Version 1 : la table de la 2.0, sans elle. Version 2 : la colonne,
-# ajoutée une seule fois — la version inscrite évite le verrou exclusif de
-# ``ALTER TABLE`` à chaque ouverture.
 IDEMPOTENCY_V2: Final = f"""\
         ALTER TABLE {IDEMPOTENCY_TABLE} ADD COLUMN IF NOT EXISTS holder text;"""
+"""``holder`` est le jeton du détenteur de la clé : ``complete`` et ``release``
+qui en présentent un ne touchent que la ligne encore à lui. La colonne est
+nullable. Version 1 : la table de la 2.0, sans elle. Version 2 : la colonne,
+ajoutée une seule fois — la version inscrite évite le verrou exclusif de
+``ALTER TABLE`` à chaque ouverture.
+"""
 
-# Rejouable : c'est ce que loom applique à l'ouverture d'une table qui existe
-# déjà. Une table sans ligne de version est au moins en version 1.
 IDEMPOTENCY_UPGRADE: Final = "\n".join(
     [
         SCHEMA_DDL,
@@ -173,12 +181,10 @@ IDEMPOTENCY_UPGRADE: Final = "\n".join(
         _migration("idempotency", IDEMPOTENCY_SCHEMA_VERSION, IDEMPOTENCY_V2),
     ]
 )
+"""Rejouable : c'est ce que loom applique à l'ouverture d'une table qui existe
+déjà. Une table sans ligne de version est au moins en version 1.
+"""
 
-# Pas de politique ici, et ce n'est pas un oubli : ``IdempotencyStore.get``
-# ne nomme pas de client (``get(key)``), et une politique par client rendrait
-# invisible la ligne qu'il faut relire. Le cadrage vient de la clé — préfixée
-# par client pour une clé métier (#49) — et des colonnes, qui portent le
-# client et la session pour l'oubli RGPD.
 IDEMPOTENCY_DDL: Final = f"""\
 CREATE TABLE IF NOT EXISTS {IDEMPOTENCY_TABLE} (
     key        text        NOT NULL PRIMARY KEY,
@@ -194,30 +200,36 @@ CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_owner
     ON {IDEMPOTENCY_TABLE} (tenant_id, session_id);
 CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_expiry
     ON {IDEMPOTENCY_TABLE} (status, expires_at);"""
+"""Pas de politique ici, et ce n'est pas un oubli : ``IdempotencyStore.get`` ne
+nomme pas de client (``get(key)``), et une politique par client rendrait
+invisible la ligne qu'il faut relire. Le cadrage vient de la clé — préfixée
+par client pour une clé métier (point 49) — et des colonnes, qui portent le
+client et la session pour l'oubli RGPD.
+"""
 
-# Version du schéma du journal que ce loom attend : en deçà, l'ouverture migre.
 EVENTS_SCHEMA_VERSION: Final = 3
+"""Version du schéma du journal que ce loom attend : en deçà, l'ouverture migre."""
 
-# Version 1 : le schéma de la 2.0 (``EVENTS_DDL``). Version 2 : l'identifiant
-# d'un événement est unique par client — l'index de la 2.0 ne l'était pas. La
-# création échoue s'il existe des doublons, et la migration entière s'annule.
 EVENTS_V2: Final = f"""\
         DROP INDEX IF EXISTS {EVENTS_TABLE}_event_id;
         CREATE UNIQUE INDEX {EVENTS_TABLE}_event_id ON {EVENTS_TABLE} (tenant_id, event_id);"""
+"""Version 1 : le schéma de la 2.0 (``EVENTS_DDL``). Version 2 : l'identifiant
+d'un événement est unique par client — l'index de la 2.0 ne l'était pas. La
+création échoue s'il existe des doublons, et la migration entière s'annule.
+"""
 
-# Version 3 : ``ingested``, le rang d'écriture, que ``after`` suit (l'id d'un
-# événement est posé avant son écriture, donc pas dans l'ordre où elle se fait).
-# Les lignes existantes reçoivent leur rang dans l'ordre où la table les
-# parcourt, ce qui est celui de leur écriture tant qu'aucune n'a été supprimée.
 EVENTS_V3: Final = f"""\
         ALTER TABLE {EVENTS_TABLE} ADD COLUMN IF NOT EXISTS ingested bigint
             GENERATED ALWAYS AS IDENTITY;
         CREATE INDEX IF NOT EXISTS {EVENTS_TABLE}_ingested
             ON {EVENTS_TABLE} (tenant_id, ingested);"""
+"""Version 3 : ``ingested``, le rang d'écriture, que ``after`` suit (l'id d'un
+événement est posé avant son écriture, donc pas dans l'ordre où elle se
+fait). Les lignes existantes reçoivent leur rang dans l'ordre où la table
+les parcourt, ce qui est celui de leur écriture tant qu'aucune n'a été
+supprimée.
+"""
 
-# Rejouable : c'est ce que loom applique à l'ouverture d'une table qui existe
-# déjà. Une table de la 2.0 n'a pas de ligne de version : elle est au moins en
-# version 1.
 EVENTS_UPGRADE: Final = "\n".join(
     [
         SCHEMA_DDL,
@@ -226,6 +238,10 @@ EVENTS_UPGRADE: Final = "\n".join(
         _migration("events", EVENTS_SCHEMA_VERSION, EVENTS_V3),
     ]
 )
+"""Rejouable : c'est ce que loom applique à l'ouverture d'une table qui existe
+déjà. Une table de la 2.0 n'a pas de ligne de version : elle est au moins en
+version 1.
+"""
 
 
 def role_ddl(role: str) -> str:
@@ -243,7 +259,7 @@ def grants_ddl(role: str, *, table: str, update: bool) -> str:
 
     ``update=False`` pour le journal : un événement écrit ne se modifie pas,
     et le rôle n'en a pas le droit. ``DELETE`` reste nécessaire, c'est la
-    suppression RGPD d'une session (§11.5).
+    suppression RGPD d'une session (conception §11.5).
     """
     check_name(role)
     rights = "SELECT, INSERT, UPDATE, DELETE" if update else "SELECT, INSERT, DELETE"

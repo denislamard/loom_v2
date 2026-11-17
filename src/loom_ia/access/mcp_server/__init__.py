@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Accès MCP : un serveur qui publie les agents en outils (N3).
+"""Accès MCP : un serveur qui publie les agents en outils (fonction N3).
 
 Demande l'extra ``mcp`` : ``pip install 'loom-ia[mcp]'``.
 """

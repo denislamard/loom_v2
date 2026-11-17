@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""API REST d'une instance loom (N2).
+"""API REST d'une instance loom (fonction N2).
 
 Sous ``/v1``, les agents et leurs runs :
 
@@ -18,13 +18,13 @@ Sous ``/v1``, les agents et leurs runs :
   pas l'un d'eux reçoit 403 à l'ouverture, ou, si le sous-agent paraît en
   cours de route, un dernier message ``error`` puis la fermeture du flux ;
 - ``POST /runs/{run_id}/approve`` et ``/reject`` : trancher une approbation
-  (#17), portée ``approve`` ; sans ``call_id``, toutes les demandes en
+  (point 17), portée ``approve`` ; sans ``call_id``, toutes les demandes en
   attente le sont. L'approbateur écrit au journal est l'identifiant de la
   clé d'API, qu'un ``by`` dans le corps remplace — une passerelle nomme
   ainsi l'humain qui a tranché ;
-- ``POST /runs/{run_id}/cancel`` : arrêt d'un run (A5), portée ``run``.
+- ``POST /runs/{run_id}/cancel`` : arrêt d'un run (fonction A5), portée ``run``.
 
-Et les sessions (F7) :
+Et les sessions (fonction F7) :
 
 - ``GET    /sessions`` : les journaux du client, le plus récent d'abord.
   Refusé à une clé limitée à certains agents : la liste ne dit pas de quels
@@ -33,12 +33,12 @@ Et les sessions (F7) :
   un humain, tous runs confondus ;
 - ``GET    /sessions/{session_id}/events`` : le journal entier en JSONL ;
 - ``GET    /sessions/{session_id}/report`` : consommation de toute la
-  session (J3), ventilée par run, par rôle et par modèle ;
+  session (fonction J3), ventilée par run, par rôle et par modèle ;
 - ``DELETE /sessions/{session_id}`` : effacement RGPD — journal, fichiers et
   clés d'idempotence. Irréversible, et il concerne tous les agents de la
   session : portée ``admin``.
 
-Et le journal lui-même (K5, #32) :
+Et le journal lui-même (fonction K5, point 32) :
 
 - ``GET /runs`` : les runs du client, du plus récemment écrit au plus ancien,
   avec ``agent``, ``status`` (répétable), ``since`` et ``until``. Ils sont
@@ -50,7 +50,7 @@ Et le journal lui-même (K5, #32) :
   à ``/sessions`` : chaque run dit de quel agent il est, si bien que la liste
   se filtre honnêtement. Aucun contenu là-dedans, seulement le type d'un
   échec ;
-- ``GET /traces/{run_id}`` : la trace d'un run (6.2c) — ses spans, tirés du
+- ``GET /traces/{run_id}`` : la trace d'un run (jalon J6.2c) — ses spans, tirés du
   journal, sous-runs compris, avec un en-tête (statut, usage, coût, durée) ;
   un run inachevé a la sienne. Sans ``read_content``, aucun contenu ; avec, le
   contenu en clair, sans masquage par motifs (ceux-là sont pour les exports).
@@ -64,7 +64,7 @@ Et le journal lui-même (K5, #32) :
   libres ne sont pas interrogeables par l'URL ; les trois que ``EventQuery``
   nomme (``tool_name``, ``model_id``, ``model``) le sont.
 
-Résultat d'un run (J3) : la réponse, ``unverified`` si elle a été gardée sans
+Résultat d'un run (fonction J3) : la réponse, ``unverified`` si elle a été gardée sans
 respecter son contrat ou son juge, l'usage et le coût, leur ventilation
 (``report``) et les verdicts des juges (``verdicts``). Un run échoué garde le
 code 201 : ``status`` vaut ``failed``, ``error_type`` dit ce qui l'a arrêté
@@ -195,11 +195,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Un événement par ligne : le format d'export du journal, celui de la CLI.
 NDJSON: Final = "application/x-ndjson"
+"""Un événement par ligne : le format d'export du journal, celui de la CLI."""
 
-# Familles de routes du document OpenAPI : chaque route en porte une, et le
-# document les décrit — c'est ce qui rend l'API lisible sans ce fichier.
 TAGS: Final[tuple[dict[str, str], ...]] = (
     {"name": "agents", "description": "Les agents que cette instance publie en REST."},
     {"name": "runs", "description": "Lancer un run, le suivre, le trancher, l'arrêter."},
@@ -213,16 +211,22 @@ TAGS: Final[tuple[dict[str, str], ...]] = (
         "description": ("Recherche au journal : les runs d'un client, leurs événements, leurs traces."),
     },
 )
+"""Familles de routes du document OpenAPI : chaque route en porte une, et le
+document les décrit — c'est ce qui rend l'API lisible sans ce fichier.
+"""
 
-# Schémas d'authentification déclarés au document : la clé est lue sur l'un ou
-# l'autre en-tête (``identify``), et les déclarer ici la rend saisissable depuis
-# la page de l'API. Ils ne refusent rien eux-mêmes — c'est ``caller`` qui le fait.
 BEARER_SCHEME: Final = HTTPBearer(auto_error=False, description="Clé d'API de l'instance")
+"""Schémas d'authentification déclarés au document : la clé est lue sur l'un ou
+l'autre en-tête (``identify``), et les déclarer ici la rend saisissable
+depuis la page de l'API. Ils ne refusent rien eux-mêmes — c'est ``caller``
+qui le fait.
+"""
 HEADER_SCHEME: Final = APIKeyHeader(name=API_KEY_HEADER, auto_error=False, description="Clé d'API de l'instance")
+"""Schéma d'authentification par l'en-tête ``x-api-key`` (voir ``BEARER_SCHEME``)."""
 
 
 def _who_calls(config: LoomConfig, host: str | None = None) -> None:
-    """Refuse une API qui ne saurait pas au nom de qui elle agit (D-1, D-1b).
+    """Refuse une API qui ne saurait pas au nom de qui elle agit (décisions D-1 et D-1b des utilisateurs et rôles).
 
     Avec des clés, chacun présente la sienne. Sans clé, l'instance agit au nom
     de ``server.http.user``, et seulement sur la boucle locale. ``host`` est
@@ -273,11 +277,11 @@ async def caller(
     """Appelant de la requête, reconnu par les clés de l'instance servie.
 
     Le débit de la clé est compté ici, donc sur toutes les routes REST : une clé qui
-    s'emballe est arrêtée avant qu'on ne lise son corps (#39). Le MCP HTTP
+    s'emballe est arrêtée avant qu'on ne lise son corps (point 39). Le MCP HTTP
     monté par l'application compte dans la même fenêtre (``app.state.rates``).
 
     Les deux schémas sont là pour le document OpenAPI ; la clé se relit sur la
-    requête elle-même, une instance locale n'en demandant aucune (D-1b).
+    requête elle-même, une instance locale n'en demandant aucune (décision D-1b des utilisateurs et rôles).
     """
     # Un refus qui sortira du SDK pendant cette requête dira qu'il est venu par REST.
     loom: Loom = request.app.state.loom
@@ -288,7 +292,7 @@ async def caller(
 
 
 def _aim(request: Request) -> audit.Aim:
-    """Ce que la requête vise, lu sur sa route : pour la ligne d'audit d'un refus (D-9)."""
+    """Ce que la requête vise, lu sur sa route : pour la ligne d'audit d'un refus (décision D-9 des utilisateurs et rôles)."""
     route: object = request.scope.get("route")
     template = route.path if isinstance(route, APIRoute) else ""
     params = request.path_params
@@ -300,8 +304,8 @@ def _aim(request: Request) -> audit.Aim:
     )
 
 
-# L'appelant, injecté dans chaque route.
 type Who = Annotated[Caller, Depends(caller)]
+"""L'appelant, injecté dans chaque route."""
 
 
 def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> FastAPI:
@@ -318,10 +322,10 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     http = loom.config.server.http
     _who_calls(loom.config, host)
 
-    # Débit des clés d'API (#39) : une fenêtre glissante par application servie,
+    # Débit des clés d'API (point 39) : une fenêtre glissante par application servie,
     # que le MCP HTTP monté ici partage.
     rates = RateWindow()
-    # Serveur MCP monté dans la même application (J5.2b) : un seul port, une
+    # Serveur MCP monté dans la même application (jalon J5.2b) : un seul port, une
     # seule authentification, et la clé donne le client à chaque requête.
     served = _mcp(loom, rates) if loom.config.server.mcp.http else None
 
@@ -330,7 +334,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         if own:
             # L'écoute du bus (``storage.bus``) naît à l'ouverture, dans la boucle
             # du serveur : sans elle, un flux SSE ne voit pas ce qu'écrit un autre
-            # process, et attend jusqu'au délai du client (test I4 du 21/10).
+            # process, et attend jusqu'au délai du client (essai de la fonction I4, 21/10).
             await loom.__aenter__()
         if served is None:
             yield
@@ -412,7 +416,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     @app.exception_handler(SealError)
     async def _sealed(request: Request, exc: Exception) -> JSONResponse:
         # Un journal scellé dont la clé a disparu n'est pas une panne : c'est
-        # un état voulu (5.5b), et 424 le dit mieux qu'un 500 — la demande est
+        # un état voulu (jalon J5.5b), et 424 le dit mieux qu'un 500 — la demande est
         # juste, ce qui manque est ailleurs, et le message nomme l'empreinte
         # attendue.
         return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_424_FAILED_DEPENDENCY)
@@ -443,7 +447,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     async def _forbidden(request: Request, exc: Exception) -> JSONResponse:
         # Le client vient de la clé : ce n'est pas une demande mal formée,
         # c'est une demande que cette clé n'a pas le droit de faire. Un refus de
-        # droits qui n'est pas passé par le SDK (as_user) s'écrit ici (D-9).
+        # droits qui n'est pas passé par le SDK (as_user) s'écrit ici (décision D-9 des utilisateurs et rôles).
         if isinstance(exc, AccessDenied):
             with audit.through("rest", app.state.loom.config):
                 audit.refused(exc, action=f"{request.method} {request.url.path}")
@@ -524,7 +528,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             )
         except (AttachmentError, StateRefused) as exc:
             # Une clé ``required`` du state sans valeur : la demande ne peut pas
-            # ouvrir de run, ce n'est pas un conflit (D13).
+            # ouvrir de run, ce n'est pas un conflit (décision D13 du state de session).
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
         except UnusableId:
             # Le ``session_id`` ou le ``run_id`` du corps est refusé tel quel (422), non pris
@@ -619,7 +623,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         since: AwareDatetime | None = None,
         until: AwareDatetime | None = None,
         # Le motif est contrôlé par ``EventQuery``, dont le refus est en français ;
-        # celui de FastAPI (« String should match pattern … ») ne l'était pas (K5).
+        # celui de FastAPI (« String should match pattern … ») ne l'était pas (fonction K5).
         after: Annotated[EventId | None, Query(json_schema_extra={"pattern": EVENT_ID_PATTERN})] = None,
         limit: Annotated[int, Query(ge=1, le=EVENTS_MAX)] = EVENTS_LIMIT,
     ) -> Response | list[Event]:
@@ -765,7 +769,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         who: Who,
         run_id: RunId,
         # Facultatif : son seul champ l'est aussi. Exigé, un POST sans corps
-        # recevait le 422 anglais de FastAPI (« Field required », test N2 du 23/10).
+        # recevait le 422 anglais de FastAPI (« Field required », essai de la fonction N2 du 23/10).
         body: Annotated[Cancellation | None, Body()] = None,
         session_id: SessionId | None = None,
     ) -> Cancelled:
@@ -876,7 +880,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         mounted = f"{http.base_path}{served.path}"
         app.mount(mounted, served)
         # Le montage ne sert que `…/mcp/` : sans cette route, `…/mcp`, l'adresse
-        # documentée, recevait un 307 avant toute clé (test N5 du 23/10) — que
+        # documentée, recevait un 307 avant toute clé (essai de la fonction N5, 23/10) — que
         # tous les clients ne suivent pas sur un POST, qu'un client HTTP suit
         # sans l'en-tête d'autorisation si l'hôte change, et qui, derrière un
         # proxy TLS, peut renvoyer en `http://`. Les deux adresses mènent au
@@ -923,7 +927,7 @@ def _acting(loom: Loom, who: Caller, as_user: str | None) -> Actor:
 
     ``as_user`` est réservé à une passerelle (``act_as``), qui n'exerce au nom
     de l'utilisateur que les rôles qu'elle endosse ; sa clé la restreint encore
-    (D-5, D-5b). L'utilisateur d'une instance locale n'a pas ``act_as`` : 403.
+    (décisions D-5 et D-5b des utilisateurs et rôles). L'utilisateur d'une instance locale n'a pas ``act_as`` : 403.
     """
     if as_user is None:
         return who.actor

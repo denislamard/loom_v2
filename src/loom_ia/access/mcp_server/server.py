@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Serveur MCP : un agent, un outil (N3, D4).
+"""Serveur MCP : un agent, un outil (fonctions N3 et D4).
 
 Chaque agent publié (``expose.mcp``) devient un outil MCP qui prend un
 message, éventuellement des images (argument ``attachments``, décrit dans le
@@ -8,7 +8,7 @@ de plus : ``run_status`` relit un run par son identifiant, ``run_report`` rend
 la consommation d'un run (avec ses sous-runs) ou de toute une session, et
 ``cancel`` arrête un run.
 
-Résultat (J3) : le texte est la réponse ; le résultat structuré y ajoute
+Résultat (fonction J3) : le texte est la réponse ; le résultat structuré y ajoute
 ``unverified``, l'usage et le coût, leur ventilation (``report``) et les
 verdicts des juges. Une réponse gardée sans respecter son contrat ou son juge
 est suivie d'un second texte qui le dit. Un run échoué rend un résultat
@@ -16,12 +16,12 @@ d'erreur (``isError``) dont le texte dit en clair ce qui l'a arrêté ; son
 type (``guard.judge``, ``model.auth``…) est dans ``error_type``. Les juges
 suivent leur ``when`` : l'accès MCP ne les force ni ne les retire.
 
-Progression (D4) : si le client en demande une (``progressToken``), chaque
+Progression (fonction D4) : si le client en demande une (``progressToken``), chaque
 étape visible du run — appels d'outils, fichiers rangés, sous-agents qui
 démarrent et se terminent, avec leurs propres appels — lui est envoyée en
 notification de progression, dans l'ordre du journal.
 
-Approbations (#17, #39, J4.5) : ``approve`` n'est **jamais** un outil MCP —
+Approbations (points 17 et 39, jalon J4.5) : ``approve`` n'est **jamais** un outil MCP —
 le LLM du client validerait lui-même les effets qu'il demande. Deux chemins,
 selon ce que le client sait faire :
 
@@ -103,22 +103,29 @@ from loom_ia.core.model import (
 from loom_ia.usage import UsageReport, render
 
 SERVER_NAME: Final = "loom"
-# Un serveur HTTP sert tous les clients : ce qu'il publie dépend de la clé,
-# donc ses instructions ne peuvent pas nommer des agents à l'avance.
+"""Nom du serveur MCP annoncé aux clients."""
 _INSTRUCTIONS: Final = "Agents loom : ceux que la clé d'API de la requête peut lancer (outil par agent)."
+"""Un serveur HTTP sert tous les clients : ce qu'il publie dépend de la clé,
+donc ses instructions ne peuvent pas nommer des agents à l'avance.
+"""
 
-# Ce qui rend l'appelant de la requête en cours ; absent en stdio.
 type CallerSource = Callable[[], Caller]
+"""Ce qui rend l'appelant de la requête en cours ; absent en stdio."""
 STATUS_TOOL: Final = "run_status"
+"""Nom de l'outil qui dit où en est un run."""
 REPORT_TOOL: Final = "run_report"
-# Nommé `cancel` comme #40 l'annonce depuis J1, et non `run_cancel` : la
-# famille des deux autres outils de contrôle ferait pourtant la paire.
+"""Nom de l'outil qui rend le rapport de consommation d'un run."""
 CANCEL_TOOL: Final = "cancel"
-# Ce qu'un formulaire d'elicitation peut rendre, par champ.
+"""Nommé `cancel` comme le point 40 l'annonce depuis le jalon J1, et non `run_cancel` : la
+famille des deux autres outils de contrôle ferait pourtant la paire.
+"""
 type FormValue = str | int | float | bool | list[str] | None
+"""Ce qu'un formulaire d'elicitation peut rendre, par champ."""
 
 UNVERIFIED_NOTE: Final = "Réponse non vérifiée : elle a été gardée sans respecter son contrat ou son juge."
+"""Note ajoutée à une réponse gardée sans respecter son contrat ou son juge."""
 FALLBACK_NOTE: Final = "Réponse de repli : la sortie a été refusée par son contrat ou son juge, puis remplacée par son message de repli."
+"""Note ajoutée à une réponse de repli."""
 
 AGENT_INPUT: Final[dict[str, Any]] = {
     "type": "object",
@@ -133,6 +140,7 @@ AGENT_INPUT: Final[dict[str, Any]] = {
     "required": ["message"],
     "additionalProperties": False,
 }
+"""Schéma d'entrée de l'outil d'un agent, lu par le modèle du client MCP."""
 
 STATUS_INPUT: Final[dict[str, Any]] = {
     "type": "object",
@@ -143,6 +151,7 @@ STATUS_INPUT: Final[dict[str, Any]] = {
     "required": ["run_id"],
     "additionalProperties": False,
 }
+"""Schéma d'entrée de ``run_status``."""
 
 CANCEL_INPUT: Final[dict[str, Any]] = {
     "type": "object",
@@ -153,6 +162,7 @@ CANCEL_INPUT: Final[dict[str, Any]] = {
     "required": ["run_id"],
     "additionalProperties": False,
 }
+"""Schéma d'entrée de ``cancel``."""
 
 CANCEL_OUTPUT: Final[dict[str, Any]] = {
     "type": "object",
@@ -164,6 +174,7 @@ CANCEL_OUTPUT: Final[dict[str, Any]] = {
     "required": ["run_id", "cancelled"],
     "additionalProperties": False,
 }
+"""Schéma du résultat structuré de ``cancel``."""
 
 REPORT_INPUT: Final[dict[str, Any]] = {
     "type": "object",
@@ -180,9 +191,8 @@ REPORT_INPUT: Final[dict[str, Any]] = {
     "anyOf": [{"required": ["run_id"]}, {"required": ["session_id"]}],
     "additionalProperties": False,
 }
+"""Schéma d'entrée de ``run_report``."""
 
-# Schémas de l'usage, du rapport, d'un verdict et d'une demande d'approbation,
-# rangés à la racine du schéma de sortie.
 _REFS, _DEFS = models_json_schema(
     [
         (Usage, "serialization"),
@@ -194,10 +204,10 @@ _REFS, _DEFS = models_json_schema(
     ],
     ref_template="#/$defs/{model}",
 )
+"""Schémas de l'usage, du rapport, d'un verdict et d'une demande d'approbation,
+rangés à la racine du schéma de sortie.
+"""
 
-# Ce qu'un client capable d'elicitation montre à l'humain : accorder ou
-# refuser, et pourquoi. Un formulaire MCP n'a qu'un niveau de propriétés :
-# corriger les arguments d'un appel n'y entre pas, et reste à l'API.
 DECISION_SCHEMA: Final[dict[str, Any]] = {
     "type": "object",
     "properties": {
@@ -215,8 +225,13 @@ DECISION_SCHEMA: Final[dict[str, Any]] = {
     },
     "required": ["decision"],
 }
+"""Ce qu'un client capable d'elicitation montre à l'humain : accorder ou
+refuser, et pourquoi. Un formulaire MCP n'a qu'un niveau de propriétés :
+corriger les arguments d'un appel n'y entre pas, et reste à l'API.
+"""
 
 REPORT_OUTPUT: Final[dict[str, Any]] = UsageReport.model_json_schema(mode="serialization")
+"""Schéma du résultat structuré de ``run_report`` : celui d'``UsageReport``."""
 
 RUN_OUTPUT: Final[dict[str, Any]] = {
     "type": "object",
@@ -277,6 +292,7 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
     "required": ["run_id", "session_id", "agent", "status", "text"],
     **_DEFS,
 }
+"""Schéma du résultat structuré de l'outil d'un agent."""
 
 
 def create_server(
@@ -292,10 +308,10 @@ def create_server(
     dirait au nom de qui une requête arrive : un serveur sert **un**
     utilisateur, nommé à son lancement (``user``, ``loom mcp --user``). Le
     client est le sien, et ses droits valent comme partout ; sans lui,
-    ``TypeError`` (D-1). Jamais le modèle ne choisit l'identité : aucun outil
+    ``TypeError`` (décision D-1 des utilisateurs et rôles). Jamais le modèle ne choisit l'identité : aucun outil
     ne prend d'utilisateur. ``AccessDenied`` pour un utilisateur inconnu.
 
-    En **HTTP** (J5.2b), ``callers`` rend l'appelant de la requête en cours,
+    En **HTTP** (jalon J5.2b), ``callers`` rend l'appelant de la requête en cours,
     tiré de sa clé : un même serveur sert alors tous les clients, publie à
     chacun ses agents, et refuse ce que sa clé ne permet pas.
 
@@ -402,7 +418,7 @@ def create_server(
         run = arguments.get("run_id")
         run_id = RunId(str(run)) if run else None
         # Lire et lancer ne demandent pas la même chose : relire un run est
-        # une lecture, faire travailler un agent en est une autre (#39).
+        # une lecture, faire travailler un agent en est une autre (point 39).
         needed: Permission = "read" if tool in (STATUS_TOOL, REPORT_TOOL) else "cancel" if tool == CANCEL_TOOL else "run"
         if not caller.may(needed):
             return _denied(caller, caller.lacking(needed), needed)
@@ -416,7 +432,7 @@ def create_server(
                 if not caller.allows(found.agent):
                     return _denied(caller, caller.lacking("read", found.agent), "read", found.agent)
                 # Relire, c'est lire le journal : sans `read_content`, le
-                # statut et les coûts passent, la correspondance non (J5.2a) ;
+                # statut et les coûts passent, la correspondance non (jalon J5.2a) ;
                 # et le rapport ne nomme que les agents que la clé peut lire.
                 shown = found.restricted(caller.allows)
                 return answer(shown.masked() if caller.masks else shown, ran=False)
@@ -568,7 +584,7 @@ def _question_form(
 
 
 def _elicited(ctx: RequestContext[Any, Any, Any]) -> Approver | None:
-    """Approbateur en ligne bâti sur l'elicitation, si le client la déclare (#17).
+    """Approbateur en ligne bâti sur l'elicitation, si le client la déclare (point 17).
 
     Sans elle, rien n'est monté : le run se mettra en pause, et l'outil rendra
     la main avec ce qu'il faut trancher.
@@ -762,7 +778,7 @@ async def _cancel(
 
     Il faut ``cancel`` sur **son** agent, vérifié après avoir lu de quel agent
     il est ; c'est l'utilisateur de l'appelant qui signe l'arrêt — jamais un
-    nom que le modèle écrirait (D-5). Un run déjà terminé n'est pas une
+    nom que le modèle écrirait (décision D-5 des utilisateurs et rôles). Un run déjà terminé n'est pas une
     erreur : il n'y avait rien à arrêter, et la réponse le dit.
     """
     state = await loom.state(run_id, session_id=session_id, tenant_id=caller.tenant)
@@ -786,7 +802,7 @@ def _always(caller: Caller) -> CallerSource:
 
 
 def _denied(caller: Caller, message: str, permission: Permission, agent: str | None = None) -> types.CallToolResult:
-    """Un refus d'accès : écrit au journal d'audit (D-9), puis rendu comme une erreur d'outil."""
+    """Un refus d'accès : écrit au journal d'audit (décision D-9 des utilisateurs et rôles), puis rendu comme une erreur d'outil."""
     audit.denied(
         message,
         access="mcp",

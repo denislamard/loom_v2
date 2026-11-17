@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Sceau des contenus : AES-256-GCM et trousseau adossé aux secrets (#30)."""
+"""Sceau des contenus : AES-256-GCM et trousseau adossé aux secrets (point 30)."""
 
 from loom_ia.adapters.crypto.aesgcm import (
     KEY_BYTES,

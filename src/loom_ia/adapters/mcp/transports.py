@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Ouverture d'une session MCP selon le transport déclaré (D3).
+"""Ouverture d'une session MCP selon le transport déclaré (fonction D3).
 
 Une fabrique de session prend le gestionnaire des messages du serveur
 (notifications ``tools/list_changed``…) et ouvre une ``ClientSession``
@@ -26,6 +26,7 @@ from loom_ia import __version__
 from loom_ia.core.model import McpServerSpec
 
 type SessionFactory = Callable[[MessageHandlerFnT], AbstractAsyncContextManager[ClientSession]]
+"""Ouvre une session MCP, avec le gestionnaire des messages du serveur."""
 
 
 class McpConfigError(ValueError):
@@ -33,15 +34,16 @@ class McpConfigError(ValueError):
 
 
 CLIENT_INFO = types.Implementation(name="loom-ia", version=__version__)
+"""Nom et version que loom-ia annonce aux serveurs MCP."""
 
-# Lignes de stderr d'un serveur stdio gardées pour expliquer un échec d'ouverture.
 STDERR_LINES: Final = 20
-# Longueur gardée d'une ligne : un serveur peut écrire une trace d'un seul tenant.
+"""Lignes de stderr d'un serveur stdio gardées pour expliquer un échec d'ouverture."""
 STDERR_LINE_CHARS: Final = 300
-# Lignes citées dans l'erreur : la dernière est presque toujours l'exception.
+"""Longueur gardée d'une ligne : un serveur peut écrire une trace d'un seul tenant."""
 STDERR_SHOWN: Final = 3
-# Ligne faite seulement des repères d'une trace Python (``~~~~^^^^``).
+"""Lignes citées dans l'erreur : la dernière est presque toujours l'exception."""
 _MARKERS: Final = re.compile(r"[~^\s]+")
+"""Ligne faite seulement des repères d'une trace Python (``~~~~^^^^``)."""
 
 
 class McpStartError(ConnectionError):
@@ -50,7 +52,7 @@ class McpStartError(ConnectionError):
     Le SDK MCP ne dit que « Connection closed » ou ``BrokenResourceError`` : ni
     le code de sortie (il ne donne pas accès au processus), ni ce que le
     serveur a écrit. Un chemin faux ou une config illisible ne se voyaient
-    qu'en relançant le serveur à la main (test D3 du 18/10).
+    qu'en relançant le serveur à la main (essai de la fonction D3, 18/10).
     """
 
 
@@ -69,6 +71,10 @@ def _secret(spec: McpServerSpec, variable: str, environ: Mapping[str, str]) -> s
 
 
 def _stdio(spec: McpServerSpec, environ: Mapping[str, str]) -> SessionFactory:
+    """Ouvre les sessions d'un serveur stdio : la commande, ses arguments, son environnement (``env``, puis ``env_from`` lu dans le nôtre) et son dossier.
+
+    Une ouverture ratée lève ``McpStartError``, avec la fin du stderr du serveur.
+    """
     if spec.command is None:
         raise McpConfigError(f"Serveur MCP {spec.name!r} : 'command' manquant")
     env = {
@@ -104,8 +110,8 @@ class _StderrTail:
     Le SDK branche le stderr du processus sur un fichier : on lui donne
     l'extrémité d'écriture d'un tuyau, et un fil lit l'autre. Chaque ligne
     part sur notre stderr préfixée du nom du serveur (``[notes] …``), et les
-    ``STDERR_LINES`` dernières restent en mémoire, sans le préfixe. Au test F6
-    du 19/10, les avertissements de torch et les traces de fastmcp d'un
+    ``STDERR_LINES`` dernières restent en mémoire, sans le préfixe. À l'essai de la
+    fonction F6, le 19/10, les avertissements de torch et les traces de fastmcp d'un
     serveur se mêlaient à la sortie de loom sans dire qui parlait. Le fil
     s'arrête quand plus personne n'écrit : le processus est mort et notre
     extrémité est fermée.
@@ -136,6 +142,7 @@ class _StderrTail:
                     self._lines.append(text[:STDERR_LINE_CHARS])
 
     def lines(self) -> list[str]:
+        """Les dernières lignes utiles du stderr du serveur."""
         return list(self._lines)
 
     def close(self) -> None:
@@ -164,6 +171,7 @@ def _innermost(error: BaseException) -> BaseException:
 
 
 def _http(spec: McpServerSpec, environ: Mapping[str, str]) -> SessionFactory:
+    """Ouvre les sessions d'un serveur HTTP (streamable HTTP), avec les en-têtes lus dans l'environnement (``headers_env``)."""
     if spec.url is None:
         raise McpConfigError(f"Serveur MCP {spec.name!r} : 'url' manquante")
     url = spec.url

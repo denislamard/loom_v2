@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Accès REST : application FastAPI et serveur de développement (N2).
+"""Accès REST : application FastAPI et serveur de développement (fonction N2).
 
 Demande l'extra ``http`` : ``pip install 'loom-ia[http]'``.
 """

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Adaptateurs de la file de tâches (#27)."""
+"""Adaptateurs de la file de tâches (point 27)."""
 
 from loom_ia.adapters.queue.asyncio_queue import MAX_REMEMBERED, AsyncioTaskQueue, Handler
 

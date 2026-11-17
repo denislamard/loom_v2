@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Corps d'une demande de run : JSON, ou formulaire multipart avec des fichiers (G1).
+r"""Corps d'une demande de run : JSON, ou formulaire multipart avec des fichiers (fonction G1).
 
 La route ``POST /v1/agents/{name}/runs`` accepte deux formes :
 
@@ -8,7 +8,7 @@ La route ``POST /v1/agents/{name}/runs`` accepte deux formes :
   et les fichiers sous le nom ``attachments``, répété pour chacun ; un
   formulaire sans fichier (``application/x-www-form-urlencoded``) passe aussi.
 
-    curl -F message='Que montre la photo ?' -F attachments=@photo.jpg \\
+    curl -F message='Que montre la photo ?' -F attachments=@photo.jpg \
          http://127.0.0.1:8000/v1/agents/assistant/runs
 
 Les limites viennent de ``execution.attachments`` : un envoi plus gros que
@@ -42,17 +42,20 @@ from loom_ia.access.http.schemas import RunRequest, shallow
 from loom_ia.core.model import JUDGES_MODES, Attachment, AttachmentPolicy
 
 JSON: Final = "application/json"
+"""Type d'un corps JSON."""
 MULTIPART: Final = "multipart/form-data"
+"""Type d'un formulaire multipart, avec des fichiers."""
 FORM: Final = "application/x-www-form-urlencoded"
-# Nom des parties qui portent les fichiers.
+"""Type d'un formulaire sans fichier."""
 FILES_FIELD: Final = "attachments"
-# Place laissée aux champs texte et aux en-têtes des parties.
+"""Nom des parties qui portent les fichiers."""
 FORM_OVERHEAD: Final = 256 * 1024
+"""Place laissée aux champs texte et aux en-têtes des parties."""
 MAX_FIELDS: Final = 16
-# Type envoyé quand le client ne sait pas : la signature décidera.
+"""Champs texte acceptés au plus dans un formulaire."""
 UNDECLARED: Final = frozenset({"", "application/octet-stream"})
+"""Type envoyé quand le client ne sait pas : la signature décidera."""
 
-# Description OpenAPI des deux corps acceptés.
 RUN_BODY: Final[dict[str, Any]] = {
     "requestBody": {
         "required": True,
@@ -81,6 +84,7 @@ RUN_BODY: Final[dict[str, Any]] = {
         },
     }
 }
+"""Description OpenAPI des deux corps acceptés."""
 
 
 async def run_request(request: Request, policy: AttachmentPolicy) -> tuple[RunRequest, list[Attachment]]:
@@ -251,6 +255,11 @@ class BodyLimit:
         self.limit = limit
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Laisse passer une requête dont le corps tient sous ``limit`` octets ; sinon, répond 413.
+
+        Une longueur annoncée trop grande est refusée sans rien lire ; sinon le
+        corps est compté à mesure, et la lecture s'arrête au dépassement.
+        """
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

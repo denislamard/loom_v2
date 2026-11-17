@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Un serveur MCP vu du client : connexion, reconnexion, cache des outils (#19, D3).
+"""Un serveur MCP vu du client : connexion, reconnexion, cache des outils (point 19, fonction D3).
 
 La session du SDK est tenue par une tâche dédiée : ses contextes (anyio) sont
 ouverts et refermés dans la même tâche, quelle que soit celle qui l'utilise.
@@ -10,7 +10,7 @@ ouverts et refermés dans la même tâche, quelle que soit celle qui l'utilise.
 - **Reconnexion avec backoff** : après un échec, la tentative suivante attend
   1, 2, 5, 10 puis 30 s ; entre-temps, le serveur est déclaré indisponible.
 - **Appel interrompu par une perte de connexion** : rejoué une fois, après
-  reconnexion, seulement si l'outil peut l'être sans risque (#18). Une session
+  reconnexion, seulement si l'outil peut l'être sans risque (point 18). Une session
   HTTP que le serveur ne reconnaît plus (réponse 404) est une connexion perdue.
 - **Une seule connexion fermée par échec** : celle qui a échoué, et seulement
   si elle est encore la courante — une autre, ouverte entre-temps, reste.
@@ -18,7 +18,7 @@ ouverts et refermés dans la même tâche, quelle que soit celle qui l'utilise.
   chaque nouvelle connexion.
 - **Fermeture après inactivité** (``idle_timeout``), pour la portée ``shared``.
 - **Appel abandonné** (délai dépassé, run annulé) : le serveur en est prévenu
-  par ``notifications/cancelled`` (B-2, D-6). Le SDK ne le fait pas de lui-même ;
+  par ``notifications/cancelled`` (décisions B-2/D-6 du délai et des threads). Le SDK ne le fait pas de lui-même ;
   un serveur qui respecte la notification arrête l'appel, les autres le
   finissent, et l'effet reste d'état inconnu pour le modèle.
 """
@@ -41,19 +41,21 @@ from loom_ia.core.ports import SourceUnavailable
 
 logger = logging.getLogger(__name__)
 
-# Attentes successives avant une nouvelle tentative de connexion, en secondes.
 BACKOFF: Final = (1.0, 2.0, 5.0, 10.0, 30.0)
-# Délai laissé à une session pour se fermer proprement.
+"""Attentes successives avant une nouvelle tentative de connexion, en secondes."""
 CLOSE_TIMEOUT: Final = 5.0
-# Délai laissé à l'envoi de ``notifications/cancelled`` au serveur (B-2, D-6).
+"""Délai laissé à une session pour se fermer proprement."""
 CANCEL_TIMEOUT: Final = 2.0
-# Message que le SDK met dans l'erreur d'une requête à laquelle un serveur HTTP
-# répond 404 : la session est inconnue ou expirée (spécification MCP). Le code
-# qu'il y joint est 32600, et non -32600 (``INVALID_REQUEST``) : seul le message
-# est fiable.
+"""Délai laissé à l'envoi de ``notifications/cancelled`` au serveur (décisions B-2/D-6 du délai et des threads)."""
 SESSION_TERMINATED: Final = "Session terminated"
+"""Message que le SDK met dans l'erreur d'une requête à laquelle un serveur
+HTTP répond 404 : la session est inconnue ou expirée (spécification MCP). Le
+code qu'il y joint est 32600, et non -32600 (``INVALID_REQUEST``) : seul le
+message est fiable.
+"""
 
 type Clock = Callable[[], float]
+"""Horloge en secondes (par défaut ``time.monotonic``) ; un essai peut en donner une autre."""
 
 
 class ConnectionLost(Exception):
@@ -150,6 +152,17 @@ class McpServer:
         clock: Clock = time.monotonic,
         backoff: Sequence[float] = BACKOFF,
     ) -> None:
+        """Prépare la connexion, sans l'ouvrir : elle s'ouvre au premier usage.
+
+        Args:
+            spec: Le serveur déclaré.
+            factory: Ouvre une session selon le transport (``session_factory``).
+            idle_timeout: Inactivité, en secondes, après laquelle la connexion est
+                fermée ; ``None`` : jamais.
+            clock: Horloge, en secondes.
+            backoff: Attentes successives avant une nouvelle tentative de
+                connexion, en secondes.
+        """
         self.spec = spec
         self._factory = factory
         self._idle_timeout = idle_timeout
@@ -170,10 +183,12 @@ class McpServer:
 
     @property
     def name(self) -> str:
+        """Nom du serveur déclaré."""
         return self.spec.name
 
     @property
     def connected(self) -> bool:
+        """Vrai si une session est ouverte."""
         return self._held is not None and self._held.session is not None
 
     async def tools(self) -> tuple[types.Tool, ...]:
@@ -247,6 +262,7 @@ class McpServer:
             self._tools = None
 
     async def aclose(self) -> None:
+        """Ferme la connexion ; plus aucune ne s'ouvre ensuite."""
         self._closed = True
         if self._idle_task is not None:
             self._idle_task.cancel()
@@ -284,6 +300,16 @@ class McpServer:
         return True
 
     async def _connect_locked(self) -> ClientSession:
+        """Ouvre une session, sous verrou, dans le délai ``connect_timeout``.
+
+        Pendant l'attente qui suit un échec (1, 2, 5, 10 puis 30 s), le serveur est
+        indisponible sans nouvelle tentative ; le cache des outils est vidé à chaque
+        connexion.
+
+        Raises:
+            SourceUnavailable: Connexion fermée, attente en cours, ou ouverture
+                ratée.
+        """
         if self._closed:
             raise SourceUnavailable(self.name, "connexion fermée", attempted=False)
         now = self._clock()

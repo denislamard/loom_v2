@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""File de tâches en mémoire, dans le process de l'instance (#27).
+"""File de tâches en mémoire, dans le process de l'instance (point 27).
 
 Mode librairie : une tâche asyncio par travail, sans stockage. La durabilité
 vient du journal — une tâche perdue au redémarrage est retrouvée par la
 reprise, pas par la file.
 
 ``key`` dédoublonne : un même travail demandé deux fois pendant qu'il tourne
-n'est lancé qu'une fois (un seul résumé par session et par position, #23).
+n'est lancé qu'une fois (un seul résumé par session et par position, point 23).
 ``max_running`` borne les travaux menés de front : les suivants attendent
 leur tour, ``pending``. Une reprise au démarrage remet d'un coup tous les
 runs laissés en plan ; sans borne, ils partaient tous ensemble.
@@ -27,22 +27,33 @@ from loom_ia.core.ports import Job, JobKind, JobState
 logger = logging.getLogger(__name__)
 
 type Handler = Callable[[Job], Awaitable[None]]
+"""Ce qui mène un travail de la file."""
 
-# Tâches terminées gardées pour qu'on puisse encore lire leur état.
 MAX_REMEMBERED: Final = 256
+"""Tâches terminées gardées pour qu'on puisse encore lire leur état."""
 
 
 @dataclass(slots=True)
 class _Entry:
+    """Un travail de la file : la tâche, sa clé de dédoublonnage, son état et la tâche asyncio qui le mène.
+
+    Attributes:
+        job: La tâche.
+        key: Clé de dédoublonnage, si la tâche en a une.
+        state: État courant.
+        task: Tâche asyncio qui mène le travail.
+        delayed: Travail qui attend son heure (``delay``) et n'a rien commencé.
+    """
+
     job: Job
     key: str | None
     state: JobState
     task: asyncio.Task[None] | None = None
-    # Travail qui attend son heure (``delay``) et n'a rien commencé.
     delayed: bool = False
 
     @property
     def open(self) -> bool:
+        """Vrai pour un travail en attente ou en cours."""
         return self.state in {"pending", "running"}
 
     @property
@@ -70,6 +81,20 @@ class AsyncioTaskQueue:
         self._closed = False
 
     async def submit(self, job: Job, *, key: str | None = None, delay: float | None = None) -> str:
+        """Met une tâche en file et rend son identifiant (``TaskQueue.submit``).
+
+        Avec ``key``, un travail de même clé encore ouvert n'est pas relancé : son
+        identifiant est rendu. Avec ``delay``, le travail attend d'abord ce
+        nombre de secondes.
+
+        Args:
+            job: La tâche.
+            key: Clé de dédoublonnage.
+            delay: Attente avant de commencer, en secondes.
+
+        Raises:
+            RuntimeError: La file est fermée.
+        """
         if self._closed:
             raise RuntimeError("File fermée : plus de tâche acceptée")
         if key is not None:
@@ -86,10 +111,12 @@ class AsyncioTaskQueue:
         return job_id
 
     async def state(self, job_id: str) -> JobState:
+        """État d'une tâche ; ``unknown`` si la file ne la connaît plus."""
         entry = self._entries.get(job_id)
         return entry.state if entry is not None else "unknown"
 
     async def cancel(self, job_id: str) -> bool:
+        """Annule une tâche ouverte ; faux si elle est inconnue ou déjà terminée."""
         entry = self._entries.get(job_id)
         if entry is None or not entry.open or entry.task is None:
             return False
@@ -158,6 +185,11 @@ class AsyncioTaskQueue:
         return f"AsyncioTaskQueue({self.open} tâche(s) en cours)"
 
     async def _work(self, job_id: str, entry: _Entry, delay: float | None) -> None:
+        """Mène un travail : attente du délai, place parmi les travaux de front, gestionnaire de son genre.
+
+        Un échec est journalisé et marque la tâche ``failed`` sans remonter ; une
+        annulation la marque ``cancelled``. La clé est libérée à la fin.
+        """
         try:
             if delay:
                 await asyncio.sleep(delay)

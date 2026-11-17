@@ -75,7 +75,8 @@ def _strip_docstrings(tree: ast.AST) -> ast.AST:
             if isinstance(block, list) and block and all(isinstance(item, ast.stmt) for item in cast(list[object], block)):
                 statements = cast(list[ast.stmt], block)
                 kept = [statement for statement in statements if not _is_text(statement)]
-                setattr(node, field, kept or [ast.Pass()])
+                # Un module vidé reste vide : un fichier sans code n'en reçoit pas.
+                setattr(node, field, kept or ([] if isinstance(node, ast.Module) else [ast.Pass()]))
     return tree
 
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Un serveur MCP référencé par un agent : source d'outils (#19, D3).
+"""Un serveur MCP référencé par un agent : source d'outils (point 19, fonction D3).
 
 La référence choisit les outils exposés (``include`` ou ``exclude``), leur
 préfixe (``serveur__outil``, ou ``alias__outil``) et leurs déclarations :
@@ -41,40 +41,62 @@ from loom_ia.core.ports import SourceContext, SourceUnavailable, Tool, ToolConte
 
 logger = logging.getLogger(__name__)
 
-# Clé de ``_meta`` qui porte la clé d'idempotence d'un appel (§9.5).
 IDEMPOTENCY_META: Final = "loom-ia/idempotency_key"
+"""Clé de ``_meta`` qui porte la clé d'idempotence d'un appel (conception §9.5)."""
 
-# Portées dont la connexion vit dans le pool, au-delà d'un run.
 POOLED: Final = frozenset({"shared", "tenant"})
+"""Portées dont la connexion vit dans le pool, au-delà d'un run."""
 
 LOST: Final = (
     "Connexion au serveur perdue pendant l'appel : l'outil a peut-être produit son effet. "
     "Il n'a pas été relancé automatiquement ; vérifie avant de le rappeler."
 )
+"""Erreur rendue au modèle quand la connexion tombe pendant un appel qui ne peut pas être relancé sans risque."""
 
 
 @dataclass(frozen=True, kw_only=True)
 class McpSelection:
-    """Ce qu'un agent prend d'un serveur."""
+    """Ce qu'un agent prend d'un serveur.
+
+    Attributes:
+        prefix: Préfixe des noms d'outils exposés à l'agent.
+        include: Seuls ces outils du serveur ; ``None`` : tous.
+        exclude: Outils du serveur écartés.
+        required: Le run ne peut pas se passer de ce serveur.
+        tools: Déclarations propres à l'agent, par nom d'outil du serveur.
+    """
 
     prefix: str
     include: tuple[str, ...] | None = None
     exclude: tuple[str, ...] | None = None
     required: bool = False
-    # Déclarations propres à l'agent, par nom d'outil du serveur.
     tools: Mapping[str, ToolOverrides] = field(default_factory=dict[str, ToolOverrides])
 
 
 @dataclass(frozen=True, slots=True)
 class McpTool:
-    """Outil d'un serveur MCP, sous son nom préfixé."""
+    """Outil d'un serveur MCP, sous son nom préfixé.
+
+    Attributes:
+        spec: Définition de l'outil, sous son nom préfixé.
+        server: Le serveur qui l'exécute.
+        remote_name: Nom de l'outil chez le serveur.
+    """
 
     spec: ToolSpec
     server: McpServer
-    # Nom de l'outil chez le serveur.
     remote_name: str
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Appelle l'outil chez le serveur, avec la clé d'idempotence de l'appel dans ``_meta``.
+
+        Une perte de connexion est rejouée une fois si l'outil peut l'être sans
+        risque (``safe_to_retry``).
+
+        Raises:
+            ToolError: Serveur indisponible, connexion perdue pendant l'appel, ou
+                erreur MCP ; le modèle en lit le message.
+        """
         meta: dict[str, Any] = {IDEMPOTENCY_META: context.idempotency_key}
         try:
             result = await self.server.call(
@@ -113,6 +135,20 @@ class McpSource:
         pool: McpPool | None = None,
         pool_key: str | None = None,
     ) -> None:
+        """Prépare la source, sans se connecter.
+
+        Args:
+            spec: Le serveur déclaré.
+            selection: Ce que l'agent en prend.
+            factory: Ouvre une session selon le transport.
+            pool: Pool des connexions partagées ; requis en portée ``shared`` ou
+                ``tenant``.
+            pool_key: Clé de la connexion dans le pool : le nom du serveur en portée
+                ``shared``, son nom et son client en portée ``tenant``.
+
+        Raises:
+            ValueError: Portée partagée sans pool.
+        """
         if spec.scope in POOLED and pool is None:
             raise ValueError(f"Serveur MCP {spec.name!r} de portée {spec.scope} : pool requis")
         self.spec = spec
@@ -120,7 +156,7 @@ class McpSource:
         self._factory = factory
         self._pool = pool
         # Clé de pool : le nom du serveur en portée ``shared``, son nom et son
-        # client en portée ``tenant`` (#34) — c'est l'appelant qui la pose,
+        # client en portée ``tenant`` (point 34) — c'est l'appelant qui la pose,
         # parce que lui seul sait pour qui il monte l'agent.
         self.pool_key = pool_key or spec.name
         self._warned = False
@@ -128,10 +164,12 @@ class McpSource:
 
     @property
     def name(self) -> str:
+        """Nom du serveur, repris dans le journal."""
         return self.spec.name
 
     @property
     def required(self) -> bool:
+        """Vrai si le run ne peut pas se passer de ce serveur (``required``)."""
         return self.selection.required
 
     def __repr__(self) -> str:
@@ -139,6 +177,17 @@ class McpSource:
 
     @asynccontextmanager
     async def open(self, context: SourceContext) -> AsyncGenerator[Sequence[Tool]]:
+        """Ouvre les outils du serveur pour un run.
+
+        En portée ``shared`` ou ``tenant``, la connexion vient du pool et lui
+        survit ; sinon elle est ouverte pour le run et fermée à la sortie.
+
+        Args:
+            context: Le contexte du run.
+
+        Yields:
+            Les outils retenus, sous leur nom préfixé.
+        """
         pooled = self._pool is not None and self.spec.scope in POOLED
         server = self._pool.server(self.spec, self.pool_key, self._factory) if self._pool is not None and pooled else McpServer(self.spec, self._factory)
         try:
@@ -185,6 +234,11 @@ class McpSource:
         )
 
     def _spec(self, tool: types.Tool) -> ToolSpec | None:
+        """La définition d'un outil du serveur ; ``None`` pour un nom hors du format des API.
+
+        Nom préfixé, description, schéma, effets lus dans ses annotations, puis
+        les déclarations du serveur et de l'agent.
+        """
         side_effects, idempotent = declared(tool.annotations)
         name = f"{self.selection.prefix}{MCP_PREFIX_SEPARATOR}{tool.name}"
         try:
@@ -207,6 +261,7 @@ class McpSource:
         return spec.overridden(self.spec.tools.get(tool.name)).overridden(self.selection.tools.get(tool.name))
 
     def _warn_unknown(self, names: set[str]) -> None:
+        """Signale les outils cités par ``include``, ``exclude`` ou ``tools`` que le serveur ne connaît pas."""
         chosen = self.selection
         checks = {
             "include": chosen.include or (),

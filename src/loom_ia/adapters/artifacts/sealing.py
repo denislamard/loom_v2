@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Fichiers scellés avec la clé de leur client (#30, §11.5).
+"""Fichiers scellés avec la clé de leur client (point 30, conception §11.5).
 
 Le journal ne porte pas les fichiers : une pièce jointe, une image produite
 par un outil, un gros résultat déporté (``offload_over``) vont au stockage
@@ -32,12 +32,14 @@ from typing import Final
 from loom_ia.core.model import ArtifactLocation, SessionId, TenantId
 from loom_ia.core.ports import ArtifactStore, Cipher, Keyring, MissingKey, SealBroken
 
-# Marque des octets scellés : un fichier en clair ne commence pas par là.
 MAGIC: Final = b"LOOMSEAL1"
-# Empreinte de la clé, en ASCII, juste après la marque : elle dit laquelle a
-# fermé ce fichier, donc laquelle manque quand il ne s'ouvre pas.
+"""Marque des octets scellés : un fichier en clair ne commence pas par là."""
 KEY_ID_BYTES: Final = 12
+"""Empreinte de la clé, en ASCII, juste après la marque : elle dit laquelle a
+fermé ce fichier, donc laquelle manque quand il ne s'ouvre pas.
+"""
 HEADER_BYTES: Final = len(MAGIC) + KEY_ID_BYTES
+"""Taille de l'en-tête d'un fichier scellé : la marque, puis l'empreinte de la clé."""
 
 
 class SealingArtifactStore:
@@ -49,14 +51,29 @@ class SealingArtifactStore:
 
     @property
     def inner(self) -> ArtifactStore:
+        """Le stockage enrobé."""
         return self._inner
 
     async def put(self, uri: str, data: bytes) -> None:
+        """Scelle les octets avec la clé courante du client de l'URI, puis les range.
+
+        Le fichier rangé commence par la marque ``LOOMSEAL1`` et l'empreinte de la
+        clé ; l'URI est authentifiée avec le contenu.
+        """
         cipher = self._sealer(_tenant(uri))
         closed = cipher.seal(data, uri.encode())
         await self._inner.put(uri, MAGIC + cipher.key_id.encode() + closed)
 
     async def get(self, uri: str) -> bytes:
+        """Rend les octets d'un artefact, ouverts avec la clé qui les a scellés.
+
+        Un fichier rangé avant que le sceau soit déclaré est rendu tel quel.
+
+        Raises:
+            ArtifactNotFound: L'artefact n'est pas dans le stockage.
+            MissingKey: La clé qui l'a scellé n'est pas dans le trousseau du client.
+            SealBroken: Octets altérés, ou fichier déplacé sous une autre URI.
+        """
         stored = await self._inner.get(uri)
         if not stored.startswith(MAGIC):
             # Fichier rangé avant que le sceau soit déclaré.
@@ -69,9 +86,11 @@ class SealingArtifactStore:
             raise SealBroken(f"{uri} : {exc}") from exc
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Supprime les fichiers d'une session dans le stockage enrobé (RGPD)."""
         return await self._inner.delete(tenant_id, session_id)
 
     async def aclose(self) -> None:
+        """Ferme le stockage enrobé."""
         await self._inner.aclose()
 
     def _sealer(self, tenant_id: TenantId) -> Cipher:

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Serveur MCP en HTTP, monté dans l'application REST (N5, #39, J5.2b).
+"""Serveur MCP en HTTP, monté dans l'application REST (fonction N5, point 39, jalon J5.2b).
 
 Ce module demande les deux extras, ``http`` et ``mcp`` : il monte le serveur
 MCP dans l'application REST. ``loom_ia.access.mcp_server`` ne l'importe donc
@@ -53,10 +53,10 @@ from loom_ia.tenancy import RateWindow
 
 logger = logging.getLogger(__name__)
 
-# Chemin du serveur MCP sous le préfixe commun de l'application.
 MCP_PATH: Final = "/mcp"
-# Hôtes toujours acceptés : l'instance servie depuis la machine même.
+"""Chemin du serveur MCP sous le préfixe commun de l'application."""
 LOCAL_HOSTS: Final = ("127.0.0.1:*", "localhost:*", "[::1]:*", "127.0.0.1", "localhost")
+"""Hôtes toujours acceptés : l'instance servie depuis la machine même."""
 
 _caller: ContextVar[Caller] = ContextVar("loom_mcp_caller")
 
@@ -80,6 +80,7 @@ def allowed_hosts(mcp: McpAccess, http: HttpServer) -> list[str]:
 
 
 def transport_security(mcp: McpAccess, http: HttpServer) -> TransportSecuritySettings:
+    """Protection du transport contre le rebond DNS : hôtes et origines acceptés."""
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=allowed_hosts(mcp, http),
@@ -88,9 +89,12 @@ def transport_security(mcp: McpAccess, http: HttpServer) -> TransportSecuritySet
 
 
 class McpHttp:
-    """Le serveur MCP d'une instance, servi en HTTP sous ``<base_path>/mcp``."""
+    """Le serveur MCP d'une instance, servi en HTTP sous ``<base_path>/mcp``.
 
-    # Chemin de montage, sous le préfixe commun de l'application.
+    Attributes:
+        path: Chemin de montage, sous le préfixe commun de l'application.
+    """
+
     path: Final = MCP_PATH
 
     def __init__(self, loom: Loom, *, name: str = SERVER_NAME, rates: RateWindow | None = None) -> None:
@@ -114,6 +118,11 @@ class McpHttp:
             yield
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Sert une requête MCP : clé identifiée et débit contrôlé d'abord, puis le gestionnaire de session, au nom de l'appelant.
+
+        Un refus d'authentification ou de débit est un 401 ou un 429 ordinaire,
+        pas une erreur d'outil.
+        """
         try:
             with audit.through("mcp", self.config):
                 caller = identify(self.security, Request(scope, receive), access="mcp")

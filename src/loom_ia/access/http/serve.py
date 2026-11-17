@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Serveur HTTP de développement (N2), et son rechargement (#48, J6.4a).
+"""Serveur HTTP de développement (fonction N2), et son rechargement (point 48, jalon J6.4a).
 
 ``uvicorn`` sert l'application ; la configuration donne l'adresse et le port,
 que la ligne de commande peut remplacer. La journalisation reste celle de
@@ -76,16 +76,16 @@ from loom_ia.runtime import apply_logging, build_agent
 if TYPE_CHECKING:
     from watchfiles import Change
 
-# Bandeau imprimé par chaque process qui prend la main : la config, le profil
-# demandé par l'option, l'adresse servie, le fichier d'environnement qu'il a lu.
 type Banner = Callable[[LoomConfig, str | None, str, int, EnvFileReport], None]
+"""Bandeau imprimé par chaque process qui prend la main : la config, le profil
+demandé par l'option, l'adresse servie, le fichier d'environnement qu'il a
+lu.
+"""
 
-# Code de sortie d'un process qui refuse sa config : celui de la CLI.
 REFUSED: Final = 2
-# Code d'un process dont l'application n'a pas démarré (uvicorn le dit).
+"""Code de sortie d'un process qui refuse sa config : celui de la CLI."""
 NOT_STARTED: Final = 3
-# Dossiers de bruit, où qu'ils soient sous un dossier surveillé : ceux que
-# ``watchfiles`` écarte, plus le cache de ruff.
+"""Code d'un process dont l'application n'a pas démarré (uvicorn le dit)."""
 NOISE_DIRS: Final = frozenset(
     {
         "__pycache__",
@@ -102,7 +102,9 @@ NOISE_DIRS: Final = frozenset(
         ".ruff_cache",
     }
 )
-# Fichiers de bruit, par leur nom : compilés, temporaires d'éditeur.
+"""Dossiers de bruit, où qu'ils soient sous un dossier surveillé : ceux que
+``watchfiles`` écarte, plus le cache de ruff.
+"""
 NOISE_FILES: Final = tuple(
     re.compile(pattern)
     for pattern in (
@@ -115,25 +117,27 @@ NOISE_FILES: Final = tuple(
         r"^flycheck_",
     )
 )
-# Changements montrés en entier ; au-delà, le compte.
+"""Fichiers de bruit, par leur nom : compilés, temporaires d'éditeur."""
 SHOWN_CHANGES: Final = 5
-# Ce qu'un process qui s'arrête dit quand il ne prend plus de requêtes, et
-# combien de temps on l'attend (secondes) : au-delà, sa boucle est bloquée, et
-# elle ne prend rien non plus.
+"""Changements montrés en entier ; au-delà, le compte."""
 DEAF: Final = "sourd"
+"""Ce qu'un process qui s'arrête dit quand il ne prend plus de requêtes."""
 DEAFNESS: Final = 5.0
-# Tous les combien un process qui sert vérifie que son superviseur est là (secondes).
+"""Combien de temps on attend ce mot, en secondes : au-delà, la boucle du process est bloquée, et elle ne prend rien non plus."""
 ORPHANED_EVERY: Final = 0.5
-# Tous les combien le guetteur rend la main sans changement (millisecondes) :
-# sa première main dit qu'il est armé.
+"""Tous les combien un process qui sert vérifie que son superviseur est là (secondes)."""
 WAKE_MS: Final = 200
+"""Tous les combien le guetteur rend la main sans changement (millisecondes) :
+sa première main dit qu'il est armé.
+"""
 
-# Lectures de la config au plus, au démarrage d'un process, pour qu'elle et
-# son relevé portent sur les mêmes dossiers.
 READS: Final = 3
+"""Lectures de la config au plus, au démarrage d'un process, pour qu'elle et
+son relevé portent sur les mêmes dossiers.
+"""
 
-# L'état d'un fichier surveillé : date de modification (ns), taille, inode.
 type FileState = tuple[int, int, int]
+"""L'état d'un fichier surveillé : date de modification (ns), taille, inode."""
 
 
 def serve(loom: Loom, *, host: str | None = None, port: int | None = None) -> None:
@@ -156,18 +160,21 @@ def serve(loom: Loom, *, host: str | None = None, port: int | None = None) -> No
 
 @dataclass(frozen=True, slots=True)
 class Watched:
-    """Ce que le rechargement surveille, et ce qu'il écarte parce que loom l'écrit."""
+    """Ce que le rechargement surveille, et ce qu'il écarte parce que loom l'écrit.
 
-    # Dossiers surveillés, sous-dossiers compris.
+    Attributes:
+        roots: Dossiers surveillés, sous-dossiers compris.
+        dirs: Dossiers écrits par loom : journaux JSONL, fichiers des runs.
+        files: Fichiers écrits par loom : bases SQLite (leurs ``-wal``,
+            ``-shm`` et ``-journal`` avec elles).
+        extra: Fichiers surveillés seuls, hors des dossiers : le fichier
+            d'environnement rangé ailleurs. Le guetteur ne les voit pas ; leur
+            état se relève à chaque réveil du superviseur (``moved``).
+    """
+
     roots: tuple[Path, ...]
-    # Dossiers écrits par loom : journaux JSONL, fichiers des runs.
     dirs: tuple[Path, ...]
-    # Fichiers écrits par loom : bases SQLite (leurs ``-wal``, ``-shm`` et
-    # ``-journal`` avec elles).
     files: tuple[Path, ...]
-    # Fichiers surveillés seuls, hors des dossiers : le fichier d'environnement
-    # rangé ailleurs. Le guetteur ne les voit pas ; leur état se relève à
-    # chaque réveil du superviseur (``moved``).
     extra: tuple[Path, ...] = ()
 
     def counts(self, path: Path) -> bool:
@@ -266,7 +273,7 @@ def watched(config: LoomConfig, env_file: Path | None = None) -> Watched:
         files += [f for f in written_files if f not in files]
     audit = config.security.audit
     if audit is not None and audit.path not in files:
-        # Le fichier des refus (D-9) : un refus écrit ne doit pas relancer le service.
+        # Le fichier des refus (décision D-9 des utilisateurs et rôles) : un refus écrit ne doit pas relancer le service.
         files.append(audit.path)
     for folder in dirs:
         for root in roots:
@@ -474,6 +481,7 @@ class _Serving:
             pass
 
     def close(self) -> None:
+        """Attend la fin du process, puis ferme le tube."""
         self.process.join()
         self.told.close()
 
@@ -493,11 +501,30 @@ class _Launcher:
         env: EnvFileReport,
         stopping: threading.Event,
     ) -> None:
+        """Retient de quoi lancer un process qui sert.
+
+        Args:
+            context: Contexte de multiprocessing.
+            path: Fichier de configuration.
+            profile: Profil demandé.
+            host: Hôte servi.
+            port: Port servi.
+            sock: La socket, ouverte par le superviseur et partagée.
+            banner: Imprime le bandeau du process qui prend la main.
+            env: Le fichier d'environnement lu.
+            stopping: Levé quand le superviseur s'arrête.
+        """
         self.context = context
         self.args = (path, profile, host, port, sock, banner, env)
         self.stopping = stopping
 
     def __call__(self) -> tuple[_Serving, Watched, dict[Path, FileState]] | None:
+        """Démarre un process qui sert, et attend qu'il ait pris la main ou renoncé.
+
+        Returns:
+            Le process, ce qu'il fait surveiller et l'état des fichiers relevé ;
+            ``None`` s'il a renoncé (config refusée) ou si le superviseur s'arrête.
+        """
         reader, writer = self.context.Pipe(duplex=False)
         process = self.context.Process(target=_serving, args=(*self.args, writer), name="loom-serve")
         process.start()
@@ -609,6 +636,14 @@ async def _served(
     supervisor: int,
     env: EnvFileReport,
 ) -> bool:
+    """Le corps d'un process qui sert : relit le fichier d'environnement et la config, monte chaque agent pour l'essai, puis sert sur la socket partagée.
+
+    Il dit au superviseur quand il a pris la main, et quand il cesse
+    d'écouter. Refusé en profil prod.
+
+    Returns:
+        Vrai si le serveur a démarré.
+    """
     # Avant la config : le fichier, peut-être modifié, peut donner le profil.
     env = reload_env_file(path, env)
     config, spec, seen = _read(path, profile, env.path)
@@ -679,6 +714,7 @@ class _Taking(uvicorn.Server):
         self.orphaned: asyncio.Task[None] | None = None
 
     async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+        """Démarre le serveur ; une fois qu'il écoute, le dit, puis surveille la présence du superviseur."""
         await super().startup(sockets=sockets)
         if self.started:
             self.taken()
@@ -697,6 +733,7 @@ class _Taking(uvicorn.Server):
                 self.should_exit = True
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+        """Cesse d'écouter, le dit au superviseur, puis s'arrête comme uvicorn."""
         # Cesser d'écouter d'abord, comme uvicorn le fait (le refaire ne coûte
         # rien), et le dire : le superviseur attend ça pour passer la main.
         for server in self.servers:
@@ -738,11 +775,14 @@ class _Unused:
 
     @property
     def provider(self) -> str:
+        """Fournisseur déclaré du modèle (son ``sdk``)."""
         return self.spec.sdk
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        """Jamais appelé : lève ``RuntimeError``."""
         raise RuntimeError(f"Montage d'essai : le modèle {self.spec.id} n'est pas appelé")
         yield  # pragma: no cover — un générateur, pour respecter le protocole
 
     async def aclose(self) -> None:
+        """Rien à fermer."""
         pass

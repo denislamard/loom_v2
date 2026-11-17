@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Ressources MCP : le journal en lecture seule (N5, #32).
+"""Ressources MCP : le journal en lecture seule (fonction N5, point 32).
 
 Un outil fait travailler ; une ressource se lit. Ce module expose donc en
-ressources ce que l'API REST rend par ses routes de lecture (J5.4a) — les runs
+ressources ce que l'API REST rend par ses routes de lecture (jalon J5.4a) — les runs
 d'un client, leurs traces, les sessions — plus les **octets** d'un fichier du
 run, qui n'étaient jusqu'ici désignés que par leur URI.
 
@@ -17,17 +17,17 @@ de pouvoir énumérer sans tout ouvrir :
 
 - ``loom://runs/{run_id}`` : le résultat d'un run, comme ``run_status`` ;
 - ``loom://runs/{run_id}/events`` : son journal, sous-runs compris ;
-- ``loom://traces/{run_id}`` : sa trace — ses spans, sous-runs compris (6.2c) ;
+- ``loom://traces/{run_id}`` : sa trace — ses spans, sous-runs compris (jalon J6.2c) ;
 - ``loom://sessions/{session_id}`` : la fiche d'une session ;
 - ``loom://sessions/{session_id}/events`` : son journal entier ;
 - ``loom://artifacts/{client}/{session}/{fichier}`` : les octets d'un fichier.
 
 **Rien dans une URI ne nomme un client** : c'est la clé de la requête qui le
-dit (#34). L'URI d'un fichier porte bien un client, puisque celle du journal
+dit (point 34). L'URI d'un fichier porte bien un client, puisque celle du journal
 le porte — il est alors *vérifié*, et un fichier d'un autre client est
 « introuvable », comme un fichier absent : on n'apprend pas qu'il existe.
 
-Portées (#39, J5.2a) : lire une ressource demande ``read``, et sans
+Portées (point 39, jalon J5.2a) : lire une ressource demande ``read``, et sans
 ``read_content`` le contenu est masqué exactement comme une relecture par
 REST — ce sont les mêmes lectures. ``loom://sessions`` est refusé à une clé
 limitée à certains agents, comme ``GET /v1/sessions`` : une liste de sessions
@@ -168,6 +168,11 @@ class ResourceReader:
         return [record.model_dump(mode="json") for record in records]
 
     async def _run(self, rest: str, session_id: SessionId | None) -> list[ReadResourceContents]:
+        """Le résultat d'un run (``loom://runs/{run_id}``), ou ses événements (``…/events``).
+
+        Le droit est vérifié sur chaque agent concerné ; le résultat est masqué
+        sans ``read_content``.
+        """
         trace = rest.endswith(EVENTS)
         run_id = RunId(rest.removesuffix(EVENTS) if trace else rest)
         if not run_id:
@@ -191,6 +196,7 @@ class ResourceReader:
         return [_json(self._sent(shown.masked() if self._caller.masks else shown))]
 
     async def _trace(self, rest: str, session_id: SessionId | None) -> list[ReadResourceContents]:
+        """La trace d'un run (``loom://traces/{run_id}``), bâtie sans contenu sans ``read_content`` ; le droit vaut pour chaque agent de l'arbre."""
         run_id = RunId(rest)
         if not run_id or "/" in rest:
             raise _unknown(f"{TRACES}/{rest}")
@@ -210,6 +216,7 @@ class ResourceReader:
         return [_json(self._sent(found))]
 
     async def _session(self, rest: str) -> list[ReadResourceContents]:
+        """La fiche d'une session (``loom://sessions/{session_id}``), ou ses événements (``…/events``), après le droit sur chacun de ses agents."""
         trace = rest.endswith(EVENTS)
         session_id = SessionId(rest.removesuffix(EVENTS) if trace else rest)
         if not session_id:
@@ -231,6 +238,7 @@ class ResourceReader:
         return [_json(self._sent(info.masked() if self._caller.masks else info))]
 
     async def _artifact(self, uri: str) -> list[ReadResourceContents]:
+        """Les octets d'un fichier rangé par loom (``artifact://…``) : du même client, avec ``read_content``, et lisible comme la session qui le porte."""
         try:
             location = ArtifactLocation.parse(uri)
         except ValueError:
@@ -276,7 +284,7 @@ class ResourceReader:
             raise self._denied(self._caller.lacking("read", agent), "read", agent)
 
     def _denied(self, message: str, permission: Permission, agent: str | None = None) -> McpError:
-        """Un refus d'accès : écrit au journal d'audit (D-9), puis rendu en erreur MCP."""
+        """Un refus d'accès : écrit au journal d'audit (décision D-9 des utilisateurs et rôles), puis rendu en erreur MCP."""
         caller = self._caller
         audit.denied(
             message,

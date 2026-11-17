@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""File de tâches servie par RabbitMQ : les runs tournent dans les workers (#27, H6).
+"""File de tâches servie par RabbitMQ : les runs tournent dans les workers (point 27, fonction H6).
 
 Deux moitiés dans la même classe, et une seule vit à la fois dans un process :
 
@@ -14,7 +14,7 @@ file `rabbitmq` sans worker derrière laisse ses tâches attendre.
 **Au moins une fois, jamais exactement une fois.** L'acquittement suit
 l'exécution : un worker tué sans préavis ne l'envoie pas, et le courtier
 redélivre. Deux pilotes pour un même run, c'est la concession qui les sépare
-(#27) ; une tâche rejouée retrouve un état qu'elle reconnaît, puisque le
+(point 27) ; une tâche rejouée retrouve un état qu'elle reconnaît, puisque le
 journal fait foi. Une tâche qui **échoue** est acquittée quand même, et
 journalisée : la rejouer sans fin serait pire que de la perdre, et le run a
 écrit son échec au journal. Un message que ce worker ne traitera **jamais**
@@ -41,7 +41,7 @@ courtier le laisse tomber dans la file de travail (``dead-letter``). Le piège
 est connu et assumé : cette file d'attente est une file, donc un message à
 longue échéance retient ceux qui le suivent. Les délais de loom sont du même
 ordre de grandeur (l'expiration d'une approbation), et cette expiration est de
-toute façon relue au journal (4.3a) — le travail différé n'est qu'un rappel.
+toute façon relue au journal (jalon J4.3a) — le travail différé n'est qu'un rappel.
 
 ``state`` rend toujours ``unknown`` et ``cancel`` toujours faux : un courtier
 ne sait pas dire où en est une tâche, et ne retire pas un message publié. Le
@@ -64,22 +64,25 @@ from loom_ia.core.ports import Job, JobKind, JobState
 
 logger = logging.getLogger(__name__)
 
-# File de travail, file d'attente des travaux différés, et file des travaux
-# mis de côté — ceux qu'aucun worker de cette version ne traitera.
 WORK_QUEUE: Final = "loom.jobs"
+"""File de travail des workers (voir aussi ``DELAY_QUEUE`` et ``DEAD_QUEUE``)."""
 DELAY_QUEUE: Final = "loom.jobs.delayed"
+"""File d'attente des travaux différés."""
 DEAD_QUEUE: Final = "loom.jobs.dead"
-# En-tête d'un travail mis de côté : pourquoi il l'a été.
+"""File des travaux mis de côté, ceux qu'aucun worker de cette version ne traitera."""
 REASON_HEADER: Final = "x-loom-reason"
-# Ce que le log garde du corps d'un message qui n'a pas pu être mis de côté.
+"""En-tête d'un travail mis de côté : pourquoi il l'a été."""
 _LOGGED_BODY: Final = 2_000
-# À l'échéance de sa durée de vie, un message de la file d'attente retombe dans
-# la file de travail. Exposées, parce que RabbitMQ refuse une redéclaration qui
-# diverge : qui déclare cette file ailleurs doit le faire à l'identique.
+"""Ce que le log garde du corps d'un message qui n'a pas pu être mis de côté."""
 DELAY_ARGUMENTS: Final[dict[str, Any]] = {
     "x-dead-letter-exchange": "",
     "x-dead-letter-routing-key": WORK_QUEUE,
 }
+"""À l'échéance de sa durée de vie, un message de la file d'attente retombe
+dans la file de travail. Exposées, parce que RabbitMQ refuse une
+redéclaration qui diverge : qui déclare cette file ailleurs doit le faire à
+l'identique.
+"""
 
 
 def encoded(job_id: str, job: Job) -> bytes:
@@ -309,6 +312,7 @@ class RabbitMqTaskQueue:
         await _settle(message)
 
     async def aclose(self) -> None:
+        """Arrête de consommer, puis ferme la connexion au courtier."""
         await self.stop()
         if self._connection is not None:
             await self._connection.close()

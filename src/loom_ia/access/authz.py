@@ -45,6 +45,16 @@ class AccessDenied(PermissionError):
         permission: str | None = None,
         agent: str | None = None,
     ) -> None:
+        """Le refus, avec de qui et de quoi il s'agit.
+
+        Args:
+            message: Ce qui manque, en clair.
+            actor: L'acteur refusé ; il donne l'utilisateur, la passerelle et la
+                clé.
+            user: L'utilisateur, à défaut d'acteur.
+            permission: La permission qui manque.
+            agent: L'agent visé.
+        """
         super().__init__(message)
         self.user = actor.user if actor is not None else user
         self.via = actor.via if actor is not None else None
@@ -60,15 +70,24 @@ class Actor:
     """L'utilisateur au nom duquel on agit, ses rôles effectifs, et par où il est passé.
 
     ``roles`` sont les rôles **effectifs** : ceux de l'utilisateur, restreints
-    à ``act_as_roles`` quand une passerelle agit en son nom (D-5b). ``key``
+    à ``act_as_roles`` quand une passerelle agit en son nom (décision D-5b des utilisateurs et rôles). ``key``
     est la clé d'API qui a identifié la requête — celle de la passerelle, pour
     un acteur endossé : ses ``scopes`` et ses ``agents`` restreignent encore.
+
+    Attributes:
+        user: Utilisateur déclaré au nom duquel on agit.
+        tenant: Son client.
+        roles: Ses rôles effectifs, bornés par ``act_as_roles`` quand une
+            passerelle agit en son nom.
+        via: Utilisateur de la passerelle qui agit au nom de ``user``
+            (``as_user``).
+        key: La clé d'API qui a identifié la requête, s'il y en a une : elle
+            restreint, elle n'ajoute jamais.
     """
 
     user: str
     tenant: TenantId
     roles: tuple[AccessRole, ...]
-    # Utilisateur de la passerelle qui agit au nom de ``user`` (``as_user``).
     via: str | None = None
     key: ApiKey | None = None
 
@@ -77,7 +96,7 @@ class Actor:
         """L'acteur d'un utilisateur déclaré, identifié ou non par une clé.
 
         ``key`` doit être une clé de cet utilisateur : une clé n'identifie
-        qu'une personne (D-4).
+        qu'une personne (décision D-4 des utilisateurs et rôles).
         """
         try:
             declared = security.user(user)
@@ -94,7 +113,7 @@ class Actor:
         )
 
     def endorse(self, security: SecurityConfig, user: str) -> Actor:
-        """L'acteur ``user``, au nom duquel cette passerelle agit (``as_user``, D-5, D-5b).
+        """L'acteur ``user``, au nom duquel cette passerelle agit (``as_user``, décisions D-5 et D-5b des utilisateurs et rôles).
 
         La passerelle doit avoir ``act_as`` (sa clé comprise), viser un
         utilisateur de son client, et ne peut exercer en son nom que les rôles
@@ -148,14 +167,22 @@ class Approvable:
     ``approvers`` et ``self_approval`` sont figés dans la demande quand elle
     est écrite : une config changée ensuite ne change pas, en silence, qui
     peut trancher. ``launcher`` est l'utilisateur du run racine qui l'a posée.
+
+    Attributes:
+        agent: Agent du run qui a posé la demande : le sous-agent s'il y en a
+            un (§ 5.2).
+        tool: Outil de l'appel en attente.
+        approvers: Rôles approbateurs ; ``None`` : tout rôle qui a ``approve``
+            sur l'agent.
+        self_approval: ``False`` si l'agent interdit l'auto-approbation
+            (décision D-7b des utilisateurs et rôles).
+        launcher: Utilisateur du run racine qui a posé la demande : c'est de lui
+            que dépend l'auto-approbation.
     """
 
-    # Agent du run qui a posé la demande : le sous-agent s'il y en a un (§ 5.2).
     agent: str
     tool: str
-    # Rôles approbateurs ; ``None`` : tout rôle qui a ``approve`` sur l'agent.
     approvers: tuple[str, ...] | None = None
-    # ``False`` si l'agent interdit l'auto-approbation (D-7b).
     self_approval: bool = True
     launcher: str | None = None
 
@@ -316,7 +343,7 @@ def _check_key(
     agent: str | None,
     permission: Permission,
 ) -> None:
-    """Règle 4 : la clé qui a identifié la requête restreint, elle n'ajoute jamais (D-4)."""
+    """Règle 4 : la clé qui a identifié la requête restreint, elle n'ajoute jamais (décision D-4 des utilisateurs et rôles)."""
     key = actor.key
     if key is None:
         return

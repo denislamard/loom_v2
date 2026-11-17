@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Accès Python : la façade ``Loom`` (N1).
+"""Accès Python : la façade ``Loom`` (fonction N1).
 
 Une instance rassemble ce qui était jusqu'ici assemblé à la main : la
 configuration, les agents, le journal, les clients de modèle. Les deux autres
@@ -14,14 +14,14 @@ bien qu'un run donne le même journal quel que soit le chemin emprunté.
 l'ordre où ils arrivent : c'est la même source pour le direct de la CLI et
 pour le flux SSE.
 
-Sous-runs (C5) : ``stream``, ``follow`` et ``events`` rendent par défaut
+Sous-runs (fonction C5) : ``stream``, ``follow`` et ``events`` rendent par défaut
 l'arbre du run — ses événements et ceux de ses sous-runs, dans l'ordre du
 journal ; chaque événement dit à quel run il appartient (``run_id``,
 ``agent``). ``subruns=False`` s'en tient au run lui-même. Les morceaux du
 modèle d'un sous-run ne sont pas diffusés : sa réponse arrive avec le
 ``tool.completed`` de l'appel.
 
-Fichiers (G1 à G3) : ``run`` et ``stream`` acceptent des pièces jointes
+Fichiers (fonctions G1 à G3) : ``run`` et ``stream`` acceptent des pièces jointes
 (``Attachment``), validées puis rangées dans le stockage d'artefacts de
 l'instance ; ``RunResult.artifacts`` liste les fichiers du run, et
 ``artifact(uri)`` en rend les octets.
@@ -29,24 +29,24 @@ l'instance ; ``RunResult.artifacts`` liste les fichiers du run, et
     photo = Attachment.from_path("photo.jpg")
     result = await loom.run("assistant", "Que montre la photo ?", attachments=[photo])
 
-Disjoncteurs (#10) : ceux des modèles et des serveurs MCP sont communs à
+Disjoncteurs (point 10) : ceux des modèles et des serveurs MCP sont communs à
 tous les runs de l'instance. Un modèle écarté après ses échecs l'est pour
 tous ses agents, qui passent directement à leur secours.
 
-Clients (L1, #33) : un run appartient toujours à un client — ``default``
+Clients (fonction L1, point 33) : un run appartient toujours à un client — ``default``
 en mode librairie, où il ne surcharge rien. ``tenant=`` le nomme sur
 ``run``, ``stream`` et ``submit``, et il se relit ensuite sur chaque
 opération qui vise un run ou une session. Les agents sont montés **par
 client** : deux clients du même agent n'ont ni les mêmes modèles, ni les
 mêmes secrets, ni les mêmes connexions MCP.
 
-Budgets et quotas d'un client (L3, J5.1b) : ils bornent ce qu'un client a le
+Budgets et quotas d'un client (fonction L3, jalon J5.1b) : ils bornent ce qu'un client a le
 droit de **lancer**, et sont donc vérifiés avant d'ouvrir le run — un budget
 de journée épuisé lève ``BudgetExhausted``, un débit dépassé
 ``QuotaExceeded``, et rien n'est écrit au journal. Les deux portent les
 secondes à attendre.
 
-Résultat (J3) : ``RunResult`` dit, en plus de la réponse, si elle a été
+Résultat (fonction J3) : ``RunResult`` dit, en plus de la réponse, si elle a été
 gardée sans respecter son contrat ou son juge (``unverified``), la
 consommation ventilée du run et de ses sous-runs (``report`` : par run, par
 rôle, par modèle) et les verdicts des juges (``verdicts``). Un échec a un
@@ -249,31 +249,37 @@ from loom_ia.usage import UsageReport, usage_report
 
 logger = logging.getLogger(__name__)
 
-# Ce qu'un run donne à voir pendant qu'il se déroule.
 type StreamItem = Event | ModelChunk
+"""Ce qu'un run donne à voir pendant qu'il se déroule."""
 
-# Un run dans son journal : le même ``run_id`` peut exister chez deux clients,
-# ou dans deux sessions d'un même client.
 type RunKey = tuple[TenantId, SessionId, RunId]
+"""Un run dans son journal : le même ``run_id`` peut exister chez deux clients,
+ou dans deux sessions d'un même client.
+"""
 
-# File servie par un courtier (5.3b) : combien de fois un travail attend la fin
-# d'un bail avant d'être abandonné au journal, et de combien on dépasse ce bail.
 MAX_CLAIM_WAITS: Final = 20
+"""File servie par un courtier (jalon J5.3b) : combien de fois un travail attend la fin d'un bail avant d'être laissé au journal."""
 CLAIM_MARGIN: Final = 0.5
+"""Ce dont on dépasse la fin du bail avant de reprendre le travail, en secondes."""
 
-# Bornes d'une liste de runs (K5) : runs rendus, et journaux ouverts pour les
-# trouver. La seconde est celle qui tient le coût d'une lecture sans projection.
 RUNS_LIMIT: Final = 50
+"""Liste de runs (fonction K5) : runs rendus par défaut."""
 SESSIONS_READ: Final = 50
-# Ce que lève la lecture d'un journal de session illisible : une ligne qu'on ne
-# décode pas, un sceau qui ne s'ouvre pas (clé effacée), des événements que la
-# projection refuse. Un balayage de sessions (``runs``, ``recover``) saute celle-là.
+"""Liste de runs : journaux de session ouverts par défaut pour les trouver ; c'est la borne qui tient le coût d'une lecture sans projection."""
 _UNREADABLE: Final = (JournalCorrupted, SealError, ValidationError, ProjectionError)
+"""Ce que lève la lecture d'un journal de session illisible : une ligne qu'on
+ne décode pas, un sceau qui ne s'ouvre pas (clé effacée), des événements que
+la projection refuse. Un balayage de sessions (``runs``, ``recover``) saute
+celle-là.
+"""
 
-# Ce qu'un appelant peut demander au plus : une lecture par journal ouvert, donc
-# une borne bien plus basse que celle d'une recherche d'événements.
 RUNS_MAX: Final = 200
+"""Runs qu'un appelant peut demander au plus dans une liste."""
 SESSIONS_MAX: Final = 200
+"""Journaux qu'un appelant peut faire ouvrir au plus pour une liste de runs :
+une lecture par journal, donc une borne bien plus basse que celle d'une
+recherche d'événements.
+"""
 
 
 def is_final(event: Event) -> bool:
@@ -292,7 +298,7 @@ def check_deletable_id(kind: str, value: str) -> None:
 
 
 class AgentNotAllowed(PermissionError):
-    """Cet agent n'est pas ouvert à ce client (L1)."""
+    """Cet agent n'est pas ouvert à ce client (fonction L1)."""
 
     def __init__(self, agent: str, tenant_id: TenantId) -> None:
         super().__init__(f"Agent {agent!r} non ouvert au client {tenant_id!r}")
@@ -336,12 +342,12 @@ class QuestionStale(ValueError):
 
 
 class ApprovalStale(ValueError):
-    """Demande d'approbation périmée : elle ne se tranche plus (#17).
+    """Demande d'approbation périmée : elle ne se tranche plus (point 17).
 
     L'``expire_at`` du journal fait foi, même quand le réveil différé qui
     devait l'appliquer a été perdu (process arrêté, file en mémoire). Rien
     n'est écrit : c'est la reprise du run qui conclut la demande, selon
-    ``approval.on_expiry``. Au test H4 du 20/10, un ``loom approve`` lancé
+    ``approval.on_expiry``. À l'essai de la fonction H4 du 20/10, un ``loom approve`` lancé
     45 s après l'échéance accordait l'appel, qui s'exécutait.
     """
 
@@ -372,7 +378,7 @@ class UnknownSession(Unknown):
 
 
 class UnknownTrigger(Unknown):
-    """Aucune porte d'entrée de ce nom dans la configuration (H6)."""
+    """Aucune porte d'entrée de ce nom dans la configuration (fonction H6)."""
 
     def __init__(self, name: str, declared: Sequence[str]) -> None:
         known = ", ".join(declared) or "aucun"
@@ -381,75 +387,111 @@ class UnknownTrigger(Unknown):
 
 
 class DeliveryRefused(ValueError):
-    """La livraison porte un identifiant ou une session inutilisables (H6)."""
+    """La livraison porte un identifiant ou une session inutilisables (fonction H6)."""
 
 
 class Triggered(DomainModel):
-    """Ce qu'une livraison a ouvert (H6, J5.4c)."""
+    """Ce qu'une livraison a ouvert (fonction H6, jalon J5.4c).
+
+    Attributes:
+        trigger: Nom du déclencheur.
+        run_id: Run ouvert, ou retrouvé.
+        session_id: Session du run.
+        status: Statut du run à la réponse.
+        repeated: Vrai si cette livraison avait déjà été reçue : le run est
+            retrouvé, pas rouvert. Les plateformes réessaient, et une relance
+            ne part qu'une fois.
+    """
 
     trigger: str
     run_id: RunId
     session_id: SessionId
     status: RunStatus
-    # Vrai si cette livraison avait déjà été reçue : le run est retrouvé, pas
-    # rouvert. Les plateformes réessaient, et une relance ne part qu'une fois.
     repeated: bool = False
 
 
 class SessionDeletion(DomainModel):
-    """Ce qu'a retiré la suppression d'une session (RGPD, F7)."""
+    """Ce qu'a retiré la suppression d'une session (RGPD, F7).
+
+    Attributes:
+        session_id: La session supprimée.
+        events: Événements retirés du journal.
+        artifacts: Fichiers retirés.
+        keys: Clés d'idempotence oubliées : celles d'un magasin partagé, le
+            magasin ``journal`` gardant les siennes dans les événements
+            ci-dessus.
+    """
 
     session_id: SessionId
     events: NonNegativeInt = 0
     artifacts: NonNegativeInt = 0
-    # Clés d'idempotence oubliées : celles d'un magasin partagé, le magasin
-    # ``journal`` gardant les siennes dans les événements ci-dessus.
     keys: NonNegativeInt = 0
 
 
 class SessionSwept(DomainModel):
-    """Une session que la rétention a retirée, ou retirerait (5.5c)."""
+    """Une session que la rétention a retirée, ou retirerait (jalon J5.5c).
+
+    Attributes:
+        tenant_id: Client de la session.
+        session_id: La session.
+        last_write: Dernière écriture : c'est elle, et elle seule, qui décide.
+        events: Longueur du journal, connue par la marque de la session : vraie
+            dans les deux modes, sans rien ouvrir.
+        artifacts: Fichiers retirés : connus en supprimant, donc ``None`` en
+            essai à blanc. Un zéro y mentirait — « aucun fichier » n'est pas «
+            je n'ai pas regardé ».
+        keys: Clés d'idempotence oubliées ; ``None`` en essai à blanc, comme
+            ``artifacts``.
+    """
 
     tenant_id: TenantId
     session_id: SessionId
-    # Dernière écriture : c'est elle, et elle seule, qui décide.
     last_write: AwareDatetime
-    # Longueur du journal, connue par la marque de la session : vraie dans les
-    # deux modes, sans rien ouvrir.
     events: NonNegativeInt = 0
-    # Fichiers et clés : connus en supprimant, donc ``None`` en essai à blanc.
-    # Un zéro y mentirait — « aucun fichier » n'est pas « je n'ai pas regardé ».
     artifacts: NonNegativeInt | None = None
     keys: NonNegativeInt | None = None
 
 
 class AuditSwept(DomainModel):
-    """Les lignes du fichier d'audit que la rétention a retirées, ou retirerait (D-9)."""
+    """Les lignes du fichier d'audit que la rétention a retirées, ou retirerait (décision D-9 des utilisateurs et rôles).
 
-    # La borne lue : ``security.audit.retention_days``.
+    Attributes:
+        days: La borne lue : ``security.audit.retention_days``.
+        scanned: Lignes lues.
+        removed: Lignes plus vieilles que la borne : retirées, ou qui le
+            seraient.
+    """
+
     days: PositiveInt
-    # Lignes lues, et celles plus vieilles que la borne.
     scanned: NonNegativeInt = 0
     removed: NonNegativeInt = 0
 
 
 class RetentionReport(DomainModel):
-    """Ce qu'un balayage a fait, ou ferait (5.5c).
+    """Ce qu'un balayage a fait, ou ferait (jalon J5.5c).
 
     ``dry_run`` dit lequel des deux : sans lui, rien n'a été supprimé. Le
     rapport dit aussi son **prix** — combien de sessions ont été regardées —
     et la borne appliquée à chaque client, parce qu'une rétention qui n'efface
     rien et une rétention non déclarée se ressemblent trop.
+
+    Attributes:
+        dry_run: Essai à blanc : rien n'a été supprimé.
+        days: Borne par client, telle qu'elle a été lue ; ``None`` : aucune
+            règle.
+        scanned: Sessions examinées.
+        kept: Sessions gardées.
+        swept: Sessions retirées, ou qui le seraient.
+        audit: Le fichier d'audit, balayé avec tous les clients quand sa borne
+            est déclarée ; ``None`` sinon. Il les mêle tous : un balayage borné
+            à un client n'y touche pas.
     """
 
     dry_run: bool
-    # Borne par client, telle qu'elle a été lue ; ``None`` : aucune règle.
     days: dict[TenantId, NonNegativeInt | None] = Field(default_factory=dict[TenantId, NonNegativeInt | None])
     scanned: NonNegativeInt = 0
     kept: NonNegativeInt = 0
     swept: tuple[SessionSwept, ...] = ()
-    # Le fichier d'audit, balayé avec tous les clients quand sa borne est déclarée ;
-    # ``None`` sinon. Il les mêle tous : un balayage borné à un client n'y touche pas.
     audit: AuditSwept | None = None
 
     @property
@@ -504,21 +546,32 @@ def unpiloted(state: RunState, now: datetime | None = None) -> bool:
 
 
 class RunSummary(DomainModel):
-    """Un run de la session, tel que la fiche le montre (F7)."""
+    """Un run de la session, tel que la fiche le montre (fonction F7).
+
+    Attributes:
+        run_id: Identifiant du run.
+        agent: Son agent.
+        status: Son statut.
+        parent_run_id: Run délégant, pour le run d'un sous-agent (point 4).
+        iterations: Itérations de la boucle.
+        usage: Tokens consommés.
+        cost_usd: Coût, en dollars.
+        unpiloted: Ni fini ni en pause, et personne ne le pilote (concession
+            absente ou échue).
+    """
 
     run_id: RunId
     agent: str
     status: RunStatus
-    # Run délégant, pour le run d'un sous-agent (#4).
     parent_run_id: RunId | None = None
     iterations: NonNegativeInt = 0
     usage: Usage = Usage()
     cost_usd: float = 0.0
-    # Ni fini ni en pause, et personne ne le pilote (concession absente ou échue).
     unpiloted: bool = False
 
     @classmethod
     def of(cls, state: RunState, now: datetime | None = None) -> Self:
+        """La ligne d'un run tirée de son état ; ``now`` sert à dire s'il n'est plus piloté."""
         return cls(
             run_id=state.run_id,
             agent=state.agent,
@@ -532,11 +585,28 @@ class RunSummary(DomainModel):
 
 
 class RunListed(DomainModel):
-    """Un run tel qu'une liste le montre (K5) : de quoi le situer et le retrouver.
+    """Un run tel qu'une liste le montre (fonction K5) : de quoi le situer et le retrouver.
 
     Aucun contenu ici, et c'est voulu : ni la réponse, ni le message d'erreur,
-    seulement son **type**. Une liste n'a donc pas à être masquée (5.2a), et la
+    seulement son **type**. Une liste n'a donc pas à être masquée (jalon J5.2a), et la
     portée ``read`` suffit à la lire.
+
+    Attributes:
+        run_id: Identifiant du run.
+        session_id: Sa session.
+        agent: Son agent.
+        status: Son statut.
+        kind: Genre du run : ``normal``, ou ``compaction`` (résumé de
+            session).
+        parent_run_id: Run délégant, pour le run d'un sous-agent.
+        started_at: Premier événement du run au journal.
+        updated_at: Dernier événement du run au journal.
+        iterations: Itérations de la boucle.
+        usage: Tokens consommés.
+        cost_usd: Coût, en dollars.
+        error_type: Type de l'échec (``guard.judge``, ``model.auth``,
+            ``timeout``…), jamais son message : celui-là est du contenu, et se
+            lit sur le run.
     """
 
     run_id: RunId
@@ -545,18 +615,16 @@ class RunListed(DomainModel):
     status: RunStatus
     kind: RunKind = "normal"
     parent_run_id: RunId | None = None
-    # Premier et dernier événement du run au journal.
     started_at: AwareDatetime
     updated_at: AwareDatetime
     iterations: NonNegativeInt = 0
     usage: Usage = Usage()
     cost_usd: float = 0.0
-    # Type de l'échec (``guard.judge``, ``model.auth``, ``timeout``…), jamais
-    # son message : celui-là est du contenu, et se lit sur le run.
     error_type: str | None = None
 
     @classmethod
     def of(cls, state: RunState, events: Sequence[Event]) -> Self:
+        """La ligne d'une liste tirée de l'état du run et de ses événements (premier et dernier)."""
         return cls(
             run_id=state.run_id,
             session_id=state.session_id,
@@ -574,40 +642,51 @@ class RunListed(DomainModel):
 
 
 class RunPage(DomainModel):
-    """Une page de runs, et ce qu'il a fallu lire pour l'obtenir (K5).
+    """Une page de runs, et ce qu'il a fallu lire pour l'obtenir (fonction K5).
 
     ``scanned`` et ``truncated`` disent le prix et l'incomplétude : la liste
     est tirée du journal, session par session, sans projection à tenir à jour.
+
+    Attributes:
+        runs: Les runs de la page.
+        scanned: Journaux de session ouverts pour cette page.
+        truncated: Vrai si une borne a arrêté la recherche : il peut y en avoir
+            d'autres.
     """
 
     runs: tuple[RunListed, ...] = ()
-    # Journaux de session ouverts pour cette page.
     scanned: NonNegativeInt = 0
-    # Vrai si une borne a arrêté la recherche : il peut y en avoir d'autres.
     truncated: bool = False
 
 
 class SessionInfo(DomainModel):
-    """Ce qu'une session contient, sans dérouler son journal (F7).
+    """Ce qu'une session contient, sans dérouler son journal (fonction F7).
 
     Les événements eux-mêmes se relisent avec ``export_session``.
+
+    Attributes:
+        session_id: La session.
+        last_seq: Dernier ``seq`` écrit : la taille du journal.
+        updated_at: Dernière écriture.
+        runs: Les runs de la session, dans l'ordre où ils y sont entrés ; ceux
+            des sous-agents compris, chacun nommant son délégant.
+        pending_approvals: Ce qui attend un humain, tous runs confondus (point
+            17) : sans cela, l'appelant devrait ouvrir chaque run pour savoir
+            ce qu'on lui demande.
+        pending_questions: Questions posées à l'utilisateur sans réponse
+            (wait_answer), tous runs confondus.
+        redacted: Ce que le masquage a retiré (clé sans ``read_content``), par
+            chemin : sans lui, un champ vidé ne se distinguait pas d'un champ
+            vide (essai de la fonction N2, 23/10). Même règle que pour un
+            événement (``redacted``).
     """
 
     session_id: SessionId
-    # Dernier ``seq`` écrit : la taille du journal.
     last_seq: NonNegativeInt = 0
     updated_at: AwareDatetime
-    # Les runs de la session, dans l'ordre où ils y sont entrés ; ceux des
-    # sous-agents compris, chacun nommant son délégant.
     runs: tuple[RunSummary, ...] = ()
-    # Ce qui attend un humain, tous runs confondus (#17) : sans cela,
-    # l'appelant devrait ouvrir chaque run pour savoir ce qu'on lui demande.
     pending_approvals: tuple[PendingApproval, ...] = ()
-    # Questions posées à l'utilisateur sans réponse (wait_answer), tous runs confondus.
     pending_questions: tuple[PendingQuestion, ...] = ()
-    # Ce que le masquage a retiré (clé sans ``read_content``), par chemin :
-    # sans lui, un champ vidé ne se distinguait pas d'un champ vide (test N2
-    # du 23/10). Même règle que pour un événement (``redacted``).
     redacted: tuple[str, ...] = ()
 
     def masked(self) -> Self:
@@ -631,24 +710,38 @@ class SessionFile(DomainModel):
     seul dit ce qu'ils sont. Un même contenu rangé plusieurs fois est un seul
     fichier (l'URI est adressée par le contenu) : sa première production le
     décrit, et ``count`` dit combien de fois il a été rangé.
+
+    Attributes:
+        uri: URI du fichier (``artifact://…``).
+        file: Nom dans le stockage (``<condensé>.<extension>``) : c'est lui
+            qu'on demande au téléchargement.
+        name: Nom donné par l'outil ou la pièce jointe ; contenu, donc masqué
+            sans ``read_content``.
+        media_type: Type du fichier.
+        size: Taille, en octets.
+        origin: Origine : ``attachment``, ``tool_output`` ou ``offload``.
+        run_id: Run qui l'a rangé.
+        agent: Agent de ce run.
+        call_id: Appel qui l'a produit (sortie d'outil ou déport).
+        tool_name: Outil de cet appel.
+        stored_at: Quand il a été rangé.
+        count: Fois où ce même contenu a été rangé dans la session.
+        redacted: Ce que le masquage a retiré (``name``), pour ne pas le
+            prendre pour un fichier sans nom.
     """
 
     uri: str
-    # Nom dans le stockage (``<condensé>.<extension>``) : c'est lui qu'on demande au téléchargement.
     file: str
-    # Nom donné par l'outil ou la pièce jointe ; contenu, donc masqué sans ``read_content``.
     name: str | None = None
     media_type: str
     size: NonNegativeInt
     origin: ArtifactOrigin
     run_id: RunId
     agent: str | None = None
-    # Appel qui l'a produit (sortie d'outil ou déport), et son outil.
     call_id: str | None = None
     tool_name: str | None = None
     stored_at: AwareDatetime
     count: PositiveInt = 1
-    # Ce que le masquage a retiré (``name``), pour ne pas le prendre pour un fichier sans nom.
     redacted: tuple[str, ...] = ()
 
     def masked(self) -> Self:
@@ -657,22 +750,33 @@ class SessionFile(DomainModel):
 
 
 class JudgeVerdict(DomainModel):
-    """Verdict d'un juge sur une sortie du run ou d'un de ses sous-runs (``judge.evaluated``)."""
+    """Verdict d'un juge sur une sortie du run ou d'un de ses sous-runs (``judge.evaluated``).
+
+    Attributes:
+        run_id: Run jugé.
+        agent: Son agent.
+        judge: Nom du juge.
+        target: ``output`` (réponse finale) ou ``role:<nom>``.
+        call_id: Appel du rôle jugé (``tool.called``) ; ``None`` pour la
+            réponse finale.
+        model_id: Nom du modèle du juge chez le fournisseur.
+        model: Identifiant de ce modèle dans la config ; ``None`` pour un
+            journal antérieur.
+        passed: Tous les critères atteignent leur seuil.
+        blocked: Un critère bloquant est sous son seuil : la sortie a été
+            refusée.
+        attempt: Tentative jugée, à partir de 1.
+        criteria: Note de chaque critère.
+    """
 
     run_id: RunId
     agent: str
     judge: str
-    # ``output`` (réponse finale) ou ``role:<nom>``.
     target: str
-    # Appel du rôle jugé (``tool.called``) ; None pour la réponse finale.
     call_id: str | None = None
-    # Nom du modèle du juge chez le fournisseur.
     model_id: str
-    # Identifiant de ce modèle dans la config ; None pour un journal antérieur.
     model: str | None = None
-    # Tous les critères atteignent leur seuil.
     passed: bool
-    # Un critère bloquant est sous son seuil : la sortie a été refusée.
     blocked: bool
     attempt: PositiveInt = 1
     criteria: tuple[CriterionScore, ...] = ()
@@ -683,6 +787,7 @@ class JudgeVerdict(DomainModel):
 
     @classmethod
     def of(cls, event: Event, verdict: JudgeEvaluated) -> Self:
+        """Le verdict tiré d'un événement ``judge.evaluated``."""
         return cls(
             run_id=event.run_id,
             agent=event.agent or "",
@@ -704,12 +809,19 @@ class JudgeSkip(DomainModel):
     Sans lui, un juge sauté ne laissait aucune trace dans le résultat : rien ne
     distinguait une sortie jugée et acceptée d'une sortie jamais jugée (test
     E3 du 19/10). Le motif est un code, pas du contenu.
+
+    Attributes:
+        run_id: Run concerné.
+        agent: Son agent.
+        judge: Nom du juge.
+        target: ``output`` (réponse finale) ou ``role:<nom>``.
+        reason: Pourquoi il n'a pas jugé : appelant, échantillon, client,
+            condition ou profil.
     """
 
     run_id: RunId
     agent: str
     judge: str
-    # ``output`` (réponse finale) ou ``role:<nom>``.
     target: str
     reason: SkipReason
 
@@ -735,7 +847,47 @@ class JudgeSkip(DomainModel):
 
 
 class RunResult(DomainModel):
-    """Ce qu'un run a produit, tiré de son état final et de son journal."""
+    """Ce qu'un run a produit, tiré de son état final et de son journal.
+
+    Attributes:
+        run_id: Identifiant du run.
+        session_id: Sa session.
+        agent: Son agent.
+        status: Statut final.
+        text: Texte de la réponse.
+        output: Le message de la réponse, blocs compris.
+        error_type: Échec : son type (``guard.judge``, ``guard.contract``,
+            ``model.auth``, ``policy.<nom>``…).
+        error: Échec : son message, lisible tel quel.
+        iterations: Itérations de la boucle.
+        usage: Tokens consommés par le run.
+        cost_usd: Coût du run, en dollars.
+        artifacts: Fichiers du run : pièces jointes, fichiers produits par les
+            outils, déports (fonction G3).
+        data: Réponse structurée : l'objet JSON validé par le schéma de sortie
+            (fonction A7).
+        unverified: Réponse gardée bien qu'elle ne respecte pas son contrat
+            (``on_failure: unverified``).
+        fallback: Réponse remplacée par le message de repli d'un contrat ou
+            d'un juge (``on_failure: fallback``) : le run a abouti sans vraie
+            réponse.
+        report: Consommation ventilée du run et de ses sous-runs : par run, par
+            rôle, par modèle.
+        verdicts: Verdicts des juges du run et de ses sous-runs, dans l'ordre
+            du journal.
+        skipped_judges: Juges déclarés qui n'ont pas jugé (appelant,
+            échantillon, client, condition, profil).
+        pending_approvals: Approbations qu'il faut trancher pour que ce run
+            avance (point 17), celles de ses sous-runs comprises : l'appelant
+            n'a pas à savoir qu'un sous-agent existe pour savoir ce qu'on lui
+            demande.
+        pending_questions: Questions posées à l'utilisateur qui attendent sa
+            réponse (wait_answer), celles des sous-runs comprises :
+            ``answer()`` y répond.
+        redacted: Ce que le masquage a retiré, par chemin (``text``,
+            ``artifacts[].name``…) : un ``text`` vidé ne se distinguait pas
+            d'une réponse vide (essai de la fonction N2, 23/10).
+    """
 
     run_id: RunId
     session_id: SessionId
@@ -743,37 +895,20 @@ class RunResult(DomainModel):
     status: RunStatus
     text: str = ""
     output: Message | None = None
-    # Échec : son type (``guard.judge``, ``guard.contract``, ``model.auth``,
-    # ``policy.<nom>``…) et son message, lisible tel quel.
     error_type: str | None = None
     error: str | None = None
     iterations: int = 0
     usage: Usage = Usage()
     cost_usd: float = 0.0
-    # Fichiers du run : pièces jointes, fichiers produits par les outils, déports (G3).
     artifacts: tuple[ArtifactRecord, ...] = ()
-    # Réponse structurée : l'objet JSON validé par le schéma de sortie (A7).
     data: JsonValue = None
-    # Réponse gardée bien qu'elle ne respecte pas son contrat (``on_failure: unverified``).
     unverified: bool = False
-    # Réponse remplacée par le message de repli d'un contrat ou d'un juge
-    # (``on_failure: fallback``) : le run a abouti sans vraie réponse.
     fallback: bool = False
-    # Consommation ventilée du run et de ses sous-runs : par run, par rôle, par modèle.
     report: UsageReport | None = None
-    # Verdicts des juges du run et de ses sous-runs, dans l'ordre du journal.
     verdicts: tuple[JudgeVerdict, ...] = ()
-    # Juges déclarés qui n'ont pas jugé (appelant, échantillon, client, condition, profil).
     skipped_judges: tuple[JudgeSkip, ...] = ()
-    # Approbations qu'il faut trancher pour que ce run avance (#17), celles
-    # de ses sous-runs comprises : l'appelant n'a pas à savoir qu'un
-    # sous-agent existe pour savoir ce qu'on lui demande.
     pending_approvals: tuple[PendingApproval, ...] = ()
-    # Questions posées à l'utilisateur qui attendent sa réponse (wait_answer),
-    # celles des sous-runs comprises : ``answer()`` y répond.
     pending_questions: tuple[PendingQuestion, ...] = ()
-    # Ce que le masquage a retiré, par chemin (``text``, ``artifacts[].name``…) :
-    # un ``text`` vidé ne se distinguait pas d'une réponse vide (test N2 du 23/10).
     redacted: tuple[str, ...] = ()
 
     def masked(self) -> Self:
@@ -893,6 +1028,7 @@ class RunResult(DomainModel):
 
     @property
     def ok(self) -> bool:
+        """Vrai si le run a abouti (``completed``)."""
         return self.status is RunStatus.COMPLETED
 
     @property
@@ -920,7 +1056,7 @@ def _produced_below(state: RunState, tree: Sequence[Event]) -> tuple[ArtifactRec
 
 
 def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, ...]:
-    """Demandes d'approbation en attente dans tout l'arbre d'un run (#17).
+    """Demandes d'approbation en attente dans tout l'arbre d'un run (point 17).
 
     Un sous-agent qui se met en pause arrête son parent : ce qu'il faut
     trancher pour que le run avance n'est pas forcément dans le run lui-même.
@@ -1026,15 +1162,21 @@ class Unchecked:
 
 
 UNCHECKED: Final = Unchecked()
+"""Le seul jeton ``Unchecked`` : passé à ``run``, il lance sans contrôle d'accès, pour le code de loom seul."""
 
 
 class _Routed(NamedTuple):
-    """Une question qui attend, à laquelle un message écrit dans la session répond."""
+    """Une question qui attend, à laquelle un message écrit dans la session répond.
 
-    # Run racine, celui qui reprend.
+    Attributes:
+        root: Run racine, celui qui reprend.
+        question: La question en attente.
+        asker: Agent du run qui l'a posée : un sous-agent, s'il y en a un (§
+            6.5).
+    """
+
     root: RunState
     question: PendingQuestion
-    # Agent du run qui l'a posée : un sous-agent, s'il y en a un (§ 6.5).
     asker: str
 
 
@@ -1049,7 +1191,7 @@ class _Signed:
 
 
 def _launched_by(actor: Actor, context: CallerContext | None, tenant: TenantId | None) -> tuple[CallerContext, TenantId | None]:
-    """Le contexte d'un run lancé par cet utilisateur, et son client (règle 1, D-7).
+    """Le contexte d'un run lancé par cet utilisateur, et son client (règle 1, décision D-7 des utilisateurs et rôles).
 
     Le contexte porte son identifiant — et la passerelle, s'il est endossé :
     c'est le lanceur, qu'une auto-approbation reconnaît. Sans client nommé,
@@ -1176,7 +1318,7 @@ def _awaiting_runs(tree: Sequence[Event]) -> list[RunState]:
 
 
 def _where(tree: Sequence[Event], run_id: RunId, call_id: str) -> tuple[SpanId | None, SpanId | None]:
-    """Span de la demande qu'une décision vient trancher (#17).
+    """Span de la demande qu'une décision vient trancher (point 17).
 
     Une décision prise hors de la boucle — par REST, par la CLI, par
     ``approve()`` — n'a pas d'étape à elle : elle se range donc **là où la
@@ -1204,7 +1346,7 @@ def _unreadable(what: str, tenant: TenantId, session: SessionId, error: Exceptio
 
 
 def _unfinished(events: Sequence[Event]) -> list[RunState]:
-    """Runs racine d'un journal qui peuvent encore avancer (#27, H3).
+    """Runs racine d'un journal qui peuvent encore avancer (point 27, fonction H3).
 
     Un sous-run n'y est pas : son parent le reprend en rejouant l'appel
     d'outil qui l'a lancé. Un run de compaction non plus — il sera refait si
@@ -1302,6 +1444,17 @@ class _ReplayMount:
         book: ReplayBook,
         tools: JournalTools | VariantTools,
     ) -> None:
+        """Prépare le montage, sans rien monter : les agents le sont au premier besoin.
+
+        Args:
+            build: ``build_agent``, avec ce que l'instance partage (registre, MCP,
+                fichiers).
+            tenant: Le client du run.
+            config: La config du rejeu (en variante, modèles changés compris).
+            store: Le journal en mémoire du rejeu.
+            book: Le livre qui sert les réponses du journal.
+            tools: Les outils du rejeu : ceux du journal, ou ceux de la variante.
+        """
         # ``build_agent``, avec ce que l'instance partage (registre, MCP, fichiers).
         self._build = build
         self._tenant = tenant
@@ -1315,6 +1468,7 @@ class _ReplayMount:
 
     @property
     def variant(self) -> bool:
+        """Vrai pour un rejeu en variante."""
         return isinstance(self._tools, VariantTools)
 
     def __call__(self, agent: str) -> RunContext:
@@ -1326,6 +1480,11 @@ class _ReplayMount:
         return context
 
     def _mount(self, agent: str) -> RunContext:
+        """Monte un agent pour le rejeu.
+
+        Clients de modèle du journal (ou de la variante), disjoncteurs à part,
+        outils du rejeu qui tranchent aussi les approbations.
+        """
         if agent not in AgentRegistry.from_config(self._config).names:
             raise ReplayError(f"Rejeu : l'agent {agent!r} n'est plus dans la config")
         book, secrets = self._book, self._tenant.secrets
@@ -1356,6 +1515,7 @@ class _ReplayMount:
             raise ReplayError(f"Variante : {problem}")
 
     async def aclose(self) -> None:
+        """Ferme les agents montés ; la première erreur remonte une fois tous tentés."""
         closing = Closing()
         for built in self.mounted:
             with closing:
@@ -1380,15 +1540,41 @@ class Loom:
         intercept: ToolReplay | None = None,
         models: Mapping[str, ModelClient] | None = None,
     ) -> None:
+        """Ouvre l'instance : clients, journal, fichiers, bus, export, idempotence et file de tâches.
+
+        Un agent n'est monté, pour un client, qu'au premier besoin. Ce que
+        l'appelant fournit lui reste : il le ferme lui-même.
+
+        Args:
+            config: La configuration chargée.
+            store: Journal à utiliser ; à défaut, celui de la config
+                (``storage.events``).
+            registry: Registre des outils et politiques ; à défaut, chargé d'après
+                la config.
+            environ: Variables lues pour les secrets ; à défaut, celles du process.
+            artifacts: Stockage des fichiers ; à défaut, celui de la config.
+            breakers: Disjoncteurs des modèles et des serveurs MCP ; à défaut, neufs.
+            secrets: Fournisseur des secrets des clients ; à défaut,
+                l'environnement.
+            counter: Compteur de consommation par client ; à défaut, en mémoire.
+            intercept: Outils servis à part, posés sur chaque agent monté : une éval
+                double ou refuse ainsi les outils à effets de bord.
+            models: Clients de modèle à la place de ceux que la config déclare, par
+                identifiant de modèle.
+
+        Raises:
+            ConfigError: Client fourni pour un modèle non déclaré, ou avertissement
+                qui refuse en profil prod.
+        """
         self._config = config
-        # Le pool des outils synchrones de l'instance (B-2, D-4) : ses threads sont des
+        # Le pool des outils synchrones de l'instance (décisions B-2/D-4 du délai et des threads) : ses threads sont des
         # démons, que ``aclose`` attend au plus ``execution.tools.grace`` secondes.
         self._threads = tool_threads.ToolThreads(config.execution.tools.threads, grace=config.execution.tools.grace)
         # Outils servis à part, posés sur chaque agent monté (sous-agents
         # compris) : c'est ainsi qu'une éval double ou refuse un outil à effets
-        # de bord (J6.3a). Sans lui, chaque outil s'exécute.
+        # de bord (jalon J6.3a). Sans lui, chaque outil s'exécute.
         self._intercept = intercept
-        # Clients de modèle fournis, par identifiant de la config (O2, 6.3c) :
+        # Clients de modèle fournis, par identifiant de la config (fonction O2, jalon J6.3c) :
         # ils servent à la place de ceux qu'elle déclare, pour chaque agent
         # monté ; ils restent à l'appelant, qui les ferme.
         declared = {spec.id for spec in config.models}
@@ -1402,16 +1588,16 @@ class Loom:
         # transmet aux instances qu'elle monte (celui de la config, lui, se refait).
         self._secrets = secrets
         # Identité de cette instance : c'est elle qui prend les concessions sur
-        # les runs qu'elle pilote (#27), et qui signe ses nouvelles sur le bus
-        # (5.3c) pour ne pas se réécouter.
+        # les runs qu'elle pilote (point 27), et qui signe ses nouvelles sur le bus
+        # (jalon J5.3c) pour ne pas se réécouter.
         self._worker_id = f"worker-{new_id()[-12:]}"
         self._registry = registry if registry is not None else load_registry(config)
         self._agents = AgentRegistry.from_config(config)
-        # Clients (L1) : résolus ici, pour qu'une surcharge incohérente soit
+        # Clients (fonction L1) : résolus ici, pour qu'une surcharge incohérente soit
         # une erreur de démarrage et non une erreur au premier run du client.
         provider: SecretProvider = secrets if secrets is not None else EnvironmentSecrets(config, environ)
         self._tenants = Tenants(config, environ=environ, secrets=provider)
-        # Sceau des contenus au repos (5.5b) : un trousseau quand la config le
+        # Sceau des contenus au repos (jalon J5.5b) : un trousseau quand la config le
         # déclare, et c'est lui qui donne son codec au journal et sa clé aux
         # fichiers. Un seul trousseau pour l'instance : les clés d'un client
         # sont résolues une fois, pas à chaque événement.
@@ -1424,7 +1610,7 @@ class Loom:
         # Stockage des fichiers, commun aux agents ; même règle de fermeture.
         self._shared_artifacts = artifacts if artifacts is not None else create_artifact_store(config, keyring=self._keyring)
         self._owns_artifacts = artifacts is None
-        # Isolation physique (#34) : un client qui déclare son propre stockage
+        # Isolation physique (point 34) : un client qui déclare son propre stockage
         # a le sien, les autres partagent celui de la racine. Le routeur est
         # un journal comme un autre : le reste de l'instance ne le voit pas.
         self._router = TenantRouter(
@@ -1436,14 +1622,14 @@ class Loom:
         )
         inner: EventStore = RoutedEventStore(self._router) if self._router.routed else shared
         self._artifacts: ArtifactStore = RoutedArtifactStore(self._router) if self._router.routed else self._shared_artifacts
-        # Bus des nouvelles d'écriture (5.3c) : sans lui, un abonné ne voit
+        # Bus des nouvelles d'écriture (jalon J5.3c) : sans lui, un abonné ne voit
         # que ce que son propre process écrit. Un journal notifiant fourni par
         # l'appelant garde le sien, s'il en a un.
         self._bus = create_bus(config) if not isinstance(inner, NotifyingEventStore) else None
         self._store = inner if isinstance(inner, NotifyingEventStore) else NotifyingEventStore(inner, bus=self._bus, source=self._worker_id)
         # Tâche qui suit le bus, lancée à l'entrée du contexte.
         self._following: asyncio.Task[None] | None = None
-        # Export des runs terminés vers les collecteurs (6.1a) : un abonné du
+        # Export des runs terminés vers les collecteurs (jalon J6.1a) : un abonné du
         # journal, qui n'écoute que ce que ce process écrit — chaque worker
         # exporte sa part, et aucune trace ne part deux fois.
         self._exporter, said = create_run_exporter(config, self._store, environ)
@@ -1451,7 +1637,7 @@ class Loom:
         self._exporting = ExitStack()
         if self._exporter is not None:
             self._exporting.enter_context(self._store.listen(self._exporter, own=True))
-        # Profil prod : ce qui avertit ailleurs refuse ici (M4, 5.5a).
+        # Profil prod : ce qui avertit ailleurs refuse ici (fonction M4, jalon J5.5a).
         announce(config, storage_warnings(config))
         # Une capacité à déclarer n'empêche pas de partir, en prod non plus.
         announce(config, model_warnings(config), refuse=False)
@@ -1459,9 +1645,9 @@ class Loom:
         announce(config, key_warnings(config))
         # Le sceau, lui, avertit dans tous les profils : un client dont la clé a
         # été effacée est un état voulu, pas une config à corriger, et refuser
-        # de démarrer arrêterait le service de tous les autres (5.5b).
+        # de démarrer arrêterait le service de tous les autres (jalon J5.5b).
         announce(config, encryption_warnings(config, self._keyring), refuse=False)
-        # Magasin d'idempotence partagé par les agents de l'instance (#49) ;
+        # Magasin d'idempotence partagé par les agents de l'instance (point 49) ;
         # ``None`` quand chaque run se sert de son journal.
         self._idempotency = create_idempotency_store(config)
         self._environ = environ
@@ -1472,25 +1658,25 @@ class Loom:
         self._mcp = create_mcp_pool(config, environ)
         # Disjoncteurs des modèles et des serveurs MCP, communs à tous les runs.
         self._breakers = breakers if breakers is not None else CircuitBreakers()
-        # Consommation par client et par période (J5.1b) : le compteur est un
+        # Consommation par client et par période (jalon J5.1b) : le compteur est un
         # cache du journal, et c'est lui qui rend un budget de journée lisible
         # avant chaque lancement sans relire toutes les sessions du client.
         self._counter = counter if counter is not None else InMemoryUsageCounter()
         self._owns_counter = counter is None
         self._usage = TenantUsage(self._counter, self._store)
-        # Débit accordé aux clients, commun aux runs de l'instance (L3).
+        # Débit accordé aux clients, commun aux runs de l'instance (fonction L3).
         self._quota = Quota()
         # Un écrivain par session : deux runs d'une même session écrivent par
-        # le même, et ne se refusent pas l'un l'autre (#22).
+        # le même, et ne se refusent pas l'un l'autre (point 22).
         self._writers = SessionWriters()
-        # Runs pilotés ici, pour que ``cancel`` puisse les atteindre (A5).
+        # Runs pilotés ici, pour que ``cancel`` puisse les atteindre (fonction A5).
         self._driving: dict[RunKey, asyncio.Task[RunState]] = {}
         # Runs tenus ici par un pilote, ou par un arrêt en cours : un seul à la
         # fois, car la concession ne départage pas deux pilotes d'un même
         # worker. L'événement se lève quand le run est lâché.
         self._held: dict[RunKey, asyncio.Event] = {}
         # Compaction : agent interne et file de tâches, seulement si la config
-        # la déclare (#23).
+        # la déclare (point 23).
         compaction = config.sessions.compaction
         self._compaction = (
             CompactionJob(
@@ -1516,9 +1702,9 @@ class Loom:
         }
         if self._compaction is not None:
             handlers["compaction"] = self._compacted
-        # La file existe toujours depuis 4.2b : elle porte les runs de fond,
+        # La file existe toujours depuis le jalon J4.2b : elle porte les runs de fond,
         # que la compaction soit configurée ou non. Servie par un courtier
-        # (5.3b), elle ne fait que publier : les traitements ci-dessus ne
+        # (jalon J5.3b), elle ne fait que publier : les traitements ci-dessus ne
         # servent alors qu'aux workers, où la même instance les consomme.
         self._queue: TaskQueue = create_task_queue(config, handlers)
 
@@ -1533,7 +1719,7 @@ class Loom:
         """Charge un fichier de configuration et ouvre l'instance.
 
         ``profile`` l'emporte sur ``LOOM_PROFILE`` et sur ``profile:`` du
-        fichier (M4).
+        fichier (fonction M4).
         """
         return cls(load_config(Path(path), profile=profile), environ=environ)
 
@@ -1541,15 +1727,16 @@ class Loom:
 
     @property
     def config(self) -> LoomConfig:
+        """La configuration de l'instance."""
         return self._config
 
     @property
     def worker_id(self) -> str:
-        """Identité que ce process inscrit dans la concession d'un run (#27).
+        """Identité que ce process inscrit dans la concession d'un run (point 27).
 
         C'est elle qui départage deux pilotes au journal : un `run.claimed`
         la porte, et la lire dit qui tient le run — utile dès qu'il y a
-        plusieurs workers (5.3b).
+        plusieurs workers (jalon J5.3b).
         """
         return self._worker_id
 
@@ -1570,14 +1757,17 @@ class Loom:
 
     @property
     def registry(self) -> Registry:
+        """Registre des outils et politiques de l'instance."""
         return self._registry
 
     @property
     def agents(self) -> tuple[AgentSpec, ...]:
+        """Les agents déclarés."""
         return tuple(self._agents)
 
     @property
     def names(self) -> tuple[str, ...]:
+        """Noms des agents déclarés."""
         return self._agents.names
 
     def exposed(self, access: str, tenant_id: TenantId | None = None) -> tuple[AgentSpec, ...]:
@@ -1638,7 +1828,7 @@ class Loom:
 
         Avec un utilisateur, le client est le sien (règle 1) et le contexte
         porte son identifiant : c'est le lanceur, dont dépend l'auto-approbation
-        (D-7).
+        (décision D-7 des utilisateurs et rôles).
         """
         if actor is not None:
             context, tenant = _launched_by(actor, context, tenant)
@@ -1761,7 +1951,7 @@ class Loom:
         require(actor, permission, agent=self._agents.get(state.agent), tenant=state.context.tenant_id)
 
     def _judged(self, judges: JudgesMode) -> JudgesMode:
-        """Ce que l'appelant demande aux juges, si le profil le permet (M4).
+        """Ce que l'appelant demande aux juges, si le profil le permet (fonction M4).
 
         ``skip`` retire un contrôle : c'est bon pour une mise au point, et
         c'est précisément ce qu'un profil ``prod`` refuse. Sans profil déclaré,
@@ -1805,17 +1995,17 @@ class Loom:
         ``run_id``. ``answerer`` répond aux questions dans la boucle.
 
         Une pièce jointe refusée (format, taille) lève ``AttachmentError``
-        avant que le run ne commence. ``judges`` (#21) : ``auto``, chaque juge
+        avant que le run ne commence. ``judges`` (point 21) : ``auto``, chaque juge
         selon son ``when`` ; ``force``, tous (audit, évals) ; ``skip``, aucun.
 
-        ``state`` : écritures du state de la session par l'application (D5),
+        ``state`` : écritures du state de la session par l'application (décision D5 du state de session),
         ``None`` effaçant une clé. Contrôlées comme celles d'un outil, elles
         vont dans le ``run.started`` ; une écriture refusée, ou une clé
         ``required`` sans valeur, lève ``StateRefused`` (une ``ValueError``)
-        avant que rien ne soit écrit (D13). ``session_state(session_id)`` relit
+        avant que rien ne soit écrit (décision D13 du state de session). ``session_state(session_id)`` relit
         ensuite le state de la session.
 
-        ``approver`` (#28) : un approbateur en ligne, appelé dans la boucle
+        ``approver`` (point 28) : un approbateur en ligne, appelé dans la boucle
         pour chaque appel qui demande une approbation. Le run ne passe alors
         jamais en pause — c'est le mode des scripts, de la CLI et des tests.
         Sans lui, l'approbation est asynchrone : le run s'arrête en ``PAUSED``
@@ -2078,7 +2268,7 @@ class Loom:
 
         Le client de modèle et les outils sont gardés d'un run à l'autre ; le
         contexte est gelé, ``on_chunk`` en donne donc une copie. Le montage a
-        lieu **par client** (L1) : la configuration qu'il voit, ses secrets,
+        lieu **par client** (fonction L1) : la configuration qu'il voit, ses secrets,
         ses outils et ses connexions MCP lui appartiennent.
         """
         tenant = self._tenants.get(tenant_id)
@@ -2127,7 +2317,7 @@ class Loom:
         doubles: Mapping[str, Double] | None = None,
         export: Path | None = None,
     ) -> ReplayReport:
-        """Rejoue un run fini, à l'identique ou en variante, et dit où il s'écarte (K6).
+        """Rejoue un run fini, à l'identique ou en variante, et dit où il s'écarte (fonction K6).
 
         La logique de l'agent — boucle, politiques, contrats, juges, budgets —
         tourne avec la config **d'aujourd'hui**. Au rejeu identique
@@ -2164,7 +2354,7 @@ class Loom:
         doubles: Mapping[str, Double] | None = None,
         export: Path | None = None,
     ) -> JournalReplay:
-        """Rejoue les runs d'un journal JSONL, fichier ou événements déjà lus (J6.3b).
+        """Rejoue les runs d'un journal JSONL, fichier ou événements déjà lus (jalon J6.3b).
 
         Le journal est celui qu'écrivent ``loom sessions export``, ``loom eval
         --export`` ou ``loom replay --export`` : il n'a pas à être dans le
@@ -2282,7 +2472,7 @@ class Loom:
         variants: Sequence[str] = (),
         export: Path | None = None,
     ) -> EvalReport:
-        """Joue une suite d'évals et dit, cas par cas et variante par variante, ce qui passe (O1).
+        """Joue une suite d'évals et dit, cas par cas et variante par variante, ce qui passe (fonction O1).
 
         La suite (``EvalSuite``, ou le chemin de son fichier YAML) porte des
         cas — une demande et ses attendus — et les variantes à comparer. Sans
@@ -2353,7 +2543,7 @@ class Loom:
         tenant_id: TenantId | None = None,
         content: bool = True,
     ) -> Trace:
-        """La trace d'un run et de ses sous-runs : ses spans, tirés du journal (K5, 6.2c).
+        """La trace d'un run et de ses sous-runs : ses spans, tirés du journal (fonction K5, jalon J6.2c).
 
         Ce sont les spans de l'export OTel, avec un en-tête (statut, usage,
         coût, durée de pilotage) ; un run inachevé a la sienne, ses spans
@@ -2443,7 +2633,7 @@ class Loom:
         *,
         period: BudgetPeriod = "day",
     ) -> TenantConsumption:
-        """Ce qu'un client a dépensé sur la journée ou le mois en cours (L3, J5.1b).
+        """Ce qu'un client a dépensé sur la journée ou le mois en cours (fonction L3, jalon J5.1b).
 
         Relu dans le journal à chaque appel, et non pris au compteur : c'est
         une question qu'un humain pose, et elle doit valoir même pour un client
@@ -2459,7 +2649,7 @@ class Loom:
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
     ) -> UsageReport:
-        """Rapport de consommation (J5) : d'un run et de ses sous-runs, ou de toute une session.
+        """Rapport de consommation (fonction J5) : d'un run et de ses sous-runs, ou de toute une session.
 
         Sans ``run_id``, ``session_id`` est requis.
         """
@@ -2476,7 +2666,7 @@ class Loom:
         """Octets d'un fichier du stockage ; lève ``ArtifactNotFound``."""
         return await self._artifacts.get(uri)
 
-    # --- Sessions (F7) --------------------------------------------------------
+    # --- Sessions (fonction F7) --------------------------------------------------------
 
     async def sessions(self, *, tenant_id: TenantId | None = None) -> list[SessionRecord]:
         """Sessions du client, de la plus récemment écrite à la plus ancienne."""
@@ -2493,7 +2683,7 @@ class Loom:
         limit: int = RUNS_LIMIT,
         sessions: int = SESSIONS_READ,
     ) -> RunPage:
-        """Runs du client, du plus récent au plus ancien (K5, #32).
+        """Runs du client, du plus récent au plus ancien (fonction K5, point 32).
 
         Lus **au journal**, session par session, de la plus récemment écrite à
         la plus ancienne, jusqu'à ce que la page soit pleine et qu'aucune
@@ -2557,7 +2747,7 @@ class Loom:
         return RunPage(runs=tuple(found), scanned=scanned, truncated=truncated)
 
     async def query(self, query: EventQuery) -> list[Event]:
-        """Événements du journal qui satisfont ces critères (#32, K5).
+        """Événements du journal qui satisfont ces critères (point 32, fonction K5).
 
         C'est la lecture des traces : le journal **est** la trace, et
         ``EventQuery`` est la façon de l'interroger. L'ordre est celui des
@@ -2658,7 +2848,7 @@ class Loom:
         """State de la session, relu dans son journal : ce qui est écrit, sans valeurs par défaut.
 
         Ce que l'application a posé à l'ouverture de chaque run, et ce que les
-        outils des runs terminés ont écrit (D2). ``UnknownSession`` si la session
+        outils des runs terminés ont écrit (décision D2 du state de session). ``UnknownSession`` si la session
         n'a aucun événement ; ``SessionUnreadable`` si l'un de ses runs ne se relit pas.
         """
         events = await self._store.read(tenant_id or DEFAULT_TENANT, session_id)
@@ -2700,7 +2890,7 @@ class Loom:
         dry_run: bool = True,
         now: datetime | None = None,
     ) -> RetentionReport:
-        """Efface les sessions dormantes au-delà de la borne (`storage.retention`, 5.5c).
+        """Efface les sessions dormantes au-delà de la borne (`storage.retention`, jalon J5.5c).
 
         Une session est choisie sur sa **dernière écriture**, et sur rien
         d'autre : aucun contenu n'est lu, si bien qu'un journal scellé dont la
@@ -2720,7 +2910,7 @@ class Loom:
         nomme, et le balayage des autres continue (voir ``delete_session``).
 
         Rien ne se déclenche tout seul : c'est `loom retention` qui appelle, et
-        la plateforme qui le met à l'heure (5.4c).
+        la plateforme qui le met à l'heure (jalon J5.4c).
         """
         moment = now or datetime.now(UTC)
         tenants = (tenant_id,) if tenant_id is not None else self._config.tenant_ids
@@ -2763,6 +2953,7 @@ class Loom:
         return AuditSwept(days=declared.retention_days, scanned=swept.scanned, removed=swept.removed)
 
     async def _sweep(self, tenant: TenantId, record: SessionRecord, *, dry_run: bool) -> SessionSwept:
+        """Retire une session dormante, ou dit ce qui partirait (``dry_run``) : en essai à blanc, fichiers et clés restent inconnus."""
         found = SessionSwept(
             tenant_id=tenant,
             session_id=record.session_id,
@@ -2817,7 +3008,7 @@ class Loom:
         for built in self._built.values():
             with closing:
                 await built.aclose()
-        # Les outils encore au travail : attendus au plus ``grace``, en le disant (D-5).
+        # Les outils encore au travail : attendus au plus ``grace``, en le disant (décision D-5 du délai et des threads).
         with closing:
             await self._threads.aclose()
         if self._mcp is not None:
@@ -2957,7 +3148,7 @@ class Loom:
         tenant_id: TenantId | None = None,
         user: str | Actor,
     ) -> bool:
-        """Arrête un run et écrit ``run.cancelled`` (A5) ; faux s'il est déjà fini.
+        """Arrête un run et écrit ``run.cancelled`` (fonction A5) ; faux s'il est déjà fini.
 
         ``user`` : ``cancel`` sur l'agent du run, chez son client ; il signe
         l'arrêt (``by``, et ``via`` pour une passerelle). ``AccessDenied``
@@ -3039,7 +3230,7 @@ class Loom:
         tenant_id: TenantId | None = None,
         user: str | Actor,
     ) -> tuple[str, ...]:
-        """Autorise un appel que le run attend, et remet son pilotage en file (#17).
+        """Autorise un appel que le run attend, et remet son pilotage en file (point 17).
 
         ``user`` : l'approbateur. Il ne tranche que les demandes que ses rôles
         lui permettent (§ 4.4) — approbateurs figés, ``self_approve`` s'il a
@@ -3098,7 +3289,7 @@ class Loom:
         tenant_id: TenantId | None = None,
         user: str | Actor,
     ) -> tuple[str, ...]:
-        """Refuse un appel que le run attend (#17) : le motif revient au modèle.
+        """Refuse un appel que le run attend (point 17) : le motif revient au modèle.
 
         Le run n'échoue pas : l'appel rend une erreur, et l'orchestrateur fait
         ce qu'il peut de ce refus. Comme pour ``approve``, une panne de la file
@@ -3374,7 +3565,7 @@ class Loom:
         state: Mapping[str, JsonValue] | None = None,
         user: str | Actor,
     ) -> RunId:
-        """Ouvre un run et met son pilotage en file ; rend son identifiant (H5).
+        """Ouvre un run et met son pilotage en file ; rend son identifiant (fonction H5).
 
         Le run est **inscrit au journal avant le retour** : l'identifiant rendu
         désigne un run qui existe, qu'on peut suivre (``follow``), interroger
@@ -3428,7 +3619,7 @@ class Loom:
         )
         return opened.run_id
 
-    # --- Déclencheurs (H6, J5.4c) ---------------------------------------------
+    # --- Déclencheurs (fonction H6, jalon J5.4c) ---------------------------------------------
 
     @property
     def triggers(self) -> tuple[TriggerSpec, ...]:
@@ -3452,7 +3643,7 @@ class Loom:
         tenant_id: TenantId | None = None,
         user: str | Actor,
     ) -> Triggered:
-        """Ouvre le run d'un déclencheur, depuis la charge reçue (H6).
+        """Ouvre le run d'un déclencheur, depuis la charge reçue (fonction H6).
 
         ``user`` : l'utilisateur de la clé qui livre ; il faut ``run`` sur
         l'agent du déclencheur, vérifié avant de chercher une livraison déjà
@@ -3523,7 +3714,7 @@ class Loom:
         Quand la session se rend depuis la charge, la même livraison avec une
         autre charge (corrigée, ou un identifiant recyclé par l'émetteur)
         tomberait dans une autre session et y ouvrirait un second run du même
-        nom : l'action partirait deux fois. Au test H6 du 20/10, ``crm-0001``
+        nom : l'action partirait deux fois. À l'essai de la fonction H6 du 20/10, ``crm-0001``
         renvoyé avec un autre numéro de devis avait ouvert un second run
         ``crm-0001``. Le journal est cherché pour tout le client : indexé en
         SQLite et en Postgres, relu en entier en JSONL — seulement pour une
@@ -3567,7 +3758,7 @@ class Loom:
         )
 
     async def recover(self, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None) -> tuple[RunId, ...]:
-        """Remet en file les runs racine laissés en plan, et rend leurs identifiants (H3).
+        """Remet en file les runs racine laissés en plan, et rend leurs identifiants (fonction H3).
 
         À appeler soi-même : une instance ne redémarre pas les runs d'un autre
         process à l'insu de son appelant. Un run déjà piloté par cette instance
@@ -3627,7 +3818,7 @@ class Loom:
         return tuple(found)
 
     async def _piloted_job(self, job: Job) -> None:
-        """Pilote un run mis en file : soumission (H5) ou reprise (H3)."""
+        """Pilote un run mis en file : soumission (fonction H5) ou reprise (fonction H3)."""
         assert job.run_id is not None, "un travail `run` désigne toujours un run"
         try:
             state = await self.state(job.run_id, session_id=job.session_id, tenant_id=job.tenant_id)
@@ -3650,7 +3841,7 @@ class Loom:
         await self._result(final)
 
     async def _after_the_lease(self, job: Job, conflict: ClaimConflict) -> None:
-        """Repose le travail pour la fin du bail, quand la file est servie (H6).
+        """Repose le travail pour la fin du bail, quand la file est servie (fonction H6).
 
         Avec une file en mémoire, le pilote qui tient le run est dans ce
         process : il le mènera au bout, et il n'y a rien à reprogrammer.
@@ -3721,7 +3912,7 @@ class Loom:
             logger.warning("Consommation du run %s non enregistrée", state.run_id, exc_info=True)
 
     async def compact(self, session_id: SessionId, *, tenant_id: TenantId | None = None) -> SessionCompacted | None:
-        """Résume maintenant les échanges anciens d'une session (#23).
+        """Résume maintenant les échanges anciens d'une session (point 23).
 
         Ne tient pas compte du seuil ``over_tokens`` : c'est la compaction à
         la demande. Rend ``None`` si la session n'a rien de neuf à résumer, ou
@@ -3735,10 +3926,10 @@ class Loom:
         """Attend les tâches de fond en cours : runs soumis, résumés."""
         await self._queue.drain()
 
-    # --- Worker (5.3b) --------------------------------------------------------
+    # --- Worker (jalon J5.3b) --------------------------------------------------------
 
     async def work(self, *, jobs: int = 1) -> None:
-        """Consomme la file jusqu'à l'arrêt : ce que fait ``loom worker`` (H6).
+        """Consomme la file jusqu'à l'arrêt : ce que fait ``loom worker`` (fonction H6).
 
         Ne rend la main qu'une fois ``stop_work`` demandé **et** les tâches en
         cours menées au bout. Une file qui exécute chez elle n'a rien à
@@ -3769,7 +3960,7 @@ class Loom:
             await self._compaction.compact(job.tenant_id, job.session_id, triggered_by=job.run_id)
 
     async def _schedule(self, state: RunState, events: Sequence[Event]) -> None:
-        """Met un résumé en file si la session a dépassé son seuil (#23).
+        """Met un résumé en file si la session a dépassé son seuil (point 23).
 
         Avec ``blocking``, rien : le résumé se fera à l'ouverture du run suivant.
         """
@@ -3800,7 +3991,7 @@ class Loom:
             )
 
     async def _expiring(self, state: RunState, events: Sequence[Event]) -> None:
-        """Ramène un run en attente à l'échéance de sa première demande (#17).
+        """Ramène un run en attente à l'échéance de sa première demande (point 17).
 
         Le travail ne décide rien : c'est ``expire_at``, au journal, qui fait
         expirer une demande, et ``drive`` le lit en reprenant. Le travail ne
@@ -3837,7 +4028,7 @@ class Loom:
             )
 
     async def _snapshot(self, state: RunState, events: Sequence[Event]) -> None:
-        """Matérialise l'historique de la session, si le gain le justifie (§11.2).
+        """Matérialise l'historique de la session, si le gain le justifie (conception §11.2).
 
         Le snapshot n'est qu'une vue : s'il ne peut pas être écrit, le run
         reste juste et la session se relit entièrement.
@@ -3862,7 +4053,7 @@ class Loom:
     async def _unclaimed(self, run_id: RunId | None, session_id: SessionId | None, tenant: TenantId) -> None:
         """Refuse un ``run_id`` choisi par l'appelant et déjà pris dans une autre session.
 
-        ``begin_run`` ne regarde que la session du run. Au test N2 du 23/10, un
+        ``begin_run`` ne regarde que la session du run. À l'essai de la fonction N2 du 23/10, un
         même ``run_id`` imposé en REST dans deux sessions a ouvert deux runs :
         leurs spans tombaient dans une même trace OTel (son identifiant vient
         du ``run_id`` et du client) et ``GET /v1/events?run_id=…`` les mêlait.
@@ -3892,12 +4083,13 @@ class Loom:
         judges: JudgesMode = "auto",
         state: Mapping[str, JsonValue] | None = None,
     ) -> RunState:
+        """Ouvre un run : state contrôlé, session résumée d'abord si elle dépasse son seuil (compaction), puis la demande et le ``run.started`` écrits."""
         tenant = (context or CallerContext()).tenant_id
         if self._compaction is not None and session_id is not None:
             # Le state se contrôle avant : un run refusé ne compacte pas la session.
             await check_state(ctx, state, tenant_id=tenant, session_id=session_id, run_id=run_id)
             # Résumé bloquant s'il est demandé, puis filet de sécurité : une
-            # session trop longue est résumée avant que le run ne commence (#23).
+            # session trop longue est résumée avant que le run ne commence (point 23).
             # L'identifiant est choisi dès maintenant : le résumé le porte en
             # ``triggered_by`` (sans lui, rien ne le rattachait au run).
             run_id = run_id or new_run_id()

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Magasin d'idempotence en Postgres : partagé entre machines (#18, #49).
+"""Magasin d'idempotence en Postgres : partagé entre machines (points 18 et 49).
 
 Le magasin ``sqlite`` suffit à plusieurs process d'une même machine ; celui-ci
 tient quand les workers sont sur plusieurs machines, ce qui est le cas dès
-que la file entre en jeu (5.3b).
+que la file entre en jeu (jalon J5.3b).
 
 ``reserve`` tient en une seule instruction, comme en SQLite — prendre la clé
 si elle est libre, la reprendre si la réservation d'un autre a expiré, ne
@@ -14,7 +14,7 @@ d'un ``INSERT`` serait un check-then-act, et deux workers passeraient.
 Pas de politique de lignes sur cette table, contrairement au journal :
 ``get(key)`` ne nomme pas de client, et une politique par client rendrait
 invisible la ligne qu'il faut justement relire. Ce qui cadre une clé, c'est
-son préfixe par client (#49) ; ce que portent les colonnes ``tenant_id`` et
+son préfixe par client (point 49) ; ce que portent les colonnes ``tenant_id`` et
 ``session_id``, c'est de quoi l'oublier avec sa session (RGPD).
 
 La colonne ``holder`` porte le jeton du détenteur de la clé : ``complete`` et
@@ -46,11 +46,6 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import KeyScope
 
-# Ce qui protège, c'est la date : une réservation encore tenue ou un résultat
-# encore mémorisé ne bougent pas. Passée leur échéance, la clé est libre.
-# La date est celle de **la base** (``now()``) : les process qui se disputent une
-# clé n'ont pas la même horloge, et c'est la seule qu'ils partagent. Les durées
-# arrivent en secondes et sont ajoutées côté base.
 _RESERVE: Final = f"""
 INSERT INTO {IDEMPOTENCY_TABLE} (key, tenant_id, session_id, status, result, expires_at, holder)
 VALUES ($1, $2, $3, 'in_progress', NULL, now() + make_interval(secs => $4::float8), $5)
@@ -63,11 +58,17 @@ ON CONFLICT (key) DO UPDATE SET
     holder     = excluded.holder
 WHERE {IDEMPOTENCY_TABLE}.expires_at < now()
 """
+"""Ce qui protège, c'est la date : une réservation encore tenue ou un résultat
+encore mémorisé ne bougent pas. Passée leur échéance, la clé est libre. La
+date est celle de **la base** (``now()``) : les process qui se disputent une
+clé n'ont pas la même horloge, et c'est la seule qu'ils partagent. Les
+durées arrivent en secondes et sont ajoutées côté base.
+"""
 
 _COMPLETE: Final = f"UPDATE {IDEMPOTENCY_TABLE} SET status = 'completed', result = $1, expires_at = now() + make_interval(secs => $2::float8) WHERE key = $3"
 
-# Avec un jeton de détenteur : la même instruction, bornée à la ligne encore à lui.
 _COMPLETE_HELD: Final = _COMPLETE + " AND holder = $4"
+"""Avec un jeton de détenteur : la même instruction, bornée à la ligne encore à lui."""
 
 _RELEASE: Final = f"DELETE FROM {IDEMPOTENCY_TABLE} WHERE key = $1 AND status = 'in_progress'"
 _RELEASE_HELD: Final = _RELEASE + " AND holder = $2"
@@ -96,6 +97,16 @@ class PostgresIdempotency:
         retention: float = DEFAULT_RETENTION,
         limits: PoolLimits = DEFAULT_LIMITS,
     ) -> None:
+        """Prépare le pool de connexions de la table d'idempotence, avec son DDL et sa mise à niveau.
+
+        Args:
+            dsn: Adresse de la base.
+            role: Rôle applicatif pris par chaque connexion ; ``None`` : celui de la
+                connexion.
+            retention: Durée de vie d'un résultat, en secondes, quand l'outil n'en
+                fixe pas.
+            limits: Taille et délais du pool.
+        """
         self.retention = retention
         self._pg = PostgresPool(
             dsn,
@@ -125,11 +136,41 @@ class PostgresIdempotency:
         )
 
     async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
+        """Prend la clé pour ``ttl`` secondes ; faux si quelqu'un la tient déjà (``IdempotencyStore.reserve``).
+
+        Ce qui protège, c'est la date : une réservation tenue ou un résultat
+        encore mémorisé gardent la clé ; une clé périmée peut être reprise. La date est celle de la base : les process qui se
+        disputent une clé n'ont pas la même horloge.
+
+        Args:
+            key: La clé.
+            ttl: Durée de la réservation, en secondes.
+            scope: De qui est la clé (client, session), pour l'oublier avec eux.
+            holder: Jeton propre à cette prise de clé.
+
+        Returns:
+            Vrai si la clé est prise.
+        """
         async with self._pg.transaction() as connection:
             status = await connection.execute(_RESERVE, key, scope.tenant_id, scope.session_id, float(ttl), holder)
         return rows_touched(status) == 1
 
     async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
+        """Enregistre ce que l'effet a rendu : la clé cesse d'être une réservation (``IdempotencyStore.complete``).
+
+        Les résultats périmés sont d'abord effacés ; les réservations, jamais. Le tout dans une transaction.
+
+        Args:
+            key: La clé réservée.
+            result: Ce que l'outil a rendu.
+            ttl: Durée de consultation du résultat, en secondes ; ``None`` : la
+                rétention du magasin.
+            holder: Avec un jeton, l'enregistrement n'a lieu que s'il est celui de
+                la clé ; sinon, il est sans effet.
+
+        Raises:
+            KeyError: Le magasin ne connaît plus la clé.
+        """
         seconds = float(self.retention if ttl is None else ttl)
         payload = json.dumps(recordable(result), ensure_ascii=False)
         async with self._pg.transaction() as connection:
@@ -147,6 +188,15 @@ class PostgresIdempotency:
             raise KeyError(f"Clé {key!r} non réservée : rien à enregistrer")
 
     async def release(self, key: str, *, holder: str | None = None) -> None:
+        """Rend une clé réservée dont l'effet ne s'est pas produit (``IdempotencyStore.release``).
+
+        Un résultat enregistré n'est jamais rendu ; avec un jeton, seule une
+        réservation encore à ce détenteur l'est.
+
+        Args:
+            key: La clé réservée.
+            holder: Le jeton de la prise de clé.
+        """
         async with self._pg.transaction() as connection:
             if holder is None:
                 await connection.execute(_RELEASE, key)
@@ -164,6 +214,7 @@ class PostgresIdempotency:
             return rows_touched(await connection.execute(sql, *values))
 
     async def aclose(self) -> None:
+        """Ferme le pool de connexions."""
         await self._pg.aclose()
 
 

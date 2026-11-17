@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Vocabulaire des ressources ``loom://`` (N5, #32).
+"""Vocabulaire des ressources ``loom://`` (fonction N5, point 32).
 
 Ce que le serveur MCP expose en lecture seule, nommé ici et non dans son
 module : la CLI l'annonce (``loom serve``, ``loom validate``) sans pouvoir
 importer le SDK MCP, qui est un extra. C'est la même raison qui avait sorti
-``Caller`` de l'accès REST en 5.2b.
+``Caller`` de l'accès REST au jalon J5.2b.
 
 Deux index se listent, et le reste se construit d'un gabarit — on ne peut pas
 énumérer les runs d'un client sans ouvrir chaque journal :
@@ -13,7 +13,7 @@ Deux index se listent, et le reste se construit d'un gabarit — on ne peut pas
 - ``loom://sessions`` : ses journaux de session, le plus récent d'abord ;
 - ``loom://runs/{run_id}{?session_id}`` et ``…/events`` : un run, son journal ;
 - ``loom://traces/{run_id}{?session_id}`` : la trace d'un run — ses spans,
-  sous-runs compris (6.2c) ;
+  sous-runs compris (jalon J6.2c) ;
 - ``loom://sessions/{session_id}`` et ``…/events`` : une session, son journal ;
 - ``loom://artifacts/{client}/{session}/{fichier}`` : les octets d'un fichier.
 
@@ -27,15 +27,20 @@ pas un lien mort.
 from typing import Final
 
 SCHEME: Final = "loom://"
+"""Préfixe des ressources MCP de loom."""
 RUNS: Final = "loom://runs"
+"""Liste des runs, et préfixe d'un run."""
 SESSIONS: Final = "loom://sessions"
+"""Liste des sessions, et préfixe d'une session."""
 TRACES: Final = "loom://traces"
+"""Préfixe de la trace d'un run."""
 ARTIFACTS: Final = "loom://artifacts/"
+"""Préfixe d'un fichier rangé par loom."""
 EVENTS: Final = "/events"
+"""Suffixe des événements d'une session ou d'un run."""
 JSON_TYPE: Final = "application/json"
+"""Type des ressources rendues en JSON."""
 
-# Ce que chaque gabarit construit, et ce qu'il rend. L'ordre est celui du
-# module : un run, son journal, sa trace, une session, son journal, un fichier.
 TEMPLATES: Final[tuple[tuple[str, str, str], ...]] = (
     (
         f"{RUNS}/{{run_id}}{{?session_id}}",
@@ -66,9 +71,13 @@ TEMPLATES: Final[tuple[tuple[str, str, str], ...]] = (
         f"{ARTIFACTS}{{client}}/{{session}}/{{fichier}}",
         "fichier",
         # Un client qui ne connaît que ce gabarit ne devinait pas que l'URI
-        # rendue dans ``artifacts`` (``artifact://…``) se lit telle quelle (G3).
+        # rendue dans ``artifacts`` (``artifact://…``) se lit telle quelle (fonction G3).
         "Octets d'un fichier du run (pièce jointe, sortie d'outil, déport). L'URI "
         "artifact://{client}/{session}/{fichier} qu'un résultat donne dans 'artifacts' "
         "se lit aussi telle quelle",
     ),
 )
+"""Ce que chaque gabarit construit, et ce qu'il rend. L'ordre est celui du
+module : un run, son journal, sa trace, une session, son journal, un
+fichier.
+"""
