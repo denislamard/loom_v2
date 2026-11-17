@@ -39,32 +39,42 @@ from loom_ia.tools_builtin.excel.arguments import (
 )
 from loom_ia.tools_builtin.excel.formulas import AGGREGATES, check_formula, sheet_name_problem
 
-# Dates du classeur (docProps/core.xml) et de l'archive : fixes, pour que deux
-# appels identiques donnent le même fichier (reprise idempotente, empreinte).
 FIXED_DATE: Final = dt.datetime(2000, 1, 1)
+"""Dates du classeur (docProps/core.xml) et de l'archive : fixes, pour que deux
+appels identiques donnent le même fichier (reprise idempotente, empreinte).
+"""
 ZIP_DATE: Final = (2000, 1, 1, 0, 0, 0)
+"""Date des parties de l'archive : fixe, pour qu'un même classeur donne les mêmes octets."""
 
 # --- Style maison --------------------------------------------------------------------
 
 FONT_NAME: Final = "Calibri"
+"""Police du classeur."""
 FONT_SIZE: Final = 11
+"""Taille de la police, en points."""
 BLUE: Final = "0000FF"
+"""Couleur du texte d'une saisie et d'une hypothèse."""
 GREEN: Final = "008000"
+"""Couleur du texte d'une cellule de rôle ``link``."""
 GREY: Final = "7F7F7F"
+"""Couleur du texte d'une note."""
 HEADER_FILL: Final = "D9E1F2"
+"""Fond des en-têtes."""
 INPUT_FILL: Final = "FFF2CC"
+"""Fond d'une cellule de saisie."""
 ASSUMPTION_FILL: Final = "FFFF99"
+"""Fond d'une hypothèse."""
 MIN_WIDTH: Final = 8
+"""Largeur au moins d'une colonne, en caractères."""
 MAX_WIDTH: Final = 60
-# Largeur totale (en caractères) au-delà de laquelle un onglet s'imprime en paysage :
-# à peu près ce que tient une page A4 en portrait, marges comprises.
+"""Largeur au plus d'une colonne, en caractères."""
 PORTRAIT_WIDTH: Final = 90
-# Types centrés : une date alignée à droite colle au texte de la colonne suivante.
+"""Largeur totale (en caractères) au-delà de laquelle un onglet s'imprime en
+paysage : à peu près ce que tient une page A4 en portrait, marges comprises.
+"""
 CENTERED: Final[frozenset[ColumnType]] = frozenset({"date", "datetime", "year", "boolean"})
+"""Types centrés : une date alignée à droite colle au texte de la colonne suivante."""
 
-# Formats en syntaxe neutre : Excel applique les séparateurs de la locale du
-# lecteur. Dates : formats intégrés n° 14 et 22, qui suivent la locale (D5 :
-# adaptatif) ; négatifs avec le signe moins, zéro affiché 0.
 NUMBER_FORMATS: Final[Mapping[ColumnType, str]] = {
     "text": "@",
     "integer": "#,##0",
@@ -77,7 +87,10 @@ NUMBER_FORMATS: Final[Mapping[ColumnType, str]] = {
     "year": "@",
     "boolean": "@",
 }
-# Largeur d'une colonne de formules, dont la valeur n'est connue qu'au recalcul.
+"""Formats en syntaxe neutre : Excel applique les séparateurs de la locale du
+lecteur. Dates : formats intégrés n° 14 et 22, qui suivent la locale (D5 :
+adaptatif) ; négatifs avec le signe moins, zéro affiché 0.
+"""
 FORMULA_WIDTH: Final[Mapping[ColumnType, int]] = {
     "text": 20,
     "integer": 10,
@@ -90,6 +103,7 @@ FORMULA_WIDTH: Final[Mapping[ColumnType, int]] = {
     "year": 6,
     "boolean": 6,
 }
+"""Largeur d'une colonne de formules, dont la valeur n'est connue qu'au recalcul."""
 
 _THIN: Final = Side(style="thin", color="A6A6A6")
 _HEADER_STYLE: Final = {
@@ -112,13 +126,19 @@ class Written:
 
 @dataclass(frozen=True, slots=True)
 class Prepared:
-    """La description validée, ses lignes chargées : prête à écrire."""
+    """La description validée, ses lignes chargées : prête à écrire.
+
+    Attributes:
+        sheets: Chaque onglet, et ses lignes chargées.
+        warnings: Les avertissements de la validation.
+        zone: Le fuseau où passent les dates-heures qui en portent un.
+        charts: Les graphiques validés de chaque onglet, dans l'ordre des
+            onglets.
+    """
 
     sheets: tuple[tuple[SheetSpec, list[RowSpec]], ...]
     warnings: tuple[str, ...]
-    # Le fuseau où passent les dates-heures qui en portent un.
     zone: ZoneInfo
-    # Les graphiques validés de chaque onglet, dans l'ordre des onglets.
     charts: tuple[tuple[charts.Plotted, ...], ...] = ()
 
 
@@ -165,6 +185,7 @@ def _sheet_rows(sheet: SheetSpec, sources: Mapping[str, list[RowSpec]], problems
 
 
 def _check_sheet(sheet: SheetSpec, rows: list[RowSpec], problems: Problems) -> None:
+    """Vérifie un onglet : colonnes et lignes bornées, en-têtes distincts, cellules du bon type."""
     headers = [column.header for column in sheet.columns]
     if len(headers) > MAX_COLUMNS:
         problems.error(f"{sheet.name} : {len(headers)} colonnes, au-delà de {MAX_COLUMNS}")
@@ -216,6 +237,7 @@ def _write_sheet(
     problems: Problems,
     zone: ZoneInfo,
 ) -> Written:
+    """Écrit un onglet : en-têtes, lignes, formules, totaux et mise en forme ; rend ce qui a été écrit."""
     done = Written(name=sheet.name, rows=len(rows))
     columns = sheet.columns
     widths = [len(column.header) for column in columns]
@@ -268,6 +290,7 @@ def _write_sheet(
 
 
 def _write_totals(ws: Worksheet, sheet: SheetSpec, at: int, done: Written) -> None:
+    """Écrit la ligne de total d'un onglet : une formule d'agrégat sous chaque colonne qui en demande un."""
     totals = sheet.totals or {}
     label = _total_label(sheet)
     for index, column in enumerate(sheet.columns, start=1):
@@ -307,6 +330,7 @@ def _finish(
     has_input: bool,
     has_assumption: bool,
 ) -> None:
+    """Termine un onglet : volets gelés, filtre, largeurs, impression (paysage au besoin) et légende des couleurs."""
     ws.freeze_panes = "A2"
     end = get_column_letter(len(sheet.columns))
     if rows:
@@ -349,6 +373,7 @@ def _cell(ws: Worksheet, row: int, column: int, value: Stored = None) -> Cell:
 
 
 def _style(cell: Cell, role: str | None, kind: ColumnType) -> None:
+    """Met une cellule en forme selon son rôle (saisie, hypothèse, lien, total, note) et le format de son type."""
     cell.number_format = NUMBER_FORMATS[kind]
     match role:
         case "input":

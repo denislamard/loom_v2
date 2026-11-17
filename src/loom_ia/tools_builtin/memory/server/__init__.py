@@ -51,12 +51,16 @@ from loom_ia.tools_builtin.memory.server.settings import (
 )
 
 PROGRAM: Final = APP
+"""Le nom du programme, dans ses messages et son aide."""
 EXIT_NOT_READY: Final = 1
+"""Code de sortie de ``status`` quand l'application n'est pas prête, ou injoignable."""
 STATUS_TIMEOUT: Final = 5.0
+"""Délai de la requête de ``status``, en secondes."""
 _COMMANDS: Final = ("serve", "status")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Point d'entrée de ``loom-mem-gpu`` : ``serve`` (la commande par défaut), ``serve --check``/``--env``, ou ``status`` ; rend le code de sortie."""
     given = list(sys.argv[1:] if argv is None else argv)
     # ``serve`` est la commande par défaut : ``loom-mem-gpu --device cuda`` sert.
     if not given or (given[0] not in _COMMANDS and given[0] not in ("-h", "--help", "--version")):
@@ -107,6 +111,7 @@ def log_format(environ: Mapping[str, str]) -> str:
 
 
 def _parser() -> argparse.ArgumentParser:
+    """L'analyseur de la ligne de commande : ``serve`` et ses options (sans défaut, pour que le fichier ``--config`` et les variables comptent), ``status``."""
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
         description="Garde BGE-M3 et son reranker en VRAM et les sert aux process loom.",

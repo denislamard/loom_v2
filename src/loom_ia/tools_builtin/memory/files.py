@@ -39,16 +39,19 @@ from loom_ia.tools_builtin.memory.service import Extracted
 from loom_ia.tools_builtin.pdf_params import SAFE_PYPDF
 
 TEXT_SUFFIXES: Final = (".md", ".markdown", ".txt")
-# Ceux que lit ``word.reader`` (``READABLE``).
+"""Suffixes des fichiers lus comme texte (Markdown ou texte brut)."""
 WORD_SUFFIXES: Final = (".docx", ".docm", ".dotx")
+"""Ceux que lit ``word.reader`` (``READABLE``)."""
 PDF_SUFFIXES: Final = (".pdf",)
-# Le fichier lu : la borne des fichiers de ``loom.word`` et ``loom.pdf``.
+"""Suffixes des fichiers lus comme PDF."""
 MAX_FILE_BYTES: Final = 20_000_000
-# Le texte qu'on en tire : environ 300 passages, de 7 à 10 minutes de calcul sur CPU.
+"""Le fichier lu : la borne des fichiers de ``loom.word`` et ``loom.pdf``."""
 MAX_TEXT_CHARS: Final = 300_000
+"""Le texte qu'on en tire : environ 300 passages, de 7 à 10 minutes de calcul sur CPU."""
 PDF_EXTRA: Final = "pdf"
-# Un caractère UTF-8 tient en 4 octets au plus : un texte plus gros dépasse forcément.
+"""L'extra de loom-ia qu'il faut pour lire les PDF."""
 MAX_TEXT_BYTES: Final = 4 * MAX_TEXT_CHARS
+"""Un caractère UTF-8 tient en 4 octets au plus : un texte plus gros dépasse forcément."""
 _H1: Final = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 _EMPHASIS: Final = re.compile(r"\*{1,2}|_{2}")
 

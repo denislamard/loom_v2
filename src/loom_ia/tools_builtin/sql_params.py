@@ -53,28 +53,42 @@ from pydantic import (
 from loom_ia.tools_builtin._rights import resolve
 
 type SqlRight = Literal["select", "insert", "update", "delete"]
+"""Droit sur une table."""
 type RightApproval = Literal["never", "always"]
+"""Approbation d'un droit : ``never`` ou ``always``."""
 
-# Dans l'ordre où on les dit.
 SQL_RIGHTS: Final[tuple[SqlRight, ...]] = ("select", "insert", "update", "delete")
+"""Dans l'ordre où on les dit."""
 DEFAULT_APPROVAL: Final[Mapping[SqlRight, RightApproval]] = {
     "select": "never",
     "insert": "never",
     "update": "always",
     "delete": "always",
 }
-# Ceux qui détruisent ce qui existe : ``loom validate`` signale ceux qui passent sans approbation.
+"""Approbation par défaut : ``select`` et ``insert`` à ``never``, ``update`` et ``delete`` à ``always``."""
 DESTRUCTIVE: Final[frozenset[SqlRight]] = frozenset({"update", "delete"})
+"""Ceux qui détruisent ce qui existe : ``loom validate`` signale ceux qui
+passent sans approbation.
+"""
 DATABASE_NAME_PATTERN: Final = r"^[a-z0-9][a-z0-9_-]{0,31}$"
-# Un identifiant SQL simple : lettres, chiffres, « _ », « $ ». Une majuscule veut
-# dire un nom créé entre guillemets (« "Devis" ») : il se compare tel quel.
+"""Nom d'une base pour le modèle : minuscules, chiffres, « _ » et « - »."""
 IDENTIFIER_PATTERN: Final = r"^[A-Za-z_][A-Za-z0-9_$]{0,62}$"
+"""Un identifiant SQL simple : lettres, chiffres, « _ », « $ ». Une majuscule
+veut dire un nom créé entre guillemets (« "Devis" ») : il se compare tel
+quel.
+"""
 ENV_NAME_PATTERN: Final = r"^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+"""Nom d'une variable d'environnement."""
 DEFAULT_TIMEZONE: Final = "Europe/Paris"
+"""Fuseau des dates-heures sans ``timezone``."""
 DEFAULT_STATEMENT_TIMEOUT: Final = 10.0
+"""Délai d'une instruction sans réglage, en secondes."""
 DEFAULT_MAX_ROWS: Final = 200
+"""Lignes rendues par une lecture sans réglage."""
 DEFAULT_MAX_AFFECTED_ROWS: Final = 100
+"""Lignes qu'un ``execute`` peut modifier sans réglage."""
 MAX_ROWS_CEILING: Final = 1000
+"""Plafond de ``max_rows``."""
 
 
 _RIGHTS_LIST: Final = {
@@ -117,6 +131,10 @@ class TableSpec(BaseModel):
     La config l'écrit en liste ou en ``{rights, approval}`` ; ``DatabaseSpec``
     la ramène à cette forme (``_table``), et nomme la base et la table dans ses
     messages.
+
+    Attributes:
+        rights: Droits accordés (``select``, ``insert``, ``update``,
+            ``delete``) et l'approbation de chacun.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -152,21 +170,32 @@ def _table(value: object, *, where: str) -> object:
 
 
 class PostgresSpec(BaseModel):
-    """Une base Postgres : la variable de son DSN, et le schéma où sont ses tables."""
+    """Une base Postgres : la variable de son DSN, et le schéma où sont ses tables.
+
+    Attributes:
+        dsn_env: Variable d'environnement qui porte le DSN ; jamais le DSN
+            lui-même.
+        schema_name: Schéma des tables (``schema`` en config), posé en
+            ``search_path`` à chaque transaction : les tables se nomment sans
+            schéma.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     dsn_env: str = Field(pattern=ENV_NAME_PATTERN)
-    # Posé en ``search_path`` à chaque transaction : les tables se nomment sans schéma.
     schema_name: str = Field(default="public", alias="schema", pattern=IDENTIFIER_PATTERN)
 
 
 class SqliteSpec(BaseModel):
-    """Une base SQLite : son fichier, qui doit exister (l'outil n'en crée jamais)."""
+    """Une base SQLite : son fichier, qui doit exister (l'outil n'en crée jamais).
+
+    Attributes:
+        path: Fichier de la base, qui doit exister : absolu, ou relatif au
+            dossier du fichier de config. Ni « ~ » ni variable.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # Absolu, ou relatif au dossier du fichier de config. Ni « ~ » ni variable.
     path: Path
 
     @model_validator(mode="after")
@@ -180,7 +209,29 @@ class SqliteSpec(BaseModel):
 
 
 class DatabaseSpec(BaseModel):
-    """Une base permise : son nom pour le modèle, sa connexion, ses tables et leurs droits."""
+    """Une base permise : son nom pour le modèle, sa connexion, ses tables et leurs droits.
+
+    Attributes:
+        name: Nom de la base pour le modèle.
+        postgres: Connexion Postgres ; ou bien ``sqlite``.
+        sqlite: Fichier SQLite ; ou bien ``postgres``.
+        tables: Tables (ou vues) permises et leurs droits ; un droit absent est
+            refusé. En config, une liste de droits, ou ``{rights, approval}``.
+        describe: Ce que la description de l'outil dit d'une table (« devis »)
+            ou d'une colonne (« devis.statut ») : le sens métier, les valeurs
+            permises…
+        functions: Fonctions que sqlglot ne connaît pas, permises quand même
+            (age, clock_timestamp, jsonb_build_object, une fonction à soi…).
+            Les autres inconnues sont refusées.
+        statement_timeout: Délai d'une instruction, côté base, en secondes
+            (statement_timeout, ou l'interruption SQLite) ; 300 au plus.
+        max_rows: Lignes rendues au modèle par une lecture ; au-delà,
+            ``truncated``.
+        max_affected_rows: Lignes qu'un ``execute`` peut modifier en tout ;
+            au-delà, rien n'est enregistré.
+        allow_full_table: UPDATE et DELETE sans WHERE : refusés, sauf si l'on
+            veut vraiment les permettre.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -191,19 +242,11 @@ class DatabaseSpec(BaseModel):
         Annotated[str, Field(pattern=IDENTIFIER_PATTERN)],
         Annotated[TableSpec, WithJsonSchema(_TABLE_SCHEMA)],
     ]
-    # Ce que la description de l'outil dit d'une table (« devis ») ou d'une colonne
-    # (« devis.statut ») : le sens métier, les valeurs permises…
     describe: dict[str, Annotated[str, Field(min_length=1, max_length=500)]] = Field(default_factory=dict[str, str])
-    # Fonctions que sqlglot ne connaît pas, permises quand même (age, clock_timestamp,
-    # jsonb_build_object, une fonction à soi…). Les autres inconnues sont refusées.
     functions: tuple[Annotated[str, Field(pattern=IDENTIFIER_PATTERN)], ...] = ()
-    # Délai d'une instruction, côté base (statement_timeout, ou l'interruption SQLite).
     statement_timeout: Annotated[PositiveFloat, Field(le=300)] = DEFAULT_STATEMENT_TIMEOUT
-    # Lignes rendues au modèle par une lecture ; au-delà, ``truncated``.
     max_rows: Annotated[int, Field(ge=1, le=MAX_ROWS_CEILING)] = DEFAULT_MAX_ROWS
-    # Lignes qu'un ``execute`` peut modifier en tout ; au-delà, rien n'est enregistré.
     max_affected_rows: Annotated[int, Field(ge=1, le=100_000)] = DEFAULT_MAX_AFFECTED_ROWS
-    # UPDATE et DELETE sans WHERE : refusés, sauf si l'on veut vraiment les permettre.
     allow_full_table: bool = False
 
     @model_validator(mode="before")
@@ -221,6 +264,13 @@ class DatabaseSpec(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> Self:
+        """Vérifie la base.
+
+        ``postgres`` ou ``sqlite``, un seul ; des tables, chacune avec un droit ;
+        ``select`` pour ``update`` et ``delete`` ; pas de tables qui ne diffèrent que
+        par la casse en SQLite ; ``describe`` sur des tables déclarées ; fonctions sans
+        doublon.
+        """
         if (self.postgres is None) == (self.sqlite is None):
             raise ValueError(f"base {self.name!r} : donner 'postgres' ou 'sqlite', et un seul")
         if not self.tables:
@@ -249,6 +299,7 @@ class DatabaseSpec(BaseModel):
 
     @property
     def dialect(self) -> Literal["postgres", "sqlite"]:
+        """``postgres`` ou ``sqlite``."""
         return "postgres" if self.postgres is not None else "sqlite"
 
     @property
@@ -268,7 +319,14 @@ def _databases(databases: tuple[DatabaseSpec, ...]) -> tuple[DatabaseSpec, ...]:
 
 
 class SqlParams(BaseModel):
-    """Paramètres de ``loom.sql``."""
+    """Paramètres de ``loom.sql``.
+
+    Attributes:
+        databases: Les bases permises, au moins une, de noms distincts.
+        timezone: Fuseau IANA où passent les dates-heures rendues au modèle, et
+            où se lit une date-heure sans fuseau donnée en paramètre d'une
+            colonne ``timestamptz``.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -277,8 +335,6 @@ class SqlParams(BaseModel):
         AfterValidator(_databases),
         Field(json_schema_extra={"minItems": 1}),
     ]
-    # Fuseau IANA où passent les dates-heures rendues au modèle, et où se lit une
-    # date-heure sans fuseau donnée en paramètre d'une colonne ``timestamptz``.
     timezone: str = DEFAULT_TIMEZONE
 
     @model_validator(mode="after")

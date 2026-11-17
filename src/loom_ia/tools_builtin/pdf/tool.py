@@ -24,6 +24,7 @@ from loom_ia.tools_builtin.pdf import reader, writer
 from loom_ia.tools_builtin.pdf_params import REFERENCE, SAFE_PYPDF, PdfParams
 
 NAME: Final = "pdf"
+"""Nom de l'outil."""
 
 
 class PdfCall(DocumentCall):
@@ -109,8 +110,7 @@ def build(params: BaseModel, context: BuiltinContext) -> PdfTool:
 
 
 def _fonts_said(styles: Sequence[Style]) -> str | None:
-    """Les polices du style que le PDF n'écrit pas telles quelles : embarquées (``fonts``),
-    ou rendues par une famille standard du PDF."""
+    """Les polices du style que le PDF n'écrit pas telles quelles : embarquées (``fonts``), ou rendues par une famille standard du PDF."""
     said: dict[str, str] = {}
     for style in styles:
         for family, how in writer.substitutions(style).items():

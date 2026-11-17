@@ -30,25 +30,41 @@ from loom_ia.tools_builtin._templates import NONE as NO_TEMPLATE
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Scalar
 
 MAX_BLOCKS: Final = 1_000
+"""Blocs au plus dans un document."""
 MAX_TEXT: Final = 20_000
+"""Longueur au plus d'un texte de bloc, en caractères."""
 MAX_ITEMS: Final = 200
+"""Éléments au plus dans une liste."""
 MAX_TABLE_COLUMNS: Final = 8
+"""Colonnes au plus dans un tableau."""
 MAX_TABLE_ROWS: Final = 500
+"""Lignes au plus dans un tableau."""
 MAX_CATEGORIES: Final = 50
+"""Libellés au plus dans un graphique."""
 MAX_SLICES: Final = 12
+"""Parts au plus dans un camembert."""
 MAX_SERIES: Final = 6
-# Images : par image, pour tout le document, nombre de blocs, pixels d'une image.
+"""Séries au plus dans un graphique."""
 MAX_IMAGE_BYTES: Final = 10_000_000
+"""Images : par image, pour tout le document, nombre de blocs, pixels d'une image."""
 MAX_IMAGES_BYTES: Final = 40_000_000
+"""Taille au plus de toutes les images d'un document, en octets."""
 MAX_IMAGES: Final = 50
+"""Images au plus dans un document."""
 MAX_PIXELS: Final = 40_000_000
+"""Pixels au plus dans une image."""
 MAX_SOURCE_BYTES: Final = 20_000_000
+"""Taille au plus d'un fichier lu, en octets."""
 MAX_OUTPUT_BYTES: Final = 50_000_000
+"""Taille au plus d'un fichier écrit, en octets."""
 MAX_WARNINGS: Final = 20
+"""Avertissements rendus au plus."""
 MAX_ERRORS_SAID: Final = 10
-# Ce que rend une lecture, en caractères JSON : sous le seuil de déport par défaut
-# (50 000), comme la lecture d'un classeur.
+"""Erreurs citées au plus dans un refus."""
 READ_CHARS: Final = 40_000
+"""Ce que rend une lecture, en caractères JSON : sous le seuil de déport par
+défaut (50 000), comme la lecture d'un classeur.
+"""
 
 
 class _Model(BaseModel):
@@ -132,6 +148,7 @@ class Quote(_Model):
 
 
 type ChartKind = Literal["bar", "horizontal_bar", "line", "pie"]
+"""Type de graphique : barres, barres horizontales, courbe ou camembert."""
 
 
 class Series(_Model):
@@ -169,6 +186,7 @@ class Chart(_Model):
 
 
 type ImageWidth = Literal["full", "half", "small"]
+"""Largeur d'une image : toute la largeur, la moitié, ou petite."""
 
 
 class Image(_Model):
@@ -180,6 +198,7 @@ class Image(_Model):
 
 
 MAX_SIGNERS: Final = 4
+"""Signataires au plus d'un bloc signature."""
 
 
 class Signature(_Model):
@@ -193,14 +212,17 @@ class Contents(_Model):
 
 
 MAX_FIELDS: Final = 30
+"""Champs au plus d'un bloc fields."""
 MAX_FIELD_LABEL: Final = 80
+"""Longueur au plus d'un libellé de champ."""
 MAX_FIELD_VALUE: Final = 500
+"""Longueur au plus d'une valeur de champ."""
 MAX_CODE_LINES: Final = 200
+"""Lignes au plus d'un bloc code."""
 
 
 class Fields(_Model):
-    """Des libellés et leurs valeurs : une paire est une liste de deux textes (plutôt
-    qu'un tuple, que tous les fournisseurs n'acceptent pas dans un schéma)."""
+    """Des libellés et leurs valeurs : une paire est une liste de deux textes (plutôt qu'un tuple, que tous les fournisseurs n'acceptent pas dans un schéma)."""
 
     type: Literal["fields"]
     items: Annotated[
@@ -215,8 +237,7 @@ class Code(_Model):
 
 
 class TaxColumns(_Model):
-    """Les colonnes du tableau qui précède, par en-tête : les montants HT et leurs taux de
-    TVA (l'aide du bloc les décrit)."""
+    """Les colonnes du tableau qui précède, par en-tête : les montants HT et leurs taux de TVA (l'aide du bloc les décrit)."""
 
     amount: str
     rate: str
@@ -229,8 +250,11 @@ class InvoiceTotals(_Model):
 
 
 MAX_PARTICIPANTS: Final = 100
+"""Participants au plus d'une feuille d'émargement."""
 MAX_SESSIONS: Final = 10
+"""Séances au plus d'une feuille d'émargement."""
 MAX_ATTENDANCE_LABEL: Final = 80
+"""Longueur au plus d'un libellé de la feuille d'émargement."""
 
 
 class Attendance(_Model):
@@ -247,24 +271,27 @@ class Attendance(_Model):
     ]
 
 
-# Les blocs que le modèle voit sans bloc facultatif.
 type Block = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote,
     Field(discriminator="type"),
 ]
-# Tous les blocs : ce qu'une écriture porte, quel que soit l'outil. Une liste à cocher
-# (``CheckList``) y passe comme liste : elle en est une.
+"""Les blocs que le modèle voit sans bloc facultatif."""
 type WrittenBlock = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote | Chart | Image | Signature | Contents | Fields | Code | InvoiceTotals | Attendance,
     Field(discriminator="type"),
 ]
+"""Tous les blocs : ce qu'une écriture porte, quel que soit l'outil. Une liste
+à cocher (``CheckList``) y passe comme liste : elle en est une.
+"""
 
 
-# Les blocs qui prennent un style proposé (``style``), par leur type.
 STYLED_BLOCKS: Final = ("heading", "paragraph", "list", "table", "note", "quote")
+"""Les blocs qui prennent un style proposé (``style``), par leur type."""
 STYLE_SAID: Final = "Un style proposé pour ce bloc (voir Styles proposés) ; sinon, rien."
+"""Description du champ ``style`` d'un bloc, lue par le modèle."""
 
 type Proposed = tuple[tuple[str, tuple[str, ...]], ...]
+"""Styles proposés : (type de bloc, noms des styles)."""
 
 
 @cache
@@ -280,8 +307,11 @@ def _styled(kind: type[_Model], names: tuple[str, ...]) -> type[_Model]:
 
 
 def block_union(blocks: Iterable[str], styles: Proposed = ()) -> object:
-    """Les blocs du schéma pour ces blocs facultatifs, dans un ordre fixe ; ``styles`` : les
-    styles proposés, par type de bloc (le champ ``style`` des blocs qui en ont)."""
+    """Les blocs du schéma pour ces blocs facultatifs, dans un ordre fixe.
+
+    ``styles`` : les styles proposés, par type de bloc (le champ ``style`` des blocs qui
+    en ont).
+    """
     chosen = set(blocks)
     proposed = dict(styles)
     kinds: list[type[_Model]] = [
@@ -367,10 +397,12 @@ class TemplateArguments(_Model):
 
 
 type Action = Literal["write", "read"]
-# Les actions d'un outil monté avec des modèles de document.
+"""Action de l'outil : écrire ou lire."""
 type TemplatedAction = Literal["write", "read", "template"]
+"""Les actions d'un outil monté avec des modèles de document."""
 
 BLOCKS_SAID: Final = "Pour write : les blocs, dans l'ordre."
+"""Description du champ ``blocks``, lue par le modèle."""
 
 
 class DocumentCall(_Model):
@@ -411,6 +443,7 @@ class DocumentCall(_Model):
         return self
 
     def request(self) -> WriteArguments | ReadArguments | TemplateArguments:
+        """La demande que l'appel porte : écrire (``WriteArguments``), lire (``ReadArguments``) ou lire un modèle (``TemplateArguments``)."""
         template = cast(str | None, getattr(self, "template", None))
         if cast(str, self.action) == "template":
             return TemplateArguments(name=cast(str, template))
@@ -432,9 +465,11 @@ class DocumentCall(_Model):
 
 
 ACTION_SAID: Final = "write (par défaut) : écrire ; read : lire un fichier (droit read) ; template : lire un modèle de document."
+"""Description du champ ``action``, lue par le modèle."""
 TEMPLATE_SAID: Final = "Pour write : le modèle suivi, ou none (document libre) ; pour template : le modèle à lire."
+"""Description du champ ``template``, lue par le modèle."""
 SECTIONS_SAID: Final = "Pour write avec un modèle : le contenu de chaque section, par son nom (voir action template) ; l'outil écrit les titres de section."
-# Le nom de l'appel selon ses blocs facultatifs : ``WordChartImageCall``…
+"""Description du champ ``sections``, lue par le modèle."""
 _SUFFIXES: Final[Mapping[str, str]] = {
     "chart": "Chart",
     "image": "Image",
@@ -446,6 +481,7 @@ _SUFFIXES: Final[Mapping[str, str]] = {
     "invoice_totals": "InvoiceTotals",
     "attendance": "Attendance",
 }
+"""Le nom de l'appel selon ses blocs facultatifs : ``WordChartImageCall``…"""
 
 
 def variant(
@@ -476,6 +512,7 @@ def _variant(
     templates: tuple[str, ...],
     proposed: Proposed = (),
 ) -> type[DocumentCall]:
+    """Les arguments de l'outil élargis aux blocs facultatifs choisis, aux modèles et aux styles proposés ; la base telle quelle sans rien de tout cela."""
     if not (chosen or templates or proposed):
         return base
     fields: dict[str, Any] = {}
@@ -556,8 +593,8 @@ def _template_rule[M: DocumentCall](self: M) -> M:
     return self
 
 
-# Le même appel, avec le bloc ``chart`` (tests du vocabulaire commun).
 WithCharts: Final = variant(DocumentCall, blocks=("chart",))
+"""Le même appel, avec le bloc ``chart`` (tests du vocabulaire commun)."""
 
 
 def parse(model: type[DocumentCall], arguments: Mapping[str, JsonValue]) -> WriteArguments | ReadArguments | TemplateArguments:
@@ -606,13 +643,16 @@ class Problems:
     warnings: list[str] = field(default_factory=list[str])
 
     def error(self, said: str) -> None:
+        """Note une erreur : le document sera refusé."""
         self.errors.append(said)
 
     def warn(self, said: str) -> None:
+        """Note un avertissement, une fois, ``MAX_WARNINGS`` au plus."""
         if said not in self.warnings and len(self.warnings) < MAX_WARNINGS:
             self.warnings.append(said)
 
     def raise_if_any(self) -> None:
+        """Lève ``ToolError`` s'il y a des erreurs : « Document refusé », puis les ``MAX_ERRORS_SAID`` premières."""
         if not self.errors:
             return
         shown = self.errors[:MAX_ERRORS_SAID]

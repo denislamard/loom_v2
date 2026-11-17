@@ -51,9 +51,12 @@ from loom_ia.tools_builtin.sql_params import DatabaseSpec
 logger = logging.getLogger(__name__)
 
 type Held = PoolConnectionProxy[asyncpg.Record]
+"""Une connexion prise au pool asyncpg."""
 
 POOL_MAX: Final = 4
+"""Connexions au plus dans le pool d'une base."""
 CONNECT_TIMEOUT: Final = 10.0
+"""Délai de connexion à la base, en secondes."""
 _PRIVILEGES: Final = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
 
 _INTEGERS: Final = frozenset({"int2", "int4", "int8", "oid", "smallint", "integer", "bigint"})
@@ -77,6 +80,7 @@ class PostgresDatabase:
         self._checked = False
 
     def where(self) -> Place:
+        """Où est la base, pour ``loom validate`` : la variable du DSN et le schéma."""
         assert self.spec.postgres is not None
         notes = (f"DSN dans {self.spec.postgres.dsn_env}", f"schéma {self.schema}")
         return Place(name="", kind="postgres", notes=notes)
@@ -84,6 +88,7 @@ class PostgresDatabase:
     # --- Appels ---------------------------------------------------------------------
 
     async def query(self, unit: Statement, analysis: Analysis) -> dict[str, JsonValue]:
+        """Lance un SELECT dans une transaction en lecture seule ; rend au plus ``max_rows`` lignes, et dit si le résultat est coupé."""
         del analysis  # le rôle fait foi : l'analyse a déjà jugé l'instruction
         limit = self.spec.max_rows
 
@@ -108,6 +113,12 @@ class PostgresDatabase:
         return await self._run(work, readonly=True)
 
     async def execute(self, units: list[tuple[Statement, Analysis]]) -> dict[str, JsonValue]:
+        """Exécute les écritures dans une même transaction.
+
+        Au-delà de ``max_affected_rows`` lignes modifiées, ou à la première erreur, rien
+        n'est enregistré.
+        """
+
         async def work(conn: Held) -> dict[str, JsonValue]:
             results: list[JsonValue] = []
             affected = 0
@@ -146,6 +157,7 @@ class PostgresDatabase:
         return await self._run(work, readonly=False)
 
     async def introspect(self) -> list[TableInfo]:
+        """Les tables et vues déclarées, lues dans le catalogue : colonnes, commentaires, contraintes (sauf les clés étrangères vers une table non permise)."""
         declared = list(self.catalog.rights)
 
         async def work(conn: Held) -> list[TableInfo]:
@@ -186,6 +198,7 @@ class PostgresDatabase:
         return await self._run(work, readonly=True)
 
     async def aclose(self) -> None:
+        """Ferme le pool, s'il est ouvert."""
         pool, self._pool = self._pool, None
         if pool is not None:
             await pool.close()
@@ -193,6 +206,7 @@ class PostgresDatabase:
     # --- Connexion ------------------------------------------------------------------
 
     async def _run[T](self, work: Callable[[Held], Awaitable[T]], *, readonly: bool) -> T:
+        """Fait ``work`` sur une connexion du pool, dans une transaction, réglages de session posés ; les erreurs de la base deviennent des ``ToolError``."""
         pool = await self._ready()
         try:
             async with pool.acquire() as conn:
@@ -217,6 +231,11 @@ class PostgresDatabase:
         )
 
     async def _ready(self) -> asyncpg.Pool[asyncpg.Record]:
+        """Le pool, créé au premier appel ; la connexion vérifiée une fois.
+
+        Raises:
+            ToolError: Base injoignable, ou connexion refusée.
+        """
         async with self._lock:
             if self._pool is None:
                 try:
@@ -318,6 +337,13 @@ class PostgresDatabase:
 
 
 class _Failed(Exception):
+    """Une instruction d'``execute`` refusée par la base.
+
+    Attributes:
+        position: Son rang, à partir de 1.
+        error: L'erreur de la base.
+    """
+
     def __init__(self, position: int, error: asyncpg.PostgresError) -> None:
         super().__init__(str(error))
         self.position = position
@@ -343,12 +369,22 @@ def _affected(status: str | None, returned: int) -> int:
 
 
 def convert(params: Sequence[ParamValue], types: Sequence[Type], zone: ZoneInfo) -> list[object]:
+    """Les paramètres convertis aux types que la base attend, un par ``$n``.
+
+    Raises:
+        ToolError: Mauvais nombre de paramètres, ou valeur qui ne convient pas.
+    """
     if len(params) != len(types):
         raise ToolError(f"{len(types)} paramètre(s) attendu(s), {len(params)} donné(s).")
     return [_value(value, expected, zone, f"${index}") for index, (value, expected) in enumerate(zip(params, types, strict=True), start=1)]
 
 
 def _value(value: ParamValue, expected: Type, zone: ZoneInfo, where: str) -> object:
+    """Un paramètre converti au type attendu ; un tableau, élément par élément.
+
+    Raises:
+        ToolError: La valeur ne convient pas, ``$n`` nommé.
+    """
     if value is None:
         return None
     name = expected.name
@@ -371,6 +407,15 @@ def _value(value: ParamValue, expected: Type, zone: ZoneInfo, where: str) -> obj
 
 
 def _scalar(value: ParamValue, name: str, expected: Type, zone: ZoneInfo) -> object:
+    """Une valeur simple convertie au type Postgres.
+
+    Entiers, flottants, numeric, booléens, textes et enums, dates et heures
+    ISO 8601 (une heure sans fuseau prise dans ``zone``), uuid, intervalles ;
+    json et jsonb tels quels.
+
+    Raises:
+        ToolError: La valeur ne convient pas, ou le type n'est pas converti.
+    """
     if name in ("json", "jsonb"):
         return value
     if isinstance(value, list | dict):

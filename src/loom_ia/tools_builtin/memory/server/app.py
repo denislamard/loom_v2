@@ -68,21 +68,27 @@ from loom_ia.tools_builtin.memory.protocol import (
 from loom_ia.tools_builtin.memory.server.settings import ServiceSettings, SettingsError
 
 log = logging.getLogger("loom_ia.memory.server")
+"""Le journal de l'application."""
 
 EXIT_OK: Final = 0
+"""Code de sortie d'un arrêt normal."""
 EXIT_SETTINGS: Final = 2
+"""Code de sortie : réglages invalides ou dépendances absentes."""
 EXIT_PORT: Final = 3
+"""Code de sortie : port déjà pris."""
 EXIT_LOAD: Final = 4
+"""Code de sortie : chargement des modèles raté."""
 
-# Requêtes servies à la fois ; au-delà, 503 et Retry-After.
 QUEUE: Final = 32
-# Délai de socket d'une requête, en secondes : un client muet ne garde pas de thread.
+"""Requêtes servies à la fois ; au-delà, 503 et Retry-After."""
 SOCKET_TIMEOUT: Final = 30.0
-# Après un chargement raté, le temps laissé à ``status`` pour lire l'erreur, en secondes.
+"""Délai de socket d'une requête, en secondes : un client muet ne garde pas de thread."""
 FAILED_GRACE: Final = 5.0
+"""Après un chargement raté, le temps laissé à ``status`` pour lire l'erreur, en secondes."""
 RETRY_AFTER: Final = "1"
-# Ce que l'extra ``memory`` apporte, et que le chargement des vrais modèles importe.
+"""L'en-tête Retry-After d'une réponse 503, en secondes."""
 MODULES: Final = ("torch", "transformers")
+"""Ce que l'extra ``memory`` apporte, et que le chargement des vrais modèles importe."""
 
 
 class _Reply(Exception):
@@ -156,6 +162,7 @@ class Host:
         log.error("modèles non chargés : %s", message)
 
     def vram_used_mb(self) -> int | None:
+        """La VRAM occupée, en Mo ; ``None`` si elle ne se mesure pas."""
         if self.vram is None:
             return None
         try:
@@ -164,6 +171,7 @@ class Host:
             return None
 
     def health(self) -> Health:
+        """L'état de l'application ; une fois prête, ses modèles et ses plafonds."""
         with self._lock:
             state, error = self.state, self.error
         if state != "ready":
@@ -185,9 +193,11 @@ class Host:
         )
 
     def embed(self, texts: Sequence[str]) -> list[Embedding]:
+        """Les vecteurs des textes."""
         return self.embedder.embed_documents(texts)
 
     def score(self, query: str, passages: Sequence[str]) -> list[float]:
+        """Les scores des passages pour la question."""
         return self.reranker.score(query, passages)
 
 
@@ -247,19 +257,24 @@ class ModelServer(ThreadingHTTPServer):
 
 
 class _Handler(BaseHTTPRequestHandler):
+    """Une requête HTTP : ``GET /v1/health``, ``POST /v1/embed`` et ``POST /v1/score``, jeton vérifié s'il en faut un."""
+
     timeout = SOCKET_TIMEOUT
     server_version = "loom-mem-gpu"
     sys_version = ""
 
     @property
     def models(self) -> ModelServer:
+        """Le serveur, et ce qu'il porte : l'hôte des modèles et la file."""
         return cast(ModelServer, self.server)
 
     def log_message(self, format: str, *args: Any) -> None:
+        """Rien : le journal d'accès est écrit par ``_respond``, sans adresse ni contenu."""
         # Le journal d'accès est écrit par ``_respond`` : sans adresse ni contenu.
         pass
 
     def do_GET(self) -> None:
+        """Sert ``/v1/health`` : 200 une fois prête, 503 avant (Retry-After pendant le chargement)."""
         started = time.monotonic()
         try:
             self._authorize()
@@ -272,6 +287,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._refuse(reply, started)
 
     def do_POST(self) -> None:
+        """Sert ``/v1/embed`` et ``/v1/score`` : modèles prêts, corps lu, une place dans la file (sinon 503 et Retry-After), puis le calcul."""
         started = time.monotonic()
         routes: dict[str, Callable[[bytes], tuple[BaseModel, int]]] = {
             "/v1/embed": self._embed,
@@ -328,6 +344,7 @@ class _Handler(BaseHTTPRequestHandler):
             raise _Reply(HTTPStatus.UNAUTHORIZED, "jeton absent ou refusé")
 
     def _ready(self) -> None:
+        """Refuse la requête (503) tant que les modèles ne sont pas chargés, ou si leur chargement a raté."""
         health = self.models.host.health()
         if health.state == "loading":
             raise _Reply(
@@ -377,6 +394,7 @@ class _Handler(BaseHTTPRequestHandler):
         retry: bool = False,
         exclude_none: bool = False,
     ) -> None:
+        """Envoie la réponse en JSON, Retry-After au besoin, et l'inscrit au journal d'accès : méthode, chemin, code, nombre de textes, durée."""
         data = payload.model_dump_json(exclude_none=exclude_none).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -434,10 +452,12 @@ class Service:
 
     @property
     def server(self) -> ModelServer:
+        """Le serveur HTTP lié."""
         return self._require()
 
     @property
     def address(self) -> tuple[str, int]:
+        """L'adresse et le port d'écoute."""
         server = self._require()
         found = cast(tuple[Any, ...], server.server_address)
         return str(found[0]), int(found[1])
@@ -464,6 +484,7 @@ class Service:
         return loading
 
     def serve_forever(self) -> None:
+        """Sert les requêtes jusqu'à l'arrêt."""
         self._require().serve_forever(poll_interval=0.2)
 
     def stop(self, code: int = EXIT_OK) -> None:

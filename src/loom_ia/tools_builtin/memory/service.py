@@ -45,6 +45,7 @@ from loom_ia.tools_builtin.memory.store import IndexedChunk, MemoryStore, ModelM
 from loom_ia.tools_builtin.memory_params import ChunkingSpec, RetrievalSpec
 
 MIN_TITLE_CHARS = 3
+"""Caractères au moins dans le titre d'un document."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,14 @@ class MemoryService:
         retrieval: RetrievalSpec,
         chunking: ChunkingSpec,
     ) -> None:
+        """Prépare le service ; rien n'est ouvert avant ``start``.
+
+        Args:
+            store: La base.
+            models: L'embedder et le reranker.
+            retrieval: Les réglages de la recherche.
+            chunking: Les réglages du découpage.
+        """
         self.store = store
         self.models = models
         self._retrieval = retrieval
@@ -99,6 +108,11 @@ class MemoryService:
         k: int = 5,
         min_score: float | None = None,
     ) -> list[Hit]:
+        """Les passages les plus pertinents pour la question : candidats du dense et du lexical fusionnés, puis reclassés par le reranker.
+
+        Raises:
+            ToolError: Question vide.
+        """
         query = query.strip()
         if not query:
             raise ToolError("'query' est vide.")
@@ -115,6 +129,11 @@ class MemoryService:
         return hits(candidates, scores, k, self._retrieval, min_score=min_score)
 
     async def get(self, doc_id: str, *, project: str | None) -> Document:
+        """Un document entier.
+
+        Raises:
+            ToolError: Document inconnu, ou hors du projet donné.
+        """
         await self.start()
         doc = await in_thread(self.store.get, doc_id.strip())
         if doc is None or (project is not None and doc.project != project):
@@ -123,11 +142,13 @@ class MemoryService:
         return doc
 
     async def list_docs(self, *, project: str | None, n: int = 20) -> list[DocSummary]:
+        """Les ``n`` derniers documents, du projet donné ou de tous."""
         await self.start()
         docs = await in_thread(self.store.list_documents, clean_project(project), n)
         return [DocSummary.of(doc) for doc in docs]
 
     async def projects(self) -> dict[str, int]:
+        """Chaque projet et son nombre de documents."""
         await self.start()
         return await in_thread(self.store.project_counts)
 
@@ -210,6 +231,11 @@ class MemoryService:
         return IngestResult(doc_id=doc.doc_id, title=doc.title, project=doc.project, chunks=chunks, updated=True)
 
     async def delete(self, doc_id: str, *, project: str | None) -> DocSummary:
+        """Supprime un document ; rend ce qu'il était.
+
+        Raises:
+            ToolError: Document inconnu, ou hors du projet donné.
+        """
         doc = await self.get(doc_id, project=project)
         await in_thread(self.store.delete, doc.doc_id)
         return DocSummary.of(doc)
@@ -254,11 +280,13 @@ class MemoryService:
 
 
 def clean_project(project: str | None) -> str | None:
+    """Le nom de projet normalisé (sans espaces autour, en minuscules) ; ``None`` s'il est vide."""
     found = (project or "").strip().lower()
     return found or None
 
 
 def clean_tags(tags: Sequence[str] | None) -> tuple[str, ...]:
+    """Les tags normalisés (sans espaces autour, en minuscules), sans vides ni doublons, dans l'ordre."""
     seen: dict[str, None] = {}
     for tag in tags or ():
         cleaned = tag.strip().lower()

@@ -48,27 +48,36 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationEr
 from loom_ia.tools_builtin._style_params import in_centimetres, percent
 
 MAX_TEMPLATES: Final = 20
+"""Modèles de document au plus par outil."""
 MAX_TEMPLATE_CHARS: Final = 20_000
+"""Taille au plus d'un fichier de modèle, en caractères."""
 MAX_DESCRIPTION: Final = 200
+"""Longueur au plus de la description d'un modèle."""
 MAX_SECTIONS: Final = 30
+"""Sections au plus dans un modèle."""
 MAX_SECTION_NAME: Final = 80
+"""Longueur au plus du nom d'une section."""
 MAX_INSTRUCTIONS: Final = 8_000
+"""Longueur au plus des consignes d'un modèle ou d'une section."""
 MAX_FIXED_TEXT: Final = 8_000
+"""Longueur au plus du texte fixe d'une section."""
 NAME: Final = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+"""Nom d'un modèle : minuscules et chiffres, mots séparés par « - »."""
 MAX_NAME: Final = 40
-# Le nom qui choisit un document libre, quand l'outil a des modèles.
+"""Longueur au plus du nom d'un modèle."""
 NONE: Final = "none"
-# Une section côte à côte : 3 au plus sur une ligne.
+"""Le nom qui choisit un document libre, quand l'outil a des modèles."""
 MAX_BESIDE: Final = 3
-# « 1. », « 2.3 - », « 4) », « a) », « IV. » : la numérotation que le modèle de langage ajoute.
+"""Une section côte à côte : 3 au plus sur une ligne."""
 _NUMBERING: Final = re.compile(r"^\s*(?:\d+(?:\.\d+)*\s*[.)\-\u2013\u2014:]?|[a-z]\)|[ivx]{1,4}[.)])\s+")
+"""« 1. », « 2.3 - », « 4) », « a) », « IV. » : la numérotation que le modèle de langage ajoute."""
 _STYLE_NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _CONTROL: Final = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
-# Le message de PyYAML devant un texte qui contient « : » sans guillemets.
 COLON: Final = "mapping values are not allowed here"
+"""Le message de PyYAML devant un texte qui contient « : » sans guillemets."""
 COLON_HINT: Final = "un texte qui contient « : » ou « # » s'écrit entre guillemets, ou après | à la ligne"
+"""Conseil ajouté à une erreur de YAML qui vient d'un « : » ou d'un « # » dans un texte."""
 
-# Les éléments dont une section choisit le style nommé (``styles``).
 type Element = Literal[
     "heading1",
     "heading2",
@@ -81,6 +90,7 @@ type Element = Literal[
     "table",
     "box",
 ]
+"""Les éléments dont une section choisit le style nommé (``styles``)."""
 ELEMENTS: Final[tuple[str, ...]] = (
     "heading1",
     "heading2",
@@ -93,17 +103,41 @@ ELEMENTS: Final[tuple[str, ...]] = (
     "table",
     "box",
 )
+"""Éléments qu'une section peut demander, dans l'ordre où on les dit."""
 
 
 class _Spec(BaseModel):
+    """Base des modèles d'un fichier de modèle : figés, sans clé inconnue."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 type Text = Annotated[str, Field(max_length=MAX_INSTRUCTIONS)]
+"""Un texte de consignes, de longueur bornée."""
 
 
 class SectionSpec(_Spec):
-    """Une section, telle qu'écrite dans le modèle."""
+    """Une section, telle qu'écrite dans le modèle.
+
+    Attributes:
+        instructions: Consignes au modèle pour cette section.
+        optional: Section facultative : le modèle peut la laisser de côté.
+        show_title: Écrire le titre de la section.
+        text: Texte fixe de la section, écrit tel quel.
+        styles: Style nommé par élément de la section (``heading1``,
+            ``paragraph``…).
+        box: Section encadrée.
+        beside: Section posée à côté de la précédente.
+        width: Largeur de la section, en pour cent de la largeur du texte :
+            ``55`` ou ``55%``.
+        page_break: Section commencée sur une nouvelle page.
+        columns: Colonnes de texte, de 1 à 3.
+        landscape: Section en paysage.
+        cover: Section en page de garde.
+        margin_top: Marge au-dessus de la section, en cm (l'adresse d'un
+            courrier dans la fenêtre d'une enveloppe) : de la mise en page, pas
+            un style.
+    """
 
     instructions: Text | None = None
     optional: bool = False
@@ -112,22 +146,17 @@ class SectionSpec(_Spec):
     styles: dict[Element, str] = {}
     box: bool = False
     beside: bool = False
-    # En pour cent de la largeur du texte : ``55`` ou ``55%``.
     width: Annotated[int, BeforeValidator(percent), Field(ge=10, le=90)] | None = None
     page_break: bool = False
     columns: Annotated[int, Field(ge=1, le=3)] = 1
     landscape: bool = False
     cover: bool = False
-    # En cm : l'adresse d'un courrier dans la fenêtre de l'enveloppe.
-    # La marge au-dessus de la section, en cm (l'adresse d'un courrier dans la fenêtre d'une
-    # enveloppe) : de la mise en page, pas un style.
     margin_top: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=20)] | None = None
 
     @model_validator(mode="before")
     @classmethod
     def _renamed(cls, value: object) -> object:
-        """``space_before`` d'une section, renommé : le même nom qu'une propriété de style
-        (en points) aurait deux sens."""
+        """``space_before`` d'une section, renommé : le même nom qu'une propriété de style (en points) aurait deux sens."""
         if not isinstance(value, Mapping):
             return value
         entries = cast(Mapping[object, object], value)
@@ -137,18 +166,31 @@ class SectionSpec(_Spec):
 
 
 class TemplateSpec(_Spec):
-    """Le fichier du modèle."""
+    """Le fichier du modèle.
+
+    Attributes:
+        description: Description du modèle, montrée au modèle de langage.
+        instructions: Consignes générales du modèle.
+        style: Un fichier de style (chemin relatif à resources_dir), ou un
+            style écrit en ligne.
+        sections: Les sections, par nom, dans l'ordre du document.
+    """
 
     description: Annotated[str, Field(max_length=MAX_DESCRIPTION)] | None = None
     instructions: Text | None = None
-    # Un fichier de style (chemin relatif à resources_dir), ou un style écrit en ligne.
     style: str | dict[str, Any] | None = None
     sections: Annotated[dict[str, SectionSpec | None], Field(min_length=1)]
 
 
 @dataclass(frozen=True, slots=True)
 class Section:
-    """Une section du modèle : son nom, sa place (à partir de 1), ce qu'elle dit."""
+    """Une section du modèle : son nom, sa place (à partir de 1), ce qu'elle dit.
+
+    Attributes:
+        name: Nom de la section, son titre.
+        position: Sa place, à partir de 1.
+        spec: Ce qu'elle dit.
+    """
 
     name: str
     position: int
@@ -156,10 +198,12 @@ class Section:
 
     @property
     def key(self) -> str:
+        """La clé de la section : son nom normalisé, pour la comparer."""
         return key(self.name)
 
     @property
     def optional(self) -> bool:
+        """Vrai si la section est facultative."""
         return self.spec.optional
 
     @property
@@ -175,12 +219,21 @@ class Section:
 
 @dataclass(frozen=True, slots=True)
 class Template:
-    """Un modèle lu : son nom, sa description, ses consignes, son style, ses sections."""
+    """Un modèle lu : son nom, sa description, ses consignes, son style, ses sections.
+
+    Attributes:
+        name: Nom du modèle.
+        description: Sa description.
+        instructions: Ses consignes générales.
+        style: Le style du modèle tel qu'écrit : un chemin, un style en ligne,
+            ou rien.
+        sections: Ses sections, dans l'ordre.
+        text: Le texte du fichier lu.
+    """
 
     name: str
     description: str | None
     instructions: str | None
-    # Le style du modèle tel qu'écrit : un chemin, un style en ligne, ou rien.
     style: str | dict[str, Any] | None
     sections: tuple[Section, ...]
     text: str = ""
@@ -195,8 +248,7 @@ class Template:
         return next((s for s in self.sections if s.key == wanted), None)
 
     def rows(self) -> dict[int, int]:
-        """La ligne de chaque section, par sa place : la place de la première de la ligne
-        (une section ``beside`` est sur la ligne de la précédente)."""
+        """La ligne de chaque section, par sa place : la place de la première de la ligne (une section ``beside`` est sur la ligne de la précédente)."""
         rows: dict[int, int] = {}
         current = 1
         for section in self.sections:
@@ -217,6 +269,7 @@ def key(title: str) -> str:
 
 
 def check_name(name: str) -> None:
+    """Refuse un nom de modèle hors format (minuscules, chiffres et tirets), trop long, ou ``none``, qui choisit un document libre."""
     if not NAME.match(name) or len(name) > MAX_NAME or name == NONE:
         raise ValueError(
             f"nom de modèle {name!r} : minuscules, chiffres et tirets ({MAX_NAME} caractères au plus), et pas « {NONE} », qui choisit un document libre"
@@ -250,6 +303,7 @@ OLD_FORMAT: Final = (
     "chaque titre « # Section » devient une clé de sections, et son texte, ses "
     "instructions (après |)"
 )
+"""Message d'un modèle écrit dans l'ancien format Markdown."""
 
 
 def parse(name: str, text: str) -> Template:
@@ -289,6 +343,7 @@ def parse(name: str, text: str) -> Template:
 
 
 def _sections(where: str, spec: TemplateSpec) -> list[Section]:
+    """Les sections d'un modèle, dans l'ordre : nombre borné, noms d'une ligne et distincts, styles d'éléments vérifiés."""
     if len(spec.sections) > MAX_SECTIONS:
         raise ValueError(f"{where} : {len(spec.sections)} sections, au-delà de {MAX_SECTIONS}")
     sections: list[Section] = []
@@ -359,7 +414,6 @@ def _check_layout(where: str, sections: Sequence[Section]) -> None:
 
 
 def fixed_paragraphs(text: str) -> list[str]:
-    """Le texte fixe d'une section, en paragraphes : une ligne vide les sépare ; un retour à
-    la ligne simple reste dans le paragraphe."""
+    """Le texte fixe d'une section, en paragraphes : une ligne vide les sépare ; un retour à la ligne simple reste dans le paragraphe."""
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     return [part.strip("\n") for part in re.split(r"\n[ \t]*\n", normalized) if part.strip()]

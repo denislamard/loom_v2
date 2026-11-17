@@ -13,9 +13,15 @@ from pydantic import BaseModel, ConfigDict, PositiveFloat
 
 
 class AskParams(BaseModel):
+    """Paramètres de ``loom.ask``.
+
+    Attributes:
+        expires_in: Délai, en secondes, après lequel une question sans réponse
+            expire et le modèle reprend avec « pas de réponse ». Par défaut,
+            elle attend indéfiniment : la conversation reprend quand
+            l'utilisateur revient.
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # Sans réponse après ce délai, la question expire et le modèle reprend avec
-    # « pas de réponse ». Par défaut, elle attend indéfiniment : la conversation
-    # reprend quand l'utilisateur revient.
     expires_in: PositiveFloat | None = None

@@ -37,12 +37,17 @@ __all__ = [
 ]
 
 DEFAULT_HOST: Final = "127.0.0.1"
+"""L'adresse d'écoute par défaut : la boucle locale."""
 DEFAULT_PORT: Final = 8765
+"""Le port d'écoute par défaut."""
 ENV_PREFIX: Final = "LOOM_MEM_GPU_"
+"""Préfixe des variables d'environnement des réglages."""
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+"""Les niveaux de journal permis."""
 LOG_LEVELS: Final[tuple[str, ...]] = get_args(LogLevel)
-# Les réglages sans défaut, écrits en commentaire dans l'unité, avec cette valeur d'exemple.
+"""Les mêmes niveaux, en tuple."""
 _EXAMPLES: Final = {"token_env": "LOOM_MEM_GPU_TOKEN", "max_vram_fraction": "0.3"}
+"""Les réglages sans défaut, écrits en commentaire dans l'unité, avec cette valeur d'exemple."""
 _DEFAULT_MODELS: Final = ModelsSpec()
 
 
@@ -51,12 +56,30 @@ class SettingsError(Exception):
 
 
 class ServiceSettings(BaseModel):
-    """Ce que l'application sert, où, et avec quelles limites."""
+    """Ce que l'application sert, où, et avec quelles limites.
+
+    Chaque ``description`` sert deux fois : l'aide de l'option, le commentaire
+    de la variable dans l'unité systemd (``as_environment``).
+
+    Attributes:
+        host: Adresse d'écoute : la boucle locale seulement.
+        port: Port d'écoute.
+        device: Périphérique de calcul. Le seul défaut qui diffère de
+            ``models`` : ``cuda``, pas ``auto``.
+        fp16: Demi-précision sur la carte.
+        offline: Modèles lus dans le cache local de Hugging Face seulement,
+            sans réseau.
+        embedder: Le modèle de la famille BGE-M3.
+        reranker: Le reranker.
+        token_env: Nom de la variable qui porte le jeton exigé des clients.
+            Jamais le jeton lui-même : il serait visible dans ``ps`` et
+            ``systemctl show``.
+        max_vram_fraction: Part de la carte permise, à côté d'un LLM local.
+        log_level: Niveau du journal.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # Chaque ``description`` sert deux fois : l'aide de l'option, le commentaire de la
-    # variable dans l'unité systemd (``as_environment``).
     host: str = Field(
         default=DEFAULT_HOST,
         description="adresse d'écoute : la boucle locale seulement (127.0.0.1, localhost, ::1)",
@@ -67,7 +90,6 @@ class ServiceSettings(BaseModel):
         le=65535,
         description="port d'écoute ; un autre port : changer aussi models.server.url des agents",
     )
-    # Le seul défaut qui diffère de ``models`` : ``cuda``, pas ``auto``.
     device: str = Field(
         default="cuda",
         pattern=DEVICE_PATTERN,
@@ -88,7 +110,6 @@ class ServiceSettings(BaseModel):
         min_length=1,
         description="reranker à classifieur de paires : nom Hugging Face ou dossier local",
     )
-    # Jamais le jeton lui-même : il serait visible dans ``ps`` et ``systemctl show``.
     token_env: str | None = Field(
         default=None,
         pattern=ENV_NAME_PATTERN,
@@ -206,6 +227,11 @@ def _unit_line(name: str, value: str) -> str:
 
 
 def _from_file(config: Path | None) -> dict[str, Any]:
+    """Les réglages du fichier YAML ``--config`` ; aucun sans fichier.
+
+    Raises:
+        SettingsError: Fichier illisible, YAML invalide, ou pas un objet.
+    """
     found: dict[str, Any] = {}
     if config is not None:
         try:

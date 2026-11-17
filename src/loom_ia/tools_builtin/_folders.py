@@ -45,22 +45,28 @@ from loom_ia.tools_builtin.local_files_params import (
     RightApproval,
 )
 
-# Fichier temporaire d'une écriture : caché, donc invisible du modèle.
 TEMP_PREFIX: Final = ".loom-"
+"""Fichier temporaire d'une écriture : caché, donc invisible du modèle."""
 
 
-# Ce qu'un droit permet, dit à l'approbateur.
 RIGHT_WORDS: Final[Mapping[Right, str]] = {
     "read": "lire",
     "write": "écrire",
     "overwrite": "remplacer un fichier existant",
     "delete": "supprimer",
 }
+"""Ce qu'un droit permet, dit à l'approbateur."""
 
 
 @dataclass(frozen=True, slots=True)
 class Folder:
-    """Un dossier permis, tel que l'outil l'utilise : sa racine résolue et ses droits."""
+    """Un dossier permis, tel que l'outil l'utilise : sa racine résolue et ses droits.
+
+    Attributes:
+        name: Nom du dossier pour le modèle.
+        root: Sa racine, résolue.
+        rights: Ses droits, et l'approbation de chacun.
+    """
 
     name: str
     root: Path
@@ -77,13 +83,19 @@ class Folder:
 
 @dataclass(frozen=True, slots=True)
 class Located:
-    """Un chemin donné par le modèle, rapporté à son dossier, sans rien lire sur le disque."""
+    """Un chemin donné par le modèle, rapporté à son dossier, sans rien lire sur le disque.
+
+    Attributes:
+        lexical: Le chemin, sans lien suivi.
+        folder: Le dossier permis où il se trouve.
+    """
 
     lexical: Path
     folder: Folder
 
     @property
     def address(self) -> str:
+        """L'adresse que voit le modèle : ``<dossier>/<chemin>``, ou le nom du dossier seul pour sa racine."""
         relative = self.lexical.relative_to(self.folder.root).as_posix()
         return self.folder.name if relative == "." else f"{self.folder.name}/{relative}"
 

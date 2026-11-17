@@ -67,71 +67,97 @@ from loom_ia.tools_builtin._document.picture import dimensions
 from loom_ia.tools_builtin._templates import Template, key
 
 READABLE: Final = (".docx", ".docm", ".dotx")
-# Formats qui ne sont pas un zip OOXML : le dire plutôt que « pas un zip ».
+"""Extensions lues."""
 OTHER_FORMATS: Final = {
     ".doc": "Word 97-2003 (.doc)",
     ".odt": "OpenDocument (.odt)",
     ".rtf": "RTF (.rtf)",
 }
+"""Formats qui ne sont pas un zip OOXML : le dire plutôt que « pas un zip »."""
 MAX_MEMBERS: Final = 10_000
+"""Parties au plus dans l'archive."""
 MAX_UNCOMPRESSED: Final = 10 * MAX_SOURCE_BYTES
-# Le corps se lit au fil de l'eau ; styles, numérotation et relations, en entier.
+"""Taille au plus de l'archive décompressée."""
 MAX_BODY: Final = 100_000_000
+"""Le corps se lit au fil de l'eau ; styles, numérotation et relations, en entier."""
 MAX_PART: Final = 10_000_000
+"""Taille au plus d'une partie décompressée, en octets."""
 MAX_CELL_CHARS: Final = 1_000
+"""Caractères rendus au plus par cellule de tableau."""
 MAX_COLUMNS: Final = 50
+"""Colonnes rendues au plus par tableau."""
 MAX_OUTLINE: Final = 100
-# Le plan s'ajoute aux blocs (READ_CHARS) : à eux deux, sous le seuil de déport (50 000).
+"""Titres rendus au plus dans le plan."""
 MAX_OUTLINE_CHARS: Final = 8_000
+"""Le plan s'ajoute aux blocs (READ_CHARS) : à eux deux, sous le seuil de déport (50 000)."""
 READ_DEADLINE: Final = 20.0
+"""Durée au plus d'une lecture, en secondes."""
 SAFE_EXPAT: Final = (2, 4, 0)
-# WordprocessingML transitionnel (ce qu'écrivent Word et LibreOffice), et strict.
+"""Version d'expat au moins, sûre contre l'expansion d'entités."""
 _NAMESPACES: Final = (
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
     "http://purl.oclc.org/ooxml/wordprocessingml/main",
 )
+"""WordprocessingML transitionnel (ce qu'écrivent Word et LibreOffice), et strict."""
 _REL_NS: Final = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _DC_TITLE: Final = "{http://purl.org/dc/elements/1.1/}title"
 _CP_CATEGORY: Final = "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}category"
 _FALSE: Final = frozenset({"0", "false", "off"})
-# Le nom du style de tableau de disposition qu'écrit l'outil (``word/style.py``).
 LAYOUT_STYLE: Final = "loom layout"
+"""Le nom du style de tableau de disposition qu'écrit l'outil (``word/style.py``)."""
 FIELDS_STYLE: Final = "loom fields"
-# Les lignes d'un groupe et de son sous-total, et le récapitulatif de TVA : le style de
-# paragraphe de leurs cellules.
+"""Nom du style de tableau des champs, que la lecture reconnaît."""
 GROUP_STYLE: Final = "loom table group"
+"""Les lignes d'un groupe et de son sous-total, et le récapitulatif de TVA : le
+style de paragraphe de leurs cellules.
+"""
 SUBTOTAL_STYLE: Final = "loom table subtotal"
+"""Nom du style des sous-totaux, que la lecture reconnaît."""
 INVOICE_STYLE: Final = "loom invoice totals"
+"""Nom du style du récapitulatif de TVA, que la lecture reconnaît."""
 ATTENDANCE_STYLE: Final = "loom attendance"
-# Les styles des blocs signature et toc, et de la liste à cocher (``word/style.py``), par leur nom.
+"""Nom du style de la feuille d'émargement, que la lecture reconnaît."""
 SIGNATURE_STYLE: Final = "loom signature"
+"""Les styles des blocs signature et toc, et de la liste à cocher
+(``word/style.py``), par leur nom.
+"""
 SIGNER_STYLE: Final = "loom signer"
+"""Nom du style d'un signataire, que la lecture reconnaît."""
 MENTION_STYLE: Final = "loom mention"
+"""Nom du style de la mention d'une signature, que la lecture reconnaît."""
 CHECK_STYLES: Final = {"loom checkbox": 0, "loom checkbox 2": 1}
-# Une case cochée (☒, ☑, ✓, ✔) ou vide (☐), en tête d'un élément de liste à cocher.
+"""Noms des styles de liste à cocher, et leur niveau."""
 _CHECKED: Final = frozenset("\u2612\u2611\u2713\u2714")
+"""Une case cochée (☒, ☑, ✓, ✔) ou vide (☐), en tête d'un élément de liste à cocher."""
 _BOXES: Final = _CHECKED | {"\u2610"}
-# Un tableau de disposition dans un autre (une grille d'images dans une colonne) : borné.
 MAX_LAYOUT_DEPTH: Final = 4
-# Ce qui sépare le numéro d'une légende de son texte (« Figure 2 — Avant »).
+"""Un tableau de disposition dans un autre (une grille d'images dans une colonne) : borné."""
 _CAPTION_SEPARATORS: Final = " \u2014\u2013-:."
-# La version de secours d'un contenu « compatible » (``mc:AlternateContent``) : Word y
-# range le même dessin en VML, que ``mc:Choice`` porte déjà ; il ne compte pas deux fois.
+"""Ce qui sépare le numéro d'une légende de son texte (« Figure 2 — Avant »)."""
 _MC_FALLBACK: Final = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
-# Sous-arbres d'un paragraphe qui ne sont pas son texte.
+"""La version de secours d'un contenu « compatible » (``mc:AlternateContent``)
+: Word y range le même dessin en VML, que ``mc:Choice`` porte déjà ; il ne
+compte pas deux fois.
+"""
 _SKIPPED: Final = frozenset(
     {"del", "delText", "moveFrom", "drawing", "pict", "object", "commentReference", "pPr", "rPr"}
 )  # fmt: skip
-# Un segment de texte : son texte, gras, italique, souligné ; ou déjà en balisage (un lien,
-# une note, un renvoi : ``raw``), que l'emphase n'enveloppe pas.
+"""Sous-arbres d'un paragraphe qui ne sont pas son texte."""
 type _Segment = tuple[str, bool, bool, bool, bool]
-# Un renvoi lu avant de connaître les titres du document : le signet qu'il vise et le texte
-# qu'il affiche, entre deux caractères qu'un XML ne peut pas porter ; remplacé à la fin de
-# la lecture par ``§[Titre]``, ou par son texte si le signet n'est pas celui d'un titre.
+"""Un segment de texte : son texte, gras, italique, souligné ; ou déjà en
+balisage (un lien, une note, un renvoi : ``raw``), que l'emphase n'enveloppe
+pas.
+"""
 _PENDING_REF: Final = re.compile("\x00([^\x00\x01]*)\x01([^\x00]*)\x00")
+"""Un renvoi lu avant de connaître les titres du document : le signet qu'il
+vise et le texte qu'il affiche, entre deux caractères qu'un XML ne peut pas
+porter ; remplacé à la fin de la lecture par ``§[Titre]``, ou par son texte
+si le signet n'est pas celui d'un titre.
+"""
 
 
 def check_suffix(path: str) -> None:
+    """Refuse un fichier qui n'est pas un document Word lisible (.docx, .docm, .dotx), en disant comment le convertir s'il en a un autre format."""
     lowered = path.lower()
     for suffix, name in OTHER_FORMATS.items():
         if lowered.endswith(suffix):
@@ -196,48 +222,79 @@ def _guarded(where: str) -> Generator[None]:
 
 @dataclass(frozen=True, slots=True)
 class _Style:
+    """Un style de paragraphe du document, tel que la lecture s'en sert.
+
+    Attributes:
+        name: Son nom.
+        based_on: Son style de base.
+        outline: Son niveau de plan, pour un titre.
+        num_id: La numérotation que le style porte (un style de liste), ou
+            ``None``.
+        numbering_off: Le style annule la numérotation de son parent (``numId
+            0``) : un titre masqué d'un document aux titres numérotés,
+            l'en-tête de table des matières de Word.
+    """
+
     name: str
     based_on: str | None
     outline: int | None
-    # La numérotation que le style porte (un style de liste), ou ``None``.
     num_id: str | None
-    # Le style annule la numérotation de son parent (``numId 0``) : un titre masqué
-    # d'un document aux titres numérotés, l'en-tête de table des matières de Word.
     numbering_off: bool = False
 
 
 @dataclass(slots=True)
 class _Package:
+    """Le document ouvert : ses parties, lues une fois.
+
+    Attributes:
+        archive: L'archive du document.
+        body: Le corps (``word/document.xml``).
+        styles: Les styles de paragraphe, par identifiant.
+        tables: Les styles de tableau, par identifiant : leur nom (« loom
+            layout »…), en minuscules.
+        numbering: numId → numéroté (vrai) ou à puces, par niveau.
+        title: Le titre du document, dans ses propriétés.
+        category: La catégorie du document : le modèle suivi, pour un document
+            écrit avec un modèle.
+        comments: Les commentaires, par identifiant.
+        charts: Identifiant de relation → partie d'un graphique
+            (``word/charts/chartN.xml``).
+        media: Identifiant de relation → partie d'une image
+            (``word/media/imageN.png``).
+        inline: De quoi lire les liens et les notes du corps.
+    """
+
     archive: zipfile.ZipFile
     body: str
     styles: dict[str, _Style]
-    # Les styles de tableau, par identifiant : leur nom (« loom layout »…), en minuscules.
     tables: dict[str, str]
-    # numId → numéroté (vrai) ou à puces, par niveau.
     numbering: dict[str, dict[int, bool]]
     title: str | None
-    # La catégorie du document : le modèle suivi, pour un document écrit avec un modèle.
     category: str | None
     comments: bool
-    # Identifiant de relation → partie d'un graphique (``word/charts/chartN.xml``).
     charts: dict[str, str] = field(default_factory=dict[str, str])
-    # Identifiant de relation → partie d'une image (``word/media/imageN.png``).
     media: dict[str, str] = field(default_factory=dict[str, str])
-    # De quoi lire les liens et les notes du corps.
     inline: _Inline | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class _Inline:
-    """Ce que demande le texte enrichi d'une partie : l'adresse de ses liens (par relation),
-    et le texte des notes du document (« f3 » : la note de bas de page 3, « e1 » : la note
-    de fin 1)."""
+    """Ce que demande le texte enrichi d'une partie.
+
+    L'adresse de ses liens (par relation), et le texte des notes du document (« f3 » :
+    la note de bas de page 3, « e1 » : la note de fin 1).
+
+    Attributes:
+        links: Identifiant de relation → adresse d'un lien.
+        notes: Identifiant → texte d'une note de bas de page.
+    """
 
     links: Mapping[str, str]
     notes: Mapping[str, str]
 
 
 def _open(data: bytes, where: str) -> _Package:
+    """Ouvre l'archive d'un document et en lit les parties utiles ; ``ToolError`` pour un fichier illisible, protégé, ou qui se décompresse trop."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
@@ -290,8 +347,7 @@ def _external(archive: zipfile.ZipFile, names: set[str], part: str) -> dict[str,
 
 
 def _note_texts(archive: zipfile.ZipFile, names: set[str], related: Mapping[str, str], where: str) -> dict[str, str]:
-    """Le texte de chaque note de bas de page et de fin (sans ses séparateurs), ses liens
-    et ses renvois compris, ses paragraphes en lignes."""
+    """Le texte de chaque note de bas de page et de fin (sans ses séparateurs), ses liens et ses renvois compris, ses paragraphes en lignes."""
     found: dict[str, str] = {}
     for kind, prefix in (("footnotes", "f"), ("endnotes", "e")):
         part = related.get(kind)
@@ -333,8 +389,7 @@ def _main_part(archive: zipfile.ZipFile, names: set[str]) -> str | None:
 
 
 def _relations(archive: zipfile.ZipFile, names: set[str], body: str, *, by_id: str | None = None) -> dict[str, str]:
-    """Les parties liées au corps, par type (« styles », « numbering »…) ; avec ``by_id``,
-    celles de ce type, par identifiant de relation (les graphiques)."""
+    """Les parties liées au corps, par type (« styles », « numbering »…) ; avec ``by_id``, celles de ce type, par identifiant de relation (les graphiques)."""
     folder, _, file = body.rpartition("/")
     rels = f"{folder}/_rels/{file}.rels" if folder else f"_rels/{file}.rels"
     if rels not in names or archive.getinfo(rels).file_size > MAX_PART:
@@ -366,6 +421,7 @@ def _parse(data: bytes) -> Element:
 
 
 def _styles(root: Element | None) -> dict[str, _Style]:
+    """Les styles de paragraphe du document, par identifiant."""
     found: dict[str, _Style] = {}
     if root is None:
         return found
@@ -419,6 +475,7 @@ def _table_styles(root: Element | None) -> dict[str, str]:
 
 
 def _numbering(root: Element | None) -> dict[str, dict[int, bool]]:
+    """Les numérotations du document : par ``numId``, numéroté ou à puces pour chaque niveau."""
     if root is None:
         return {}
     abstract: dict[str, dict[int, bool]] = {}
@@ -465,10 +522,42 @@ def _properties(archive: zipfile.ZipFile, names: set[str], where: str) -> tuple[
 
 @dataclass(slots=True)
 class _Reading:
-    """Ce que la lecture rend, et ce qu'elle a vu en passant."""
+    """Ce que la lecture rend, et ce qu'elle a vu en passant.
+
+    Attributes:
+        start: Le premier bloc rendu.
+        budget: Taille du résultat, en caractères JSON : au-delà, la lecture
+            s'arrête (``next_start``).
+        blocks: Les blocs rendus.
+        used: La taille déjà prise.
+        full: Vrai quand le budget est atteint.
+        next_start: Le bloc où reprendre, si la lecture s'est arrêtée.
+        count: Les blocs vus.
+        outline: Les titres du document.
+        images: Rendre les images.
+        revisions: Les révisions suivies vues.
+        cut: Ce qui a été coupé.
+        pending: Une liste en cours : ses éléments s'ajoutent jusqu'au bloc
+            suivant.
+        pending_id: Sa numérotation : deux listes voisines (puces, puis
+            numéros) restent deux listes.
+        pictures: Avec ``images`` : les images rendues en blocs.
+        last_image: La dernière image rendue : un paragraphe de légende qui la
+            suit devient sa caption.
+        in_toc: Dans un sommaire : ses entrées ne sont pas des blocs, le bloc
+            ``sommaire`` est rendu.
+        template: Le modèle que le document suit (si l'outil le déclare).
+        proposed: Les styles proposés du modèle.
+        section: La section en cours (sa place dans le modèle), par son signet.
+        seen: Les sections vues.
+        where: La section de chaque bloc rendu (``None`` hors des sections).
+        anchors: Les signets des titres : le texte du titre, que vise un renvoi
+            à ce signet.
+        shown: Ce qui s'affiche, plutôt que ce qui se réécrit : les groupes,
+            leurs sous-totaux et le récapitulatif de TVA en lignes de tableau.
+    """
 
     start: int
-    # Taille du résultat, en caractères JSON : au-delà, la lecture s'arrête (``next_start``).
     budget: int = READ_CHARS
     blocks: list[JsonValue] = field(default_factory=list[JsonValue])
     used: int = 0
@@ -479,28 +568,17 @@ class _Reading:
     images: int = 0
     revisions: int = 0
     cut: int = 0
-    # Une liste en cours : ses éléments s'ajoutent jusqu'au bloc suivant.
     pending: dict[str, JsonValue] | None = None
-    # Sa numérotation : deux listes voisines (puces, puis numéros) restent deux listes.
     pending_id: str | None = None
-    # Avec ``images`` : les images rendues en blocs.
     pictures: bool = False
-    # La dernière image rendue : un paragraphe de légende qui la suit devient sa caption.
     last_image: dict[str, JsonValue] | None = None
-    # Dans un sommaire : ses entrées ne sont pas des blocs, le bloc ``sommaire`` est rendu.
     in_toc: bool = False
-    # Le modèle que le document suit (si l'outil le déclare), et les styles proposés.
     template: Template | None = None
     proposed: frozenset[str] = frozenset()
-    # La section en cours (sa place dans le modèle), par son signet ; celles vues.
     section: int | None = None
     seen: set[int] = field(default_factory=set[int])
-    # La section de chaque bloc rendu (``None`` hors des sections).
     where: list[int | None] = field(default_factory=list[int | None])
-    # Les signets des titres : le texte du titre, que vise un renvoi à ce signet.
     anchors: dict[str, str] = field(default_factory=dict[str, str])
-    # Ce qui s'affiche, plutôt que ce qui se réécrit : les groupes, leurs sous-totaux et le
-    # récapitulatif de TVA en lignes de tableau.
     shown: bool = False
 
 
@@ -573,8 +651,7 @@ def read(
 
 
 def _resolved(value: JsonValue, anchors: Mapping[str, str]) -> JsonValue:
-    """Les renvois lus, une fois les titres connus : ``§[Titre]`` vers un titre, le texte
-    affiché vers un autre signet."""
+    """Les renvois lus, une fois les titres connus : ``§[Titre]`` vers un titre, le texte affiché vers un autre signet."""
 
     def replaced(found: re.Match[str]) -> str:
         title = anchors.get(found.group(1))
@@ -590,9 +667,12 @@ def _resolved(value: JsonValue, anchors: Mapping[str, str]) -> JsonValue:
 
 
 def _by_section(result: dict[str, JsonValue], reading: _Reading, template: Template, notes: list[JsonValue]) -> None:
-    """Un document qui suit un modèle : ses blocs rangés par section, dans l'ordre ; le
-    titre du document est déjà dans ``title`` (il est dans la section d'une page de garde,
-    qui le porte : il n'en est pas un bloc)."""
+    """Un document qui suit un modèle.
+
+    Ses blocs rangés par section, dans l'ordre ; le titre du document est déjà dans
+    ``title`` (il est dans la section d'une page de garde, qui le porte : il n'en est
+    pas un bloc).
+    """
     names = {section.position: section.name for section in template.sections}
     sections: dict[str, JsonValue] = {}
     outside: list[JsonValue] = []
@@ -613,9 +693,11 @@ def _by_section(result: dict[str, JsonValue], reading: _Reading, template: Templ
 
 
 def _mark(reading: _Reading, element: Element) -> None:
-    """Un signet : le début d'une section du modèle (``_loom_s<n>``), qui court jusqu'au
-    début de la suivante. Sa fin ne compte pas : LibreOffice, qui reprend un document,
-    dédouble un signet en plusieurs, certains vides ; le premier début est à sa place."""
+    """Un signet : le début d'une section du modèle (``_loom_s<n>``), qui court jusqu'au début de la suivante.
+
+    Sa fin ne compte pas : LibreOffice, qui reprend un document, dédouble un signet en
+    plusieurs, certains vides ; le premier début est à sa place.
+    """
     if reading.template is None or _local(element.tag) != "bookmarkStart":
         return
     found = _SECTION_MARK.match(_attribute(element, "name") or "")
@@ -629,18 +711,21 @@ def _mark(reading: _Reading, element: Element) -> None:
 
 
 def _marks_in(reading: _Reading, element: Element) -> None:
-    """Les signets de section d'un tableau (dans le premier paragraphe d'une cellule,
-    quand la section commence par lui) : avant le tableau, qui est de la section."""
+    """Les signets de section d'un tableau (dans le premier paragraphe d'une cellule, quand la section commence par lui).
+
+    Avant le tableau, qui est de la section.
+    """
     for child in element.iter():
         if _local(child.tag) == "bookmarkStart":
             _mark(reading, child)
 
 
-# Le signet d'une section du modèle : sa place.
 _SECTION_MARK: Final = re.compile(r"^_loom_s(\d+)$")
+"""Le signet d'une section du modèle : sa place."""
 
 
 def _walk(package: _Package, reading: _Reading, deadline: float, where: str) -> None:
+    """Lit le corps du document au fil de l'eau, bloc par bloc, dans le délai donné."""
     parser: XMLPullParser[Element] = XMLPullParser(events=("start", "end"))
     depth = 0
     body_depth: int | None = None
@@ -680,6 +765,7 @@ def _walk(package: _Package, reading: _Reading, deadline: float, where: str) -> 
 
 
 def _block(package: _Package, reading: _Reading, element: Element, depth: int = 0) -> None:
+    """Un élément du corps : paragraphe, tableau (signature, champs, émargement, récapitulatif…), signet ou section."""
     match _local(element.tag):
         case "bookmarkStart" | "bookmarkEnd":
             _mark(reading, element)
@@ -743,8 +829,7 @@ def _table_style(package: _Package, table: Element) -> str | None:
 
 
 def _table_style_name(package: _Package, reading: _Reading, table: Element) -> str | None:
-    """Le style proposé d'un tableau : celui du texte de sa première ligne de données (pas
-    d'une ligne de groupe ni de sous-total)."""
+    """Le style proposé d'un tableau : celui du texte de sa première ligne de données (pas d'une ligne de groupe ni de sous-total)."""
     rows = [row for row in table if _local(row.tag) == "tr"]
     for row in rows[1:]:
         name = _row_style(package, row)
@@ -755,8 +840,7 @@ def _table_style_name(package: _Package, reading: _Reading, table: Element) -> s
 
 
 def _row_style(package: _Package, row: Element) -> str:
-    """Le nom du style de paragraphe d'une ligne de tableau : celui de son premier
-    paragraphe ; « » sans paragraphe ni style."""
+    """Le nom du style de paragraphe d'une ligne de tableau : celui de son premier paragraphe ; « » sans paragraphe ni style."""
     for paragraph in row.iter():
         if _local(paragraph.tag) == "p":
             properties = _child(paragraph, "pPr")
@@ -766,9 +850,11 @@ def _row_style(package: _Package, row: Element) -> str:
 
 
 def _attendance(package: _Package, table: Element) -> dict[str, JsonValue] | None:
-    """Une feuille d'émargement écrite par l'outil : ses sessions (l'en-tête, sans
-    « Participant »), ses participants (la première cellule de chaque ligne) ; ``None``
-    pour un autre tableau."""
+    """Une feuille d'émargement écrite par l'outil.
+
+    Ses sessions (l'en-tête, sans « Participant »), ses participants (la première
+    cellule de chaque ligne) ; ``None`` pour un autre tableau.
+    """
     rows = [row for row in table if _local(row.tag) == "tr"]
     if not rows or _row_style(package, rows[0]) != ATTENDANCE_STYLE:
         return None
@@ -790,9 +876,11 @@ def _attendance(package: _Package, table: Element) -> dict[str, JsonValue] | Non
 
 
 def _invoice(package: _Package, table: Element) -> dict[str, JsonValue] | None:
-    """Un récapitulatif de TVA écrit par l'outil : le bloc ``invoice_totals`` que sa
-    description garde (ses colonnes, l'acompte) ; ``None`` pour un autre tableau, ou un
-    récapitulatif dont la description manque."""
+    """Un récapitulatif de TVA écrit par l'outil.
+
+    Le bloc ``invoice_totals`` que sa description garde (ses colonnes, l'acompte) ;
+    ``None`` pour un autre tableau, ou un récapitulatif dont la description manque.
+    """
     rows = [row for row in table if _local(row.tag) == "tr"]
     if not rows or _row_style(package, rows[0]) != INVOICE_STYLE:
         return None
@@ -818,8 +906,7 @@ def _invoice(package: _Package, table: Element) -> dict[str, JsonValue] | None:
 
 
 def _fields(package: _Package, table: Element) -> dict[str, JsonValue]:
-    """Des champs : le libellé et la valeur de chaque ligne (la valeur avec son emphase,
-    ses liens, ses notes)."""
+    """Des champs : le libellé et la valeur de chaque ligne (la valeur avec son emphase, ses liens, ses notes)."""
     items: list[JsonValue] = []
     for row in table:
         cells = [cell for cell in row if _local(cell.tag) == "tc"] if _local(row.tag) == "tr" else []
@@ -852,6 +939,7 @@ def _signature(package: _Package, table: Element) -> dict[str, JsonValue]:
 
 
 def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
+    """Un paragraphe : titre, élément de liste, légende, code, ou paragraphe, selon son style et sa numérotation."""
     properties = _child(element, "pPr")
     style_id: str | None = None
     numbering: tuple[str, int] | None = None
@@ -947,8 +1035,8 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
         _emit(reading, _styled({"type": kind, "text": text}, own))
 
 
-# Une entrée de sommaire (« toc 1 » à « toc 9 »).
 _TOC_ENTRY: Final = re.compile(r"^toc [1-9]$")
+"""Une entrée de sommaire (« toc 1 » à « toc 9 »)."""
 
 
 def _checkbox(reading: _Reading, text: str, level: int) -> None:
@@ -966,8 +1054,6 @@ def _checkbox(reading: _Reading, text: str, level: int) -> None:
 _CHECKLIST: Final = "checkboxes"
 
 
-# Les styles qui disent un autre bloc que le paragraphe : ceux qu'écrit l'outil, et
-# leurs équivalents intégrés de Word.
 _KIND: Final = {
     "loom code": "code",
     "quote": "quote",
@@ -975,6 +1061,9 @@ _KIND: Final = {
     "quote source": "quote",
     "note": "note",
 }
+"""Les styles qui disent un autre bloc que le paragraphe : ceux qu'écrit
+l'outil, et leurs équivalents intégrés de Word.
+"""
 
 
 def _without_number(paragraph: Element) -> Element:
@@ -1022,6 +1111,7 @@ _CHART_NS: Final = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 _DRAWING_NS: Final = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 _R_ID: Final = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
 MAX_CHART_POINTS: Final = 200
+"""Points rendus au plus par graphique."""
 
 
 def _chart_ids(element: Element) -> list[str]:
@@ -1144,6 +1234,7 @@ def _pictures(package: _Package, element: Element) -> list[dict[str, JsonValue]]
 
 
 def _width(package: _Package, frame: Element, relation: str) -> ImageWidth:
+    """La largeur d'une image dans la page, ramenée à ``full``, ``half`` ou ``small``."""
     extent = frame.find(f"{_WP_NS}extent")
     shown = _float(extent.get("cx") if extent is not None else None)
     width = (shown if isinstance(shown, int | float) else 0) / _EMU
@@ -1198,9 +1289,11 @@ def _style_meaning(styles: dict[str, _Style], style_id: str | None) -> tuple[boo
 
 
 def _segments(element: Element, inline: _Inline | None = None) -> list[_Segment]:
-    """Le texte d'un paragraphe, en segments (texte, gras, italique, souligné), dans
-    l'ordre. Avec ``inline`` : un lien, une note, un renvoi en balisage (``raw``) ; sans,
-    le texte qu'ils affichent (une note, rien)."""
+    """Le texte d'un paragraphe, en segments (texte, gras, italique, souligné), dans l'ordre.
+
+    Avec ``inline`` : un lien, une note, un renvoi en balisage (``raw``) ; sans, le
+    texte qu'ils affichent (une note, rien).
+    """
     found: list[_Segment] = []
     # Les champs complexes ouverts (``fldChar``) : leur instruction, et ce qu'affiche un
     # renvoi (``REF``), qui ne revient pas tel quel.
@@ -1298,8 +1391,14 @@ def _segments(element: Element, inline: _Inline | None = None) -> list[_Segment]
 
 @dataclass(slots=True)
 class _Field:
-    """Un champ complexe en cours : son instruction ; passé son séparateur, ce qu'il
-    affiche."""
+    """Un champ complexe en cours : son instruction ; passé son séparateur, ce qu'il affiche.
+
+    Attributes:
+        instr: L'instruction du champ.
+        result: Vrai une fois passé le séparateur : le texte qui suit est ce
+            que le champ affiche.
+        shown: Ce que le champ affiche, en morceaux de texte.
+    """
 
     instr: str = ""
     result: bool = False
@@ -1331,8 +1430,10 @@ def _underlined(element: Element | None) -> bool:
 
 
 def _markdown(segments: list[_Segment]) -> str:
-    """Les segments joints, l'emphase en ``**``, ``*`` et ``<u>`` comme à l'écriture ; un
-    ``^[`` ou un ``§[`` du texte échappé, pour ne pas se relire en note ou en renvoi."""
+    """Les segments joints, l'emphase en ``**``, ``*`` et ``<u>`` comme à l'écriture.
+
+    Un ``^[`` ou un ``§[`` du texte échappé, pour ne pas se relire en note ou en renvoi.
+    """
     merged: list[_Segment] = []
     for segment in segments:
         if merged and not segment[4] and not merged[-1][4] and merged[-1][1:] == segment[1:]:
@@ -1359,9 +1460,12 @@ def _markdown(segments: list[_Segment]) -> str:
 
 
 def _table(package: _Package, reading: _Reading, element: Element) -> list[JsonValue]:
-    """Les lignes d'un tableau : chaque cellule en texte, son emphase, ses liens, ses notes
-    et ses renvois compris ; l'emphase d'une ligne d'en-tête, ou d'une ligne toute en gras
-    (un total), est celle de son style, que la réécriture repose : elle ne revient pas."""
+    """Les lignes d'un tableau.
+
+    Chaque cellule en texte, son emphase, ses liens, ses notes et ses renvois compris ;
+    l'emphase d'une ligne d'en-tête, ou d'une ligne toute en gras (un total), est celle
+    de son style, que la réécriture repose : elle ne revient pas.
+    """
     rows: list[JsonValue] = []
     # Le groupe en cours : ses lignes, jusqu'à son sous-total ou au groupe suivant.
     group: list[JsonValue] | None = None
@@ -1416,8 +1520,7 @@ def _all_bold(segments: list[_Segment]) -> bool:
 
 
 def _cell_markdown(paragraphs: list[list[_Segment]], *, emphasis: bool) -> str:
-    """Le texte d'une cellule, ses paragraphes en lignes ; sans ``emphasis``, sans
-    l'emphase."""
+    """Le texte d'une cellule, ses paragraphes en lignes ; sans ``emphasis``, sans l'emphase."""
     lines: list[str] = []
     for segments in paragraphs:
         if not emphasis:
@@ -1440,6 +1543,7 @@ def _cell_text(cell: Element) -> str:
 
 
 def _list_item(reading: _Reading, text: str, level: int, ordered: bool, style: str | None = None) -> None:
+    """Ajoute un élément à la liste en cours (ou en ouvre une) ; une sous-liste va sous l'élément précédent, trois niveaux en tout."""
     pending = reading.pending
     if pending is None:
         pending = reading.pending = _styled({"type": "list", "ordered": ordered, "items": []}, style)
@@ -1473,8 +1577,7 @@ def _section_title(reading: _Reading, text: str) -> bool:
 
 
 def _kind(styles: dict[str, _Style], style_id: str | None) -> str:
-    """Le bloc que dit un style, en suivant ses bases : un style à toi qui part de Note est
-    une note."""
+    """Le bloc que dit un style, en suivant ses bases : un style à toi qui part de Note est une note."""
     seen: set[str] = set()
     current = style_id
     while current is not None and current not in seen and len(seen) < 20:
@@ -1495,6 +1598,7 @@ def _close_list(reading: _Reading) -> None:
 
 
 def _emit(reading: _Reading, block: dict[str, JsonValue], heading: tuple[int, str] | None = None) -> None:
+    """Rend un bloc, s'il est dans la fenêtre lue et que le budget le permet ; un titre va aussi au plan."""
     # Une légende ne se rattache qu'à l'image qui la précède immédiatement.
     reading.last_image = None
     template = reading.template
@@ -1543,6 +1647,7 @@ def _bounded(outline: list[JsonValue]) -> list[JsonValue]:
 
 
 def _notes(package: _Package, reading: _Reading, start: int) -> list[JsonValue]:
+    """Ce que la lecture doit dire en plus : ``start`` hors du document, lecture coupée, images non lues, révisions, etc."""
     notes: list[JsonValue] = []
     if start >= reading.count and reading.count:
         notes.append(f"Le document a {reading.count} bloc(s) : start va de 0 à {reading.count - 1}.")

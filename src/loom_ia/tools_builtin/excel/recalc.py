@@ -19,6 +19,7 @@ from loom_ia.core.ports import ToolError
 from loom_ia.tools_builtin.excel.arguments import MAX_ERRORS_SAID
 
 ERRORS: Final = frozenset({"#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A"})
+"""Les valeurs d'erreur d'Excel."""
 
 
 def recalculate(data: bytes, formulas: Sequence[str], soffice: Path, timeout: float) -> JsonValue:

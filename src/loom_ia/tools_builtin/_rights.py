@@ -23,10 +23,12 @@ from collections.abc import Mapping, Sequence
 from typing import Final, Literal, cast
 
 type RightApproval = Literal["never", "always"]
-# Comment dire l'écriture équivalente : clés d'un dossier, ou valeur d'une table SQL.
+"""Approbation d'un droit : ``never`` (l'appel passe) ou ``always`` (validation humaine)."""
 type Form = Literal["folder", "table"]
+"""Comment dire l'écriture équivalente : clés d'un dossier, ou valeur d'une table SQL."""
 
 APPROVALS: Final[tuple[RightApproval, ...]] = ("never", "always")
+"""Les approbations possibles."""
 
 
 def resolve[R: str](
@@ -66,6 +68,7 @@ def resolve[R: str](
 
 
 def _approval(approval: object, *, given: Sequence[str], known: Sequence[str], where: str) -> dict[str, RightApproval]:
+    """La table ``approval`` lue : chaque droit doit être connu, accordé, et valoir ``never`` ou ``always`` ; ``ValueError`` sinon."""
     if approval is None:
         return {}
     if not isinstance(approval, Mapping):

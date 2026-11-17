@@ -38,19 +38,25 @@ from pydantic import (
 from loom_ia.tools_builtin._rights import resolve
 
 type Right = Literal["read", "write", "overwrite", "delete"]
+"""Droit sur un dossier : lire, écrire un fichier neuf, écraser, supprimer."""
 type RightApproval = Literal["never", "always"]
+"""Approbation d'un droit : ``never`` ou ``always``."""
 
-# Dans l'ordre où on les dit.
 RIGHTS: Final[tuple[Right, ...]] = ("read", "write", "overwrite", "delete")
+"""Dans l'ordre où on les dit."""
 DEFAULT_APPROVAL: Final[Mapping[Right, RightApproval]] = {
     "read": "never",
     "write": "never",
     "overwrite": "always",
     "delete": "always",
 }
-# Ceux qui détruisent ce qui existe : ``loom validate`` signale ceux qui passent sans approbation.
+"""Approbation par défaut de chaque droit : ``read`` et ``write`` à ``never``, ``overwrite`` et ``delete`` à ``always``."""
 DESTRUCTIVE: Final[frozenset[Right]] = frozenset({"overwrite", "delete"})
+"""Ceux qui détruisent ce qui existe : ``loom validate`` signale ceux qui
+passent sans approbation.
+"""
 FOLDER_NAME_PATTERN: Final = r"^[a-z0-9][a-z0-9_-]{0,31}$"
+"""Nom d'un dossier pour le modèle : minuscules, chiffres, « _ » et « - »."""
 
 
 _RIGHTS_SCHEMA: Final = {
@@ -80,22 +86,28 @@ def _with_approval(schema: dict[str, Any]) -> None:
 
 
 class FolderSpec(BaseModel):
-    """Un dossier permis : son nom pour le modèle, son chemin, ses droits."""
+    """Un dossier permis : son nom pour le modèle, son chemin, ses droits.
+
+    Attributes:
+        name: Ce que voit le modèle : il désigne un fichier par «
+            <name>/<chemin> », et le chemin réel ne lui est jamais montré.
+        path: Absolu, ou relatif au dossier du fichier de config. Ni « ~ » ni
+            variable (« $HOME ») : la config n'interprète rien.
+        rights: Droits accordés (``read``, ``write``, ``overwrite``,
+            ``delete``) et l'approbation de chacun. En entrée, une liste et
+            ``approval`` ; ici, la table droit → approbation.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid", json_schema_extra=_with_approval)
 
-    # Ce que voit le modèle : il désigne un fichier par « <name>/<chemin> », et
-    # le chemin réel ne lui est jamais montré.
     name: str = Field(pattern=FOLDER_NAME_PATTERN)
-    # Absolu, ou relatif au dossier du fichier de config. Ni « ~ » ni variable
-    # (« $HOME ») : la config n'interprète rien.
     path: Path
-    # En entrée, une liste et ``approval`` ; ici, la table droit → approbation.
     rights: Annotated[dict[Right, RightApproval], WithJsonSchema(_RIGHTS_SCHEMA)]
 
     @model_validator(mode="before")
     @classmethod
     def _resolve(cls, data: object) -> object:
+        """Ramène ``rights`` et ``approval`` à la table droit → approbation."""
         if not isinstance(data, dict):
             return data
         fields = dict(cast(dict[str, object], data))
@@ -144,7 +156,11 @@ def _unique_names(folders: tuple[FolderSpec, ...]) -> tuple[FolderSpec, ...]:
 
 
 class LocalFilesParams(BaseModel):
-    """Paramètres de ``loom.local_files``."""
+    """Paramètres de ``loom.local_files``.
+
+    Attributes:
+        folders: Dossiers permis, au moins un, de noms distincts.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

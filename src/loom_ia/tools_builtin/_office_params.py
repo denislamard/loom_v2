@@ -23,6 +23,7 @@ from loom_ia.tools_builtin._templates import parse as parse_template
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 
 DEFAULT_TIMEZONE: Final = "Europe/Paris"
+"""Fuseau des dates rendues, sans ``timezone`` dans les paramètres."""
 
 
 def no_delete(reference: str) -> Callable[[object], object]:
@@ -89,8 +90,6 @@ def check_timezone(name: str) -> None:
 
 # --- Blocs facultatifs (loom.word, loom.pdf) -----------------------------------------
 
-# Chacun coûte des tokens à chaque appel du modèle : il n'est dans le schéma et la
-# description que si la config de l'outil le nomme dans ``blocks``.
 type OptionalBlock = Literal[
     "chart",
     "image",
@@ -102,6 +101,9 @@ type OptionalBlock = Literal[
     "invoice_totals",
     "attendance",
 ]
+"""Chacun coûte des tokens à chaque appel du modèle : il n'est dans le schéma
+et la description que si la config de l'outil le nomme dans ``blocks``.
+"""
 OPTIONAL_BLOCKS: Final[tuple[OptionalBlock, ...]] = (
     "chart",
     "image",
@@ -113,12 +115,13 @@ OPTIONAL_BLOCKS: Final[tuple[OptionalBlock, ...]] = (
     "invoice_totals",
     "attendance",
 )
-# Les clés d'avant ``blocks`` (2.0.x), refusées avec la forme qui les remplace.
+"""Blocs facultatifs, dans l'ordre où on les dit."""
 OLD_KEYS: Final[Mapping[str, str]] = {
     "charts": "blocks: [chart]",
     "images": "blocks: [image]",
     "extra_blocks": "blocks: [signature, toc, checkboxes]",
 }
+"""Les clés d'avant ``blocks`` (2.0.x), refusées avec la forme qui les remplace."""
 
 
 def _unique_blocks(blocks: tuple[OptionalBlock, ...]) -> tuple[OptionalBlock, ...]:
@@ -129,6 +132,7 @@ def _unique_blocks(blocks: tuple[OptionalBlock, ...]) -> tuple[OptionalBlock, ..
 
 
 type Blocks = Annotated[tuple[OptionalBlock, ...], AfterValidator(_unique_blocks)]
+"""Liste ``blocks`` des paramètres : des blocs facultatifs, sans doublon."""
 
 
 def _keys(value: object) -> set[object]:
@@ -137,8 +141,11 @@ def _keys(value: object) -> set[object]:
 
 
 def no_old_keys(value: object) -> object:
-    """Avant la validation : ``charts``, ``images`` et ``extra_blocks`` (2.0.x) refusés,
-    avec la forme qui les remplace, plutôt qu'un champ « extra » sans explication."""
+    """Avant la validation.
+
+    ``charts``, ``images`` et ``extra_blocks`` (2.0.x) refusés, avec la forme qui les
+    remplace, plutôt qu'un champ « extra » sans explication.
+    """
     keys = _keys(value)
     found = [f"{key} → {OLD_KEYS[key]}" for key in OLD_KEYS if key in keys]
     if found:
@@ -156,13 +163,19 @@ class TemplateRef(BaseModel):
     ``skill_file`` dans ``skill`` ; ``file`` n'est alors plus gardé. Le style que nomme le
     modèle (``style:`` dans son fichier) est lu en même temps et rangé dans ``style``. En
     config, le chemin seul : ``note: templates/note.yaml``.
+
+    Attributes:
+        file: Fichier YAML du modèle, relatif à ``resources_dir`` ; plus gardé
+            une fois lu.
+        text: Texte du modèle, rangé par le chargeur de config.
+        style: Le style du modèle, lu par le chargeur de config (``loom.word``,
+            ``loom.pdf``).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     file: Path | None = None
     text: str | None = None
-    # Le style du modèle, lu par le chargeur de config (``loom.word``).
     style: StyleField = None
 
     @model_validator(mode="before")
@@ -219,8 +232,11 @@ def read_templates(templates: Mapping[str, TemplateRef], reference: str) -> dict
 
 
 def check_section_styles(template: Template, style: Style, where: str) -> None:
-    """Les styles que choisissent les sections (``styles``) : connus du style du modèle, et
-    partis de l'élément qu'ils mettent en forme ; ``ValueError`` qui dit lequel."""
+    """Les styles que choisissent les sections (``styles``).
+
+    Connus du style du modèle, et partis de l'élément qu'ils mettent en forme ;
+    ``ValueError`` qui dit lequel.
+    """
     for section in template.sections:
         for element, name in section.spec.styles.items():
             fault = style.element_fault(element, name)
@@ -229,3 +245,4 @@ def check_section_styles(template: Template, style: Style, where: str) -> None:
 
 
 type Templates = Annotated[dict[str, TemplateRef], BeforeValidator(_short_form), AfterValidator(_checked_templates)]
+"""Table ``templates`` des paramètres : nom → modèle de document ; la forme courte ``nom: fichier.yaml`` est admise."""

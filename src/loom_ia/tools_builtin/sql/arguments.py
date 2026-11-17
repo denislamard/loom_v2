@@ -9,15 +9,21 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, m
 from loom_ia.core.ports import ToolError
 
 NAME: Final = "sql"
+"""Le nom de l'outil."""
 MAX_STATEMENTS: Final = 20
+"""Instructions au plus par appel ``execute``."""
 MAX_SQL_CHARS: Final = 20_000
+"""Caractères au plus par instruction SQL."""
 MAX_PARAMS: Final = 100
+"""Paramètres au plus par instruction."""
 
 type Action = Literal["schema", "query", "execute"]
+"""Ce que fait un appel : lire le schéma, lancer un SELECT, ou exécuter des instructions qui modifient."""
 
-# Une valeur de paramètre : un scalaire JSON, ou une liste de scalaires (tableau Postgres).
 type Scalar = str | int | float | bool | None
+"""Une valeur de paramètre : un scalaire JSON, ou une liste de scalaires (tableau Postgres)."""
 type ParamValue = Scalar | list[Scalar] | dict[str, JsonValue]
+"""La valeur d'un paramètre ``$n`` : un scalaire, une liste de scalaires ou un objet JSON."""
 
 
 class Statement(BaseModel):
@@ -65,6 +71,7 @@ class SqlArguments(BaseModel):
 
     @model_validator(mode="after")
     def _fields_of_the_action(self) -> SqlArguments:
+        """Refuse les champs qui ne servent pas à l'action, et exige ceux dont elle a besoin."""
         said = {
             "sql": self.sql is not None,
             "params": self.params is not None,
@@ -93,6 +100,11 @@ class SqlArguments(BaseModel):
 
 
 def parse(arguments: Mapping[str, JsonValue]) -> SqlArguments:
+    """Les arguments validés.
+
+    Raises:
+        ToolError: « Arguments invalides », une ligne par erreur.
+    """
     try:
         return SqlArguments.model_validate(dict(arguments))
     except ValidationError as exc:
@@ -104,6 +116,7 @@ def parse(arguments: Mapping[str, JsonValue]) -> SqlArguments:
 
 
 def input_schema() -> dict[str, JsonValue]:
+    """Le schéma JSON des arguments, sans les titres."""
     schema = SqlArguments.model_json_schema()
     _untitled(schema)
     return cast(dict[str, JsonValue], schema)

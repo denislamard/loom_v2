@@ -21,17 +21,17 @@ from loom_ia.tools_builtin._style_params import default_style
 from loom_ia.tools_builtin._values import ColumnType
 
 _HOUSE: Final = default_style().chart
-# La palette de default.yaml : les accents du thème Office 2023, puis les mêmes plus sombres.
 PALETTE: Final = tuple(_HOUSE.series if _HOUSE is not None and _HOUSE.series else ())
+"""La palette de default.yaml : les accents du thème Office 2023, puis les mêmes plus sombres."""
 GRID: Final = _HOUSE.grid_color if _HOUSE is not None and _HOUSE.grid_color else ""
+"""Couleur du quadrillage des graphiques, tirée de default.yaml ; vide sans réglage."""
 TEXT: Final = _HOUSE.text_color if _HOUSE is not None and _HOUSE.text_color else ""
-# Au-delà, des étiquettes de valeur sur chaque barre se chevauchent.
+"""Couleur des textes des graphiques, tirée de default.yaml ; vide sans réglage."""
 LABELLED_BARS: Final = 12
-# La place laissée au bout de la plus grande barre pour son étiquette.
+"""Au-delà, des étiquettes de valeur sur chaque barre se chevauchent."""
 LABEL_ROOM: Final = {"bar": 1.1, "horizontal_bar": 1.22}
+"""La place laissée au bout de la plus grande barre pour son étiquette."""
 
-# Formats des nombres de Word et d'Excel, en syntaxe neutre : le logiciel applique
-# les séparateurs de la langue du lecteur.
 LABEL_FORMATS: Final[dict[ColumnType, str]] = {
     "integer": "#,##0",
     "decimal": "#,##0.00",
@@ -39,6 +39,9 @@ LABEL_FORMATS: Final[dict[ColumnType, str]] = {
     "amount_keur": '#,##0 "k€"',
     "percent": "0.0%",
 }
+"""Formats des nombres de Word et d'Excel, en syntaxe neutre : le logiciel
+applique les séparateurs de la langue du lecteur.
+"""
 AXIS_FORMATS: Final[dict[ColumnType, str]] = {
     "integer": "#,##0",
     "decimal": "#,##0.##",
@@ -46,6 +49,7 @@ AXIS_FORMATS: Final[dict[ColumnType, str]] = {
     "amount_keur": '#,##0 "k€"',
     "percent": "0%",
 }
+"""Formats des nombres d'un axe, par type de colonne : moins de décimales que les étiquettes."""
 
 
 def axis_end(values: Sequence[float], room: float) -> float | None:

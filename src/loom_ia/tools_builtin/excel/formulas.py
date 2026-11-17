@@ -19,7 +19,6 @@ from loom_ia.tools_builtin.excel.arguments import (
 
 # --- Formules --------------------------------------------------------------------------
 
-# Fonctions permises : elles s'évaluent dans Excel 2010+ et dans LibreOffice.
 ALLOWED_FUNCTIONS: Final = frozenset(
     {
         "SUM", "SUMIF", "SUMIFS", "AVERAGE", "AVERAGEIF", "AVERAGEIFS", "COUNT", "COUNTA",
@@ -29,11 +28,12 @@ ALLOWED_FUNCTIONS: Final = frozenset(
         "LEN", "TRIM", "UPPER", "LOWER", "CONCATENATE", "VLOOKUP",
     }
 )  # fmt: skip
-# Postérieures à Excel 2007 : le fichier les nomme avec le préfixe _xlfn., ajouté ici.
+"""Fonctions permises : elles s'évaluent dans Excel 2010+ et dans LibreOffice."""
 PREFIXED_FUNCTIONS: Final = frozenset({"TEXTJOIN", "CONCAT", "IFS", "SWITCH", "MAXIFS", "MINIFS"})
-# Fonctions à débordement : openpyxl n'écrit pas leurs métadonnées.
+"""Postérieures à Excel 2007 : le fichier les nomme avec le préfixe _xlfn., ajouté ici."""
 SPILL_FUNCTIONS: Final = frozenset({"XLOOKUP", "XMATCH", "FILTER", "SORT", "SORTBY", "UNIQUE",
                                     "SEQUENCE", "RANDARRAY"})  # fmt: skip
+"""Fonctions à débordement : openpyxl n'écrit pas leurs métadonnées."""
 FRENCH_FUNCTIONS: Final[Mapping[str, str]] = {
     "SOMME": "SUM", "SOMME.SI": "SUMIF", "SOMME.SI.ENS": "SUMIFS", "MOYENNE": "AVERAGE",
     "NB": "COUNT", "NBVAL": "COUNTA", "NB.SI": "COUNTIF", "NB.SI.ENS": "COUNTIFS",
@@ -44,6 +44,7 @@ FRENCH_FUNCTIONS: Final[Mapping[str, str]] = {
     "CONCATENER": "CONCATENATE", "JOINDRE.TEXTE": "TEXTJOIN", "MAX.SI.ENS": "MAXIFS",
     "MIN.SI.ENS": "MINIFS",
 }  # fmt: skip
+"""Fonctions d'Excel en français → leur nom anglais, celui que le fichier garde."""
 
 AGGREGATES: Final[Mapping[Aggregate, str]] = {
     "sum": "SUM",
@@ -52,6 +53,7 @@ AGGREGATES: Final[Mapping[Aggregate, str]] = {
     "min": "MIN",
     "max": "MAX",
 }
+"""Agrégat d'une colonne → fonction d'Excel."""
 _STRING: Final = re.compile(r'"(?:[^"]|"")*"')
 _QUOTED_SHEET: Final = re.compile(r"'((?:[^']|'')+)'!")
 _BARE_SHEET: Final = re.compile(r"(?<![\w.'])([^\W\d][\w.]*)!", re.UNICODE)
@@ -145,6 +147,8 @@ def check_formula(formula: str, where: str, sheets: Mapping[str, str], problems:
 
 
 def _prefixed(formula: str) -> str:
+    """Préfixe de ``_xlfn.`` les fonctions récentes d'Excel qui l'exigent, hors des chaînes de la formule."""
+
     def add(match: re.Match[str]) -> str:
         name = match.group(1)
         if name.upper() in PREFIXED_FUNCTIONS:

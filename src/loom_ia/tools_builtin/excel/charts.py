@@ -62,43 +62,60 @@ from loom_ia.tools_builtin.excel.arguments import (
     SheetSpec,
 )
 
-# Une courbe se lit encore avec beaucoup de points (une année au jour le jour) ;
-# des barres ou des secteurs, non.
 MAX_POINTS: Final = 1_000
+"""Une courbe se lit encore avec beaucoup de points (une année au jour le jour)
+; des barres ou des secteurs, non.
+"""
 MAX_CHARTS: Final = 10
+"""Graphiques au plus par onglet."""
 KIND_SAID: Final[dict[str, str]] = {
     "bar": "des barres",
     "horizontal_bar": "des barres",
     "line": "une courbe",
     "pie": "des secteurs",
 }
-# Des libellés que l'axe garde en nombres (et dont il garde le format) ; les autres sont du texte.
+"""Ce que trace chaque type de graphique, pour les messages."""
 NUMBERED: Final[frozenset[ColumnType]] = NUMERIC | frozenset[ColumnType]({"date", "datetime"})
-# Taille d'un graphique, en centimètres ; une ligne d'Excel fait 0,53 cm (15 points).
+"""Des libellés que l'axe garde en nombres (et dont il garde le format) ; les
+autres sont du texte.
+"""
 WIDTH: Final = 16
+"""Taille d'un graphique, en centimètres ; une ligne d'Excel fait 0,53 cm (15 points)."""
 HEIGHT: Final = 9
+"""Hauteur d'un graphique, en centimètres (voir ``WIDTH``)."""
 ROW_CM: Final = 0.53
-# Les graphiques que l'outil dessine ; ceux qui ont des axes.
+"""Hauteur d'une ligne d'Excel, en centimètres."""
 type Drawn = BarChart | LineChart | PieChart
+"""Les graphiques que l'outil dessine ; ceux qui ont des axes."""
 type Axed = BarChart | LineChart
-# Des lignes qui ne sont pas des données : elles ne font pas partie du graphique.
+"""Les graphiques qui ont des axes."""
 NOT_DATA: Final = frozenset({"total", "note"})
+"""Des lignes qui ne sont pas des données : elles ne font pas partie du graphique."""
 
 
 @dataclass(frozen=True, slots=True)
 class Plotted:
-    """Un graphique validé : ses colonnes (à partir de 1) et ce que l'on sait de ses valeurs."""
+    """Un graphique validé : ses colonnes (à partir de 1) et ce que l'on sait de ses valeurs.
+
+    Attributes:
+        spec: Le graphique tel que le modèle l'a décrit.
+        category: Colonne des libellés, à partir de 1.
+        values: Colonnes des valeurs, à partir de 1.
+        value_type: Type des valeurs.
+        category_type: Type des libellés.
+        last: Les lignes de données tracées : de la ligne 2 à ``last``.
+        known: Les valeurs écrites en clair (sans formule) : bornes de l'axe,
+            contrôle des secteurs.
+        complete: Toutes les valeurs sont connues (aucune formule) ?
+    """
 
     spec: ChartSpec
     category: int
     values: tuple[int, ...]
     value_type: ColumnType
     category_type: ColumnType
-    # Les lignes de données tracées : de la ligne 2 à ``last``.
     last: int
-    # Les valeurs écrites en clair (sans formule) : bornes de l'axe, contrôle des secteurs.
     known: tuple[float, ...]
-    # Toutes les valeurs sont connues (aucune formule) ?
     complete: bool
 
 
@@ -143,6 +160,7 @@ def _check_one(
     where: str,
     problems: Problems,
 ) -> Plotted | None:
+    """Un graphique validé : colonnes connues, libellés et valeurs du bon type, lignes de données ; ``None``, avec une erreur, sinon."""
     wanted = [spec.categories, *spec.values]
     unknown = [name for name in wanted if name.strip() not in headers]
     if unknown:
@@ -220,6 +238,7 @@ def draw(ws: Worksheet, sheet: SheetSpec, plotted: Sequence[Plotted]) -> None:
 
 
 def _chart(ws: Worksheet, found: Plotted) -> Drawn:
+    """Le graphique openpyxl d'un graphique validé : type, données liées aux cellules de l'onglet, couleurs et axes."""
     spec = found.spec
     labels = Reference(ws, min_col=found.category, min_row=2, max_row=found.last)
     chart: Drawn
@@ -325,6 +344,7 @@ def _lines(chart: LineChart) -> None:
 
 
 def _pie(chart: PieChart, count: int) -> None:
+    """Colore chaque part d'un camembert, la palette reprise en boucle, un trait blanc entre elles."""
     series = _series(chart)[0]
     series.dPt = [
         DataPoint(
@@ -345,6 +365,7 @@ def _pie(chart: PieChart, count: int) -> None:
 
 
 def _axes(chart: Axed, found: Plotted) -> None:
+    """Règle les axes d'un graphique à barres ou d'une courbe : visibles, format des nombres, grille, sens des barres horizontales."""
     horizontal = found.spec.kind == "horizontal_bar"
     categories, values = chart.x_axis, chart.y_axis
     # openpyxl 3.1 masque les axes par défaut (``delete``) : les montrer.

@@ -33,62 +33,88 @@ from loom_ia.core.state_extract import ModelKey
 
 @dataclass(frozen=True, slots=True)
 class Builtin:
-    """Un outil fourni : où le trouver, et ses paramètres s'il en a."""
+    """Un outil fourni : où le trouver, et ses paramètres s'il en a.
 
-    # ``module:attr`` : l'outil lui-même ; avec ``params``, sa fabrique (``BuiltinFactory``).
+    Attributes:
+        target: ``module:attr`` : l'outil lui-même ; avec ``params``, sa
+            fabrique (``BuiltinFactory``).
+        params: ``module:Modèle`` : modèle Pydantic des paramètres, dans un
+            module léger.
+        refused: Réglages communs que l'outil refuse sur sa référence : ses
+            paramètres les expriment déjà, et deux endroits pour une même
+            décision finiraient par se contredire.
+        refused_because: Pourquoi ils sont refusés, pour le message.
+        own_description: Vrai si l'outil tire sa description de ses paramètres
+            (dossiers, droits, tables) : ``description`` l'effacerait, et le
+            modèle ne saurait plus où agir. Du texte s'ajoute avec ``skill``.
+        extra: L'extra de loom-ia qui apporte ses dépendances, s'il en faut un
+            : le dire quand le montage échoue faute d'elles.
+    """
+
     target: str
-    # ``module:Modèle`` : modèle Pydantic des paramètres, dans un module léger.
     params: str | None = None
-    # Réglages communs que l'outil refuse sur sa référence, et pourquoi : ses
-    # paramètres les expriment déjà, et deux endroits pour une même décision
-    # finiraient par se contredire.
     refused: tuple[str, ...] = ()
     refused_because: str = ""
-    # Vrai si l'outil tire sa description de ses paramètres (dossiers, droits,
-    # tables) : ``description`` l'effacerait, et le modèle ne saurait plus où
-    # agir. Du texte s'ajoute avec ``skill``.
     own_description: bool = False
-    # L'extra de loom-ia qui apporte ses dépendances, s'il en faut un : le dire
-    # quand le montage échoue faute d'elles.
     extra: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Protected:
-    """Un chemin de loom qu'un outil fourni ne doit jamais exposer au modèle."""
+    """Un chemin de loom qu'un outil fourni ne doit jamais exposer au modèle.
+
+    Attributes:
+        path: Le chemin protégé.
+        what: Ce que c'est, pour le message : « la config », « le journal »…
+        subtree: Vrai pour un dossier dont aucun sous-dossier ne peut être
+            exposé non plus ; faux pour un fichier, ou pour le dossier de la
+            config, dont on peut exposer un sous-dossier qui ne contient rien
+            de protégé.
+    """
 
     path: Path
-    # Ce que c'est, pour le message : « la config », « le journal »…
     what: str
-    # Vrai pour un dossier dont aucun sous-dossier ne peut être exposé non plus ;
-    # faux pour un fichier, ou pour le dossier de la config, dont on peut
-    # exposer un sous-dossier qui ne contient rien de protégé.
     subtree: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BuiltinContext:
-    """Ce que reçoit la fabrique d'un outil fourni, avec ses paramètres."""
+    """Ce que reçoit la fabrique d'un outil fourni, avec ses paramètres.
 
-    # Dossier du fichier de config : les chemins relatifs des paramètres s'y rapportent.
+    Attributes:
+        base_dir: Dossier du fichier de config : les chemins relatifs des
+            paramètres s'y rapportent.
+        protected: Config, fichier d'environnement, prompts, stockage… du
+            client monté : ce que l'outil ne doit jamais exposer.
+        secrets: Table des secrets du client pour qui l'agent est monté, en
+            lecture seule — celle que reçoivent les fabriques de
+            ``tool_sources`` ; ``None`` : l'environnement.
+        protected_dsns: Variables des DSN du stockage de loom (journal,
+            idempotence) : une base qu'un outil fourni expose ne doit pas être
+            celle-là.
+        state_keys: Clés du state que le modèle tient à jour (``writers:
+            [model]``), pour ``loom.state``.
+        state_max_value_bytes: Taille permise d'une valeur du state
+            (``sessions.state``).
+    """
+
     base_dir: Path | None = None
-    # Config, fichier d'environnement, prompts, stockage… du client monté.
     protected: tuple[Protected, ...] = ()
-    # Table des secrets du client pour qui l'agent est monté, en lecture seule —
-    # celle que reçoivent les fabriques de ``tool_sources`` ; ``None`` : l'environnement.
     secrets: Mapping[str, str] | None = None
-    # Variables des DSN du stockage de loom (journal, idempotence) : une base
-    # qu'un outil fourni expose ne doit pas être celle-là.
     protected_dsns: tuple[str, ...] = ()
-    # Clés du state que le modèle tient à jour (``writers: [model]``), pour
-    # ``loom.state`` ; et la taille permise d'une valeur (``sessions.state``).
     state_keys: tuple[ModelKey, ...] = ()
     state_max_value_bytes: int = 1024
 
 
 @dataclass(frozen=True, slots=True)
 class Grant:
-    """Un droit accordé, pour ``loom validate`` : s'il attend une approbation, s'il détruit."""
+    """Un droit accordé, pour ``loom validate`` : s'il attend une approbation, s'il détruit.
+
+    Attributes:
+        right: Le droit.
+        approval: Il attend une approbation.
+        destructive: Il détruit ce qui existe.
+    """
 
     right: str
     approval: bool
@@ -106,18 +132,25 @@ class Place:
 
     Un dossier a ses droits sous la cible ``""`` ; une base, table par table.
     ``path`` est montré relatif au dossier de la config quand il s'y trouve.
+
+    Attributes:
+        name: Nom du dossier ou de la base, tel que le modèle le voit.
+        kind: « sqlite », « postgres » ; vide pour un dossier.
+        path: Chemin du dossier ou du fichier.
+        notes: Dit après l'emplacement, sur la même ligne (variable du DSN,
+            schéma).
+        grants: Droits accordés, par cible : ``""`` pour un dossier, chaque
+            table pour une base.
+        rights: L'ordre où dire les droits (les colonnes, pour une base).
+        limits: Bornes, une ligne chacune (lignes lues au plus, délai…).
     """
 
     name: str
-    # « sqlite », « postgres » ; vide pour un dossier.
     kind: str = ""
     path: Path | None = None
-    # Dit après l'emplacement, sur la même ligne (variable du DSN, schéma).
     notes: tuple[str, ...] = ()
     grants: tuple[tuple[str, tuple[Grant, ...]], ...] = ()
-    # L'ordre où dire les droits (les colonnes, pour une base).
     rights: tuple[str, ...] = ()
-    # Une ligne chacune (lignes lues au plus, délai…).
     limits: tuple[str, ...] = ()
 
 
@@ -127,6 +160,11 @@ class Settings:
 
     ``rows`` : un réglage par ligne, alignés (les clés du state) ; ``options`` :
     des réglages courts, dits sur une ligne (fuseau, recalcul…).
+
+    Attributes:
+        places: Dossiers et bases exposés.
+        rows: Réglages dits un par ligne, alignés (les clés du state).
+        options: Réglages courts, dits sur une ligne (fuseau, recalcul…).
     """
 
     places: tuple[Place, ...] = ()
@@ -138,7 +176,9 @@ class Settings:
 class ShowsSettings(Protocol):
     """Outil fourni qui dit ses réglages à ``loom validate``."""
 
-    def settings(self) -> Settings: ...
+    def settings(self) -> Settings:
+        """Les réglages à montrer."""
+        ...
 
 
 @runtime_checkable
@@ -150,16 +190,19 @@ class NamesSecrets(Protocol):
     ``loom.yaml`` nomme.
     """
 
-    def secret_names(self) -> tuple[str, ...]: ...
+    def secret_names(self) -> tuple[str, ...]:
+        """Les noms des variables que les paramètres lisent."""
+        ...
 
 
 class BuiltinFactory(Protocol):
     """Fabrique d'un outil fourni à paramètres ; ``ValueError`` dit ce qui ne va pas."""
 
-    def __call__(self, params: BaseModel, context: BuiltinContext, /) -> Tool: ...
+    def __call__(self, params: BaseModel, context: BuiltinContext, /) -> Tool:
+        """Fabrique l'outil, avec ses paramètres validés et le contexte du montage."""
+        ...
 
 
-# Référence ``loom.<outil>`` → ``module:attr`` de l'outil, ou ``Builtin``.
 BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
     "loom.current_datetime": "loom_ia.tools_builtin.current_datetime:current_datetime",
     "loom.fetch_page": "loom_ia.tools_builtin.fetch_page:fetch_page",
@@ -227,6 +270,7 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         ),
     ),
 }
+"""Référence ``loom.<outil>`` → ``module:attr`` de l'outil, ou ``Builtin``."""
 
 
 def is_builtin(reference: str) -> bool:

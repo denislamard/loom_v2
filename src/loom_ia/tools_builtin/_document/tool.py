@@ -78,7 +78,6 @@ from loom_ia.tools_builtin._templates import NONE as NO_TEMPLATE
 from loom_ia.tools_builtin._templates import Template
 from loom_ia.tools_builtin.local_files_params import Right
 
-# Le mode d'emploi de l'écriture, commun aux formats ; il ne part qu'à qui peut écrire.
 WRITING_HELP: Final = (
     "Blocs ('blocks', dans l'ordre ; 'type' en tête de chacun) : heading (text, level 1 à 3), "
     "paragraph (text), list (items : textes, ou {text, items} pour une sous-liste, trois "
@@ -101,8 +100,8 @@ WRITING_HELP: Final = (
     "si totals. Ne rien calculer soi-même.",
     "Décrire ce que SONT les blocs, jamais leur apparence : police, tailles, couleurs, marges, sauts de page et numéros de page sont décidés par le style.",
 )
+"""Le mode d'emploi de l'écriture, commun aux formats ; il ne part qu'à qui peut écrire."""
 
-# Le mode d'emploi de chaque bloc facultatif, seulement s'il est déclaré (``blocks``).
 OPTIONAL_HELP: Final[Mapping[str, str]] = {
     "chart": (
         "Graphique ('type': 'chart') : kind (bar, horizontal_bar, line, pie), title, "
@@ -137,6 +136,7 @@ OPTIONAL_HELP: Final[Mapping[str, str]] = {
     ),
     "attendance": ("Feuille d'émargement ('type': 'attendance') : participants (les noms, 100 au plus), sessions (une colonne à signer chacune, 10 au plus)."),
 }
+"""Le mode d'emploi de chaque bloc facultatif, seulement s'il est déclaré (``blocks``)."""
 
 
 # --- Le style des documents ----------------------------------------------------------
@@ -144,12 +144,16 @@ OPTIONAL_HELP: Final[Mapping[str, str]] = {
 
 @dataclass(frozen=True, slots=True)
 class Styles:
-    """Les styles résolus d'un outil : la charte, et charte + style du modèle, par modèle ;
-    le style maison sans charte (``default`` vide)."""
+    """Les styles résolus d'un outil : la charte, et charte + style du modèle, par modèle ; le style maison sans charte (``default`` vide).
+
+    Attributes:
+        default: La charte : le style des documents libres.
+        by_template: Charte et style du modèle, par modèle.
+        said: Ce que ``loom validate`` en dit.
+    """
 
     default: Style | None = None
     by_template: Mapping[str, Style] = field(default_factory=dict[str, Style])
-    # Ce que ``loom validate`` en dit.
     said: tuple[tuple[str, str], ...] = ()
 
     def of(self, template: str | None) -> Style:
@@ -162,16 +166,21 @@ class Styles:
 
 
 HOUSE_STYLES: Final = Styles()
+"""Les styles de la maison : default.yaml, sans modèle."""
 
 
 class StyledParams(Protocol):
     """Les paramètres d'un outil de document : sa charte et ses modèles."""
 
     @property
-    def style(self) -> StyleRef | None: ...
+    def style(self) -> StyleRef | None:
+        """La charte de l'outil, si elle est déclarée."""
+        ...
 
     @property
-    def templates(self) -> Mapping[str, TemplateRef]: ...
+    def templates(self) -> Mapping[str, TemplateRef]:
+        """Les modèles de document, par nom."""
+        ...
 
 
 def read_styles(
@@ -275,13 +284,19 @@ def _spec(ref: StyleRef | None, where: str) -> StyleFile | None:
 
 
 class DocumentTool(ABC):
-    """Un outil de document monté avec ses dossiers, son fuseau, ses modèles et ses
-    styles."""
+    """Un outil de document monté avec ses dossiers, son fuseau, ses modèles et ses styles.
+
+    Attributes:
+        NAME: Nom de l'outil.
+        CALL: Les arguments du format, sans graphique ni image : ``variant``
+            les élargit.
+        SUFFIX: Le suffixe écrit (« .docx »).
+        LABEL: Le nom du fichier pour le modèle (« document Word »).
+        MAX_SOURCE: Taille au plus d'un fichier lu, en octets.
+    """
 
     NAME: ClassVar[str]
-    # Les arguments du format, sans graphique ni image : ``variant`` les élargit.
     CALL: ClassVar[type[DocumentCall]]
-    # Le suffixe écrit (« .docx ») et le nom du fichier pour le modèle (« document Word »).
     SUFFIX: ClassVar[str]
     LABEL: ClassVar[str]
     MAX_SOURCE: ClassVar[int] = MAX_SOURCE_BYTES
@@ -295,6 +310,15 @@ class DocumentTool(ABC):
         templates: Mapping[str, Template] | None = None,
         styles: Styles = HOUSE_STYLES,
     ) -> None:
+        """Prépare l'outil : dossiers, fuseau, blocs facultatifs, modèles et styles ; ses arguments et sa description en découlent.
+
+        Args:
+            space: Les dossiers permis.
+            zone: Le fuseau des dates.
+            blocks: Les blocs facultatifs déclarés.
+            templates: Les modèles de document, par nom.
+            styles: La charte, et les styles des modèles.
+        """
         self._space = space
         self._zone = zone
         self._styles = styles
@@ -330,6 +354,7 @@ class DocumentTool(ABC):
 
     @property
     def spec(self) -> ToolSpec:
+        """La définition de l'outil."""
         return self._spec
 
     def settings(self) -> Settings:
@@ -389,6 +414,11 @@ class DocumentTool(ABC):
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Mène l'action : lire un modèle (``template``), lire un fichier (``read``), ou écrire un document (``write``, hors de la boucle asyncio).
+
+        Raises:
+            ToolError: Arguments, chemin, droit ou document refusés.
+        """
         request = parse(self._call, arguments)
         if isinstance(request, TemplateArguments):
             return to_output(self._template(request.name))
@@ -426,6 +456,11 @@ class DocumentTool(ABC):
     # --- Exécution ----------------------------------------------------------------------
 
     def _write(self, request: WriteArguments, located: Located) -> dict[str, JsonValue]:
+        """Écrit le document.
+
+        Validé, rendu, borné à ``MAX_OUTPUT_BYTES``, puis écrit dans son dossier ; rend
+        le chemin, ce que le document contient et les avertissements.
+        """
         followed = self._templates[request.template] if request.template is not None and request.template != NO_TEMPLATE else None
         prepared = prepare(
             request,
@@ -455,9 +490,11 @@ class DocumentTool(ABC):
         }
 
     def _template(self, name: str) -> dict[str, JsonValue]:
-        """Un modèle déclaré, tel que le modèle de langage le remplit : sa description, ses
-        consignes, et chaque section qu'il écrit (son nom, ses consignes) ; jamais le texte
-        fixe ni la mise en page."""
+        """Un modèle déclaré, tel que le modèle de langage le remplit.
+
+        Sa description, ses consignes, et chaque section qu'il écrit (son nom, ses
+        consignes) ; jamais le texte fixe ni la mise en page.
+        """
         template = self._templates[name]
         sections: list[JsonValue] = []
         for section in template.sections:
@@ -522,8 +559,7 @@ class DocumentTool(ABC):
     # --- Les styles ---------------------------------------------------------------------
 
     def _proposed_styles(self) -> Mapping[str, Iterable[str]]:
-        """Les styles proposés au modèle de langage, par type de bloc : la charte et tous les
-        modèles (le schéma) ; aucun sans style."""
+        """Les styles proposés au modèle de langage, par type de bloc : la charte et tous les modèles (le schéma) ; aucun sans style."""
         found: dict[str, list[str]] = {}
         styles = [self._styles.default, *self._styles.by_template.values()]
         for style in styles:
@@ -612,6 +648,7 @@ class DocumentTool(ABC):
         ]
 
     def _description(self) -> str:
+        """La description de l'outil : ce qu'il écrit et lit, les dossiers et leurs droits, les blocs, les modèles et les styles proposés."""
         space = self._space
         writes = [folder.name for folder in space.folders if "write" in folder.rights]
         reads = [folder.name for folder in space.folders if "read" in folder.rights]

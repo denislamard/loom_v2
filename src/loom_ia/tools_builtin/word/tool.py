@@ -25,6 +25,7 @@ from loom_ia.tools_builtin.word import reader, writer
 from loom_ia.tools_builtin.word_params import REFERENCE, WordParams
 
 NAME: Final = "word"
+"""Nom de l'outil."""
 
 
 class WordCall(DocumentCall):
@@ -105,9 +106,11 @@ class WordTool(DocumentTool):
 
 
 def _warn_unwritten(found: dict[str, JsonValue], blocks: tuple[str, ...]) -> None:
-    """Des blocs lus que cet outil n'écrit pas (un graphique, une signature, un sommaire, une
-    liste à cocher, des champs, du code, un récapitulatif de TVA, un émargement) : le dire
-    avant une réécriture, que le schéma refuserait sans dire pourquoi."""
+    """Dit les blocs lus que cet outil n'écrit pas, avant une réécriture que le schéma refuserait sans dire pourquoi.
+
+    Un graphique, une signature, un sommaire, une liste à cocher, des champs, du code,
+    un récapitulatif de TVA, un émargement.
+    """
     read = found.get("blocks")
     if not isinstance(read, list):
         return

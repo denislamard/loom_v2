@@ -36,8 +36,8 @@ def _limit(memory: int, seconds: int) -> None:
         resource.setrlimit(kind, (wanted, hard))
 
 
-# Ce qu'aucun texte n'affiche : des glyphes sans correspondance (puces…), du bruit.
 _CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+"""Ce qu'aucun texte n'affiche : des glyphes sans correspondance (puces…), du bruit."""
 
 
 def _clean(text: str) -> str:
@@ -68,6 +68,7 @@ def _fields(reader: Any, limit: int) -> dict[str, str] | None:
 
 
 def read(data: bytes, first: int, last: int | None, budget: int) -> dict[str, Any]:
+    """Lit le texte des pages ``first`` à ``last`` d'un PDF, dans la limite de ``budget`` caractères ; un PDF protégé ou illisible donne une erreur."""
     from pypdf import PdfReader
     from pypdf.errors import FileNotDecryptedError, LimitReachedError, PdfReadError
 
@@ -123,6 +124,7 @@ def read(data: bytes, first: int, last: int | None, budget: int) -> dict[str, An
 
 
 def main() -> int:
+    """Point d'entrée du process de lecture : bornes de mémoire et de temps posées, PDF lu sur l'entrée standard, résultat en JSON sur la sortie."""
     request = json.loads(sys.argv[1])
     _limit(int(request["memory"]), int(request["seconds"]))
     data = sys.stdin.buffer.read()

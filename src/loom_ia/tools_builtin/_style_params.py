@@ -52,24 +52,31 @@ from pydantic import (
 )
 
 DEFAULT_FILE: Final = Path(__file__).with_name("styles") / "default.yaml"
+"""Le style de la maison, ``styles/default.yaml`` : celui d'un outil sans ``style``."""
 MAX_STYLE_CHARS: Final = 20_000
+"""Taille au plus d'un fichier de style, en caractères."""
 MAX_LOGO_BYTES: Final = 2_000_000
-# Les polices embarquées dans le PDF : leurs fichiers, et leurs familles par fichier de style.
+"""Taille au plus d'un logo, en octets."""
 MAX_FONT_BYTES: Final = 2_000_000
+"""Les polices embarquées dans le PDF : leurs fichiers, et leurs familles par fichier de style."""
 MAX_FONT_FAMILIES: Final = 4
+"""Familles de polices au plus par fichier de style."""
 MAX_BAND_TEXT: Final = 200
+"""Longueur au plus d'un texte d'en-tête ou de pied de page."""
 MAX_BAND_LINES: Final = 4
-# La table d'un en-tête ou d'un pied de page : ses colonnes, ses lignes, la largeur d'une
-# colonne ``auto`` au moins (en cm).
+"""Lignes de texte au plus dans une zone d'en-tête ou de pied de page."""
 MAX_BAND_COLUMNS: Final = 4
+"""La table d'un en-tête ou d'un pied de page : ses colonnes, ses lignes, la
+largeur d'une colonne ``auto`` au moins (en cm).
+"""
 MAX_BAND_ROWS: Final = 3
+"""Lignes au plus de la table d'un en-tête ou d'un pied de page."""
 MIN_AUTO_WIDTH: Final = 1.0
+"""Largeur au moins d'une colonne ``auto`` de cette table, en cm."""
 MAX_STYLES: Final = 80
+"""Styles nommés au plus dans un fichier de style."""
 MAX_LABEL: Final = 40
-# Les polices présentes sur presque tous les postes (Windows, macOS, LibreOffice les
-# remplace par des équivalentes métriques ; Aptos, celle de Word depuis Microsoft 365,
-# s'installe avec Office) : une autre s'affiche ailleurs dans une police de remplacement,
-# et ``loom validate`` le signale.
+"""Longueur au plus d'un libellé (``labels``)."""
 SAFE_FONTS: Final = frozenset(
     {
         "aptos",
@@ -86,8 +93,11 @@ SAFE_FONTS: Final = frozenset(
         "courier new",
     }
 )
-# Les polices standard du PDF, qui ne s'embarquent pas : celle qui rend une police du style
-# dont le style ne donne pas les fichiers (``fonts``), selon sa forme ; Helvetica sinon.
+"""Les polices présentes sur presque tous les postes (Windows, macOS,
+LibreOffice les remplace par des équivalentes métriques ; Aptos, celle de
+Word depuis Microsoft 365, s'installe avec Office) : une autre s'affiche
+ailleurs dans une police de remplacement, et ``loom validate`` le signale.
+"""
 PDF_FONTS: Final[Mapping[str, str]] = {
     **dict.fromkeys(
         (
@@ -105,29 +115,43 @@ PDF_FONTS: Final[Mapping[str, str]] = {
     **dict.fromkeys(("times new roman", "times", "cambria", "georgia", "garamond"), "Times-Roman"),
     **dict.fromkeys(("courier new", "courier"), "Courier"),
 }
+"""Les polices standard du PDF, qui ne s'embarquent pas : celle qui rend une
+police du style dont le style ne donne pas les fichiers (``fonts``), selon
+sa forme ; Helvetica sinon.
+"""
 PDF_FALLBACK: Final = "Helvetica"
-# Les champs d'un en-tête ou d'un pied de page.
+"""Police standard du PDF quand aucune autre ne convient."""
 PLACEHOLDERS: Final = frozenset({"page", "pages", "title"})
+"""Les champs d'un en-tête ou d'un pied de page."""
 _PLACEHOLDER: Final = re.compile(r"\{([^{}]*)\}")
 _HEX: Final = re.compile(r"^#?[0-9A-Fa-f]{6}$")
 _FONT: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 \-]{0,59}$")
 _NAME: Final = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _RULE: Final = re.compile(r"^(\d+(?:[.,]\d+)?)\s*pt\s+(\S+)$")
 NONE: Final = "none"
+"""Valeur qui retire une couleur, un fond ou un filet."""
 
 type Align = Literal["left", "center", "right", "justify"]
+"""Alignement d'un paragraphe."""
 type Position = Literal["left", "center", "right"]
-# Les filets d'un tableau : aucun, entre ses lignes, entre ses colonnes, les deux (grid).
+"""Place d'un élément dans la largeur : gauche, centre ou droite."""
 type Borders = Literal["none", "horizontal", "vertical", "grid"]
+"""Les filets d'un tableau : aucun, entre ses lignes, entre ses colonnes, les deux (grid)."""
 type VAlign = Literal["top", "center", "bottom"]
+"""Alignement vertical dans une cellule."""
 type TableWidth = Literal["full", "content"]
+"""Largeur d'un tableau : toute la page, ou celle de son contenu."""
 type Numbering = Literal["none", "decimal", "article"]
+"""Numérotation des titres : aucune, décimale (1, 1.1…) ou par articles."""
 type PageSize = Literal["A4", "A5", "Letter"]
+"""Format de page."""
 type Orientation = Literal["portrait", "landscape"]
+"""Orientation de la page."""
 type Language = Literal["fr", "en"]
+"""Langue des libellés produits par l'outil (« Tableau », « Figure »…)."""
 
-# Un centimètre en vingtièmes de point (twips).
 CM: Final = 567
+"""Un centimètre en vingtièmes de point (twips)."""
 
 
 def cm_twips(value: float) -> int:
@@ -140,8 +164,8 @@ PAGE_SIZES: Final[Mapping[str, tuple[int, int]]] = {
     "A5": (8391, 11906),
     "Letter": (12240, 15840),
 }
+"""Dimensions de chaque format de page, en twips (1/20 de point) : largeur, hauteur en portrait."""
 
-# Les styles prévus, et la base de chacun quand le fichier n'en donne pas.
 BASES: Final[Mapping[str, str | None]] = {
     "body": None,
     "document_title": "body",
@@ -177,14 +201,17 @@ BASES: Final[Mapping[str, str | None]] = {
     "fields": "body",
     "fields_label": "fields",
 }
+"""Les styles prévus, et la base de chacun quand le fichier n'en donne pas."""
 # --- Le registre des propriétés ------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class Property:
-    """Une propriété de style, telle que la décrit le registre : son nom ; les styles qui la
-    portent, avec ceux qui en partent (``None`` : tous, une propriété commune) ; sa valeur ;
-    l'unité d'un nombre ; ses bornes ; son rôle."""
+    """Une propriété de style, telle que la décrit le registre.
+
+    Son nom ; les styles qui la portent, avec ceux qui en partent (``None`` : tous, une
+    propriété commune) ; sa valeur ; l'unité d'un nombre ; ses bornes ; son rôle.
+    """
 
     name: str
     owners: frozenset[str] | None
@@ -196,13 +223,10 @@ class Property:
 
 _TABLE: Final = frozenset({"table"})
 _BOXES: Final = frozenset({"box", "table"})
-# Les styles d'une ligne de tableau : leur espacement est celui de leurs cellules.
 ROW_STYLES: Final = frozenset({"table_header", "table_total", "table_group", "table_subtotal"})
+"""Les styles d'une ligne de tableau : leur espacement est celui de leurs cellules."""
 _BANDS: Final = frozenset({"header", "footer"})
 
-# Le registre : la seule liste des propriétés. ``Props`` (le fichier lu) et ``Look`` (le
-# style résolu) en ont exactement les noms, ce qu'un essai vérifie ; ``_OWNERS`` et le
-# message d'une propriété inconnue en sont tirés.
 PROPERTIES: Final[tuple[Property, ...]] = (
     Property("base", None, "nom de style", "Le style dont celui-ci part"),
     Property("description", None, "texte", "Le sens d'un style à toi, proposé au modèle de langage sur son type de bloc", bounds="1 à 200 caractères"),
@@ -242,15 +266,18 @@ PROPERTIES: Final[tuple[Property, ...]] = (
     Property("label_width", frozenset({"fields"}), "nombre", "La largeur des libellés", unit="cm", bounds="1 à 10"),
     Property("row_height", frozenset({"attendance"}), "nombre", "La hauteur d'une ligne d'émargement", unit="cm", bounds="0,5 à 5"),
 )
+"""Le registre : la seule liste des propriétés. ``Props`` (le fichier lu) et
+``Look`` (le style résolu) en ont exactement les noms, ce qu'un essai
+vérifie ; ``_OWNERS`` et le message d'une propriété inconnue en sont tirés.
+"""
 PROPERTY_NAMES: Final = frozenset(found.name for found in PROPERTIES)
-# Les propriétés propres à certains styles, et ceux (avec leurs dérivés) qui les portent.
+"""Noms des propriétés qu'un style nommé peut porter."""
 _OWNERS: Final[Mapping[str, frozenset[str]]] = {found.name: found.owners for found in PROPERTIES if found.owners is not None}
-# Les réglages : des clés du fichier qui ne sont pas des styles.
+"""Les propriétés propres à certains styles, et ceux (avec leurs dérivés) qui les portent."""
 SETTINGS: Final = frozenset({"colors", "page", "numbering", "language", "labels", "image", "chart", "fonts"})
-# La disposition des sections d'un modèle : dans le modèle de document depuis 2.1.0.
+"""Les réglages : des clés du fichier qui ne sont pas des styles."""
 LAYOUT: Final = frozenset({"sections", "beside"})
-# Les styles de bloc : un style à toi qui en descend peut être proposé au modèle de langage
-# (``description``), sur ce type de bloc.
+"""La disposition des sections d'un modèle : dans le modèle de document depuis 2.1.0."""
 BLOCK_STYLES: Final[Mapping[str, str]] = {
     "heading1": "heading",
     "heading2": "heading",
@@ -261,8 +288,11 @@ BLOCK_STYLES: Final[Mapping[str, str]] = {
     "quote": "quote",
     "table": "table",
 }
+"""Les styles de bloc : un style à toi qui en descend peut être proposé au
+modèle de langage (``description``), sur ce type de bloc.
+"""
 MAX_STYLE_DESCRIPTION: Final = 200
-# Les clés du format de la 2.0, refusées avec ce qui les remplace.
+"""Longueur au plus de la description d'un style nommé."""
 OLD_KEYS: Final[Mapping[str, str]] = {
     "title": "document_title",
     "headings": "heading1, heading2, heading3 (et numbering : decimal, article)",
@@ -271,8 +301,8 @@ OLD_KEYS: Final[Mapping[str, str]] = {
     "captions": "caption (numbered)",
     "images": "image (side_by_side)",
 }
+"""Les clés du format de la 2.0, refusées avec ce qui les remplace."""
 
-# Les libellés que l'outil écrit dans le document, par langue.
 LABEL_KEYS: Final = (
     "table",
     "figure",
@@ -290,8 +320,9 @@ LABEL_KEYS: Final = (
     "due",
     "participant",
 )
-# Les champs du libellé d'une ligne de TVA : le taux (obligatoire) et sa base.
+"""Les libellés que l'outil écrit dans le document, par langue."""
 TAX_FIELDS: Final = frozenset({"rate", "base"})
+"""Les champs du libellé d'une ligne de TVA : le taux (obligatoire) et sa base."""
 LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
     "fr": {
         "table": "Tableau",
@@ -328,14 +359,14 @@ LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
         "participant": "Participant",
     },
 }
+"""Libellés produits par l'outil, par langue."""
 
 
 # --- Les valeurs ------------------------------------------------------------------------
 
 
 def _text_color(value: object) -> object:
-    """Les couleurs YAML écrites sans guillemets : ``1F3864`` reste une chaîne, ``000000``
-    aussi (un nombre pour YAML)."""
+    """Les couleurs YAML écrites sans guillemets : ``1F3864`` reste une chaîne, ``000000`` aussi (un nombre pour YAML)."""
     return f"{value:06d}" if isinstance(value, int) and not isinstance(value, bool) else value
 
 
@@ -408,6 +439,7 @@ def _style_name(value: str) -> str:
 # espacements, cm pour la géométrie. Une proportion : un nombre suivi de %, pour une largeur.
 
 POINTS_PER: Final[Mapping[str, float]] = {"pt": 1.0, "mm": 72 / 25.4, "cm": 72 / 2.54, "in": 72.0}
+"""Points par unité de longueur : ``pt``, ``mm``, ``cm``, ``in``."""
 _LENGTH: Final = re.compile(r"^(\d+(?:[.,]\d+)?)\s*(pt|mm|cm|in)?$")
 _PERCENT: Final = re.compile(r"^(\d+(?:[.,]\d+)?)\s*%$")
 
@@ -439,19 +471,21 @@ def percent(value: object) -> object:
     return float(found.group(1).replace(",", "."))
 
 
-# Une longueur lue en points (la typographie, les espacements), en centimètres (la géométrie).
 in_points: Final = _length_in("pt")
+"""Une longueur lue en points (la typographie, les espacements), en centimètres (la géométrie)."""
 in_centimetres: Final = _length_in("cm")
+"""Une longueur lue en centimètres : un nombre seul y est déjà, une longueur avec unité y est convertie."""
 
-# Les quatre côtés d'un écart : en haut, à droite, en bas, à gauche (l'ordre de CSS).
 type Sides = tuple[float, float, float, float]
+"""Les quatre côtés d'un écart : en haut, à droite, en bas, à gauche (l'ordre de CSS)."""
 
 
 def _sides_in(unit: str, high: float) -> Callable[[object], object]:
-    """Une à quatre longueurs (``4pt 8pt``), dans ``unit``, de 0 à ``high`` chacune, dans
-    l'ordre de CSS : une, les quatre côtés ; deux, en haut et en bas, puis à droite et à
-    gauche ; trois, en haut, à droite et à gauche, en bas ; quatre, en haut, à droite, en
-    bas, à gauche."""
+    """Une à quatre longueurs (``4pt 8pt``), dans ``unit``, de 0 à ``high`` chacune, dans l'ordre de CSS.
+
+    Une, les quatre côtés ; deux, en haut et en bas, puis à droite et à gauche ; trois,
+    en haut, à droite et à gauche, en bas ; quatre, en haut, à droite, en bas, à gauche.
+    """
     read = _length_in(unit)
 
     def sides(value: object) -> object:
@@ -487,22 +521,33 @@ def _sides_in(unit: str, high: float) -> Callable[[object], object]:
 
 
 type Color = Annotated[str, BeforeValidator(_text_color), AfterValidator(_color)]
+"""Une couleur : six chiffres hexadécimaux (``1F3864``, « # » facultatif), ou le nom d'une couleur déclarée dans ``colors``."""
 type Fill = Annotated[str, BeforeValidator(_text_color), AfterValidator(_fill)]
+"""Une couleur de fond, comme ``Color``, ou ``none``."""
 type Hex = Annotated[str, BeforeValidator(_text_color), AfterValidator(_hex)]
+"""Une couleur en six chiffres hexadécimaux seulement (``1F3864``)."""
 type Rule = Annotated[str, AfterValidator(_rule)]
+"""Un filet : épaisseur et couleur (``1pt 2F5496``, ``3pt brand``), ou ``none``."""
 type FontName = Annotated[str, AfterValidator(_font)]
+"""Un nom de police : lettres, chiffres, espaces et tirets."""
 type BandText = Annotated[str, AfterValidator(_band_text)]
+"""Le texte d'un en-tête ou d'un pied, avec ses champs (``{page}``, ``{pages}``, ``{title}``)."""
 type StyleName = Annotated[str, AfterValidator(_style_name)]
+"""Le nom d'un style nommé : minuscules, chiffres et « _ »."""
 type ColorName = Annotated[str, AfterValidator(_color_name)]
+"""Le nom d'une couleur déclarée dans ``colors`` : minuscules, chiffres et « _ »."""
 type Points = Annotated[float, BeforeValidator(in_points), Field(ge=0, le=72)]
+"""Une longueur en points, de 0 à 72 ; une autre unité est convertie."""
 
 
 class _Spec(BaseModel):
+    """Base des modèles d'un fichier de style : figés, sans clé inconnue."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-# Les styles renommés en 2.0.21 (docs/style_format.md), refusés avec leur nouveau nom.
 RENAMED_STYLES: Final[Mapping[str, str]] = {"text": "body"}
+"""Les styles renommés en 2.0.21 (docs/style_format.md), refusés avec leur nouveau nom."""
 
 
 def refuse_renamed(value: object, where: str, renamed: Mapping[str, str]) -> object:
@@ -520,12 +565,14 @@ def refuse_renamed(value: object, where: str, renamed: Mapping[str, str]) -> obj
 
 
 class BandElementSpec(_Spec):
-    """Un élément d'un en-tête ou d'un pied de page : une zone, une ligne, une cellule de
-    sa table. Un texte (``text``), ou des lignes (``lines``, dans une cellule seulement),
-    avec ``{page}``, ``{pages}``, ``{title}`` ; le nom du style qui le met en forme
+    """Un élément d'un en-tête ou d'un pied de page : une zone, une ligne, une cellule de sa table.
+
+    Un texte (``text``), ou des lignes (``lines``, dans une cellule seulement), avec
+    ``{page}``, ``{pages}``, ``{title}`` ; le nom du style qui le met en forme
     (``style``, un style qui part de ``header`` ou de ``footer``) ; le logo de l'en-tête
-    ou du pied (``logo: true``). Écrit en court : un texte, ou une liste de lignes. Aucune
-    propriété de style : elles vont dans le style qu'il nomme."""
+    ou du pied (``logo: true``). Écrit en court : un texte, ou une liste de lignes.
+    Aucune propriété de style : elles vont dans le style qu'il nomme.
+    """
 
     text: BandText | None = None
     lines: Annotated[list[BandText], Field(min_length=1, max_length=MAX_BAND_LINES)] | None = None
@@ -535,6 +582,7 @@ class BandElementSpec(_Spec):
     @model_validator(mode="before")
     @classmethod
     def _short(cls, value: object) -> object:
+        """La forme courte d'un élément : un texte, ou une liste de lignes ; une propriété de style ou un style en ligne sont refusés."""
         if isinstance(value, str):
             return {"text": value}
         if isinstance(value, list):
@@ -560,9 +608,12 @@ class BandElementSpec(_Spec):
 
 
 class BandLogoSpec(_Spec):
-    """Le logo d'un en-tête ou d'un pied : son fichier (PNG ou JPEG, relatif à
-    ``resources_dir`` ; ses octets une fois lu au chargement), sa largeur (cm), l'écart à
-    son texte (pt). Écrit en court : le fichier seul."""
+    """Le logo d'un en-tête ou d'un pied.
+
+    Son fichier (PNG ou JPEG, relatif à ``resources_dir`` ; ses octets une fois lu au
+    chargement), sa largeur (cm), l'écart à son texte (pt). Écrit en court : le fichier
+    seul.
+    """
 
     file: str | bytes
     width: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0.5, le=17)] | None = None
@@ -575,8 +626,11 @@ class BandLogoSpec(_Spec):
 
 
 def _band_width_read(value: object) -> object:
-    """Une largeur de colonne : ``auto`` ; une proportion (``50%``, de plus de 0 à 100 %) ;
-    une longueur (``1.5cm``, ``15mm``, un nombre en cm, de plus de 0 à 30 cm)."""
+    """Une largeur de colonne.
+
+    ``auto`` ; une proportion (``50%``, de plus de 0 à 100 %) ; une longueur (``1.5cm``,
+    ``15mm``, un nombre en cm, de plus de 0 à 30 cm).
+    """
     if value == "auto":
         return value
     if isinstance(value, str) and value.strip().endswith("%"):
@@ -594,17 +648,19 @@ def _band_width_read(value: object) -> object:
     return float(width)
 
 
-# Une largeur de colonne : auto, une proportion (``50%``), une longueur (cm par défaut).
 type BandWidth = Annotated[float | str, BeforeValidator(_band_width_read)]
+"""Une largeur de colonne : auto, une proportion (``50%``), une longueur (cm par défaut)."""
 
 
 class BandTableSpec(_Spec):
-    """La table d'un en-tête ou d'un pied de page : la largeur de chaque colonne (une
-    longueur, une proportion, ou ``auto`` : la place qui reste, partagée) ; ses lignes,
-    chacune un élément par colonne ; le nom du style qui l'habille (``style``, qui part de
-    ``header`` ou de ``footer`` ; ``header`` ou ``footer`` sans lui) : son cadre, son fond,
-    ses filets intérieurs (``borders``, ``line``), l'écart entre ses colonnes
-    (``column_gap``)."""
+    """La table d'un en-tête ou d'un pied de page.
+
+    La largeur de chaque colonne (une longueur, une proportion, ou ``auto`` : la place
+    qui reste, partagée) ; ses lignes, chacune un élément par colonne ; le nom du style
+    qui l'habille (``style``, qui part de ``header`` ou de ``footer`` ; ``header`` ou
+    ``footer`` sans lui) : son cadre, son fond, ses filets intérieurs (``borders``,
+    ``line``), l'écart entre ses colonnes (``column_gap``).
+    """
 
     widths: Annotated[list[BandWidth], Field(min_length=1, max_length=MAX_BAND_COLUMNS)]
     rows: Annotated[list[list[BandElementSpec]], Field(min_length=1, max_length=MAX_BAND_ROWS)]
@@ -633,9 +689,12 @@ class BandTableSpec(_Spec):
 
 
 class BandSpec(_Spec):
-    """Ce qu'écrit un en-tête ou un pied de page (``page.header``, ``page.footer``) : trois
-    zones sur une ligne, ou une table ; des lignes de toute la largeur ; le logo, posé dans
-    l'élément qui le demande ; ``first_page: false`` pour une première page sans."""
+    """Ce qu'écrit un en-tête ou un pied de page (``page.header``, ``page.footer``).
+
+    Trois zones sur une ligne, ou une table ; des lignes de toute la largeur ; le logo,
+    posé dans l'élément qui le demande ; ``first_page: false`` pour une première page
+    sans.
+    """
 
     first_page: bool | None = None
     logo: BandLogoSpec | None = None
@@ -658,8 +717,58 @@ class BandSpec(_Spec):
 
 
 class Props(_Spec):
-    """Les propriétés d'un style nommé, telles qu'écrites ; toutes facultatives. Leurs noms
-    sont ceux du registre (``PROPERTIES``) ; une autre est dite par ``describe``."""
+    """Les propriétés d'un style nommé, telles qu'écrites ; toutes facultatives.
+
+    Leurs noms sont ceux du registre (``PROPERTIES``) ; une autre est dite par
+    ``describe``.
+
+    Attributes:
+        base: Style de base, dont il reprend les propriétés.
+        font: Police.
+        size: Taille du texte, en points (6 à 72).
+        color: Couleur du texte.
+        fill: Couleur du fond, ou ``none``.
+        bold: Gras.
+        italic: Italique.
+        underline: Souligné.
+        uppercase: En capitales.
+        align: Alignement : ``left``, ``center``, ``right`` ou ``justify``.
+        space_before: Espace avant, en points.
+        space_after: Espace après, en points.
+        line_spacing: Interligne, de 1 à 3.
+        indent: Retrait à gauche, en cm.
+        border_top: Filet au-dessus.
+        border_bottom: Filet au-dessous.
+        border_left: Filet à gauche.
+        border_right: Filet à droite.
+        border: Filet des quatre côtés.
+        border_space: L'écart entre un filet (ou le fond) et le texte, en
+            points, les quatre côtés.
+        valign: Le tableau, et les tables d'en-tête et de pied : le texte dans
+            la hauteur d'une cellule.
+        borders: Le tableau : ses filets (``none``, ``horizontal``,
+            ``vertical``, ``grid``).
+        line: Le tableau : le filet de ses traits.
+        bands: Le tableau : le fond d'une ligne sur deux.
+        width: Le tableau : toute la largeur (``full``) ou celle du contenu.
+        position: Le tableau : sa place dans la largeur.
+        padding: Le cadre d'une section, une cellule de tableau : l'écart au
+            texte, en cm, les quatre côtés.
+        column_gap: La table d'un en-tête ou d'un pied : l'écart entre deux
+            colonnes, en cm.
+        numbered: La légende, le sommaire : numérotés.
+        levels: Le sommaire : niveaux de titres repris, de 1 à 3.
+        page_numbers: Le sommaire : avec les numéros de page.
+        level_indent: Une liste, le sommaire : le retrait de chaque niveau, en
+            cm.
+        marker_space: Une liste : la place de la puce, en cm.
+        sign_height: La signature : la place pour signer, en cm.
+        label_width: Les champs : la largeur de la colonne des libellés, en cm.
+        row_height: La hauteur d'une ligne d'émargement, en cm : la place de
+            signer.
+        description: Le sens d'un style à toi : il est proposé au modèle de
+            langage, sur son type de bloc.
+    """
 
     base: StyleName | None = None
     font: FontName | None = None
@@ -680,41 +789,55 @@ class Props(_Spec):
     border_left: Rule | None = None
     border_right: Rule | None = None
     border: Rule | None = None
-    # L'écart entre un filet (ou le fond) et le texte, en points, les quatre côtés.
     border_space: Annotated[Sides, BeforeValidator(_sides_in("pt", 20))] | None = None
-    # Le tableau, et les tables d'en-tête et de pied : le texte dans la hauteur d'une cellule.
     valign: VAlign | None = None
-    # Le tableau.
     borders: Borders | None = None
     line: Rule | None = None
     bands: Fill | None = None
     width: TableWidth | None = None
     position: Position | None = None
-    # Le cadre d'une section, une cellule de tableau : l'écart au texte, en cm, les quatre côtés.
     padding: Annotated[Sides, BeforeValidator(_sides_in("cm", 2))] | None = None
-    # La table d'un en-tête ou d'un pied : l'écart entre deux colonnes, en cm.
     column_gap: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=3)] | None = None
-    # La légende, le sommaire.
     numbered: bool | None = None
     levels: Annotated[int, Field(ge=1, le=3)] | None = None
     page_numbers: bool | None = None
-    # Une liste, le sommaire : le retrait de chaque niveau ; la place de la puce, en cm.
     level_indent: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=5)] | None = None
     marker_space: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=3)] | None = None
-    # La signature : la place pour signer, en cm.
     sign_height: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=10)] | None = None
-    # Les champs : la largeur de la colonne des libellés, en cm.
     label_width: Annotated[float, BeforeValidator(in_centimetres), Field(ge=1, le=10)] | None = None
-    # La hauteur d'une ligne d'émargement, en cm : la place de signer.
     row_height: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0.5, le=5)] | None = None
-    # Le sens d'un style à toi : il est proposé au modèle de langage, sur son type de bloc.
     description: Annotated[str, Field(min_length=1, max_length=MAX_STYLE_DESCRIPTION)] | None = None
 
 
 type Margin = Annotated[float, BeforeValidator(in_centimetres), Field(ge=0.5, le=5)]
+"""Une marge en centimètres, de 0,5 à 5 ; une autre unité est convertie."""
 
 
 class PageSpec(_Spec):
+    """La page d'un fichier de style : format, marges, distances, en-tête, pied et filigrane.
+
+    Attributes:
+        paper: Format : ``A4``, ``A5`` ou ``Letter``.
+        orientation: ``portrait`` ou ``landscape``.
+        margins: Les quatre marges, en cm.
+        margin_top: Marge du haut, en cm.
+        margin_bottom: Marge du bas, en cm.
+        margin_left: Marge de gauche, en cm.
+        margin_right: Marge de droite, en cm.
+        header_distance: La distance de l'en-tête au bord de la page, en cm.
+        footer_distance: La distance du pied au bord de la page, en cm.
+        column_gap: L'écart entre les colonnes d'une section, en cm.
+        beside_gap: L'écart entre deux sections (ou deux blocs) côte à côte, en
+            cm.
+        beside_space: L'espace après des sections côte à côte ou encadrées, en
+            points.
+        cover_margin_top: Le haut d'une page de garde sans ``margin_top``, en
+            cm.
+        header: Ce qu'écrit l'en-tête : du contenu, pas un style.
+        footer: Ce qu'écrit le pied.
+        watermark: Le texte du filigrane, 40 caractères au plus.
+    """
+
     paper: PageSize | None = None
     orientation: Orientation | None = None
     margins: Margin | None = None
@@ -722,17 +845,12 @@ class PageSpec(_Spec):
     margin_bottom: Margin | None = None
     margin_left: Margin | None = None
     margin_right: Margin | None = None
-    # La distance de l'en-tête et du pied au bord de la page, en cm.
     header_distance: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=5)] | None = None
     footer_distance: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=5)] | None = None
-    # L'écart entre les colonnes d'une section, entre deux sections (ou deux blocs) côte à
-    # côte, en cm ; l'espace après des sections côte à côte ou encadrées, en points ; le haut
-    # d'une page de garde sans margin_top, en cm.
     column_gap: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=5)] | None = None
     beside_gap: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=5)] | None = None
     beside_space: Points | None = None
     cover_margin_top: Annotated[float, BeforeValidator(in_centimetres), Field(ge=0, le=20)] | None = None
-    # Ce qu'écrivent l'en-tête, le pied, le filigrane : du contenu, pas un style.
     header: BandSpec | None = None
     footer: BandSpec | None = None
     watermark: Annotated[str, Field(max_length=40)] | None = None
@@ -754,6 +872,27 @@ def _tax_label(label: str) -> str:
 
 
 class LabelsSpec(_Spec):
+    """Les libellés que l'outil écrit, s'ils diffèrent de ceux de la langue.
+
+    Attributes:
+        table: Légende d'un tableau (« Tableau »).
+        figure: Légende d'une figure (« Figure »).
+        contents: Titre du sommaire (« Sommaire »).
+        date: Libellé de la date d'une signature (« Date : »).
+        signature: Libellé de la signature (« Signature : »).
+        article: Numérotation par articles (« Article »).
+        total: Ligne de total (« Total »).
+        notes: Titre des notes (« Notes »).
+        subtotal: Ligne de sous-total (« Sous-total »).
+        total_excl_tax: Total hors taxes (« Total HT »).
+        tax: Ligne de TVA : ``{rate}`` (le taux), et au besoin ``{base}`` (sa
+            base) — « TVA {rate} sur {base} ».
+        total_incl_tax: Total toutes taxes (« Total TTC »).
+        paid: Acompte (« Acompte versé »).
+        due: Reste à payer (« Net à payer »).
+        participant: Colonne de la feuille d'émargement (« Participant »).
+    """
+
     table: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     figure: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     contents: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
@@ -772,9 +911,14 @@ class LabelsSpec(_Spec):
 
 
 class ImageSpec(_Spec):
-    # Deux images ``half`` qui se suivent : côte à côte.
+    """Les images d'un fichier de style.
+
+    Attributes:
+        side_by_side: Deux images ``half`` qui se suivent : côte à côte.
+        space_after: L'espace après une image sans légende, en points.
+    """
+
     side_by_side: bool | None = None
-    # L'espace après une image sans légende, en points.
     space_after: Points | None = None
 
     @model_validator(mode="before")
@@ -784,8 +928,10 @@ class ImageSpec(_Spec):
 
 
 class FontFiles(_Spec):
-    """Les fichiers TrueType d'une police, relatifs à ``resources_dir`` ; leurs octets une
-    fois lus au chargement. ``regular`` seul suffit : le gras et l'italique le prennent."""
+    """Les fichiers TrueType d'une police, relatifs à ``resources_dir`` ; leurs octets une fois lus au chargement.
+
+    ``regular`` seul suffit : le gras et l'italique le prennent.
+    """
 
     regular: str | bytes
     bold: str | bytes | None = None
@@ -793,17 +939,25 @@ class FontFiles(_Spec):
     bold_italic: str | bytes | None = None
 
 
-# Les variantes d'une police, dans l'ordre de ``FontFiles``.
 FONT_VARIANTS: Final = ("regular", "bold", "italic", "bold_italic")
+"""Les variantes d'une police, dans l'ordre de ``FontFiles``."""
 
 
 class ChartSpec(_Spec):
-    # La couleur de chaque série, dans l'ordre ; le texte, la grille, le titre.
+    """Les graphiques d'un fichier de style.
+
+    Attributes:
+        series: La couleur de chaque série, dans l'ordre (12 au plus).
+        text_color: La couleur du texte.
+        grid_color: La couleur de la grille.
+        title_color: La couleur du titre.
+        space_after: L'espace après un graphique sans légende, en points.
+    """
+
     series: Annotated[list[Color], Field(min_length=1, max_length=12)] | None = None
     text_color: Color | None = None
     grid_color: Color | None = None
     title_color: Color | None = None
-    # L'espace après un graphique sans légende, en points.
     space_after: Points | None = None
 
     @model_validator(mode="before")
@@ -884,8 +1038,6 @@ class StyleFile(_Spec):
         return data
 
 
-# Le contenu que portaient les styles ``header``, ``footer`` et ``watermark`` avant 2.0.21,
-# et où il va.
 _MOVED: Final[Mapping[str, str]] = {
     "left": "left",
     "center": "center",
@@ -897,11 +1049,13 @@ _MOVED: Final[Mapping[str, str]] = {
     "logo_position": "logo: true, dans la zone qui le porte",
     "first_page": "first_page",
 }
+"""Le contenu que portaient les styles ``header``, ``footer`` et ``watermark``
+avant 2.0.21, et où il va.
+"""
 
 
 def _moved_content(name: str, given: object) -> str:
-    """Ce qu'un style ``header``, ``footer`` ou ``watermark`` écrit encore de son contenu,
-    avec sa nouvelle place ; ``""`` s'il n'en écrit pas."""
+    """Ce qu'un style ``header``, ``footer`` ou ``watermark`` écrit encore de son contenu, avec sa nouvelle place ; ``""`` s'il n'en écrit pas."""
     if name == "watermark":
         if isinstance(given, str):
             return f"watermark: {given} → page.watermark: {given}"
@@ -928,8 +1082,7 @@ def _old_fonts(value: object) -> bool:
 
 
 def describe(error: ValidationError, where: str) -> list[str]:
-    """Les fautes d'un fichier de style, une par ligne : « <where>.heading1.colour — … »,
-    ou « <where> : … » pour une faute de tout le fichier."""
+    """Les fautes d'un fichier de style, une par ligne : « <where>.heading1.colour — … », ou « <where> : … » pour une faute de tout le fichier."""
     lines: list[str] = []
     for item in error.errors(include_url=False):
         loc = [str(part) for part in item["loc"]]
@@ -990,14 +1143,14 @@ def short_style(value: object) -> object:
 
 
 type StyleField = Annotated[StyleRef | None, BeforeValidator(short_style)]
+"""La référence à un style nommé ; un nom seul est admis."""
 
 
 # --- Contrôles, au chargement -------------------------------------------------------------
 
 
 def logos(spec: StyleFile) -> list[tuple[str, str | bytes]]:
-    """Les logos d'un fichier de style : (où, fichier ou octets) ; ``page.header``,
-    ``page.footer``."""
+    """Les logos d'un fichier de style : (où, fichier ou octets) ; ``page.header``, ``page.footer``."""
     page = spec.page
     if page is None:
         return []
@@ -1005,8 +1158,7 @@ def logos(spec: StyleFile) -> list[tuple[str, str | bytes]]:
 
 
 def font_files(spec: StyleFile) -> list[tuple[str, str, str | bytes]]:
-    """Les fichiers des polices d'un fichier de style : (famille, variante, fichier ou
-    octets)."""
+    """Les fichiers des polices d'un fichier de style : (famille, variante, fichier ou octets)."""
     found: list[tuple[str, str, str | bytes]] = []
     for family, files in (spec.fonts or {}).items():
         for variant in FONT_VARIANTS:
@@ -1016,8 +1168,8 @@ def font_files(spec: StyleFile) -> list[tuple[str, str, str | bytes]]:
     return found
 
 
-# Le droit d'embarquer une police (``fsType`` de sa table OS/2) : ce qui l'interdit.
 _RESTRICTED: Final = 0x0002
+"""Le droit d'embarquer une police (``fsType`` de sa table OS/2) : ce qui l'interdit."""
 _PREVIEW_PRINT: Final = 0x0004
 _EDITABLE: Final = 0x0008
 _NO_SUBSETTING: Final = 0x0100
@@ -1071,9 +1223,11 @@ def font_fault(data: bytes) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class BandElement:
-    """Un élément résolu d'un en-tête ou d'un pied : une zone, une ligne, une cellule. Ses
-    lignes (une seule pour une zone ou une ligne), le style qui le met en forme (``None`` :
-    celui de l'en-tête, du pied, ou de sa table), s'il porte le logo."""
+    """Un élément résolu d'un en-tête ou d'un pied : une zone, une ligne, une cellule.
+
+    Ses lignes (une seule pour une zone ou une ligne), le style qui le met en forme
+    (``None`` : celui de l'en-tête, du pied, ou de sa table), s'il porte le logo.
+    """
 
     lines: tuple[str, ...] = ("",)
     style: str | None = None
@@ -1081,6 +1235,7 @@ class BandElement:
 
     @property
     def text(self) -> str:
+        """Le texte de l'élément : sa première ligne."""
         return self.lines[0]
 
 
@@ -1093,20 +1248,24 @@ class Share:
 
 @dataclass(frozen=True, slots=True)
 class BandTable:
-    """La table résolue d'un en-tête ou d'un pied : les largeurs en cm (``None`` : auto)."""
+    """La table résolue d'un en-tête ou d'un pied : les largeurs en cm (``None`` : auto).
 
-    # En cm, en proportion de la largeur de la table (``Share``), ou ``None`` (auto).
+    Attributes:
+        widths: Largeur de chaque colonne : en cm, en proportion de la largeur
+            de la table (``Share``), ou ``None`` (auto).
+        rows: Ses lignes, chacune un élément par colonne.
+        style: Le style qui l'habille (cadre, filets, écart entre colonnes) :
+            ``None``, celui de l'en-tête ou du pied.
+    """
+
     widths: tuple[float | Share | None, ...]
     rows: tuple[tuple[BandElement, ...], ...]
-    # Le style qui l'habille (cadre, filets, écart entre colonnes) : ``None``, celui de
-    # l'en-tête ou du pied.
     style: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class BandRow:
-    """Une ligne de l'en-tête ou du pied en mode table : une ligne de la table, ou une des
-    ``lines``, sur toute la largeur (``line``)."""
+    """Une ligne de l'en-tête ou du pied en mode table : une ligne de la table, ou une des ``lines``, sur toute la largeur (``line``)."""
 
     cells: tuple[BandElement, ...]
     line: bool = False
@@ -1137,14 +1296,14 @@ def _band_table(given: Mapping[str, Any]) -> BandTable:
     )
 
 
-# Le logo d'un en-tête ou d'un pied sans largeur ni écart : 3 cm, à 4 pt de son texte.
 LOGO_WIDTH: Final = 3.0
+"""Le logo d'un en-tête ou d'un pied sans largeur ni écart : 3 cm, à 4 pt de son texte."""
 LOGO_GAP: Final = 4.0
+"""Écart entre un logo et son texte, en points, sans réglage."""
 
 
 def _band(given: Mapping[str, Any]) -> Band | None:
-    """Ce qu'écrit un en-tête ou un pied (``page.header``, ``page.footer``, fusionnés) ;
-    ``None`` s'il n'écrit rien."""
+    """Ce qu'écrit un en-tête ou un pied (``page.header``, ``page.footer``, fusionnés) ; ``None`` s'il n'écrit rien."""
     logo_given = cast(Mapping[str, Any] | None, given.get("logo"))
     logo = None
     if logo_given is not None and isinstance(logo_given.get("file"), bytes):
@@ -1176,8 +1335,11 @@ def _fixed(width: float | Share, available: int) -> int:
 
 
 def band_columns(table: BandTable, available: int) -> list[int]:
-    """La largeur de chaque colonne, en twips, pour ``available`` twips : les colonnes en cm
-    ou en proportion, puis le reste partagé entre les ``auto`` (la dernière prend l'arrondi)."""
+    """La largeur de chaque colonne, en twips, pour ``available`` twips.
+
+    Les colonnes en cm ou en proportion, puis le reste partagé entre les ``auto`` (la
+    dernière prend l'arrondi).
+    """
     fixed = [_fixed(width, available) for width in table.widths if width is not None]
     autos = [index for index, width in enumerate(table.widths) if width is None]
     rest = max(available - sum(fixed), 0)
@@ -1189,8 +1351,11 @@ def band_columns(table: BandTable, available: int) -> list[int]:
 
 
 def band_frame(look: Look) -> tuple[tuple[str | None, str | None, str | None, str | None], str | None]:
-    """Le cadre d'un en-tête ou d'un pied en mode table, autour de la table : ses filets
-    (haut, bas, gauche, droite ; ``None`` sans filet), et son fond (``None`` sans fond)."""
+    """Le cadre d'un en-tête ou d'un pied en mode table, autour de la table.
+
+    Ses filets (haut, bas, gauche, droite ; ``None`` sans filet), et son fond (``None``
+    sans fond).
+    """
 
     def rule(value: str | None) -> str | None:
         return value if value is not None and value != NONE else None
@@ -1209,8 +1374,11 @@ def band_frame(look: Look) -> tuple[tuple[str | None, str | None, str | None, st
 
 
 def band_rows(band: Band, *, header: bool) -> list[BandRow]:
-    """Les lignes d'un en-tête ou d'un pied en mode table, du haut vers le bas : la table,
-    puis les ``lines`` dans un en-tête ; les ``lines``, puis la table dans un pied."""
+    """Les lignes d'un en-tête ou d'un pied en mode table, du haut vers le bas.
+
+    La table, puis les ``lines`` dans un en-tête ; les ``lines``, puis la table dans un
+    pied.
+    """
     table = band.table
     rows = [BandRow(row) for row in (table.rows if table else ())]
     lines = [BandRow((line,), line=True) for line in band.lines]
@@ -1219,8 +1387,7 @@ def band_rows(band: Band, *, header: bool) -> list[BandRow]:
 
 @dataclass(frozen=True, slots=True)
 class Look:
-    """Un style résolu : ses propriétés, héritées de sa base puis les siennes ; ``None``
-    pour ce que rien ne règle (la valeur de Word)."""
+    """Un style résolu : ses propriétés, héritées de sa base puis les siennes ; ``None`` pour ce que rien ne règle (la valeur de Word)."""
 
     font: str | None = None
     size: float | None = None
@@ -1285,20 +1452,39 @@ class Labels:
 
 
 FRENCH: Final = Labels()
+"""Les libellés en français, ceux par défaut."""
 
 
 @dataclass(frozen=True, slots=True)
 class Logo:
+    """Le logo d'un en-tête ou d'un pied, lu.
+
+    Attributes:
+        data: Ses octets (PNG ou JPEG).
+        width: Largeur dans la page, en cm.
+        gap: L'écart à son texte, en points.
+    """
+
     data: bytes = field(repr=False)
-    # Largeur dans la page, en cm ; l'écart à son texte, en points.
     width: float
     gap: float = LOGO_GAP
 
 
 @dataclass(frozen=True, slots=True)
 class Band:
-    """Ce qu'écrit un en-tête ou un pied : trois zones, ou une table ; des lignes ; le logo,
-    dans l'élément qui le demande."""
+    """Ce qu'écrit un en-tête ou un pied : trois zones, ou une table ; des lignes ; le logo, dans l'élément qui le demande.
+
+    Attributes:
+        left: Zone de gauche.
+        center: Zone du centre.
+        right: Zone de droite.
+        lines: Lignes de toute la largeur.
+        logo: Le logo, s'il est lu.
+        first_page: Écrit aussi sur la première page.
+        table: La table, à la place des trois zones.
+        logo_given: Un logo donné, même non lu (``logos`` le dit au chargeur) :
+            pour vérifier sa place.
+    """
 
     left: BandElement | None = None
     center: BandElement | None = None
@@ -1307,11 +1493,11 @@ class Band:
     logo: Logo | None = None
     first_page: bool = True
     table: BandTable | None = None
-    # Un logo donné, même non lu (``logos`` le dit au chargeur) : pour vérifier sa place.
     logo_given: bool = field(default=False, compare=False)
 
     @property
     def zones(self) -> dict[str, BandElement | None]:
+        """Les trois zones, par place."""
         return {"left": self.left, "center": self.center, "right": self.right}
 
     def elements(self) -> list[BandElement]:
@@ -1324,13 +1510,13 @@ class Band:
 
     @property
     def empty(self) -> bool:
+        """Vrai si l'en-tête ou le pied n'écrit rien."""
         return not (any(self.zones.values()) or self.lines or self.logo or self.table)
 
 
 @dataclass(frozen=True, slots=True)
 class ChartLook:
-    """Les couleurs des graphiques : les séries, le texte, la grille, le titre ; l'espace
-    après un graphique sans légende, en points."""
+    """Les couleurs des graphiques : les séries, le texte, la grille, le titre ; l'espace après un graphique sans légende, en points."""
 
     colors: tuple[str, ...]
     text: str
@@ -1341,10 +1527,13 @@ class ChartLook:
 
 @dataclass(frozen=True, slots=True)
 class PageLook:
-    """Les distances de la page, en twips (``cm_twips``) : l'en-tête et le pied au bord,
-    l'écart entre les colonnes d'une section et entre deux sections côte à côte, le haut
-    d'une page de garde sans ``margin_top`` ; en points, l'espace après des sections côte
-    à côte ou encadrées et après une image sans légende."""
+    """Les distances de la page, en twips (``cm_twips``).
+
+    L'en-tête et le pied au bord, l'écart entre les colonnes d'une section et entre deux
+    sections côte à côte, le haut d'une page de garde sans ``margin_top`` ; en points,
+    l'espace après des sections côte à côte ou encadrées et après une image sans
+    légende.
+    """
 
     header_distance: int
     footer_distance: int
@@ -1357,34 +1546,51 @@ class PageLook:
 
 @dataclass(frozen=True, slots=True)
 class Style:
-    """Un style complet, prêt à rendre : chaque style nommé résolu, et les réglages."""
+    """Un style complet, prêt à rendre : chaque style nommé résolu, et les réglages.
+
+    Attributes:
+        looks: Chaque style nommé, résolu (bases suivies).
+        declared: Ce que chaque style écrit lui-même (les fichiers fusionnés,
+            couleurs résolues) : un style Word reprend son style de base, et
+            n'écrit que ce qui lui est propre.
+        bases: Le style de base de chaque style nommé.
+        distances: Les distances de la page (``page`` et ``image``, dans
+            default.yaml).
+        page: Format de page, en twips (largeur, hauteur en portrait).
+        landscape: Page en paysage.
+        margins: Haut, bas, gauche, droite, en twips.
+        numbering: Numérotation des titres.
+        labels: Les libellés, et la langue.
+        image_grid: Deux images ``half`` qui se suivent : côte à côte.
+        chart: Les couleurs et l'espacement des graphiques.
+        fonts: Les fichiers TrueType des polices, par famille puis variante
+            (``regular``…) : le PDF les embarque.
+        header_band: Ce qu'écrit l'en-tête (``page.header``) ; ``None`` sans
+            rien.
+        footer_band: Ce qu'écrit le pied (``page.footer``) ; ``None`` sans
+            rien.
+        watermark_text: Le filigrane (``page.watermark``) ; ``None`` sans rien.
+    """
 
     looks: Mapping[str, Look]
-    # Ce que chaque style écrit lui-même (les fichiers fusionnés, couleurs résolues) : un
-    # style Word reprend son style de base, et n'écrit que ce qui lui est propre.
     declared: Mapping[str, Mapping[str, Any]]
     bases: Mapping[str, str | None]
-    # Les distances de la page (``page`` et ``image``, dans default.yaml).
     distances: PageLook
     page: tuple[int, int] = PAGE_SIZES["A4"]
     landscape: bool = False
-    # Haut, bas, gauche, droite, en twips.
     margins: tuple[int, int, int, int] = (1134, 1134, 1134, 1134)
     numbering: Numbering = "none"
     labels: Labels = FRENCH
     image_grid: bool = False
     chart: ChartLook = ChartLook((), "", "", "", 0.0)
-    # Les fichiers TrueType des polices, par famille puis variante (``regular``…) : le PDF
-    # les embarque.
     fonts: Mapping[str, Mapping[str, bytes]] = field(default_factory=dict[str, Mapping[str, bytes]])
-    # Ce qu'écrivent l'en-tête, le pied, le filigrane (``page.header``, ``page.footer``,
-    # ``page.watermark``) : ``None`` sans rien.
     header_band: Band | None = None
     footer_band: Band | None = None
     watermark_text: str | None = None
 
     @property
     def language(self) -> Language:
+        """La langue des libellés."""
         return self.labels.language
 
     @property
@@ -1394,6 +1600,7 @@ class Style:
         return width - self.margins[2] - self.margins[3]
 
     def look(self, name: str) -> Look:
+        """Un style nommé, résolu ; ``KeyError`` s'il n'existe pas."""
         return self.looks[name]
 
     def chain(self, name: str) -> list[str]:
@@ -1406,9 +1613,10 @@ class Style:
         return said
 
     def between(self, name: str, stop: str | None) -> dict[str, Any]:
-        """Ce que ``name`` écrit en plus de ``stop`` : les propriétés déclarées par ``name``
-        et ses bases jusqu'à ``stop`` (exclu), la plus précise gagnant. Une propriété
-        négative (``false``, ``none``) que ``stop`` a déjà n'y est pas."""
+        """Ce que ``name`` écrit en plus de ``stop`` : les propriétés déclarées par ``name`` et ses bases jusqu'à ``stop`` (exclu), la plus précise gagnant.
+
+        Une propriété négative (``false``, ``none``) que ``stop`` a déjà n'y est pas.
+        """
         chain = self.chain(name)
         if stop in chain:
             chain = chain[: chain.index(stop)]
@@ -1423,8 +1631,11 @@ class Style:
         return said
 
     def block_type(self, name: str) -> tuple[str, int] | None:
-        """Le type de bloc d'un style et, pour un titre, son niveau : (« note », 0),
-        (« heading », 2) ; ``None`` pour un style qui ne part d'aucun style de bloc."""
+        """Le type de bloc d'un style et, pour un titre, son niveau.
+
+        (« note », 0), (« heading », 2) ; ``None`` pour un style qui ne part d'aucun
+        style de bloc.
+        """
         for step in self.chain(name):
             kind = BLOCK_STYLES.get(step)
             if kind is not None:
@@ -1442,8 +1653,7 @@ class Style:
         return {kind: sorted(names) for kind, names in sorted(found.items())}
 
     def element_fault(self, element: str, name: str) -> str | None:
-        """Ce qui empêche ``name`` d'être le style de ``element`` (``styles`` d'une section) :
-        un style inconnu, ou qui ne part pas de l'élément."""
+        """Ce qui empêche ``name`` d'être le style de ``element`` (``styles`` d'une section) : un style inconnu, ou qui ne part pas de l'élément."""
         if name not in self.looks:
             return f"style « {name} » inconnu"
         if element not in self.chain(name):
@@ -1451,17 +1661,20 @@ class Style:
         return None
 
     def table_level(self, name: str) -> bool:
-        """Un style de tableau (``table``, ``invoice_totals``, un style à toi qui en part),
-        et non d'une de ses lignes (``table_header``, ``table_group``…) : son espace avant
-        et après vaut autour du tableau."""
+        """Un style de tableau (``table``, ``invoice_totals``, un style à toi qui en part), et non d'une de ses lignes (``table_header``, ``table_group``…).
+
+        Son espace avant et après vaut autour du tableau.
+        """
         chain = self.chain(name)
         return "table" in chain and not ROW_STYLES & set(chain)
 
     def cell_spacing(self, name: str | None, table: str, family: str) -> tuple[float, float]:
-        """L'espace avant et après des paragraphes d'une cellule, en points : ce que son
-        style (``name``) écrit en plus de celui de la table (``table``, ou ``family`` qu'ils
-        partagent : ``table``, ``header``, ``footer``) ; 0 sans lui. L'espacement du style
-        de la table vaut autour d'elle, pas dans ses cellules."""
+        """L'espace avant et après des paragraphes d'une cellule, en points.
+
+        Ce que son style (``name``) écrit en plus de celui de la table (``table``, ou
+        ``family`` qu'ils partagent : ``table``, ``header``, ``footer``) ; 0 sans lui.
+        L'espacement du style de la table vaut autour d'elle, pas dans ses cellules.
+        """
         if name is None or name == table:
             return (0.0, 0.0)
         stop = table if table in self.chain(name) else family
@@ -1478,21 +1691,26 @@ class Style:
 
     @property
     def header(self) -> Band | None:
+        """Ce qu'écrit l'en-tête ; ``None`` sans rien."""
         return self.band("header")
 
     @property
     def footer(self) -> Band | None:
+        """Ce qu'écrit le pied ; ``None`` sans rien."""
         return self.band("footer")
 
     @property
     def watermark(self) -> str | None:
+        """Le filigrane ; ``None`` sans rien."""
         return self.watermark_text or None
 
 
 def resolve(*files: StyleFile | None) -> Style:
-    """Le style complet : ``default.yaml``, puis chaque fichier donné, propriété par
-    propriété ; puis l'héritage. ``ValueError`` qui dit la faute (couleur inconnue, base
-    inconnue ou en boucle, propriété hors de son style)."""
+    """Le style complet : ``default.yaml``, puis chaque fichier donné, propriété par propriété ; puis l'héritage.
+
+    ``ValueError`` qui dit la faute (couleur inconnue, base inconnue ou en boucle,
+    propriété hors de son style).
+    """
     given = [default_style(), *(file for file in files if file is not None)]
     colors: dict[str, str] = {}
     for file in given:
@@ -1581,9 +1799,12 @@ def resolve(*files: StyleFile | None) -> Style:
 
 
 def _check_bands(style: Style, faults: list[str]) -> None:
-    """L'en-tête et le pied, dans le style résolu (tous les fichiers lus) : une table sans
-    les trois zones ; le logo dans un seul élément ; le style de chaque élément et de la
-    table, qui part de ``header`` ou de ``footer`` ; les largeurs de la table."""
+    """L'en-tête et le pied, dans le style résolu (tous les fichiers lus).
+
+    Une table sans les trois zones ; le logo dans un seul élément ; le style de chaque
+    élément et de la table, qui part de ``header`` ou de ``footer`` ; les largeurs de la
+    table.
+    """
     for name in ("header", "footer"):
         band = style.band(name)
         if band is None:
@@ -1655,6 +1876,7 @@ def _named_colors(name: str, prop: str, value: Any, colors: Mapping[str, str], f
 
 
 def _bases(declared: Mapping[str, Mapping[str, Any]], faults: list[str]) -> dict[str, str | None]:
+    """Le style de base de chaque style, déclaré ou par défaut ; une base inconnue ou une boucle est notée dans ``faults`` et ramenée à ``body``."""
     bases: dict[str, str | None] = {}
     for name in {*BASES, *declared}:
         written = declared.get(name, {}).get("base")
@@ -1729,6 +1951,7 @@ def _look(
     bases: Mapping[str, str | None],
     looks: dict[str, Look],
 ) -> Look:
+    """Un style nommé résolu : les propriétés de sa base (résolue d'abord), puis les siennes."""
     if name in looks:
         return looks[name]
     base = bases.get(name)
@@ -1742,6 +1965,11 @@ def _look(
 
 
 def _page(given: Iterable[StyleFile]) -> dict[str, Any]:
+    """La page fusionnée des fichiers de style, dans l'ordre.
+
+    ``margins`` vaut pour les quatre côtés ; l'en-tête et le pied se fusionnent clé par
+    clé, ``null`` efface.
+    """
     page: dict[str, Any] = {}
     for file in given:
         if file.page is None:
@@ -1763,6 +1991,7 @@ def _page(given: Iterable[StyleFile]) -> dict[str, Any]:
 
 
 def _chart(given: Iterable[StyleFile], colors: Mapping[str, str], faults: list[str]) -> ChartLook:
+    """Les réglages des graphiques fusionnés des fichiers de style, couleurs nommées résolues."""
     said: dict[str, Any] = {}
     for file in given:
         if file.chart is not None:

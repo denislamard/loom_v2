@@ -30,20 +30,22 @@ from loom_ia.core.model.media import sniff
 from loom_ia.tools_builtin._document.arguments import MAX_PIXELS
 
 type PictureFormat = Literal["png", "jpeg"]
+"""Format d'image reconnu."""
 
 PNG_SIGNATURE: Final = b"\x89PNG\r\n\x1a\n"
-# Bits par échantillon permis, par type de couleur ; et le nombre d'échantillons.
+"""Les huit octets qui ouvrent un PNG."""
 _PNG_DEPTHS: Final = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}
+"""Bits par échantillon permis, par type de couleur ; et le nombre d'échantillons."""
 _PNG_SAMPLES: Final = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
-# Les sept passes d'un PNG entrelacé (Adam7) : départ et pas, en colonnes puis en lignes.
 _ADAM7: Final = ((0, 8, 0, 8), (4, 8, 0, 8), (0, 4, 4, 8), (2, 4, 0, 4), (0, 2, 2, 4),
                  (1, 2, 0, 2), (0, 1, 1, 2))  # fmt: skip
-# Décompression par tranches : la mémoire ne suit pas la taille de l'image.
+"""Les sept passes d'un PNG entrelacé (Adam7) : départ et pas, en colonnes puis en lignes."""
 _CHUNK: Final = 1 << 20
-# Codages JPEG affichés partout : de base, étendu, progressif (Huffman).
+"""Décompression par tranches : la mémoire ne suit pas la taille de l'image."""
 _JPEG_SOF: Final = frozenset({0xC0, 0xC1, 0xC2})
-# Les autres débuts d'image : sans perte, hiérarchiques, arithmétiques.
+"""Codages JPEG affichés partout : de base, étendu, progressif (Huffman)."""
 _JPEG_OTHER_SOF: Final = frozenset({0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
+"""Les autres débuts d'image : sans perte, hiérarchiques, arithmétiques."""
 _JPEG_STANDALONE: Final = frozenset({0x01, *range(0xD0, 0xD8)})
 _EXIF_ORIENTATION: Final = 0x0112
 
@@ -54,20 +56,30 @@ class PictureError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Picture:
-    """Une image reconnue : son format, ses pixels, ses octets et leur empreinte."""
+    """Une image reconnue : son format, ses pixels, ses octets et leur empreinte.
+
+    Attributes:
+        format: ``png`` ou ``jpeg``.
+        width: Largeur, en pixels.
+        height: Hauteur, en pixels.
+        data: Ses octets.
+        digest: L'empreinte de ses octets.
+        orientation: L'orientation EXIF d'une photo (1 : droite ; 6 et 8 :
+            prise de côté).
+        animated: Un PNG animé (APNG) : seule sa première image s'affiche.
+    """
 
     format: PictureFormat
     width: int
     height: int
     data: bytes = field(repr=False)
     digest: str
-    # L'orientation EXIF d'une photo (1 : droite ; 6 et 8 : prise de côté).
     orientation: int = 1
-    # Un PNG animé (APNG) : seule sa première image s'affiche.
     animated: bool = False
 
     @property
     def extension(self) -> str:
+        """L'extension du fichier : ``png`` ou ``jpeg``."""
         return "png" if self.format == "png" else "jpeg"
 
 
@@ -128,6 +140,7 @@ def dimensions(data: bytes) -> tuple[int, int] | None:
 
 
 def _png(data: bytes) -> tuple[int, int, bool]:
+    """Largeur, hauteur et animation d'un PNG, lus dans ses segments (sommes de contrôle vérifiées) ; ``PictureError`` s'il est abîmé."""
     position = len(PNG_SIGNATURE)
     header: tuple[int, int, int, int, int] | None = None
     palette = animated = ended = False
@@ -208,6 +221,7 @@ def _png_raw_size(width: int, height: int, bits: int, interlace: int) -> int:
 
 
 def _jpeg(data: bytes) -> tuple[int, int, int]:
+    """Largeur, hauteur et orientation EXIF d'un JPEG, lues dans ses segments ; ``PictureError`` s'il est abîmé."""
     position = 2
     size: tuple[int, int] | None = None
     orientation = 1

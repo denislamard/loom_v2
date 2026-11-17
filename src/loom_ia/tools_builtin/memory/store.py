@@ -30,12 +30,14 @@ from loom_ia.tools_builtin.memory.models import Embedding
 from loom_ia.tools_builtin.memory.records import Chunk, Document, SourceKind
 
 SCHEMA_VERSION: Final = "1"
+"""Version du schéma de la base de mémoire ; une autre version est refusée."""
 BUSY_TIMEOUT_S: Final = 10.0
-# Un coup d'œil avant un appel tourne dans la boucle du moteur : il n'attend pas un verrou.
+"""Attente au plus d'un verrou SQLite, en secondes."""
 PEEK_TIMEOUT_S: Final = 0.5
+"""Un coup d'œil avant un appel tourne dans la boucle du moteur : il n'attend pas un verrou."""
 
-# Attentes entre deux essais du passage en WAL, en secondes : de 10 ms à 200 ms.
 _WAL_FIRST_WAIT: Final = 0.01
+"""Attentes entre deux essais du passage en WAL, en secondes : de 10 ms à 200 ms."""
 _WAL_LONGEST_WAIT: Final = 0.2
 _BUSY: Final = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
 
@@ -105,10 +107,15 @@ class ModelMismatchError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Peeked:
-    """Ce qu'un coup d'œil à la base dit d'un document (``MemoryStore.peek``)."""
+    """Ce qu'un coup d'œil à la base dit d'un document (``MemoryStore.peek``).
+
+    Attributes:
+        doc: Le document cherché, ``None`` s'il n'existe pas.
+        same: Dans le projet de ``doc``, le document qui a déjà le contenu
+            cherché.
+    """
 
     doc: Document | None
-    # Dans le projet de ``doc``, le document qui a déjà le contenu cherché.
     same: Document | None = None
 
 
@@ -133,22 +140,30 @@ class IndexedChunk:
 
 
 def pack_dense(values: Sequence[float]) -> bytes:
+    """Le dense en octets : des float32, dans l'ordre de la machine."""
     return array("f", values).tobytes()
 
 
 def unpack_dense(blob: bytes) -> array[float]:
+    """Le dense relu de ses octets."""
     found = array("f")
     found.frombytes(blob)
     return found
 
 
 def pack_sparse(indices: Sequence[int], values: Sequence[float]) -> bytes:
+    """Le lexical en octets : les indices (uint32), puis les poids (float32).
+
+    Raises:
+        ValueError: Indices et poids de longueurs différentes.
+    """
     if len(indices) != len(values):
         raise ValueError("indices et poids de longueurs différentes")
     return array("I", indices).tobytes() + array("f", values).tobytes()
 
 
 def unpack_sparse(blob: bytes) -> dict[int, float]:
+    """Le lexical relu de ses octets : indice → poids."""
     count = len(blob) // 8
     indices = array("I")
     indices.frombytes(blob[: count * 4])
@@ -222,20 +237,25 @@ class MemoryStore:
     # --- Lecture --------------------------------------------------------------------
 
     def generation(self) -> int:
+        """Le compteur des écritures : il change à chaque modification, et l'index en mémoire se recharge alors."""
         with self._connection() as connection:
             row = connection.execute("SELECT value FROM meta WHERE key = 'generation'").fetchone()
         return int(row[0]) if row else 0
 
     def get(self, doc_id: str) -> Document | None:
+        """Le document de cet identifiant, ou ``None``."""
         return self._one("doc_id = ?", (doc_id,))
 
     def find_by_hash(self, content_hash: str, project: str) -> Document | None:
+        """Le document du projet qui a ce contenu, ou ``None``."""
         return self._one("content_hash = ? AND project = ?", (content_hash, project))
 
     def find_by_source(self, source: str, project: str) -> Document | None:
+        """Le document du projet venu de cette source (adresse ou fichier), ou ``None``."""
         return self._one("source = ? AND project = ?", (source, project))
 
     def list_documents(self, project: str | None, limit: int) -> list[Document]:
+        """Les ``limit`` derniers documents ajoutés, du projet donné ou de tous."""
         where, args = ("project = ?", (project,)) if project is not None else ("1", ())
         return self._many(f"{where} ORDER BY added_at DESC LIMIT ?", (*args, limit))
 
@@ -244,6 +264,7 @@ class MemoryStore:
         return self._many("1 ORDER BY added_at, doc_id", ())
 
     def project_counts(self) -> dict[str, int]:
+        """Chaque projet et son nombre de documents, par nom."""
         with self._connection() as connection:
             rows = connection.execute("SELECT project, count(*) FROM documents GROUP BY project ORDER BY project").fetchall()
         return {str(project): int(count) for project, count in rows}
@@ -429,6 +450,7 @@ def _with_content(connection: sqlite3.Connection, content_hash: str, project: st
 
 
 def _document(row: Sequence[object], tags: list[str]) -> Document:
+    """Un document reconstruit d'une ligne de la table ``documents`` et de ses tags."""
     doc_id, project, title, source_kind, source, added_at, updated_at, digest, text = row
     kind: SourceKind = "url" if source_kind == "url" else "file" if source_kind == "file" else "text"
     return Document(

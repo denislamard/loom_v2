@@ -28,19 +28,26 @@ type ColumnType = Literal[
     "year",
     "boolean",
 ]
+"""Type d'une colonne de données : texte, nombre, montant, pourcentage, date…"""
 type Aggregate = Literal["sum", "average", "count", "min", "max"]
+"""Agrégat d'une colonne : somme, moyenne, compte, minimum ou maximum."""
 type Scalar = str | int | float | bool | None
+"""Une valeur de cellule."""
 
-# Ce qu'une cellule reçoit : valeur convertie selon son type de colonne.
 type Stored = str | int | float | dt.date | dt.datetime | None
+"""Ce qu'une cellule reçoit : valeur convertie selon son type de colonne."""
 
 
 class Reports(Protocol):
     """Où dire une faute ou un avertissement : les ``Problems`` de chaque outil."""
 
-    def error(self, said: str) -> None: ...
+    def error(self, said: str) -> None:
+        """Note une erreur : la valeur est refusée."""
+        ...
 
-    def warn(self, said: str) -> None: ...
+    def warn(self, said: str) -> None:
+        """Note un avertissement : la valeur passe, en le disant."""
+        ...
 
 
 def convert(value: Scalar, kind: ColumnType, where: str, problems: Reports, zone: ZoneInfo) -> Stored:
@@ -58,6 +65,10 @@ def convert(value: Scalar, kind: ColumnType, where: str, problems: Reports, zone
 
 
 def _convert(value: Scalar, kind: ColumnType, where: str, problems: Reports, zone: ZoneInfo) -> Stored:
+    """Une valeur convertie selon le type de sa colonne ; ``ValueError`` si elle ne s'y prête pas.
+
+    Types : texte, année, booléen, nombre, montant, pourcentage, date…
+    """
     match kind:
         case "text":
             return str(value)
@@ -100,6 +111,11 @@ def _boolean(value: Scalar) -> bool:
 
 
 def _number(value: Scalar, *, percent: bool = False) -> float | int:
+    """Un nombre lu dans une valeur.
+
+    Espaces, « € » et « k€ » retirés, virgule décimale française comprise, ``%`` divisé
+    par 100 si ``percent`` ; ``ValueError`` sinon.
+    """
     if isinstance(value, bool):
         raise ValueError(value)
     if isinstance(value, int | float):

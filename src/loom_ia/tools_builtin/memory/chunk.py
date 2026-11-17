@@ -57,10 +57,12 @@ def snippet(text: str, limit: int) -> str:
 
 # --- Découpage -------------------------------------------------------------------
 
-# Un paragraphe qui annonce la suite — une question, une phrase qui finit par « : », une
-# étiquette (« **Règles générales** ») — n'est jamais laissé en fin de passage ni en fin de
-# section : il rejoint ce qu'il annonce. Au-delà de cette longueur, ce n'est plus une annonce.
 LEAD_CHARS: Final = 200
+"""Un paragraphe qui annonce la suite — une question, une phrase qui finit par
+« : », une étiquette (« **Règles générales** ») — n'est jamais laissé en fin
+de passage ni en fin de section : il rejoint ce qu'il annonce. Au-delà de
+cette longueur, ce n'est plus une annonce.
+"""
 _TRAILING_MARKS: Final = re.compile(r"[\s*_»\"')\]]+$")
 _LIST_ITEM: Final = re.compile(r"^(?:[-*+]|\d+[.)])\s")
 _NOT_A_LABEL: Final = frozenset(".!…;,")
@@ -70,14 +72,31 @@ type _Headings = tuple[tuple[int, str], ...]
 
 @dataclass(slots=True)
 class _Section:
+    """Une section du document, entre deux titres.
+
+    Attributes:
+        heading_path: Le chemin des titres de la section, rendu avec le
+            passage.
+        headings: Titres sous celui du document : (niveau, texte), du plus haut
+            au plus bas.
+        body: Le texte de la section, sans son titre.
+    """
+
     heading_path: str
-    # Titres sous celui du document : (niveau, texte), du plus haut au plus bas.
     headings: _Headings
     body: str
 
 
 @dataclass(frozen=True, slots=True)
 class _Piece:
+    """Un morceau du corps d'une section, avant la fusion des trop petits.
+
+    Attributes:
+        heading_path: Le chemin des titres de sa section.
+        headings: Les titres de sa section : (niveau, texte).
+        body: Son texte.
+    """
+
     heading_path: str
     headings: _Headings
     body: str
@@ -173,6 +192,14 @@ def _open_fence(text: str) -> bool:
 
 
 def _split_body(body: str, spec: ChunkingSpec) -> list[str]:
+    """Les passages du corps d'une section.
+
+    Un corps de ``max_chars`` au plus reste entier. Sinon, les paragraphes (les
+    trop longs découpés) sont regroupés jusqu'à ``target_chars``, chaque passage
+    ouvert par la fin du précédent (``overlap_chars``). Une annonce ne finit
+    pas un passage : seule, elle garde ce qu'elle annonce jusqu'à ``max_chars`` ;
+    sinon elle passe en tête du suivant.
+    """
     if not body:
         return []
     if len(body) <= spec.max_chars:

@@ -23,16 +23,20 @@ from loom_ia.core.ports import ToolError
 from loom_ia.tools_builtin._document.arguments import READ_CHARS
 
 WORKER: Final = Path(__file__).with_name("worker.py")
+"""Le script qui lit le PDF dans un process à part."""
 READ_DEADLINE: Final = 20.0
+"""Durée au plus d'une lecture, en secondes."""
 MEMORY: Final = 1 << 30
-# Où chercher l'en-tête « %PDF- » : la norme tolère des octets avant lui.
+"""Mémoire au plus du process de lecture, en octets (1 Gio)."""
 HEADER_WINDOW: Final = 1024
-# La note d'une page seule plus longue que le budget, coupée : ``loom.memory`` la refuse.
+"""Où chercher l'en-tête « %PDF- » : la norme tolère des octets avant lui."""
 PAGE_CUT: Final = "Une page plus longue que le budget a été coupée."
+"""La note d'une page seule plus longue que le budget, coupée : ``loom.memory`` la refuse."""
 _PAGES: Final = re.compile(r"\s*(\d+)\s*(?:(-)\s*(\d+)?)?\s*")
 
 
 def check_suffix(path: str) -> None:
+    """Refuse un fichier qui n'est pas un .pdf."""
     if not path.lower().endswith(".pdf"):
         raise ToolError(f"{path} : seuls les fichiers .pdf sont lus.")
 
@@ -100,6 +104,7 @@ async def read(data: bytes, where: str, pages: str | None, budget: int = READ_CH
 
 
 def _shaped(found: dict[str, JsonValue], budget: int) -> dict[str, JsonValue]:
+    """Le résultat d'une lecture tel que le modèle le reçoit : pages, métadonnées, et la page où reprendre si la lecture a été coupée."""
     pages = cast(list[JsonValue], found["pages"])
     next_page = found.get("next_page")
     result: dict[str, JsonValue] = {

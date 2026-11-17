@@ -21,8 +21,8 @@ _WP: Final = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDra
 _A: Final = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _PIC: Final = "http://schemas.openxmlformats.org/drawingml/2006/picture"
 _R: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-# Un centième de millimètre en EMU (English Metric Units) : 360.
 EMU: Final = 360
+"""Un centième de millimètre en EMU (English Metric Units) : 360."""
 
 
 def _attribute(text: str) -> str:

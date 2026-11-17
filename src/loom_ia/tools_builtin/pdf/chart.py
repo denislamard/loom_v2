@@ -26,8 +26,9 @@ from loom_ia.tools_builtin._style_params import ChartLook, Language
 from loom_ia.tools_builtin._values import ColumnType
 
 HEIGHT: Final = 9 * cm
-# Un libellé plus long est raccourci sous l'axe : il chevaucherait ses voisins.
+"""Hauteur d'un graphique dans la page (9 cm)."""
 AXIS_LABEL: Final = 18
+"""Un libellé plus long est raccourci sous l'axe : il chevaucherait ses voisins."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,7 @@ class _Paint:
     language: Language
 
     def color(self, index: int) -> Any:
+        """La couleur de la série ``index``, la palette reprise en boucle."""
         return self.palette[index % len(self.palette)]
 
 
@@ -87,14 +89,14 @@ def _short(label: str) -> str:
 
 
 def height(chart: ChartOut) -> float:
+    """La hauteur d'un graphique : fixe, sauf pour des barres horizontales, qui grandit avec le nombre de libellés (de 6 à 20 cm)."""
     if chart.kind != "horizontal_bar":
         return HEIGHT
     return min(20 * cm, max(6 * cm, 1.4 * cm + 0.6 * cm * len(chart.categories)))
 
 
 def drawing(chart: ChartOut, width: float, look: ChartLook, font: str, language: Language) -> Drawing:
-    """Le graphique, à la largeur donnée, aux couleurs du style ``chart``, dans la police
-    ``font`` et la langue du document."""
+    """Le graphique, à la largeur donnée, aux couleurs du style ``chart``, dans la police ``font`` et la langue du document."""
     paint = _paint(look, font, language)
     tall = height(chart)
     found = Drawing(width, tall)
@@ -174,6 +176,7 @@ def drawing(chart: ChartOut, width: float, look: ChartLook, font: str, language:
 
 
 def _pie(found: Drawing, chart: ChartOut, width: float, tall: float, paint: _Paint) -> None:
+    """Dessine un camembert, chaque part étiquetée de son pourcentage."""
     pie: Any = Pie()
     size = tall - 1 * cm
     pie.x, pie.y = 1 * cm, 0.5 * cm
@@ -206,6 +209,7 @@ def _legend(
     *,
     columns: int | None = None,
 ) -> None:
+    """Dessine la légende des séries."""
     legend: Any = Legend()
     legend.x, legend.y = x, y
     legend.boxAnchor = anchor

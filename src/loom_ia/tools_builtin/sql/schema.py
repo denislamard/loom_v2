@@ -21,10 +21,21 @@ from typing import Final, Literal
 from loom_ia.tools_builtin.sql_params import RightApproval, SqlRight
 
 CACHE_SECONDS: Final = 300.0
+"""Durée de vie du schéma lu, en secondes."""
 
 
 @dataclass(frozen=True, slots=True)
 class Column:
+    """Une colonne d'une table.
+
+    Attributes:
+        name: Son nom.
+        type: Son type, tel que la base le nomme.
+        not_null: Vrai si elle refuse NULL.
+        default: Sa valeur par défaut, en SQL.
+        comment: Son commentaire dans la base.
+    """
+
     name: str
     type: str
     not_null: bool = False
@@ -34,15 +45,24 @@ class Column:
 
 @dataclass(frozen=True, slots=True)
 class TableInfo:
-    """Une table ou une vue lue dans la base."""
+    """Une table ou une vue lue dans la base.
+
+    Attributes:
+        name: Son nom.
+        kind: Table ou vue.
+        columns: Ses colonnes.
+        constraints: Clés, unicité, CHECK, clés étrangères vers une table
+            permise (Postgres).
+        comment: Son commentaire dans la base.
+        ddl: Le DDL d'origine, quand la base le garde (SQLite) : rendu tel
+            quel.
+    """
 
     name: str
     kind: Literal["table", "view"]
     columns: tuple[Column, ...]
-    # Clés, unicité, CHECK, clés étrangères vers une table permise (Postgres).
     constraints: tuple[str, ...] = ()
     comment: str | None = None
-    # Le DDL d'origine, quand la base le garde (SQLite) : rendu tel quel.
     ddl: str | None = None
 
 
@@ -83,6 +103,7 @@ def render(
 
 
 def _ddl(table: TableInfo) -> str:
+    """Le DDL d'une table reconstruit à partir de ce que Postgres en dit : colonnes, défauts, contraintes, commentaires en ``--``."""
     keyword = "VIEW" if table.kind == "view" else "TABLE"
     head = f"CREATE {keyword} {table.name} ("
     if table.comment:
@@ -113,6 +134,7 @@ class SchemaCache:
     _at: float = field(default=0.0)
 
     async def tables(self) -> list[TableInfo]:
+        """Les tables, relues au plus toutes les ``CACHE_SECONDS``."""
         now = self.clock()
         if self._tables is None or now - self._at > CACHE_SECONDS:
             self._tables = await self.read()
@@ -120,6 +142,7 @@ class SchemaCache:
         return self._tables
 
     def forget(self) -> None:
+        """Oublie le schéma lu : le prochain appel le relit."""
         self._tables = None
 
 
