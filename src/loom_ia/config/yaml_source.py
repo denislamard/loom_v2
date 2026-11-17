@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Lecture YAML de loom : ``safe_load``, sans clé en double (M1).
+"""Lecture YAML de loom : ``safe_load``, sans clé en double (fonction M1).
 
 ``yaml.safe_load`` garde la **dernière** valeur d'une clé répétée, sans rien
 dire. Une faute de copier-coller annulait ainsi un réglage en silence : deux
 ``retry`` (17/10), deux ``capture`` dont la seconde faisait partir du contenu
-vers un collecteur (test K4 du 21/10), deux ``max_iterations`` dans un agent
-(test M1 du 22/10). Une clé répétée dans un même objet est donc refusée, en
+vers un collecteur (essai de la fonction K4, 21/10), deux ``max_iterations`` dans un agent
+(essai de la fonction M1, 22/10). Une clé répétée dans un même objet est donc refusée, en
 nommant la clé et ses deux lignes.
 
 Une fusion YAML (``<<: *ancre``) reste permise : une clé écrite à côté d'une
@@ -18,12 +18,23 @@ from typing import Any, Final
 import yaml
 from yaml.nodes import MappingNode
 
-# Étiquette de la clé de fusion (``<<``).
 MERGE_TAG: Final = "tag:yaml.org,2002:merge"
+"""Étiquette de la clé de fusion (``<<``)."""
 
 
 class DuplicateKey(yaml.YAMLError):
-    """Une clé écrite deux fois dans le même objet."""
+    """Une clé écrite deux fois dans le même objet.
+
+    Args:
+        key: La clé.
+        first: Ligne de la première.
+        second: Ligne de la seconde.
+
+    Attributes:
+        key: La clé.
+        first: Ligne de la première.
+        second: Ligne de la seconde.
+    """
 
     def __init__(self, key: object, first: int, second: int) -> None:
         super().__init__(f"clé {key!r} donnée deux fois dans le même objet (lignes {first} et {second}) : la seconde écraserait la première en silence")
@@ -36,6 +47,12 @@ class _UniqueKeyLoader(yaml.SafeLoader):
     """``SafeLoader`` qui refuse une clé écrite deux fois dans un objet."""
 
     def construct_mapping(self, node: MappingNode, deep: bool = False) -> dict[Any, Any]:
+        """Construit l'objet après avoir vérifié que chaque clé écrite n'y figure qu'une fois.
+
+        Raises:
+            DuplicateKey: Une clé écrite deux fois ; la clé de fusion ``<<``
+                ne compte pas.
+        """
         seen: dict[object, int] = {}
         for key_node, _ in node.value:
             if key_node.tag == MERGE_TAG:
@@ -54,5 +71,13 @@ class _UniqueKeyLoader(yaml.SafeLoader):
 
 
 def load_yaml(content: str) -> object:
-    """Le document YAML, comme ``yaml.safe_load`` ; ``DuplicateKey`` pour une clé en double."""
+    """Le document YAML, comme ``yaml.safe_load``.
+
+    Args:
+        content: Le texte YAML.
+
+    Raises:
+        DuplicateKey: Une clé écrite deux fois dans un même objet.
+        yaml.YAMLError: YAML invalide.
+    """
     return yaml.load(content, Loader=_UniqueKeyLoader)

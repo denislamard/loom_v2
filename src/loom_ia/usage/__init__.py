@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Coûts et budgets : politique de budget, rapport de consommation (J1 à J5).
+"""Coûts et budgets : politique de budget, rapport de consommation (fonctions J1 à J5).
 
 Le ledger est une projection du journal (``core.projections.ledger``) ; ce
 package y ajoute la politique fournie ``loom.budget`` et le rapport.

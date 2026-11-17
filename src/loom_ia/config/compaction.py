@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Agent interne de compaction, tiré de la configuration (#23).
+"""Agent interne de compaction, tiré de la configuration (point 23).
 
 Résumer une session est un appel de modèle comme un autre : plutôt qu'un
 chemin à part, `sessions.compaction` produit un agent ordinaire, monté comme
@@ -8,6 +8,14 @@ coûts, des spans et de la réparation, sans rien recâbler.
 
 Il n'a pas d'outils, une seule itération, et n'est publié ni en REST ni en
 MCP. Son nom est réservé : un agent déclaré ainsi est refusé au chargement.
+
+Exemple ::
+
+    sessions:
+      compaction:
+        model: HAIKU
+        over_tokens: 12000
+        keep_last: 6
 """
 
 from pathlib import Path
@@ -19,6 +27,7 @@ from loom_ia.agents.spec import AgentSpec, Expose, MainRole
 from loom_ia.core.model.base import DomainModel
 
 COMPACTION_AGENT: Final = "_compaction"
+"""Nom réservé de l'agent interne."""
 
 COMPACTION_SYSTEM: Final = """\
 Tu résumes les échanges anciens d'une conversation entre un utilisateur et un
@@ -34,26 +43,41 @@ agent, pour que la suite tienne dans le contexte du modèle.
   qu'il garde d'utile, sans le perdre ni le recopier mot pour mot.
 - N'invente rien et ne conclus rien qui ne soit pas dans les échanges.
 """
+"""Prompt système de l'agent interne, sauf ``system_file``."""
 
 
 class CompactionConfig(DomainModel):
-    """Résumé d'une session devenue longue (#23, §11.3)."""
+    """Résumé d'une session devenue longue (point 23, conception §11.3).
 
-    # Modèle dédié, moins cher que celui de l'agent.
+    Bloc ``sessions.compaction`` de la config.
+
+    Attributes:
+        model: Modèle dédié (identifiant dans ``models``), en général moins
+            cher que celui de l'agent.
+        over_tokens: Taille d'historique, en tokens estimés, au-delà de
+            laquelle un résumé est mis en file à la fin d'un run (12 000 par
+            défaut).
+        hard_tokens: Taille au-delà de laquelle il devient bloquant à
+            l'ouverture d'un run (150 000 par défaut) ; doit dépasser
+            ``over_tokens``.
+        keep_last: Tours laissés intacts à la fin de l'historique (un tour =
+            un run ; 6 par défaut).
+        fidelity_check: Contrôle déterministe des repères du segment dans le
+            résumé.
+        blocking: Vrai : le résumé dû se fait à l'ouverture du run suivant,
+            qui l'attend, au lieu d'une tâche de fond après le run. Rien ne
+            reste alors en cours quand un process de courte vie (CLI) se
+            ferme.
+        system_file: Prompt interne surchargé, relatif au dossier des
+            ressources.
+    """
+
     model: str = Field(min_length=1)
-    # Taille d'historique au-delà de laquelle un résumé est mis en file à la
-    # fin d'un run, et taille au-delà de laquelle il devient bloquant.
     over_tokens: PositiveInt = 12_000
     hard_tokens: PositiveInt = 150_000
-    # Tours laissés intacts à la fin de l'historique (un tour = un run).
     keep_last: NonNegativeInt = 6
-    # Contrôle déterministe des repères du segment dans le résumé.
     fidelity_check: bool = True
-    # Vrai : le résumé dû se fait à l'ouverture du run suivant, qui l'attend,
-    # au lieu d'une tâche de fond après le run. Rien ne reste alors en cours
-    # quand un process de courte vie (CLI) se ferme.
     blocking: bool = False
-    # Prompt interne surchargé, relatif au dossier des ressources.
     system_file: Path | None = None
 
     @model_validator(mode="after")
@@ -64,7 +88,15 @@ class CompactionConfig(DomainModel):
 
 
 def compaction_agent(spec: CompactionConfig) -> AgentSpec:
-    """Agent interne qui résume un segment de session."""
+    """Agent interne qui résume un segment de session.
+
+    Args:
+        spec: Le bloc ``sessions.compaction``.
+
+    Returns:
+        L'agent ``_compaction`` : sans outils, une itération, publié ni en REST
+        ni en MCP.
+    """
     main = MainRole(model=spec.model, system_file=spec.system_file) if spec.system_file is not None else MainRole(model=spec.model, system=COMPACTION_SYSTEM)
     return AgentSpec(
         name=COMPACTION_AGENT,

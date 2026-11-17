@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Lecture de ``loom.yaml`` et des agents (M1, #35).
+"""Lecture de ``loom.yaml`` et des agents (fonction M1, point 35).
 
 ``safe_load`` (sans clé en double, ``yaml_source``) puis validation stricte
 par les modèles Pydantic. Les chemins (``agents_dir``, ``resources_dir``,
@@ -53,14 +53,16 @@ from loom_ia.tools_builtin._style_params import (
 from loom_ia.tools_builtin._templates import parse as parse_template
 
 AGENT_SUFFIXES = (".yaml", ".yml")
-# Début du message d'un contrôle qui porte sur un agent (``LoomConfig.check``).
+"""Extensions des fichiers d'agents lus dans ``agents_dir``."""
 _AGENT_NAMED: Final = re.compile(r"Agent '([^']+)'")
-# Variable qui l'emporte sur le fichier : ce qu'un conteneur sait poser.
+"""Début du message d'un contrôle qui porte sur un agent (``LoomConfig.check``)."""
 PROFILE_ENV: Final = "LOOM_PROFILE"
-# Blocs remplacés en entier par une surcharge de profil, jamais fusionnés :
-# ils sont transmis tels quels au fournisseur, et une moitié de l'un n'a pas
-# de sens (décision de conception, §17.9).
+"""Variable qui l'emporte sur le fichier : ce qu'un conteneur sait poser."""
 WHOLE: Final = frozenset({"params", "llm"})
+"""Blocs remplacés en entier par une surcharge de profil, jamais fusionnés :
+ils sont transmis tels quels au fournisseur, et une moitié de l'un n'a pas
+de sens (décision de conception, conception §17.9).
+"""
 
 
 def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
@@ -70,6 +72,25 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     l'argument (``--profile``), ``LOOM_PROFILE``, puis ``profile:`` dans le
     fichier. ``chosen_profile`` rend le même arbitrage avec sa provenance,
     pour qui veut l'afficher.
+
+    Étapes : lecture YAML (sans clé en double), surcharges du profil, chemins
+    rendus absolus, agents de ``agents_dir`` lus et préparés (prompts,
+    skills, schémas de sortie, modèles et styles de documents), puis
+    validation de l'ensemble et contrôle des variables des prompts.
+
+    Args:
+        path: Chemin de ``loom.yaml``.
+        profile: Profil donné par l'appelant (``--profile``).
+
+    Returns:
+        La configuration validée, ``base_dir`` posé.
+
+    Raises:
+        ConfigError: Fichier illisible, YAML invalide, clé en double, champ
+            inconnu ou invalide, fichier cité absent ou hors de
+            ``resources_dir``, agent en double, incohérence (modèle,
+            serveur, agent non déclarés…). Le message nomme le fichier et
+            le chemin dans le YAML.
     """
     root = Path(path).resolve()
     data = _read_yaml(root)
@@ -149,6 +170,16 @@ def chosen_profile(given: str | None, in_file: object = None) -> tuple[Profile |
 
     Un profil qu'on ne voit pas est un profil qu'on oublie : la provenance est
     rendue avec lui pour que ``loom validate`` et ``loom serve`` la disent.
+
+    Args:
+        given: Profil donné par l'appelant.
+        in_file: Valeur de ``profile:`` dans le fichier.
+
+    Returns:
+        Le profil (``dev``, ``prod`` ou ``None``) et sa provenance.
+
+    Raises:
+        ConfigError: Profil inconnu.
     """
     candidats: tuple[tuple[object, str], ...] = (
         (given, "option"),
@@ -184,7 +215,7 @@ def _check_env_file_at_root(data: dict[str, Any], *, source: Path) -> None:
 
 
 def _merged(data: dict[str, Any], active: Profile | None, *, source: Path) -> dict[str, Any]:
-    """Applique les surcharges du profil actif au fichier racine (M4).
+    """Applique les surcharges du profil actif au fichier racine (fonction M4).
 
     Les objets fusionnent en profondeur, les listes sont **remplacées** : une
     liste partiellement fusionnée ne veut rien dire — que ferait-on d'un
@@ -241,13 +272,13 @@ def _prepared(spec: AgentSpec, resources_dir: Path, base_dir: Path, *, source: P
 
 
 def _culprit(error: ValidationError, loaded: Sequence[tuple[AgentSpec, Path]]) -> Path | None:
-    """Le fichier d'agent que nomme l'erreur de la config entière, s'il est seul (M5).
+    """Le fichier d'agent que nomme l'erreur de la config entière, s'il est seul (fonction M5).
 
     Un fichier d'agent est validé seul ; ce qu'il référence ailleurs (un modèle,
     un serveur MCP, une source, un autre agent, des capacités) ne l'est qu'avec
     la config entière, et l'erreur était attribuée à la racine de ``loom.yaml``
     — « (racine) — Agent 'agent' : modèle 'SONNET' non déclaré » pour une faute
-    dans ``agents/agent.yaml`` (test M5 du 23/10). Les contrôles d'un agent
+    dans ``agents/agent.yaml`` (essai de la fonction M5, 23/10). Les contrôles d'un agent
     commencent tous par « Agent '<nom>' » : quand toutes les erreurs nomment
     le même agent, et qu'il vient d'un fichier, c'est ce fichier. Sinon (une
     erreur de la racine, deux agents en cause), ``None`` : ``loom.yaml``.
@@ -302,8 +333,9 @@ def _with_prompts(spec: AgentSpec, resources_dir: Path, *, source: Path) -> Agen
 
 
 def _within_resources(resources_dir: Path, written: Path, label: str, *, source: Path) -> Path:
-    """Un fichier lu par la config (prompt, skill, modèle de document, style, logo), qui
-    doit rester dans ``resources_dir``.
+    """Un fichier lu par la config, qui doit rester dans ``resources_dir``.
+
+    Prompt, skill, modèle de document, style, logo.
 
     Le chemin est comparé une fois résolu (``..``, chemin absolu, lien
     symbolique) : ``resources_dir`` est protégé de tout outil fourni
@@ -327,6 +359,11 @@ def _hint(resources_dir: Path, written: Path) -> str:
 
 
 def _with_prompt[R: BaseRole](role: R, resources_dir: Path, label: str, *, source: Path) -> R:
+    """Le ``system_file`` d'un rôle rendu absolu, contenu dans ``resources_dir`` et lisible.
+
+    Raises:
+        ConfigError: Fichier hors de ``resources_dir`` ou absent.
+    """
     if role.system_file is None:
         return role
     prompt = _within_resources(resources_dir, role.system_file, f"{label}.system_file", source=source)
@@ -414,8 +451,7 @@ def _template_style(given: object, where: str, path: Path, *, source: Path) -> S
 
 
 def _styles_read(declared: PythonTool, resources_dir: Path, label: str, *, source: Path) -> PythonTool:
-    """La charte d'un outil ``loom.word`` ou ``loom.pdf``, lue, et la cascade de chaque
-    modèle vérifiée.
+    """La charte d'un outil ``loom.word`` ou ``loom.pdf``, lue, et la cascade de chaque modèle vérifiée.
 
     La charte, relative à ``resources_dir`` et contenue dans ce dossier, est lue une fois
     au chargement avec ses logos et ses polices, et validée ici ; le style de chaque
@@ -460,13 +496,12 @@ def _resolved(where: str, *files: StyleFile | None) -> Style:
         raise ValueError(f"{where} : {exc}") from None
 
 
-# Le message de PyYAML devant un texte qui contient « : » sans guillemets.
 _COLON: Final = "mapping values are not allowed here"
+"""Le message de PyYAML devant un texte qui contient « : » sans guillemets."""
 
 
 def _style_read(ref: StyleRef, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
-    """Un fichier de style lu et validé, ses logos et ses polices lus ; ou le style écrit en
-    ligne."""
+    """Un fichier de style lu et validé, ses logos et ses polices lus ; ou le style écrit en ligne."""
     if ref.spec is not None:
         return _files_read(ref.spec, resources_dir, where, source=source)
     file = cast(Path, ref.file)
@@ -505,8 +540,10 @@ def _files_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Pat
 
 
 def _logos_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
-    """Les logos d'un style (``page.header.logo``, ``page.footer.logo``), lus : leurs octets
-    à la place de leur fichier."""
+    """Les logos d'un style (``page.header.logo``, ``page.footer.logo``), lus.
+
+    Leurs octets prennent la place de leur fichier.
+    """
     page = spec.page
     if page is None:
         return spec
@@ -540,8 +577,10 @@ def _logos_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Pat
 
 
 def _fonts_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
-    """Les polices d'un style, lues et vérifiées (TrueType, droits d'embarquement) : leurs
-    octets à la place de leur fichier."""
+    """Les polices d'un style, lues et vérifiées (TrueType, droits d'embarquement).
+
+    Leurs octets prennent la place de leur fichier.
+    """
     if not spec.fonts:
         return spec
     fonts = {family: files.model_dump() for family, files in spec.fonts.items()}
@@ -627,7 +666,7 @@ def _absolute_tenant(tenant: TenantSpec, base_dir: Path) -> TenantSpec:
 
 
 def _check_variables(config: LoomConfig, *, source: Path) -> None:
-    """Variables citées par les prompts définies pour chaque client (§6, M5).
+    """Variables citées par les prompts définies pour chaque client (conception §6, fonction M5).
 
     Un prompt appartient à la configuration, pas au client : la même phrase
     sert tout le monde. Ce qui change d'un client à l'autre, ce sont les
@@ -696,6 +735,12 @@ def _absolute_server(config: LoomConfig, base_dir: Path) -> object:
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
+    """Le contenu d'un fichier YAML, qui doit être un objet (vide : ``{}``).
+
+    Raises:
+        ConfigError: Fichier illisible, YAML invalide, clé en double, ou
+            document qui n'est pas un objet.
+    """
     try:
         content = path.read_text(encoding="utf-8")
     except OSError as exc:

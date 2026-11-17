@@ -45,7 +45,7 @@ type ModelErrorKind = Literal[
     "content_filtered",
     # Sortie coupée par la limite de tokens (``max_tokens``) : jamais une réponse.
     "truncated",
-    # Tous les modèles de la chaîne sont écartés par leur disjoncteur (#10).
+    # Tous les modèles de la chaîne sont écartés par leur disjoncteur (point 10).
     "unavailable",
 ]
 """Genre d'une erreur d'appel de modèle, classée de façon neutre (point 10) ; voir ``ModelError``."""
@@ -413,7 +413,7 @@ class ResponseAccumulator:
 
     @staticmethod
     def _stamped(block: ContentBlock, model_id: str) -> ContentBlock:
-        """Raisonnement marqué du modèle demandé : après une bascule, il sera écarté (#7)."""
+        """Raisonnement marqué du modèle demandé : après une bascule, il sera écarté (point 7)."""
         if isinstance(block, ReasoningBlock) and block.model_id is None:
             return block.model_copy(update={"model_id": model_id})
         return block

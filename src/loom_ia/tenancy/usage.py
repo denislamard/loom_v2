@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Budget d'un client sur une période : le compteur et le contrôle (J4, L3, §15).
+"""Budget d'un client sur une période : le compteur et le contrôle (fonctions J4 et L3, conception §15).
 
 Le contrôle a lieu **au lancement d'un run**, une fois, et pas avant chaque
 appel de modèle comme le budget d'un run. Deux raisons. La sémantique : une
@@ -16,7 +16,7 @@ coûté en se terminant. Comme ``record`` pose une valeur par run racine au lieu
 de l'ajouter, les deux sources peuvent se chevaucher sans jamais compter deux
 fois.
 
-**Chaque contrôle relit la suite du journal** (test N du 23/10). Le journal
+**Chaque contrôle relit la suite du journal** (essai N du 23/10). Le journal
 est commun à tous les process — un autre ``loom serve``, un worker, ``loom
 run`` — et le compteur ne l'est pas : réchauffé une seule fois par fenêtre,
 celui d'un ``serve`` qui dure ne voyait plus que ses propres runs, et deux
@@ -39,6 +39,10 @@ Le rapport (``consumption``), lui, ne passe pas par le compteur : il relit le
 journal à chaque appel. C'est une question qu'un humain pose, pas une
 vérification par run, et elle doit valoir même pour un client sans budget —
 dont le compteur, justement, ne retient rien.
+
+Config : ``budgets.tenant`` (``max_cost_per_day``, ``max_tokens_per_day``,
+``max_cost_per_month``, ``max_tokens_per_month``), à la racine ou dans la
+fiche d'un client.
 """
 
 import asyncio
@@ -67,20 +71,30 @@ from loom_ia.tenancy.registry import Tenant
 logger = logging.getLogger(__name__)
 
 MODEL_RESPONDED: Final = "model.responded"
-# Tentatives ratées que le fournisseur a facturées (J1) : le ledger garde
-# celles qui portent un usage.
+"""Type des appels aboutis, lus au réchauffage."""
 MODEL_RETRIED: Final = "model.retried"
-# Événements lus par requête au réchauffage ; la pagination fait le reste.
+"""Type des tentatives ratées ; le ledger garde celles que le fournisseur a facturées (fonction J1)."""
 PAGE: Final = 5_000
-# Recul de la borne de lecture : un événement daté avant la dernière lecture
-# mais écrit après (un process plus lent, une horloge en retard) est rattrapé ;
-# les événements déjà vus sont écartés par leur identifiant.
+"""Événements lus par requête au réchauffage ; la pagination fait le reste."""
 OVERLAP: Final = timedelta(minutes=2)
+"""Recul de la borne de lecture.
+
+Un événement daté avant la dernière lecture mais écrit après (un process plus
+lent, une horloge en retard) est rattrapé ; les événements déjà vus sont
+écartés par leur identifiant.
+"""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Exceeded:
-    """Une limite de client atteinte : ce qu'elle valait, ce qui a été dépensé."""
+    """Une limite de client atteinte : ce qu'elle valait, ce qui a été dépensé.
+
+    Attributes:
+        period: La fenêtre.
+        limit: ``max_cost`` ou ``max_tokens``.
+        value: Le plafond.
+        spent: La dépense.
+    """
 
     period: Period
     limit: BudgetLimit
@@ -96,6 +110,16 @@ class BudgetExhausted(RuntimeError):
 
     ``retry_after`` porte les secondes jusqu'à la remise à zéro de la fenêtre,
     de quoi répondre honnêtement à l'appelant (``Retry-After`` en HTTP).
+
+    Args:
+        tenant_id: Le client.
+        reached: La limite atteinte.
+        retry_after: Secondes jusqu'à la remise à zéro.
+
+    Attributes:
+        tenant_id: Le client.
+        reached: La limite atteinte.
+        retry_after: Secondes jusqu'à la remise à zéro.
     """
 
     def __init__(self, tenant_id: TenantId, reached: Exceeded, retry_after: float) -> None:
@@ -107,7 +131,15 @@ class BudgetExhausted(RuntimeError):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TenantConsumption:
-    """Ce qu'un client a dépensé sur une fenêtre, et ce qu'elle lui permettait."""
+    """Ce qu'un client a dépensé sur une fenêtre, et ce qu'elle lui permettait.
+
+    Attributes:
+        tenant_id: Le client.
+        period: La fenêtre.
+        spent: La dépense : coût, tokens, appels.
+        limits: Plafonds posés pour cette fenêtre : limite et valeur.
+        runs: Runs racines comptés.
+    """
 
     tenant_id: TenantId
     period: Period
@@ -117,10 +149,15 @@ class TenantConsumption:
 
     @property
     def resets_at(self) -> datetime:
+        """Instant de la remise à zéro, en UTC."""
         return self.period.end
 
     def left(self, limit: BudgetLimit) -> float | None:
-        """Ce qui reste sur une limite ; ``None`` si elle n'est pas posée."""
+        """Ce qui reste sur une limite ; ``None`` si elle n'est pas posée.
+
+        Args:
+            limit: ``max_cost`` ou ``max_tokens``.
+        """
         for name, value in self.limits:
             if name == limit:
                 return max(0.0, value - _used(limit, self.spent))
@@ -129,25 +166,40 @@ class TenantConsumption:
 
 @dataclass(slots=True)
 class _Window:
-    """Ce que ce process a lu du journal pour un client et une période."""
+    """Ce que ce process a lu du journal pour un client et une période.
+
+    Attributes:
+        period: La fenêtre.
+        since: Prochaine lecture à partir de cette date (le début de la
+            fenêtre, puis la dernière date lue moins ``OVERLAP``).
+        totals: Dépense par run racine, tirée du journal : la somme de ce qui
+            a été lu.
+        seen: Événements déjà comptés, et leur date : ceux d'avant ``since``
+            sont oubliés.
+    """
 
     period: Period
-    # Prochaine lecture à partir de cette date (le début de la fenêtre, puis la
-    # dernière date lue moins ``OVERLAP``).
     since: datetime
-    # Dépense par run racine, tirée du journal : la somme de ce qui a été lu.
     totals: dict[RunId, Spent] = field(default_factory=dict[RunId, Spent])
-    # Événements déjà comptés, et leur date : ceux d'avant ``since`` sont oubliés.
     seen: dict[str, datetime] = field(default_factory=dict[str, datetime])
 
 
 class TenantUsage:
-    """Compteur de consommation par client, et contrôle de son budget de période."""
+    """Compteur de consommation par client, et contrôle de son budget de période.
+
+    Args:
+        counter: Le compteur (port ``UsageCounter``) : en mémoire, ou
+            partagé et durable.
+        store: Le journal, relu pour réchauffer le compteur et pour les
+            rapports.
+        warm: Faux pour un compteur partagé et durable (jalon J5.3), qui n'a
+            rien à réchauffer.
+    """
 
     def __init__(self, counter: UsageCounter, store: EventStore, *, warm: bool = True) -> None:
         self._counter = counter
         self._store = store
-        # Un compteur partagé et durable (J5.3) n'a rien à réchauffer : sa
+        # Un compteur partagé et durable (jalon J5.3) n'a rien à réchauffer : sa
         # valeur est déjà celle de tout le monde.
         self._warms = warm
         self._windows: dict[tuple[TenantId, str], _Window] = {}
@@ -159,6 +211,13 @@ class TenantUsage:
 
         Si le journal ne peut pas être relu pour réchauffer le compteur, l'erreur
         de lecture se propage telle quelle : le run n'est pas lancé.
+
+        Args:
+            tenant: Le client, et ses plafonds par période.
+            now: L'instant, avec un fuseau ; maintenant par défaut.
+
+        Raises:
+            BudgetExhausted: Une limite d'une fenêtre est atteinte.
         """
         budget = tenant.budget
         if not budget.limited:
@@ -178,6 +237,12 @@ class TenantUsage:
 
         Rien n'est retenu pour un client sans budget : le compteur ne sert qu'à
         ``check``, et le rapport relit le journal.
+
+        Args:
+            tenant: Le client.
+            run_id: Le run racine.
+            spent: Ce qu'il a coûté, sous-runs compris.
+            now: L'instant ; maintenant par défaut.
         """
         if not tenant.budget.limited:
             return
@@ -191,7 +256,20 @@ class TenantUsage:
         kind: BudgetPeriod = "day",
         now: datetime | None = None,
     ) -> TenantConsumption:
-        """Dépense d'un client sur une fenêtre, relue dans le journal."""
+        """Dépense d'un client sur une fenêtre, relue dans le journal.
+
+        Sert à ``loom report --period`` et ``Loom.consumption()``.
+
+        Args:
+            tenant_id: Le client.
+            budget: Ses plafonds par période, pour ``limits`` ; ``None`` :
+                aucun.
+            kind: ``day`` ou ``month``.
+            now: L'instant ; maintenant par défaut.
+
+        Returns:
+            La dépense, le nombre de runs et les plafonds de la fenêtre.
+        """
         period = Period.of(kind, now)
         totals = await self._from_journal(tenant_id, period)
         spent = Spent()
@@ -264,9 +342,9 @@ class TenantUsage:
     async def _from_journal(self, tenant_id: TenantId, period: Period) -> dict[RunId, Spent]:
         """Dépense par run racine, lue dans le journal depuis le début de la fenêtre.
 
-        Appels aboutis et tentatives ratées facturées (J1) : un rapport de période
+        Appels aboutis et tentatives ratées facturées (fonction J1) : un rapport de période
         ou un plafond de client qui ne lirait que les premiers sous-compterait
-        (test J5 du 21/10).
+        (essai de la fonction J5, 21/10).
 
         Les totaux sont assemblés sur **toutes** les pages avant d'être rendus :
         un run dont les appels se répartissent sur deux pages ne doit pas être

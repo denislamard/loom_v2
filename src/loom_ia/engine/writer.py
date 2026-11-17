@@ -273,7 +273,7 @@ class SessionWriter:
 
     @contextmanager
     def held(self, run_id: RunId, worker_id: str) -> Generator[SessionWriter]:
-        """Vue du pilote qui vient d'écrire la concession de ``run_id`` (#27).
+        """Vue du pilote qui vient d'écrire la concession de ``run_id`` (point 27).
 
         À ouvrir aussitôt la concession écrite, sans attente entre les deux :
         tout ce qui s'écrit ensuite sur la session passe alors sous ses yeux. La

@@ -25,6 +25,7 @@ Les analyses d'impact sous `docs/` numérotent leurs décisions `D-1`, `D-2`… 
 | `engine/executor.py` (ordre des appels d'un tour, `order: effects`) | Ordre des appels | `docs/moteur-ordre-des-appels-analyse.md` |
 | `engine/questions.py`, `access/progress.py` (questions, `loom.ask`) | Attente d'une réponse, questions multiples | `docs/wait_answer.md`, `docs/multi-questions.md` |
 | `tools_builtin/word`, `tools_builtin/_document` (`B-3`, `B-4`) | Outils Word et PDF | `docs/outil-word-*-analyse.md` (images, styles, modèles, refonte…) |
+| `config/references.py`, `tools_builtin/__init__.py` (préfixe `loom.`, registre, `D5`) | Outils fournis par loom-ia | `docs/tools-builtin-analyse.md` |
 | `tools_builtin/excel` | loom.excel | `docs/outil-excel-*.md`, `docs/excel_chart.md` |
 | `tools_builtin/sql` | loom.sql | `docs/sql_builtin_tool.md` |
 | `tools_builtin/local_files`, droits et approbations | Droits et approbation | `docs/rights_approval.md` |

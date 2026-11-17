@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""De la config aux objets qui tournent (M1, A9).
+"""De la config aux objets qui tournent (fonctions M1 et A9).
 
 ``build_agent`` assemble les clients de modèle, l'exécuteur d'outils (outils
 Python et rôles délégués), le prompt système et le ``RunContext``. Les trois
@@ -8,37 +8,37 @@ points d'accès partent tous d'ici.
 Un client de modèle est ouvert par modèle utilisé : ``main`` et un rôle sur le
 même modèle le partagent. Tout est vérifié avant d'ouvrir le premier client.
 
-Serveurs MCP (#19) : chaque référence d'un agent devient une source d'outils,
+Serveurs MCP (point 19) : chaque référence d'un agent devient une source d'outils,
 ouverte au début de chaque run. Les connexions de portée ``shared`` vivent
 dans un ``McpPool``, celui de l'instance ``Loom`` ou, à défaut, celui de
 l'agent. Le SDK ``mcp`` n'est importé que si la config déclare des serveurs.
 
-Stockage d'artefacts (G2) : un seul par instance, partagé par ses agents. Il
+Stockage d'artefacts (fonction G2) : un seul par instance, partagé par ses agents. Il
 suit le journal par défaut (dossier ``.artifacts`` d'un journal JSONL,
 mémoire sinon).
 
-Clients (L1, #34) : ``tenant`` dit pour qui l'agent est monté. Il apporte la
+Clients (fonction L1, point 34) : ``tenant`` dit pour qui l'agent est monté. Il apporte la
 table des secrets à lire, les outils retirés, les approbations imposées et
 les valeurs des variables citées par les prompts ; la correspondance des
 modèles, elle, est déjà dans la config qu'il porte. Sans lui, l'agent est
-monté pour ``default``, qui ne surcharge rien (#33).
+monté pour ``default``, qui ne surcharge rien (point 33).
 
-Politiques (#2) : chaque référence est résolue (politique fournie ``loom.…``,
+Politiques (point 2) : chaque référence est résolue (politique fournie ``loom.…``,
 nom enregistré ou ``module:attr``), puis contrôlée avant le premier run : ses
 points parmi ceux qu'elle déclare, ses décisions permises à chacun de ses
 points (``Pause`` : ``before_tool`` seulement, J4.3), un nom unique dans l'agent.
 
-Contrats de sortie (#20) : si l'agent en déclare un (réponse finale, rôle,
+Contrats de sortie (point 20) : si l'agent en déclare un (réponse finale, rôle,
 outil Python ou MCP), le guard ``loom.contract`` est placé en tête de ses
 politiques. La diffusion de la réponse finale (``stream_output``) vaut par
 défaut ``after_guards`` quand elle est contrôlée, ``live`` sinon.
 
-Secours (B4, #10) : ``main``, chaque rôle et chaque juge reçoivent leur
+Secours (fonction B4, point 10) : ``main``, chaque rôle et chaque juge reçoivent leur
 chaîne (modèle, puis ``fallbacks``), avec un client par modèle. Les
 disjoncteurs des modèles et des serveurs MCP sont communs aux agents d'une
 instance ``Loom`` (``breakers``) ; sans elle, à l'agent et à ses sous-agents.
 
-Sous-agents (C5) : l'agent appelé n'est monté qu'au premier appel, par
+Sous-agents (fonction C5) : l'agent appelé n'est monté qu'au premier appel, par
 ``agents`` (``Loom.context`` dans une instance). Deux agents peuvent ainsi
 s'appeler l'un l'autre sans que le montage boucle ; la profondeur borne les
 appels. Sans ``agents``, l'agent monte lui-même ses sous-agents à la demande,
@@ -195,19 +195,32 @@ logger = logging.getLogger(__name__)
 
 
 class _Closable(Protocol):
-    async def aclose(self) -> None: ...
+    """Ressource qu'un agent ferme avec lui (``aclose``)."""
+
+    async def aclose(self) -> None:
+        """Ferme la ressource."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
 class Agent:
-    """Un agent prêt à tourner, et de quoi refermer ce qu'il a ouvert."""
+    """Un agent prêt à tourner, et de quoi refermer ce qu'il a ouvert.
+
+    Attributes:
+        spec: Définition de l'agent.
+        context: Son contexte d'exécution, prêt pour ``begin_run`` et
+            ``drive``.
+        clients: Clients de modèle que l'agent a créés (``main``, rôles,
+            juges), un par modèle ; un client fourni par l'appelant
+            (``provided``) n'en est pas.
+        owned: Ressources ouvertes pour cet agent seul (connexions MCP
+            partagées sans pool fourni, sources de paquets, outils fournis qui
+            ferment des connexions, sous-agents).
+    """
 
     spec: AgentSpec
     context: RunContext
-    # Clients de modèle que l'agent a créés (``main``, rôles, juges), un par
-    # modèle ; un client fourni par l'appelant (``provided``) n'en est pas.
     clients: tuple[ModelClient, ...] = ()
-    # Ressources ouvertes pour cet agent seul (connexions MCP partagées sans pool fourni).
     owned: tuple[_Closable, ...] = ()
 
     async def aclose(self) -> None:
@@ -227,7 +240,17 @@ class Agent:
 
 
 def create_mcp_pool(config: LoomConfig, environ: Mapping[str, str] | None = None) -> McpPool | None:
-    """Pool des connexions MCP partagées, ou None si la config ne déclare aucun serveur."""
+    """Pool des connexions MCP partagées, ou None si la config ne déclare aucun serveur.
+
+    Args:
+        config: La configuration chargée.
+        environ: Environnement où lire les secrets des serveurs ;
+            ``os.environ`` par défaut.
+
+    Raises:
+        ConfigError: La config déclare des serveurs et le SDK ``mcp`` n'est pas
+            installé (extra ``loom-ia[mcp]``).
+    """
     if not config.mcp_servers:
         return None
     try:
@@ -239,7 +262,7 @@ def create_mcp_pool(config: LoomConfig, environ: Mapping[str, str] | None = None
 
 
 def _dsn(declared: EventsStorage | IdempotencyStorage, what: str) -> str:
-    """DSN lu dans la variable que la config nomme : elle ne porte pas le secret (§16.3)."""
+    """DSN lu dans la variable que la config nomme : elle ne porte pas le secret (conception §16.3)."""
     variable = declared.dsn_env or ""
     dsn = os.environ.get(variable, "")
     if not dsn:
@@ -256,7 +279,16 @@ def create_keyring(config: LoomConfig, secrets: SecretProvider | None = None) ->
 
     Les clés viennent des secrets, jamais de la config : celle-ci ne nomme
     que le secret qui les porte, et chaque client redirige ce nom vers sa
-    variable (5.1a).
+    variable (jalon J5.1a).
+
+    Args:
+        config: La configuration chargée.
+        secrets: Gestionnaire de secrets de l'application ; à défaut,
+            l'environnement, redirigé par client.
+
+    Raises:
+        ConfigError: Le paquet ``cryptography`` n'est pas installé (extra
+            ``loom-ia[crypto]``).
     """
     declared = config.storage.encryption
     if declared is None:
@@ -270,7 +302,15 @@ def create_keyring(config: LoomConfig, secrets: SecretProvider | None = None) ->
 
 
 def create_journal_codec(config: LoomConfig, secrets: SecretProvider | None = None) -> JournalCodec:
-    """Codec du journal : scellant quand ``storage.encryption`` est déclaré."""
+    """Codec du journal : scellant quand ``storage.encryption`` est déclaré.
+
+    Args:
+        config: La configuration chargée.
+        secrets: Gestionnaire de secrets de l'application.
+
+    Returns:
+        Le codec : en clair sans ``storage.encryption``, scellant sinon.
+    """
     keyring = create_keyring(config, secrets)
     return PLAIN if keyring is None else SealingCodec(keyring)
 
@@ -282,6 +322,18 @@ def create_event_store(config: LoomConfig | StorageConfig, *, codec: JournalCode
     scellée. Sans lui, il est tiré de la config — un journal de client n'en
     déclare pas (le sceau se déclare à la racine), si bien qu'un journal créé
     pour un client reçoit celui de l'instance.
+
+    Args:
+        config: La configuration, ou le bloc ``storage`` d'un client.
+        codec: Rangement des lignes ; tiré de la config à défaut.
+
+    Returns:
+        Le journal : ``postgres``, ``jsonl`` ou ``sqlite`` (avec ``path``),
+        sinon en mémoire.
+
+    Raises:
+        ConfigError: Variable du DSN absente, ou paquet non installé
+            (``asyncpg`` pour ``postgres``, ``aiosqlite`` pour ``sqlite``).
     """
     events = _storage(config).events
     chosen = codec if codec is not None else _own_codec(config)
@@ -328,6 +380,18 @@ def create_task_queue(config: LoomConfig, handlers: Mapping[JobKind, Handler]) -
     c'est ``loom worker`` qui les mène. Les traitements sont passés dans les
     deux cas : c'est le même objet qui sert de file dans un process qui
     publie et de consommateur dans un worker.
+
+    Args:
+        config: La configuration chargée.
+        handlers: Traitement de chaque genre de tâche (``run``,
+            ``compaction``…).
+
+    Returns:
+        ``rabbitmq`` (URL dans ``url_env``) ou ``asyncio`` (dans ce process,
+        ``max_running`` tâches à la fois).
+
+    Raises:
+        ConfigError: ``aio-pika`` non installé, ou variable de l'URL vide.
     """
     declared = config.storage.queue
     if declared.backend == "rabbitmq":
@@ -352,6 +416,16 @@ def create_bus(config: LoomConfig) -> EventBus | None:
 
     ``memory`` rend ``None`` : dans un seul process, le journal remet déjà ses
     écritures à ses abonnés, et un bus de plus ne ferait que les recopier.
+
+    Args:
+        config: La configuration chargée.
+
+    Returns:
+        Le bus ``postgres`` ou ``redis`` ; ``None`` pour ``memory``.
+
+    Raises:
+        ConfigError: Variable d'adresse absente, ou bibliothèque
+            (``asyncpg``, ``redis``) non installée.
     """
     declared = config.storage.bus
     if declared.backend == "postgres":
@@ -370,7 +444,7 @@ def create_bus(config: LoomConfig) -> EventBus | None:
 
 
 def _variable(declared: BusStorage, what: str, porte: str) -> str:
-    """Valeur de la variable d'environnement que la config nomme (§16.3)."""
+    """Valeur de la variable d'environnement que la config nomme (conception §16.3)."""
     name = declared.variable or ""
     value = os.environ.get(name, "")
     if not value:
@@ -379,12 +453,23 @@ def _variable(declared: BusStorage, what: str, porte: str) -> str:
 
 
 def create_run_exporter(config: LoomConfig, store: EventStore, environ: Mapping[str, str] | None = None) -> tuple[RunExporter | None, list[str]]:
-    """Les collecteurs de ``telemetry.exporters``, et ce qui empêche d'en monter (6.1a).
+    """Les collecteurs de ``telemetry.exporters``, et ce qui empêche d'en monter (jalon J6.1a).
 
     Un collecteur dont la variable d'adresse est vide n'est **pas monté**, et
     c'est dit — un avertissement, une erreur en profil prod : le SDK enverrait
     sinon à son adresse par défaut, ce qu'on n'a pas demandé. Sans collecteur
     monté, pas d'abonné du tout : rien ne coûte rien.
+
+    Args:
+        config: La configuration chargée.
+        store: Le journal, dont l'exporteur lit les runs.
+        environ: Environnement où lire les adresses des collecteurs.
+
+    Returns:
+        L'exporteur (``None`` sans collecteur monté) et les avertissements.
+
+    Raises:
+        ConfigError: OpenTelemetry non installé (extra ``loom-ia[otel]``).
     """
     declared = config.telemetry.exporters
     if not declared:
@@ -431,12 +516,19 @@ def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
 
     Une config qui n'en déclare aucun rend le SQL complet avec le rôle par
     défaut : de quoi préparer une base avant de la déclarer.
+
+    Args:
+        config: La configuration, ou le bloc ``storage`` d'un client.
+
+    Returns:
+        Le SQL des tables ``postgres`` déclarées (journal, idempotence),
+        rôles et droits compris ; sans aucune, le SQL complet.
     """
     from loom_ia.adapters.postgres import sql
 
     storage = _storage(config)
     # Le schéma complet de chaque table, migrations et table des versions
-    # comprises, comme ``sql.ddl()`` : au test F5 du 19/10, ``EVENTS_DDL`` seul
+    # comprises, comme ``sql.ddl()`` : à l'essai de la fonction F5 du 19/10, ``EVENTS_DDL`` seul
     # (le schéma de la 2.0) laissait la base sans ``loom_schema`` ; à
     # l'ouverture, loom tentait la migration avec le rôle de connexion, qui
     # n'en a pas le droit (« permission denied for schema public »).
@@ -474,6 +566,14 @@ def create_artifact_store(config: LoomConfig | StorageConfig, *, keyring: Keyrin
     Avec un trousseau, les octets sont scellés comme les charges du journal :
     un gros résultat déporté ou une pièce jointe porte du contenu, et le
     laisser en clair ferait du sceau une demi-mesure.
+
+    Args:
+        config: La configuration, ou le bloc ``storage`` d'un client.
+        keyring: Trousseau ; avec lui, les octets sont scellés.
+
+    Returns:
+        Le stockage ``local`` (avec un dossier) ou en mémoire, scellé avec un
+        trousseau.
     """
     storage = _storage(config)
     path = storage.artifacts_path
@@ -492,6 +592,17 @@ def create_idempotency_store(config: LoomConfig) -> IdempotencyStore | None:
     ``journal`` ne rend rien : il n'y a pas de magasin commun à monter, chaque
     run écrit ses enregistrements dans son journal et l'exécuteur le lui donne
     au moment de l'appel.
+
+    Args:
+        config: La configuration chargée.
+
+    Returns:
+        Le magasin ``memory``, ``postgres``, ``redis`` ou ``sqlite`` ;
+        ``None`` pour ``journal``.
+
+    Raises:
+        ConfigError: Variable de l'URL vide, ou bibliothèque non installée
+            (``asyncpg``, ``redis``, ``aiosqlite``).
     """
     declared = config.storage.idempotency
     if declared.backend == "memory":
@@ -526,12 +637,27 @@ def create_idempotency_store(config: LoomConfig) -> IdempotencyStore | None:
 
 
 def load_registry(config: LoomConfig) -> Registry:
-    """Charge les modules de ``imports`` et enregistre leurs outils."""
+    """Charge les modules de ``imports`` et enregistre leurs outils.
+
+    Args:
+        config: La configuration chargée.
+
+    Returns:
+        Le registre des outils et politiques enregistrés par les modules
+        de ``imports``.
+    """
     return import_modules(config.imports, base_dir=config.base_dir)
 
 
 def apply_logging(config: LoomConfig) -> logging.Handler:
-    """Installe les logs demandés par ``telemetry.logging``."""
+    """Installe les logs demandés par ``telemetry.logging``.
+
+    Args:
+        config: La configuration chargée.
+
+    Returns:
+        Le gestionnaire installé (niveau et format de ``telemetry.logging``).
+    """
     settings = config.telemetry.logging
     return configure_logging(settings.level.upper(), format=settings.format)
 
@@ -556,10 +682,10 @@ def build_agent(
 ) -> Agent:
     """Assemble l'agent ``name`` de la config.
 
-    ``models`` remplace la fabrique des clients de modèle (J6.2a) : le rejeu
+    ``models`` remplace la fabrique des clients de modèle (jalon J6.2a) : le rejeu
     monte ainsi le même agent, avec des clients qui répondent depuis le journal.
-    ``provided`` donne des clients tout faits, par identifiant de modèle (O2,
-    6.3c) : ils servent à la place de ceux que la config déclare, et restent à
+    ``provided`` donne des clients tout faits, par identifiant de modèle
+    (fonction O2, jalon J6.3c) : ils servent à la place de ceux que la config déclare, et restent à
     l'appelant, qui les ferme.
 
     ``mcp_pool`` porte les connexions MCP partagées ; sans lui, l'agent ouvre
@@ -569,10 +695,37 @@ def build_agent(
     nom ; sans lui, l'agent monte ses sous-agents lui-même, au premier appel.
     ``breakers`` : disjoncteurs partagés (ceux de l'instance) ; sans eux,
     l'agent a les siens, communs à ses sous-agents. ``idempotency`` : magasin
-    partagé (#49) ; sans lui, chaque appel reçoit celui de son journal.
-    ``tenant`` : le client pour qui l'agent est monté (L1) ; ses secrets
+    partagé (point 49) ; sans lui, chaque appel reçoit celui de son journal.
+    ``tenant`` : le client pour qui l'agent est monté (fonction L1) ; ses secrets
     remplacent alors ``environ``. ``threads`` : le pool des outils synchrones de
-    l'instance (B-2, D-4) ; sans lui, l'agent a le sien, commun à ses sous-agents.
+    l'instance (décisions B-2 et D-4 du délai et des threads) ; sans lui, l'agent a le sien, commun à ses sous-agents.
+
+    Args:
+        config: La configuration chargée.
+        name: Nom de l'agent.
+        store: Le journal.
+        registry: Registre des outils et politiques ; chargé depuis
+            ``imports`` à défaut.
+        environ: Environnement où lire les secrets, sans client.
+        on_chunk: Diffusion en direct de la réponse.
+        mcp_pool: Connexions MCP partagées de l'instance.
+        artifacts: Stockage des fichiers.
+        idempotency: Magasin d'idempotence partagé.
+        agents: Contexte d'un sous-agent par son nom.
+        breakers: Disjoncteurs partagés de l'instance.
+        tenant: Client pour qui l'agent est monté.
+        models: Fabrique des clients de modèle (rejeu).
+        provided: Clients tout faits, par identifiant de modèle.
+        threads: Pool des outils synchrones de l'instance.
+
+    Returns:
+        L'agent : sa définition, son ``RunContext`` et ce qu'il ferme.
+
+    Raises:
+        UnknownAgent: Aucun agent de ce nom.
+        ConfigError: Outil, politique, juge ou source introuvable ; nom en
+            double ; secret manquant ; agent qui exige un journal durable ou
+            un magasin d'idempotence partagé.
     """
     spec = AgentRegistry.from_config(config).get(name)
     known = registry if registry is not None else load_registry(config)
@@ -606,7 +759,7 @@ def build_agent(
     own_threads = ToolThreads(config.execution.tools.threads, grace=config.execution.tools.grace) if threads is None else None
     threads = threads if threads is not None else own_threads
 
-    # Échanges bruts (6.1b) : ceux de ce client de loom, pour tous ses modèles.
+    # Échanges bruts (jalon J6.1b) : ceux de ce client de loom, pour tous ses modèles.
     capture = config.capture_for(tenant_id)
     raw = capture.raw_max_bytes if capture.raw_exchanges else None
 
@@ -626,7 +779,7 @@ def build_agent(
                 read = secrets if secrets is not None else os.environ
                 said = _missing_secret(tenant_id, redirects, read, [spec.api_key_env])
                 if said is None and vaulted and _absent(read, spec.api_key_env):
-                    # Au test M3 du 22/10, un secret absent du gestionnaire se disait
+                    # À l'essai de la fonction M3 du 22/10, un secret absent du gestionnaire se disait
                     # « variable d'environnement » : il ne vient pas de là.
                     raise ModelConfigError(f"Modèle {model_id!r} : {_unprovided(tenant_id, [spec.api_key_env])}") from exc
                 if said is None:
@@ -774,7 +927,24 @@ def build_policies(
     l'agent en déclare (``contracts``, déduit de l'agent si absent), puis les
     juges (``judges``) — la forme d'une sortie est contrôlée avant son fond —,
     puis le budget (``budget``). ``fidelity`` n'est branché que sur l'agent
-    interne de compaction (#23).
+    interne de compaction (point 23).
+
+    Args:
+        spec: L'agent.
+        registry: Registre des politiques enregistrées.
+        base_dir: Dossier de la config, pour les références ``module:attr``.
+        contracts: Brancher le guard des contrats ; déduit de l'agent si
+            ``None``.
+        judges: Les guards des juges.
+        budget: La politique de budget.
+        fidelity: Le contrôle de fidélité d'un résumé.
+
+    Returns:
+        Les politiques, prêtes pour le moteur.
+
+    Raises:
+        ConfigError: Politique introuvable, point non déclaré par elle,
+            décision non permise à un point, nom en double.
     """
     bound: list[BoundPolicy] = []
     if fidelity is not None:
@@ -836,7 +1006,15 @@ def build_policies(
 
 
 def model_keys(spec: AgentSpec) -> tuple[ModelKey, ...]:
-    """Clés du state que le modèle tient à jour (``writers: [model]``), pour ``loom.state``."""
+    """Clés du state que le modèle tient à jour (``writers: [model]``), pour ``loom.state``.
+
+    Args:
+        spec: L'agent.
+
+    Returns:
+        Pour chaque clé tenue par le modèle : nom, description, schéma,
+        règle ``extract``, ``required`` et ``clears``.
+    """
     return tuple(
         ModelKey(
             name=name,
@@ -857,7 +1035,7 @@ def model_keys(spec: AgentSpec) -> tuple[ModelKey, ...]:
 
 
 def _model_tool(spec: AgentSpec, tools: Sequence[Tool]) -> str | None:
-    """Nom sous lequel ``loom.state`` est monté : ses écritures sont celles du modèle (B4)."""
+    """Nom sous lequel ``loom.state`` est monté : ses écritures sont celles du modèle (décision B4 du state v2)."""
     for declared, tool in zip(spec.python_tools, tools, strict=True):
         if declared.python == "loom.state":
             return tool.spec.name
@@ -867,7 +1045,16 @@ def _model_tool(spec: AgentSpec, tools: Sequence[Tool]) -> str | None:
 def state_rules(config: LoomConfig, spec: AgentSpec, *, model_tool: str | None = None) -> StateRules:
     """Clés du state que déclare l'agent, telles que le moteur les applique, et leurs limites.
 
-    ``model_tool`` : le nom sous lequel ``loom.state`` est monté (S1, B4).
+    ``model_tool`` : le nom sous lequel ``loom.state`` est monté (décisions S1
+    et B4 du state v2).
+
+    Args:
+        config: La configuration chargée. (limites ``sessions.state``).
+        spec: L'agent.
+        model_tool: Nom de ``loom.state`` dans l'agent.
+
+    Returns:
+        Les règles du state ; vides si l'agent ne déclare pas de clés.
     """
     limits = config.sessions.state
     return StateRules(
@@ -889,7 +1076,15 @@ def state_rules(config: LoomConfig, spec: AgentSpec, *, model_tool: str | None =
 
 
 def stream_output(spec: AgentSpec, policies: Policies) -> StreamOutput:
-    """Diffusion de la réponse finale : celle déclarée, sinon selon ses contrôles (#11)."""
+    """Diffusion de la réponse finale : celle déclarée, sinon selon ses contrôles (point 11).
+
+    Args:
+        spec: L'agent.
+        policies: Ses politiques montées.
+
+    Returns:
+        ``live`` ou ``after_guards``.
+    """
     if spec.stream_output is not None:
         return spec.stream_output
     guarded = bool(policies.at("on_output")) or any(role.terminal and (role.output is not None or role.judge is not None) for role in spec.roles)
@@ -921,7 +1116,12 @@ def _policy(spec: AgentSpec, ref: PolicyRef, registry: Registry, base_dir: Path 
 
 
 def system_prompt(spec: AgentSpec, variables: Mapping[str, JsonValue] | None = None) -> str:
-    """Prompt système de l'orchestrateur, ses variables rendues."""
+    """Prompt système de l'orchestrateur, ses variables rendues.
+
+    Args:
+        spec: L'agent.
+        variables: Valeurs des variables du client.
+    """
     return prompt_text(spec.main, variables)
 
 
@@ -929,10 +1129,17 @@ def prompt_text(role: BaseRole, variables: Mapping[str, JsonValue] | None = None
     """Prompt système d'un rôle : texte en ligne ou fichier, ses variables rendues.
 
     Un prompt appartient à la configuration : il est le même pour tout le
-    monde (§6). Ce qu'un client y change, ce sont les valeurs qu'il cite —
+    monde (conception §6). Ce qu'un client y change, ce sont les valeurs qu'il cite —
     ``{{ entreprise }}`` —, et le chargement a déjà vérifié qu'aucune ne
-    manque à aucun client (M5). Un prompt sans ``{{ }}`` traverse ce rendu
+    manque à aucun client (fonction M5). Un prompt sans ``{{ }}`` traverse ce rendu
     sans y laisser de trace.
+
+    Args:
+        role: Le rôle (``main`` ou délégué).
+        variables: Valeurs des variables du client.
+
+    Returns:
+        Le prompt rendu.
     """
     source = system_text(role)
     if "{{" not in source:
@@ -946,7 +1153,14 @@ def role_definition(
     *,
     state: Mapping[str, StateKey] | None = None,
 ) -> RoleDefinition:
-    """Rôle délégué tel que le moteur l'exécute ; ``state`` : les clés que déclare l'agent."""
+    """Rôle délégué tel que le moteur l'exécute ; ``state`` : les clés que déclare l'agent.
+
+    Args:
+        role: Le rôle déclaré.
+        variables: Valeurs des variables du client.
+        state: Les clés du state de l'agent, pour décrire celles que le rôle
+            reçoit.
+    """
     template = Template.parse(role.input_template) if role.input_template is not None else None
     return RoleDefinition(
         name=role.name,
@@ -970,7 +1184,19 @@ def judge_definition(
     base_dir: Path | None = None,
     profile: str | None = None,
 ) -> JudgeDefinition:
-    """Juge tel que le moteur l'exécute : condition résolue, contexte converti."""
+    """Juge tel que le moteur l'exécute : condition résolue, contexte converti.
+
+    Args:
+        spec: L'agent.
+        judged: Nom du juge, rôle jugé (``None`` pour la réponse finale) et
+            définition.
+        registry: Registre, pour résoudre ``when.condition``.
+        base_dir: Dossier de la config.
+        profile: Profil courant, pour ``when.profiles``.
+
+    Raises:
+        ConfigError: Condition introuvable ou non appelable.
+    """
     name, role, judge = judged
     condition: Condition | None = None
     reference = judge.when.condition
@@ -1009,13 +1235,13 @@ def _check_durable_journal(
     imposed: Mapping[str, Approval] | None = None,
     tenant: Tenant | None = None,
 ) -> None:
-    """Un agent qui peut se mettre en pause exige un journal durable (#28).
+    """Un agent qui peut se mettre en pause exige un journal durable (point 28).
 
     En pause, le run n'existe plus que dans le journal : le process peut
     s'arrêter, l'approbateur prendre son temps, un autre worker reprendre. Un
     journal en mémoire perdrait le run à la première fermeture, et
     l'approbation n'aurait rien à reprendre. Une erreur, donc, et non un
-    avertissement — sauf en profil ``dev`` (5.5a), où perdre un run en pause à
+    avertissement — sauf en profil ``dev`` (jalon J5.5a), où perdre un run en pause à
     la fermeture est le prix d'un essai.
 
     Le journal jugé est celui du client pour qui l'agent est monté : son
@@ -1053,9 +1279,9 @@ def _check_durable_journal(
         ]
         if causes:
             # Assoupli en dev seulement : sur une machine, perdre un run en
-            # pause à la fermeture est le prix d'un essai (M4).
+            # pause à la fermeture est le prix d'un essai (fonction M4).
             whose = f", celui du client {tenant.id!r}" if tenant is not None and own is not None else ""
-            # Dit une fois par client monté : au test M4 du 23/10, la même ligne
+            # Dit une fois par client monté : à l'essai de la fonction M4 du 23/10, la même ligne
             # revenait sans dire pour quel client.
             agent = f"Agent {spec.name!r}" + (f" (client {tenant.id!r})" if tenant is not None else "")
             announce(
@@ -1113,7 +1339,7 @@ def _selects(ref: McpTools | SourceTools, short: str) -> bool:
 
 
 def _check_shared_idempotency(config: LoomConfig, spec: AgentSpec, tools: Sequence[AnyTool]) -> None:
-    """Une clé métier exige un magasin partagé et durable (#49).
+    """Une clé métier exige un magasin partagé et durable (point 49).
 
     Une clé métier dit « cette relance est déjà partie » à qui la demande,
     d'un run à l'autre et d'une conversation à l'autre. Le magasin ``journal``
@@ -1134,11 +1360,20 @@ def _check_shared_idempotency(config: LoomConfig, spec: AgentSpec, tools: Sequen
 
 
 def announce(config: LoomConfig, warnings: Sequence[str], *, refuse: bool | None = None) -> None:
-    """Dit ce qui ne va pas — un avertissement, ou une erreur en profil ``prod`` (M4).
+    """Dit ce qui ne va pas — un avertissement, ou une erreur en profil ``prod`` (fonction M4).
 
     C'est ici que les profils prennent leur sens : la même config charge sur
     une machine et refuse de partir en production. ``refuse`` tranche à la
     place du profil quand la règle a son propre arbitrage.
+
+    Args:
+        config: La configuration chargée.
+        warnings: Les messages.
+        refuse: Vrai pour refuser, faux pour avertir ; le profil ``prod``
+            décide si ``None``.
+
+    Raises:
+        ConfigError: Il y a des messages et l'on refuse.
     """
     if not warnings:
         return
@@ -1150,10 +1385,14 @@ def announce(config: LoomConfig, warnings: Sequence[str], *, refuse: bool | None
 
 
 def exporter_warnings(config: LoomConfig, environ: Mapping[str, str] | None = None) -> list[str]:
-    """Les collecteurs que leur variable d'adresse, vide, laisse non montés (6.1a).
+    """Les collecteurs que leur variable d'adresse, vide, laisse non montés (jalon J6.1a).
 
     Le même texte que ``create_run_exporter`` dit au montage : ``loom validate``
     l'affiche à sa place.
+
+    Args:
+        config: La configuration chargée.
+        environ: Environnement où lire les adresses.
     """
     variables = os.environ if environ is None else environ
     return [_unmounted(exporter.endpoint_env) for exporter in config.telemetry.exporters if not variables.get(exporter.endpoint_env, "")]
@@ -1164,18 +1403,21 @@ def _unmounted(variable: str) -> str:
 
 
 def storage_warnings(config: LoomConfig) -> list[str]:
-    """Ce qui ne va pas ensemble dans un service à plusieurs process (5.3).
+    """Ce qui ne va pas ensemble dans un service à plusieurs process (jalon J5.3).
 
     Un tel service partage son journal et ses nouvelles, mais **pas forcément
     ses fichiers** : les artefacts ``local`` exigent un dossier commun aux
     process, et ``memory`` ne sort pas de celui qui écrit. Un run repris
-    ailleurs (5.3b) ne retrouverait alors ni ses pièces jointes ni ses
+    ailleurs (jalon J5.3b) ne retrouverait alors ni ses pièces jointes ni ses
     résultats déportés.
 
     Un avertissement, pas une erreur : un volume partagé est un montage
     parfaitement légitime, que la config ne peut pas distinguer d'un dossier
     propre à chaque machine, et un agent qui ne produit aucun fichier n'est de
-    toute façon pas concerné. Le stockage partagé (GCS) est reporté avec 5.3d.
+    toute façon pas concerné. Le stockage partagé (GCS) est reporté avec le jalon J5.3d.
+
+    Args:
+        config: La configuration chargée.
     """
     storage = config.storage
     if not (storage.queue.brokered or storage.bus.shared):
@@ -1203,11 +1445,14 @@ def model_warnings(config: LoomConfig) -> list[str]:
     voit les images peut les recevoir **dans** le résultat d'un outil
     (``tool_result_media: true``). Sans cette capacité, une image rendue par un
     outil part dans un message utilisateur placé après les résultats, et le
-    modèle la prend pour une image envoyée par l'utilisateur (test D8 du 18/10).
+    modèle la prend pour une image envoyée par l'utilisateur (essai de la fonction D8, 18/10).
     Ce n'est pas un défaut que loom choisit seul : ``sdk: anthropic`` désigne
     un protocole, que des fournisseurs compatibles (MiniMax…) reprennent sans
     forcément accepter une image dans un résultat d'outil. Un avertissement
     donc, dans tous les profils, et seulement pour l'adresse officielle.
+
+    Args:
+        config: La configuration chargée.
     """
     return [
         f"Modèle {spec.id!r} : sdk anthropic avec vision, mais sans "
@@ -1228,6 +1473,9 @@ def key_warnings(config: LoomConfig) -> list[str]:
     chaque appel est donc refusé — au 20/10, en « 401 invalid x-api-key », sans
     que rien n'ait signalé l'oubli. Un avertissement, une erreur en profil
     ``prod`` : un service qui ne peut appeler aucun de ses modèles ne part pas.
+
+    Args:
+        config: La configuration chargée.
     """
     return [
         f"Modèle {spec.id!r} : sdk {spec.sdk} vers l'API officielle sans api_key_env — "
@@ -1239,7 +1487,7 @@ def key_warnings(config: LoomConfig) -> list[str]:
 
 
 def encryption_warnings(config: LoomConfig, keyring: Keyring | None) -> list[str]:
-    """Ce que le trousseau dit des clients déclarés (5.5b).
+    """Ce que le trousseau dit des clients déclarés (jalon J5.5b).
 
     Deux choses valent d'être dites au chargement. Un client **sans clé** :
     son journal reste illisible et ses runs seront refusés à leur premier
@@ -1251,6 +1499,10 @@ def encryption_warnings(config: LoomConfig, keyring: Keyring | None) -> list[str
     Deux clients qui **partagent une clé** : c'est un montage possible, mais
     effacer cette clé efface le contenu des deux, et c'est le genre de chose
     qu'on découvre au mauvais moment.
+
+    Args:
+        config: La configuration chargée.
+        keyring: Le trousseau, s'il y en a un.
     """
     if keyring is None:
         return []
@@ -1278,7 +1530,11 @@ def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     """Budget en dollars sur un agent dont un modèle n'a pas de tarif (backlog #010).
 
     Ses appels comptent 0 $ : le plafond ne les voit pas. En profil prod,
-    ``announce`` en fait une erreur (5.5a) ; un budget en tokens reste efficace.
+    ``announce`` en fait une erreur (jalon J5.5a) ; un budget en tokens reste efficace.
+
+    Args:
+        config: La configuration chargée.
+        spec: L'agent.
     """
     if not config.budget_of(spec.name).in_dollars:
         return []
@@ -1291,13 +1547,18 @@ def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
 
 
 def judge_warnings(config: LoomConfig, spec: AgentSpec, *, tenant: Tenant | None = None) -> list[str]:
-    """Avertissements sur les juges de l'agent (E6, #21) ; des erreurs en profil prod (5.5a).
+    """Avertissements sur les juges de l'agent (fonction E6, point 21) ; des erreurs en profil prod (jalon J5.5a).
 
     ``tenant`` : le client pour qui l'agent est monté, sa correspondance des
     modèles déjà appliquée à ``config``. Un client déclaré est nommé, et un
-    modèle qu'il remplace est dit avec sa cible : au test E6 du 19/10, « (OPUS
+    modèle qu'il remplace est dit avec sa cible : à l'essai de la fonction E6 du 19/10, « (OPUS
     et HAIKU) » pour un client chez qui OPUS devient HAIKU ne disait ni le
     client, ni que les deux sont le même modèle.
+
+    Args:
+        config: La configuration chargée.
+        spec: L'agent.
+        tenant: Le client.
     """
     warnings: list[str] = []
     declared = tenant is not None and tenant.spec is not None
@@ -1311,7 +1572,7 @@ def judge_warnings(config: LoomConfig, spec: AgentSpec, *, tenant: Tenant | None
         label = f"Agent {spec.name!r}, juge {name!r}"
         if declared and tenant is not None:
             label = f"Client {tenant.id!r}, agent {spec.name!r}, juge {name!r}"
-        # Chaînes de secours comprises (#10) : un secours peut rendre le juge corrélé.
+        # Chaînes de secours comprises (point 10) : un secours peut rendre le juge corrélé.
         evaluated = role.chain if role is not None else spec.main.chain
         pairs = [(mine, theirs) for mine in judge.chain for theirs in evaluated if correlated(config.model_spec(mine), config.model_spec(theirs))]
         if pairs:
@@ -1337,6 +1598,13 @@ def declared_skills(config: LoomConfig, spec: AgentSpec) -> list[tuple[str, str]
     On lit ce que la config déclare, comme ``_sources_asking_approval`` : la
     surcharge de l'agent l'emporte sur celle du serveur ou de la source, et un
     outil qu'``include`` ou ``exclude`` écarte ne compte pas.
+
+    Args:
+        config: La configuration chargée.
+        spec: L'agent.
+
+    Returns:
+        Nom de l'outil et texte du skill.
     """
     found: list[tuple[str, str]] = []
     for ref, declared in _source_refs(config, spec):
@@ -1370,7 +1638,12 @@ def _check_skills_read(config: LoomConfig, spec: AgentSpec) -> None:
 
 
 def skill_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
-    """Les skills plus longs que ``SKILL_WARN_CHARS`` : ils partent à chaque appel de modèle."""
+    """Les skills plus longs que ``SKILL_WARN_CHARS`` : ils partent à chaque appel de modèle.
+
+    Args:
+        config: La configuration chargée.
+        spec: L'agent.
+    """
     sized = [(tool.python.removeprefix(RESERVED_PREFIX), tool.skill) for tool in spec.python_tools if tool.skill]
     sized += declared_skills(config, spec)
     return [
@@ -1389,10 +1662,13 @@ def overlap_warnings(spec: AgentSpec) -> list[str]:
     chacune en expose une part : ``fs_lecture`` pour lire, ``fs_ecriture``
     pour écrire, avec une approbation. Elles le sont moins quand elles se
     recouvrent : le modèle voit deux fois les mêmes outils et les appelle
-    tous les deux (test D3 du 18/10, ``fs__list_roots`` et ``f__list_roots``).
+    tous les deux (essai de la fonction D3, 18/10, ``fs__list_roots`` et ``f__list_roots``).
     Seuls deux ``include`` disjoints garantissent l'absence de recouvrement :
     avec ``exclude``, ou sans filtre, la liste dépend de ce que le serveur
     annonce, que la config ne connaît pas.
+
+    Args:
+        spec: L'agent.
     """
     refs: dict[tuple[str, str], list[McpTools | SourceTools]] = {}
     for ref in (*spec.mcp_tools, *spec.source_tools):
@@ -1412,10 +1688,14 @@ def overlap_warnings(spec: AgentSpec) -> list[str]:
 
 
 def fallback_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
-    """Secours à la fenêtre de contexte déclarée plus petite que celle du modèle (#10).
+    """Secours à la fenêtre de contexte déclarée plus petite que celle du modèle (point 10).
 
     Une requête qui tient dans la fenêtre du modèle peut déborder de celle du
     secours : la bascule échouera alors en ``context_overflow``.
+
+    Args:
+        config: La configuration chargée.
+        spec: L'agent.
     """
     chains = [(f"Agent {spec.name!r}", spec.main.chain)]
     chains += [(f"Agent {spec.name!r}, rôle {role.name!r}", role.chain) for role in spec.roles]
@@ -1484,6 +1764,7 @@ class _SubAgents:
         tenant: Tenant | None = None,
         threads: ToolThreads | None = None,
     ) -> None:
+        """Garde de quoi monter les sous-agents ; les arguments sont ceux de ``build_agent``."""
         self._config = config
         self._store = store
         self._threads = threads
@@ -1497,6 +1778,7 @@ class _SubAgents:
         self._built: dict[str, Agent] = {}
 
     def __call__(self, name: str) -> RunContext:
+        """Contexte du sous-agent ``name``, monté au premier appel puis gardé."""
         built = self._built.get(name)
         if built is None:
             built = build_agent(
@@ -1517,6 +1799,7 @@ class _SubAgents:
         return built.context
 
     async def aclose(self) -> None:
+        """Ferme les sous-agents montés."""
         closing = Closing()
         for built in self._built.values():
             with closing:
@@ -1551,7 +1834,7 @@ def _check_names(spec: AgentSpec, python_tools: list[str]) -> None:
 
 
 def _check_state(spec: AgentSpec, tools: Sequence[Tool]) -> None:
-    """Sources ``from`` du state : des outils de l'agent, avec des données pour ``path`` (D12).
+    """Sources ``from`` du state : des outils de l'agent, avec des données pour ``path`` (décision D12 du state de session).
 
     ``path`` se lit dans les données du résultat (``data``), après les
     politiques ``after_tool`` : un contrat avec schéma en donne à un outil ou à
@@ -1622,7 +1905,7 @@ def _absent(secrets: Mapping[str, str], variable: str | None) -> bool:
 
 
 def _unprovided(tenant_id: TenantId, names: Iterable[str | None]) -> str:
-    """Le refus d'un secret que le gestionnaire de l'application ne rend pas (M3)."""
+    """Le refus d'un secret que le gestionnaire de l'application ne rend pas (fonction M3)."""
     named = [name for name in dict.fromkeys(names) if name is not None]
     which = f"le secret {named[0]} est absent ou vide" if len(named) == 1 else f"les secrets {', '.join(named)} sont absents ou vides"
     return f"{which} dans le gestionnaire de secrets (client {tenant_id!r})"
@@ -1634,12 +1917,12 @@ def _missing_secret(
     secrets: Mapping[str, str],
     variables: Iterable[str | None],
 ) -> str | None:
-    """Le refus d'un secret manquant, redit avec la variable **du client** (L2).
+    """Le refus d'un secret manquant, redit avec la variable **du client** (fonction L2).
 
     Un client redirige ``ANTHROPIC_API_KEY`` vers ``DUPONT_ANTHROPIC_KEY`` ;
     l'adaptateur, qui ne connaît que la config, disait alors « la variable
     ANTHROPIC_API_KEY est absente ou vide » alors qu'elle est posée — c'est
-    la variable du client qui manque (test L2 du 22/10). Rend ``None`` quand
+    la variable du client qui manque (essai de la fonction L2, 22/10). Rend ``None`` quand
     aucune variable redirigée ne manque : le message d'origine dit juste.
     """
     missing = [
@@ -1664,7 +1947,7 @@ def _mcp_sources(
 ) -> tuple[list[ToolSource], tuple[_Closable, ...]]:
     """Sources d'outils des serveurs MCP de l'agent, et le pool créé pour lui s'il en faut un.
 
-    Portée ``tenant`` (#34) : la connexion vit dans le pool comme une
+    Portée ``tenant`` (point 34) : la connexion vit dans le pool comme une
     ``shared``, mais sous une clé qui nomme le client — deux clients du même
     serveur ont chacun la leur, ouverte avec ses identifiants.
     """
@@ -1712,7 +1995,7 @@ def _mcp_sources(
 
 
 def _packaged_sources(config: LoomConfig, spec: AgentSpec, environ: Mapping[str, str] | None) -> list[PackagedSource]:
-    """Sources d'outils des paquets que l'agent référence (J6.4b).
+    """Sources d'outils des paquets que l'agent référence (jalon J6.4b).
 
     Le paquet de chaque source est importé ici, et sa fabrique appelée avec
     ce que la config déclare : des paramètres refusés refusent le montage.
@@ -1760,6 +2043,12 @@ def _tool(
     *,
     provided: BuiltinContext | None = None,
 ) -> Tool:
+    """Outil Python d'un agent : fourni, enregistré ou importé, avec les réglages de sa référence.
+
+    Raises:
+        ConfigError: ``skill_file`` non lu, ou outil introuvable ; le message
+            nomme l'agent et l'outil.
+    """
     if declared.skill_file is not None:
         # Une spec construite en Python n'est pas passée par le chargement.
         raise ConfigError(f"Agent {agent!r}, outil {declared.python!r} : skill_file {declared.skill_file} non lu — un skill se lit au chargement (load_config)")
@@ -1771,7 +2060,7 @@ def _tool(
         tool = found if isinstance(found, Tool) else _from_function(declared, found)
     except ConfigError as exc:
         # La référence ne dit pas d'où elle vient : l'agent et l'outil, si
-        # (test M5 du 23/10, « Référence 'prix_ht' introuvable » sans plus).
+        # (essai de la fonction M5, 23/10, « Référence 'prix_ht' introuvable » sans plus).
         raise ConfigError(f"Agent {agent!r}, outil {declared.python!r} : {exc.reason}") from exc
     return configure(
         tool,
@@ -1885,8 +2174,8 @@ def _protected_paths(config: LoomConfig) -> tuple[Protected, ...]:
     return tuple(found)
 
 
-# Ce qu'un serveur MCP exécute : un script, pas une donnée qu'il sert.
 _SCRIPT_SUFFIXES: Final = frozenset({".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".sh", ".bash", ".rb", ".pl", ".php"})
+"""Ce qu'un serveur MCP exécute : un script, pas une donnée qu'il sert."""
 
 
 def _code_names(config: LoomConfig) -> set[str]:

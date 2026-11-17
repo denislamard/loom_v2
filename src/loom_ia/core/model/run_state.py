@@ -131,7 +131,8 @@ class Rejected:
     Attributes:
         reason: Motif du refus, lu par le modèle.
         by: Identité de qui refuse.
-        via: Passerelle qui a porté la décision (audit, §7).
+        via: Passerelle qui a porté la décision (audit,
+            ``docs/loom_role_user.md`` §7).
         roles: Rôles d'accès qui l'ont permise.
         self_approved: Vrai si c'est celui qui a lancé le run.
     """
@@ -199,7 +200,8 @@ class PendingApproval(DomainModel):
             (``docs/loom_role_user.md`` §5.2).
         policy: Politique qui l'a exigée ; absente pour un outil en ``approval:
             always``.
-        approvers: Rôles approbateurs, figés à l'écriture (§5.3) ; ``None`` :
+        approvers: Rôles approbateurs, figés à l'écriture
+            (``docs/loom_role_user.md`` §5.3) ; ``None`` :
             tout rôle qui a ``approve`` sur l'agent.
         self_approval: Faux si l'agent interdit l'auto-approbation (décision
             D-7b des utilisateurs et rôles).

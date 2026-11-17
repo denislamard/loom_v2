@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Budget d'un run et de sa session : politique fournie ``loom.budget`` (J4, #1).
+"""Budget d'un run et de sa session : politique fournie ``loom.budget`` (fonction J4, point 1).
 
 Avant chaque appel de l'orchestrateur (``before_model``), la politique
 compare la consommation aux limites de l'agent :
@@ -14,6 +14,11 @@ Une limite atteinte écrit un ``budget.exceeded``, une fois par limite et par
 run. Avec ``on_exceed: stop``, la décision est ``Stop`` : le run passe en
 ``FINALIZING`` et produit une réponse forcée sans outils ; le dépassement est
 borné à cette dernière génération. Avec ``warn``, le run continue.
+
+Config : ``budgets`` de la racine, surchargé clé par clé par ``budget`` de
+l'agent (``run`` : ``max_cost``, ``max_tokens``, ``max_calls`` ; ``session`` :
+``max_cost``, ``max_tokens`` ; ``on_exceed``). Le montage branche la politique
+dès qu'une limite est déclarée.
 """
 
 from typing import Final
@@ -35,32 +40,56 @@ from loom_ia.core.model import (
 from loom_ia.engine import Trace, TracingPolicy
 
 BUDGET_POLICY: Final = "loom.budget"
+"""Nom de la politique de budget dans le journal."""
 
 type Reached = tuple[BudgetScope, BudgetLimit, float, float]
+"""Une limite atteinte : portée (``run``, ``session``), limite, plafond, consommation."""
 
 
 class BudgetGuard(TracingPolicy):
-    """Politique ``loom.budget`` : limites du run et de la session, avant chaque appel."""
+    """Politique ``loom.budget`` : limites du run et de la session, avant chaque appel.
+
+    Args:
+        budgets: Les limites de l'agent et ``on_exceed``.
+
+    Attributes:
+        budgets: Les limites de l'agent.
+    """
 
     def __init__(self, budgets: Budgets) -> None:
         self.budgets = budgets
 
     @property
     def name(self) -> str:
+        """``loom.budget``."""
         return BUDGET_POLICY
 
     @property
     def points(self) -> frozenset[HookPoint]:
+        """``before_model`` seulement."""
         return frozenset({"before_model"})
 
     @property
     def decisions(self) -> frozenset[DecisionKind]:
+        """``stop`` seulement."""
         return frozenset({"stop"})
 
     def __repr__(self) -> str:
         return f"BudgetGuard({self.budgets!r})"
 
     async def decide_traced(self, subject: PolicySubject, context: PolicyContext, trace: Trace) -> Decision:
+        """Compare la consommation aux limites ; écrit un ``budget.exceeded`` par limite nouvellement atteinte.
+
+        Args:
+            subject: Le sujet ``before_model`` ; sans effet pendant la réponse
+                forcée.
+            context: Contexte de la politique (son nom va dans l'événement).
+            trace: Reçoit les ``budget.exceeded``.
+
+        Returns:
+            ``Stop`` avec les limites atteintes en clair si ``on_exceed`` vaut
+            ``stop`` ; ``CONTINUE`` sinon, ou si rien n'est atteint.
+        """
         if not isinstance(subject, BeforeModel) or subject.finalizing:
             return CONTINUE
         reached = self.reached(subject)
@@ -85,7 +114,18 @@ class BudgetGuard(TracingPolicy):
         return CONTINUE
 
     def reached(self, subject: BeforeModel) -> list[Reached]:
-        """Limites atteintes : portée, limite, plafond, consommation."""
+        """Limites atteintes : portée, limite, plafond, consommation.
+
+        Le run : sa limite la plus basse entre celle de l'agent et la part
+        reçue d'un parent. La session : pour un run racine, la consommation
+        des runs précédents plus celle du run.
+
+        Args:
+            subject: Le sujet ``before_model``.
+
+        Returns:
+            Les limites atteintes ou dépassées.
+        """
         state = subject.state
         run = self.budgets.run.tightest(state.budget)
         used = state.spent
@@ -107,13 +147,28 @@ class BudgetGuard(TracingPolicy):
 
 
 def describe(scope: BudgetScope, limit: BudgetLimit, value: float, used: float) -> str:
-    """Une limite atteinte, en clair : « budget du run atteint : 0,00231 $ (plafond 0,00200 $) »."""
+    """Une limite atteinte, en clair : « budget du run atteint : 0,00231 $ (plafond 0,00200 $) ».
+
+    Args:
+        scope: ``run`` ou ``session``.
+        limit: ``max_cost``, ``max_tokens`` ou ``max_calls``.
+        value: Le plafond.
+        used: La consommation.
+    """
     where = "du run" if scope == "run" else "de la session"
     return f"budget {where} atteint : {amount(limit, used)} (plafond {amount(limit, value)})"
 
 
 def amount(limit: BudgetLimit, value: float) -> str:
-    """Une quantité de budget : dollars, tokens ou appels."""
+    """Une quantité de budget : dollars, tokens ou appels.
+
+    Args:
+        limit: La limite, qui dit l'unité.
+        value: La quantité.
+
+    Returns:
+        « 0,00231 $ » (5 décimales, virgule), « 1200 tokens » ou « 3 appels ».
+    """
     match limit:
         case "max_cost":
             return f"{value:.5f} $".replace(".", ",")

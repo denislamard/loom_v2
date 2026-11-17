@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Fenêtres calendaires d'un budget de client (J5.1b, §15).
+"""Fenêtres calendaires d'un budget de client (jalon J5.1b, conception §15).
 
 Le jour et le mois, **en UTC**. Calendaire et non glissant : un compteur par
 fenêtre suffit alors, il se reconstruit depuis le journal en lisant les dates
@@ -20,8 +20,8 @@ from typing import Self
 
 from loom_ia.core.model import BudgetPeriod
 
-# Fenêtres, de la plus courte à la plus longue.
 PERIODS: tuple[BudgetPeriod, ...] = ("day", "month")
+"""Fenêtres, de la plus courte à la plus longue."""
 
 
 def _utc(now: datetime | None) -> datetime:
@@ -39,14 +39,28 @@ def _utc(now: datetime | None) -> datetime:
 
 @dataclass(frozen=True, slots=True)
 class Period:
-    """Une fenêtre, par son genre et son début."""
+    """Une fenêtre, par son genre et son début.
+
+    Attributes:
+        kind: ``day`` ou ``month``.
+        start: Début de la fenêtre, à minuit UTC (le premier du mois pour
+            ``month``).
+    """
 
     kind: BudgetPeriod
     start: datetime
 
     @classmethod
     def of(cls, kind: BudgetPeriod, now: datetime | None = None) -> Self:
-        """La fenêtre qui contient ``now`` (l'instant présent par défaut)."""
+        """La fenêtre qui contient ``now`` (l'instant présent par défaut).
+
+        Args:
+            kind: ``day`` ou ``month``.
+            now: L'instant, avec un fuseau horaire.
+
+        Raises:
+            ValueError: ``now`` sans fuseau horaire.
+        """
         moment = _utc(now)
         midnight = moment.replace(hour=0, minute=0, second=0, microsecond=0)
         return cls(kind=kind, start=midnight if kind == "day" else midnight.replace(day=1))
@@ -67,7 +81,11 @@ class Period:
         return self.start.replace(month=self.start.month + 1)
 
     def resets_in(self, now: datetime | None = None) -> float:
-        """Secondes avant la remise à zéro ; jamais négatif."""
+        """Secondes avant la remise à zéro ; jamais négatif.
+
+        Args:
+            now: L'instant, avec un fuseau horaire ; maintenant par défaut.
+        """
         return max(0.0, (self.end - _utc(now)).total_seconds())
 
     def __str__(self) -> str:

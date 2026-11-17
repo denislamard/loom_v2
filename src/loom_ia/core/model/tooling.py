@@ -145,7 +145,7 @@ toute reprise.
 
 
 class IdempotencyRecord(DomainModel):
-    """Ce qu'un magasin d'idempotence sait d'une clé (#18, #49).
+    """Ce qu'un magasin d'idempotence sait d'une clé (points 18 et 49).
 
     ``in_progress`` : quelqu'un a réservé la clé et n'a pas encore fini —
     l'effet est peut-être en train de se produire. ``completed`` : il s'est
@@ -221,7 +221,7 @@ class ApprovalSettings(DomainModel):
 
 
 class Approvers(DomainModel):
-    """Qui tranche les demandes d'approbation d'un agent, tel que chacune le fige (§ 5.3).
+    """Qui tranche les demandes d'approbation d'un agent, tel que chacune le fige (``docs/loom_role_user.md`` §5.3).
 
     Tiré du bloc ``access`` de l'agent au montage : le moteur ne lit pas la
     config. Chaque demande écrite emporte la liste de son outil et

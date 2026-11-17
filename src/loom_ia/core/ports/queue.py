@@ -8,7 +8,7 @@ file non durable suffit donc en mode librairie.
 
 C'est ce qui permet d'assumer une livraison **au moins une fois** : un
 courtier qui redélivre après la mort d'un worker est dans son droit, la
-concession (#27) refuse le second pilote d'un run déjà tenu, et une tâche
+concession (point 27) refuse le second pilote d'un run déjà tenu, et une tâche
 rejouée retrouve un état qu'elle reconnaît. Un courtier ne sait pas non plus
 toujours répondre sur une tâche : ``state`` peut rendre ``unknown`` et
 ``cancel`` faux sans que rien n'aille mal — le journal fait foi, pas la file.

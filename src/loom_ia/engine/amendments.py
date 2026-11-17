@@ -80,7 +80,7 @@ def amendment_note(amendment: Amendment, tool: str | None = None) -> str:
                 f"ce que l'utilisateur avait demandé, dis-lui que {told}."
             )
         case "policy":
-            # Nommée, avec son motif (test E7 du 19/10) : sans lui, Haiku a cru
+            # Nommée, avec son motif (essai de la fonction E7, 19/10) : sans lui, Haiku a cru
             # à son erreur, refait l'appel identique, puis écarté le résultat.
             names = (amendment.by or "").split(", ") if amendment.by else []
             if len(names) > 1:

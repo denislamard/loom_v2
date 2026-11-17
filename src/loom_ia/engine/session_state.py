@@ -307,7 +307,7 @@ class StateRules:
         kept = [name for name in self.shown(keys) if "model" in self.keys[name].writers]
         if kept and self.model_tool is not None:
             # Ajouté seulement avec une clé tenue par le modèle : la consigne des
-            # agents d'avant ne change pas d'un octet (B2).
+            # agents d'avant ne change pas d'un octet (décision B2 du state v2).
             lines.append(
                 f"Tiens toi-même à jour {', '.join(kept)} avec l'outil {self.model_tool}, sans "
                 "demander et sans en parler : le state doit toujours dire de quoi parle la "
@@ -371,7 +371,7 @@ class StateRules:
             # un effacement passe toujours, une session déjà trop grosse (limite
             # abaissée) peut encore remplacer une valeur par une plus petite, et
             # une clé qu'un appel suivant du lot écrit aussi ne compte pas — c'est
-            # sa valeur à lui que la session gardera (D9).
+            # sa valeur à lui que la session gardera (décision D9 du state de session).
             grown = [name for name, value in accepted.items() if value is not None and not tally.overridden(call_id, name)]
             refused += [
                 f"{name} non posé : le state de la session ferait {total} octets, au-delà de sessions.state.max_total_bytes ({self.max_total_bytes})"

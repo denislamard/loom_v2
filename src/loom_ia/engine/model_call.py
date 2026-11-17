@@ -230,11 +230,11 @@ class ModelCall:
             if delay is None:
                 if billed is not None:
                     # La dernière tentative ratée n'est annoncée que si elle a été
-                    # facturée : son usage entre ainsi dans les comptes (J1).
+                    # facturée : son usage entre ainsi dans les comptes (fonction J1).
                     yield self._retried(request, failure, attempt, 0.0, billed, final=True)
                 raise failure
             # Une panne resservie par le rejeu (``by_client``) n'est pas une panne
-            # du fournisseur : au test O3 du 23/10, elle s'écrivait en WARNING.
+            # du fournisseur : à l'essai de la fonction O3 du 23/10, elle s'écrivait en WARNING.
             logger.log(
                 logging.DEBUG if failure.by_client else logging.WARNING,
                 "Tentative %d/%d du modèle %s ratée (%s) : nouvel essai dans %.1f s",

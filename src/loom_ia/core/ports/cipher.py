@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Port du sceau : fermer et ouvrir des octets avec la clé d'un client (point 30, conception §11.5, fonction P1).
 
-Le journal garde les contenus complets — c'est lui qui fait foi (#22). Ce
+Le journal garde les contenus complets — c'est lui qui fait foi (point 22). Ce
 port permet de les garder **illisibles au repos** : la charge d'un événement
 et les octets d'un fichier sont fermés avec la clé du client à qui ils
 appartiennent. Effacer cette clé rend tout son journal illisible,

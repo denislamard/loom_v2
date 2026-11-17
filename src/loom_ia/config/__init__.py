@@ -1,5 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Configuration : schéma Pydantic, lecture YAML, références Python (M1 à M3)."""
+"""Configuration : schéma Pydantic, lecture YAML, références Python (fonctions M1 à M3).
+
+- ``models`` : le schéma de ``loom.yaml`` (``LoomConfig``) ;
+- ``loader`` : ``load_config``, qui lit ``loom.yaml``, les agents, les
+  prompts et les skills, applique le profil et contrôle le tout ;
+- ``env_file`` : le fichier d'environnement du projet (``.env``) ;
+- ``references`` : ``imports``, registre des outils, ``module:attr`` ;
+- ``telemetry`` : capture, masquage et collecteurs ;
+- ``compaction`` : l'agent interne ``_compaction`` ;
+- ``keys`` : clés d'API et leur empreinte ;
+- ``schema`` : le JSON Schema publié pour l'éditeur (``loom schema``) ;
+- ``errors`` : ``ConfigError``, des messages qui nomment fichier et chemin.
+"""
 
 from loom_ia.config.env_file import EnvFileReport, load_env_file
 from loom_ia.config.errors import ConfigError

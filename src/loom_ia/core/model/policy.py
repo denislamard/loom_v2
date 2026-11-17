@@ -342,7 +342,7 @@ type CheckResolution = Literal["retry", "fail", "unverified", "fallback"]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GuardCheck:
-    """Contrôle d'une sortie, journalisé en ``guard.checked`` avant la décision (#20).
+    """Contrôle d'une sortie, journalisé en ``guard.checked`` avant la décision (point 20).
 
     Attributes:
         guard: Nom du guard.

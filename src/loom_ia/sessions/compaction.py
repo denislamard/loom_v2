@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Compaction d'une session : résumer les échanges anciens (#23, §11.3).
+"""Compaction d'une session : résumer les échanges anciens (point 23, conception §11.3).
 
 Compacter ne réécrit rien. On ajoute un ``session.compacted`` qui porte le
 résumé et la position qu'il couvre ; l'historique repart de ce résumé, et les
@@ -26,6 +26,10 @@ Filet de sécurité : au démarrage d'un run, si l'historique dépasse
 ``hard_tokens``, ``ensure_fits`` compacte en synchrone ; si cela échoue, les
 tours les plus anciens sont retirés (``session.trimmed``), avec un
 avertissement dans le journal.
+
+Config : ``sessions.compaction`` (``model``, ``over_tokens``, ``hard_tokens``,
+``keep_last``, ``fidelity_check``, ``blocking``, ``system_file``), voir
+``config/compaction.py``.
 """
 
 import logging
@@ -66,22 +70,36 @@ from loom_ia.sessions.snapshot import Cuts, boundary, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
-# L'agent interne, monté pour le client dont on résume la session (L1) : deux
-# clients ne résument pas leurs conversations avec le même modèle ni les mêmes
-# identifiants.
 type SummaryResolver = Callable[[str, TenantId], RunContext]
+"""Monte l'agent interne pour le client dont on résume la session (fonction L1).
+
+Deux clients ne résument pas leurs conversations avec le même modèle ni les
+mêmes identifiants. Reçoit le nom de l'agent et le client.
+"""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CompactionPlan:
-    """Réglages de la compaction, tirés de la config par le câblage."""
+    """Réglages de la compaction, tirés de la config par le câblage.
+
+    Attributes:
+        agent: Nom de l'agent interne (``_compaction``).
+        over_tokens: Taille d'historique, en tokens estimés, au-delà de
+            laquelle un résumé est dû.
+        hard_tokens: Taille au-delà de laquelle le filet compacte en
+            synchrone à l'ouverture d'un run, ou coupe.
+        keep_last: Tours laissés intacts à la fin de l'historique.
+        fidelity_check: Contrôle déterministe des repères du segment dans le
+            résumé.
+        blocking: Résumé à l'ouverture du run suivant plutôt qu'en tâche de
+            fond après le run.
+    """
 
     agent: str
     over_tokens: int
     hard_tokens: int
     keep_last: int
     fidelity_check: bool = True
-    # Résumé à l'ouverture du run suivant plutôt qu'en tâche de fond après le run.
     blocking: bool = False
 
 
@@ -108,7 +126,11 @@ def run_starts(events: Sequence[Event]) -> list[int]:
 
 
 def summarised(events: Sequence[Event]) -> int:
-    """Position déjà couverte par un résumé ou une coupe, 0 sinon."""
+    """Position déjà couverte par un résumé ou une coupe, 0 sinon.
+
+    Args:
+        events: Le journal de la session.
+    """
     covered = 0
     for event in events:
         payload = event.payload
@@ -118,7 +140,16 @@ def summarised(events: Sequence[Event]) -> int:
 
 
 def cut(events: Sequence[Event], keep_last: int) -> int:
-    """Position jusqu'à laquelle résumer, en gardant les derniers tours intacts."""
+    """Position jusqu'à laquelle résumer, en gardant les derniers tours intacts.
+
+    Args:
+        events: Le journal de la session.
+        keep_last: Tours à garder.
+
+    Returns:
+        La position, juste avant le premier tour gardé et sans couper un run ;
+        0 s'il n'y a rien à résumer.
+    """
     cuts = Cuts(events)
     if keep_last <= 0:
         return cuts.at_most()
@@ -129,12 +160,27 @@ def cut(events: Sequence[Event], keep_last: int) -> int:
 
 
 def oversized(events: Sequence[Event], limit: int) -> bool:
-    """Vrai si l'historique de la session dépasse ce nombre de tokens estimé."""
+    """Vrai si l'historique de la session dépasse ce nombre de tokens estimé.
+
+    Args:
+        events: Le journal de la session.
+        limit: Le seuil, en tokens estimés.
+    """
     return estimate_tokens(history(events)) > limit
 
 
 class CompactionJob:
-    """Résume un segment de session, puis écrit le marqueur et un snapshot."""
+    """Résume un segment de session, puis écrit le marqueur et un snapshot.
+
+    Mis en file (``TaskQueue``) à la fin d'un run, appelé à l'ouverture du
+    suivant (``before_run``).
+
+    Args:
+        resolve: Monte l'agent interne pour un client.
+        store: Le journal.
+        writers: Registre des écrivains de l'instance.
+        plan: Les réglages.
+    """
 
     def __init__(
         self,
@@ -152,13 +198,26 @@ class CompactionJob:
         return f"CompactionJob(agent={self.plan.agent!r}, keep_last={self.plan.keep_last})"
 
     def key(self, session_id: SessionId, up_to_seq: int) -> str:
-        """Clé de dédoublonnage : un seul résumé par session et par position."""
+        """Clé de dédoublonnage : un seul résumé par session et par position.
+
+        Args:
+            session_id: La session.
+            up_to_seq: Position à résumer.
+        """
         return f"compaction:{session_id}:{up_to_seq}"
 
     def pending(self, events: Sequence[Event], *, limit: int | None = None) -> int | None:
         """Position à résumer, ou ``None`` s'il n'y a rien à faire.
 
         ``limit`` : seuil de déclenchement ; ``over_tokens`` par défaut.
+
+        Args:
+            events: Le journal de la session.
+            limit: Le seuil, en tokens estimés.
+
+        Returns:
+            La position à résumer si l'historique dépasse le seuil et qu'un
+            segment non résumé précède les ``keep_last`` derniers tours.
         """
         if not oversized(events, self.plan.over_tokens if limit is None else limit):
             return None
@@ -173,7 +232,18 @@ class CompactionJob:
         triggered_by: RunId | None = None,
         limit: int | None = None,
     ) -> SessionCompacted | None:
-        """Résume la session si un segment le mérite ; rend le marqueur écrit."""
+        """Résume la session si un segment le mérite ; rend le marqueur écrit.
+
+        Args:
+            tenant_id: Client de la session.
+            session_id: La session.
+            triggered_by: Run qui a déclenché le résumé.
+            limit: Seuil de déclenchement ; ``over_tokens`` par défaut.
+
+        Returns:
+            Le ``session.compacted`` écrit ; ``None`` s'il n'y avait rien à
+            résumer ou si l'agent interne a échoué.
+        """
         events = await self._store.read(tenant_id, session_id)
         up_to_seq = self.pending(events, limit=limit)
         if up_to_seq is None:
@@ -217,6 +287,11 @@ class CompactionJob:
         Un résumé bloquant qui échoue ne fait pas échouer le run : il part avec
         l'historique non réduit, et le résumé sera retenté à l'ouverture du
         suivant. Une annulation, elle, passe.
+
+        Args:
+            tenant_id: Client de la session.
+            session_id: La session.
+            run_id: Le run qui s'ouvre.
         """
         if self.plan.blocking:
             try:
@@ -237,6 +312,11 @@ class CompactionJob:
 
         ``run_id`` : le run qui s'ouvre, noté ``triggered_by`` du résumé, comme
         pour le résumé bloquant.
+
+        Args:
+            tenant_id: Client de la session.
+            session_id: La session.
+            run_id: Le run qui s'ouvre.
         """
         events = await self._store.read(tenant_id, session_id)
         if not oversized(events, self.plan.hard_tokens):
@@ -361,6 +441,7 @@ class CompactionJob:
 
 
 def _scope(state: RunState) -> RunScope:
+    """Portée du run de compaction, pour écrire son marqueur et son snapshot."""
     return RunScope(
         tenant_id=state.context.tenant_id,
         session_id=state.session_id,

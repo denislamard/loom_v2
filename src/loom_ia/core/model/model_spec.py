@@ -152,7 +152,7 @@ class PromptCache(DomainModel):
 class ModelCapabilities(DomainModel):
     """Capacités déclarées d'un modèle (``models[].capabilities``), contrôlées au démarrage (fonction B9).
 
-    Images (#14) : un modèle sans ``vision`` n'en reçoit qu'une mention
+    Images (point 14) : un modèle sans ``vision`` n'en reçoit qu'une mention
     textuelle. Pour un modèle avec ``vision``, chaque image est lue dans le
     stockage d'artefacts et envoyée en base64, après contrôle de son format
     (``image_formats``) et de sa taille (``max_image_bytes``).
@@ -163,7 +163,7 @@ class ModelCapabilities(DomainModel):
     ses tours d'outils ; avec l'API Chat, le raisonnement de la boucle en
     cours lui est renvoyé (#7, backlog #015). ``native_json`` : il accepte un
     schéma de sortie JSON ; celui du contrat lui est transmis pour un appel
-    sans outils (B9). ``forced_tool_choice`` : il accepte qu'on lui impose
+    sans outils (fonction B9). ``forced_tool_choice`` : il accepte qu'on lui impose
     d'appeler un outil (``tool_choice: required``) ; sans elle, une requête qui
     l'impose part en ``auto`` (``engine.fallback.sendable``). Claude Opus 5.5
     et Fable 5.1 refusent l'outil imposé (400) : le verdict d'un juge leur est

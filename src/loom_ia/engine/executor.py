@@ -857,7 +857,7 @@ class ToolExecutor:
         keeps = bool(self.state_rules) and keeps_state(state)
         current = state_of_run(session_state or {}, state, before=_batch_turn(state)) if keeps else {}
         # Taille du state au fil du lot, dans l'ordre des appels : chaque appel
-        # compte ce que les autres ont posé, voisins déjà soldés compris (D7).
+        # compte ce que les autres ont posé, voisins déjà soldés compris (décision D7 du state de session).
         tally = _batch_tally(state, current) if keeps else BatchTally()
         view = self.view(
             state,
@@ -1462,7 +1462,7 @@ class ToolExecutor:
                     threads.abandon()
         if isinstance(output, Waiting):
             # Rien à contrôler ni à conclure : l'appel reste en suspens, et
-            # le parent attend avec son enfant (H4).
+            # le parent attend avec son enfant (fonction H4).
             emit(output)
             return
         if policies:
