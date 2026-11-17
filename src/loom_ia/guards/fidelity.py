@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Contrôle de fidélité d'un résumé de session (#23).
+"""Contrôle de fidélité d'un résumé de session (point 23).
 
 Un résumé n'a d'intérêt que s'il garde ce qui sert à la suite : numéros de
 devis, montants, quantités, adresses. Le contrôle est déterministe — aucun
@@ -37,24 +37,29 @@ from loom_ia.core.model import (
 )
 
 FIDELITY_POLICY: Final = "loom.fidelity"
+"""Nom de la politique de fidélité dans le journal."""
 FIDELITY_GUARD: Final = "fidelity"
-# En deçà, un nombre ne dit rien qu'un résumé doive garder.
+"""Nom du guard dans ``guard.checked``."""
 MIN_DIGITS: Final = 3
-# Repères nommés dans le diagnostic, pour ne pas lui faire recopier le segment.
+"""En deçà, un nombre ne dit rien qu'un résumé doive garder."""
 SHOWN: Final = 12
+"""Repères nommés dans le diagnostic, pour ne pas lui faire recopier le segment."""
 
 _REFERENCE: Final = re.compile(r"\b[A-Za-z]{1,6}[-_]\d{2,}(?:[-_]\d+)*\b")
-# Le lookbehind ne laisse commencer une adresse qu'au début d'un mot : sans lui,
-# chaque lettre d'un long mot sans « @ » relançait la lecture jusqu'à sa fin.
 _EMAIL: Final = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+\.[\w.-]+")
-# Des chiffres que séparent un seul caractère : espace (fine, insécable ou non),
-# point ou virgule. Ce qu'ils forment — milliers, décimales, plusieurs nombres —
-# se tranche dans ``_readings``.
+"""Le lookbehind ne laisse commencer une adresse qu'au début d'un mot : sans
+lui, chaque lettre d'un long mot sans « @ » relançait la lecture jusqu'à sa
+fin.
+"""
 _SEPARATOR: Final = re.compile("[\\u00a0\\u202f .,]")
+"""Des chiffres que séparent un seul caractère : espace (fine, insécable ou
+non), point ou virgule. Ce qu'ils forment — milliers, décimales, plusieurs
+nombres — se tranche dans ``_readings``.
+"""
 _NUMBER: Final = re.compile("\\d+(?:[\\u00a0\\u202f .,]\\d+)*")
 
-# Une lecture : les nombres que dit un même texte ; plusieurs si le texte est ambigu.
 Reading = tuple[str, ...]
+"""Une lecture : les nombres que dit un même texte ; plusieurs si le texte est ambigu."""
 
 
 def markers(text: str) -> set[str]:
@@ -62,6 +67,9 @@ def markers(text: str) -> set[str]:
 
     Un texte ambigu (« 120 150 ») les donne toutes les deux lectures : c'est ce
     qu'un résumé peut avoir écrit de plus large.
+
+    Args:
+        text: Le texte.
     """
     found: set[str] = set()
     for _, readings in _requirements(text):
@@ -74,6 +82,10 @@ def missing(source: str, summary: str) -> list[str]:
     """Repères du segment absents du résumé, dans l'ordre du texte.
 
     Un repère ambigu est présent si le résumé a l'une de ses lectures en entier.
+
+    Args:
+        source: Le segment d'origine.
+        summary: Le résumé.
     """
     have = markers(summary)
     seen: list[str] = []
@@ -145,25 +157,45 @@ class FidelityGuard:
     """Politique ``loom.fidelity`` : les repères du segment sont-ils dans le résumé ?"""
 
     def __init__(self, max_attempts: int = 1) -> None:
+        """Règle les réparations.
+
+        Args:
+            max_attempts: Réparations demandées au modèle avant de garder le
+                résumé tel quel.
+        """
         # Réparations demandées au modèle avant de garder le résumé tel quel.
         self.max_attempts = max_attempts
 
     @property
     def name(self) -> str:
+        """``loom.fidelity``."""
         return FIDELITY_POLICY
 
     @property
     def points(self) -> frozenset[HookPoint]:
+        """``on_output`` : le résumé est la réponse finale de l'agent de compaction."""
         return frozenset({"on_output"})
 
     @property
     def decisions(self) -> frozenset[DecisionKind]:
+        """``retry`` seulement."""
         return frozenset({"retry"})
 
     def __repr__(self) -> str:
         return f"FidelityGuard({self.max_attempts} tentative(s))"
 
     async def decide(self, subject: PolicySubject, context: PolicyContext) -> Decision:
+        """Compare les repères du segment et ceux du résumé.
+
+        Args:
+            subject: Le résumé (réponse finale de ``_compaction``) et son run.
+            context: Contexte de la politique (réparations déjà demandées).
+
+        Returns:
+            ``CONTINUE`` si rien ne manque, ou si les réparations sont épuisées
+            (le ``guard.checked`` est ``unverified``) ; sinon ``Retry`` qui nomme les
+            repères manquants.
+        """
         if not isinstance(subject, OnOutput):
             return CONTINUE
         segment = _segment(subject.state.messages)

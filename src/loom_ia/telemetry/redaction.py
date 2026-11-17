@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Masquage par motifs du contenu exporté (K3, #30, §14.2).
+"""Masquage par motifs du contenu exporté (fonction K3, point 30, conception §14.2).
 
 Deux masquages coexistent, et ne se confondent pas :
 
@@ -27,13 +27,12 @@ from pydantic import JsonValue
 
 from loom_ia.core.bounded_regex import RegexTimeout, compile_pattern, substitute
 
-# Motifs fournis, dans l'ordre où ils s'appliquent par défaut : les secrets
-# d'abord, que le téléphone ou l'IBAN mordraient pour en laisser filer le reste.
 BUILTIN_PATTERNS: Final = ("secret", "email", "phone", "iban")
+"""Motifs fournis, dans l'ordre où ils s'appliquent par défaut : les secrets
+d'abord, que le téléphone ou l'IBAN mordraient pour en laisser filer le
+reste.
+"""
 
-# Un motif fourni peut tenir en plusieurs expressions, appliquées l'une après
-# l'autre sous le même nom : réunies en une seule alternative, celles du
-# secret coûtaient six fois plus (le moteur ne cherche plus leurs préfixes).
 _BUILTIN: Final[Mapping[str, tuple[str, ...]]] = {
     # Clés et jetons de forme connue, masqués en entier. Le « Bearer » passe
     # avant le JWT qu'il porte souvent, pour partir avec lui.
@@ -75,17 +74,29 @@ _BUILTIN: Final[Mapping[str, tuple[str, ...]]] = {
     # groupes de quatre séparés ou non par une espace ; en toute casse.
     "iban": (r"(?i)\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,3})?\b",),
 }
+"""Un motif fourni peut tenir en plusieurs expressions, appliquées l'une après
+l'autre sous le même nom : réunies en une seule alternative, celles du
+secret coûtaient six fois plus (le moteur ne cherche plus leurs préfixes).
+"""
 
 
 class Redactor:
-    """Remplace ce que ses motifs reconnaissent par ``[nom]``."""
+    """Remplace ce que ses motifs reconnaissent par ``[nom]``.
+
+    Args:
+        patterns: Motifs ``(nom, expression)``, dans l'ordre d'application.
+    """
 
     def __init__(self, patterns: Iterable[tuple[str, str]]) -> None:
         self._patterns = tuple((name, compile_pattern(regex)) for name, regex in patterns)
 
     @classmethod
     def of(cls, declared: Iterable[str | tuple[str, str]]) -> Redactor:
-        """Motifs déclarés : un nom de motif fourni, ou ``(nom, expression)``."""
+        """Motifs déclarés : un nom de motif fourni, ou ``(nom, expression)``.
+
+        Args:
+            declared: Les motifs.
+        """
         resolved: list[tuple[str, str]] = []
         for item in declared:
             if isinstance(item, str):
@@ -100,6 +111,14 @@ class Redactor:
         return tuple(dict.fromkeys(name for name, _ in self._patterns))
 
     def text(self, value: str) -> str:
+        """Le texte, chaque motif remplacé par ``[nom]``.
+
+        Un motif qui ne finit pas à temps masque tout le texte
+        (``[nom : délai dépassé, texte masqué]``).
+
+        Args:
+            value: Le texte.
+        """
         for name, pattern in self._patterns:
             try:
                 value = substitute(pattern, f"[{name}]", value)

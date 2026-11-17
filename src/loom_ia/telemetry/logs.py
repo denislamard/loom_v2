@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Configuration optionnelle des logs de loom-ia (#45).
+"""Configuration optionnelle des logs de loom-ia (point 45).
 
 La librairie n'installe aucun handler : elle écrit dans les loggers
 ``loom_ia.*`` et laisse l'application hôte décider de l'affichage.
@@ -31,24 +31,30 @@ type LogFormat = Literal["console", "json"]
 
 CONTEXT_FIELDS: Final = ("run_id", "span_id", "tenant_id")
 ROOT_LOGGER: Final = "loom_ia"
-# Le SDK OpenTelemetry, qui envoie les spans aux collecteurs.
 SDK_LOGGER: Final = "opentelemetry"
+"""Le SDK OpenTelemetry, qui envoie les spans aux collecteurs."""
 
-# Marqueur posé sur le handler installé par configure_logging, pour le
-# retrouver et le remplacer lors d'un nouvel appel (idempotence).
 _HANDLER_MARK: Final = "_loom_ia_configured"
+"""Marqueur posé sur le handler installé par configure_logging, pour le
+retrouver et le remplacer lors d'un nouvel appel (idempotence).
+"""
 
-# Caractères qu'un terminal exécute au lieu de les afficher — C0 sauf la
-# tabulation et le saut de ligne, DEL, C1 —, et ce qui les montre à leur place.
 _CONTROLS: Final = {code: f"\\x{code:02x}" for code in (*range(0x09), *range(0x0B, 0x20), *range(0x7F, 0xA0))}
+"""Caractères qu'un terminal exécute au lieu de les afficher — C0 sauf la
+tabulation et le saut de ligne, DEL, C1 —, et ce qui les montre à leur
+place.
+"""
 
 
 def printable(text: str) -> str:
-    """Le texte pour un terminal : chaque caractère de contrôle montré (``\\x1b``), pas exécuté.
+    r"""Le texte pour un terminal : chaque caractère de contrôle montré (``\x1b``), pas exécuté.
 
     Ce que rendent un modèle, un outil ou un serveur peut porter des séquences
     qui pilotent le terminal (presse-papier, écran, titre). Montrées, elles se
-    lisent sans agir. ``\\n`` et ``\\t`` restent ce qu'ils sont.
+    lisent sans agir. ``\n`` et ``\t`` restent ce qu'ils sont.
+
+    Args:
+        text: Le texte.
     """
     return text.translate(_CONTROLS)
 
@@ -73,6 +79,7 @@ class ConsoleFormatter(logging.Formatter):
         )
 
     def format(self, record: logging.LogRecord) -> str:
+        """La ligne, suivie du contexte ``[clé=valeur …]`` ; les caractères de contrôle sont montrés."""
         line = super().format(record)
         context = _context(record)
         audit: object = getattr(record, AUDIT, None)
@@ -94,6 +101,7 @@ class JsonFormatter(logging.Formatter):
     """Un objet JSON par ligne, pour les collecteurs de logs."""
 
     def format(self, record: logging.LogRecord) -> str:
+        """Un objet JSON : ``ts``, ``level``, ``logger``, ``message``, contexte, ``audit``, ``exception``."""
         payload: dict[str, object] = {
             "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(timespec="milliseconds"),
             "level": record.levelname,
@@ -123,13 +131,24 @@ def configure_logging(
     Seuls les loggers ``loom_ia`` et ``opentelemetry`` sont configurés : le
     logger racine de l'application n'est pas touché. Le second est celui du
     SDK qui envoie les spans aux collecteurs (``telemetry.exporters``) : ses
-    lignes prennent le format et le niveau de loom (au test K4 du 21/10, elles
+    lignes prennent le format et le niveau de loom (à l'essai de la fonction K4 du 21/10, elles
     sortaient brutes, hors de ``telemetry.logging``). La propagation est
     coupée pour éviter les doublons si l'application a aussi configuré le
     logger racine.
 
     Un nouvel appel remplace le handler installé par l'appel précédent.
     Renvoie le handler installé.
+
+    Args:
+        level: Niveau (``INFO`` par défaut).
+        format: ``console`` ou ``json``.
+        stream: Flux de sortie ; ``sys.stderr`` par défaut.
+
+    Returns:
+        Le handler installé.
+
+    Raises:
+        ValueError: Format inconnu.
     """
     formatters: dict[str, type[logging.Formatter]] = {
         "console": ConsoleFormatter,

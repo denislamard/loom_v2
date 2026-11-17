@@ -27,10 +27,9 @@ from pydantic import JsonValue
 from loom_ia.telemetry.spans import AttributeValue
 from loom_ia.telemetry.trace import Trace, TraceEvent, TraceSpan
 
-# Largeur d'un extrait : au-delà, la ligne est coupée en le disant.
 WIDTH: Final = 110
+"""Largeur d'un extrait : au-delà, la ligne est coupée en le disant."""
 _INDENT: Final = "  "
-# Événements d'un span qui ne disent rien de plus que le span lui-même.
 _SILENT: Final = frozenset(
     {
         "run.started",
@@ -49,10 +48,19 @@ _SILENT: Final = frozenset(
         "approval.requested",
     }
 )
+"""Événements d'un span qui ne disent rien de plus que le span lui-même."""
 
 
 def render_trace(trace: Trace, *, full: bool = False) -> list[str]:
-    """Les lignes de ``loom inspect`` pour cette trace."""
+    """Les lignes de ``loom inspect`` pour cette trace.
+
+    Args:
+        trace: La trace.
+        full: Vrai pour ne pas couper les extraits.
+
+    Returns:
+        Les lignes : en-tête du run, puis l'arbre de ses spans.
+    """
     lines = [
         f"Run        : {trace.run_id} (agent {trace.agent}, client {trace.tenant_id})",
         f"Session    : {trace.session_id}",
@@ -92,6 +100,7 @@ def _tree(
     full: bool,
     asked: frozenset[str] = frozenset(),
 ) -> list[str]:
+    """Les lignes d'un span et de ses enfants, indentées selon la profondeur."""
     pad = _INDENT * depth
     lines = [f"{pad}{_head(span, asked)}"]
     # Ce qui s'est passé dans le span, marqué, au niveau de ses enfants.
@@ -165,6 +174,7 @@ def _body(span: TraceSpan, full: bool) -> list[str]:
 
 
 def _said(span: TraceSpan, event: TraceEvent, full: bool) -> list[str]:
+    """Ce qu'un événement ajoute sous son span : réponse, arguments, résultat, verdict, approbation, question."""
     data, content = event.data, event.content
     match event.name:
         case "model.responded":
@@ -258,6 +268,7 @@ def _other(span: TraceSpan) -> str:
 
 
 def _approval(event: TraceEvent) -> str:
+    """Une décision d'approbation en clair : qui, par quelle passerelle, et le motif d'un refus."""
     by = str(event.data.get("by"))
     via = event.data.get("via")
     if isinstance(via, str):
@@ -314,8 +325,8 @@ def _output(value: JsonValue) -> str:
         if isinstance(blocks, list)
         else []
     )
-    # Un outil qui ne rend qu'un fichier n'a ni texte ni données : au test K1 du
-    # 21/10, l'étiquette d'un devis s'affichait « résultat : null ».
+    # Un outil qui ne rend qu'un fichier n'a ni texte ni données : lors de
+    # l'essai de la fonction K1, le 21/10, l'étiquette d'un devis s'affichait « résultat : null ».
     data = value.get("data")
     said = " ".join(t for t in texts if t) or (_compact(data) if data is not None or not files else "") or ", ".join(files)
     return f"(erreur) {said}" if value.get("is_error") else said

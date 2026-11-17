@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Outils écrits en Python (D1).
+"""Outils écrits en Python (fonction D1).
 
 Le schéma d'entrée est déduit de la signature ; la description vient de la
 docstring. Un paramètre annoté ``ToolContext`` reçoit le contexte de l'appel
@@ -12,7 +12,7 @@ et n'apparaît pas dans le schéma.
     @tool(side_effects="irreversible", timeout=10)
     async def envoyer_email(to: str, body: str, ctx: ToolContext) -> None: ...
 
-Conversion du résultat (#15) : ``str`` donne un bloc texte ; ``None`` un
+Conversion du résultat (point 15) : ``str`` donne un bloc texte ; ``None`` un
 résultat vide ; un ``ToolOutput`` est repris tel quel ; une ``Image`` est
 rangée dans le stockage d'artefacts par le moteur et le modèle en reçoit la
 référence ; toute autre valeur sérialisable en JSON (``dict``, ``list``,
@@ -78,7 +78,7 @@ _JSON: TypeAdapter[Any] = TypeAdapter(Any)
 
 @dataclass(frozen=True, slots=True)
 class Image:
-    """Image renvoyée par un outil : rangée comme artefact, référencée dans le résultat (G3).
+    """Image renvoyée par un outil : rangée comme artefact, référencée dans le résultat (fonction G3).
 
     Le type se déduit de la signature binaire (JPEG, PNG, GIF, WebP) ;
     ``media_type`` ne sert que si elle n'est pas reconnue.
@@ -90,10 +90,20 @@ class Image:
 
     @classmethod
     def from_path(cls, path: str | Path) -> Self:
+        """Image lue dans un fichier ; son nom est celui du fichier.
+
+        Args:
+            path: Chemin du fichier.
+        """
         file = Path(path)
         return cls(data=file.read_bytes(), name=file.name)
 
     def block(self) -> InlineDataBlock:
+        """Le bloc d'octets que le moteur range comme artefact.
+
+        Raises:
+            ValueError: Format non reconnu et ``media_type`` absent.
+        """
         media_type = sniff(self.data) or self.media_type
         if media_type is None:
             raise ValueError(f"Image {self.name or ''} : format non reconnu (JPEG, PNG, GIF ou WebP attendu)")
@@ -118,6 +128,28 @@ class FunctionTool[**P, R]:
         timeout: float | None = None,
         offload_over: int | None = None,
     ) -> None:
+        """Construit l'outil : schéma d'entrée tiré de la signature, description de la docstring.
+
+        Args:
+            fn: La fonction, synchrone ou asynchrone ; ses paramètres nommés
+                deviennent les arguments, un paramètre annoté ``ToolContext``
+                reçoit le contexte.
+            name: Nom de l'outil ; par défaut celui de la fonction.
+            description: Description vue par le modèle ; par défaut la docstring.
+            side_effects: ``none``, ``reversible`` ou ``irreversible`` ; sans
+                déclaration, ``none`` (``declares_effects`` reste faux).
+            approval: ``never`` (défaut), ``always`` ou ``policy``.
+            idempotent: Vrai si refaire l'appel est sans risque.
+            on_unknown: Ce qu'il advient d'un appel interrompu dont l'effet est
+                inconnu : ``error`` (défaut, le modèle est prévenu) ou ``pause`` (un
+                humain tranche).
+            timeout: Délai de l'outil, en secondes ; à défaut, celui de la config.
+            offload_over: Seuil de déport du résultat, en caractères.
+
+        Raises:
+            ValueError: Pas de description (docstring vide).
+            TypeError: Paramètre positionnel seul ou variadique.
+        """
         self.fn = fn
         # Sans déclaration, l'outil passe pour sans effet : ``loom validate`` le signale.
         self.declares_effects = side_effects is not None
@@ -145,6 +177,7 @@ class FunctionTool[**P, R]:
 
     @property
     def spec(self) -> ToolSpec:
+        """Description de l'outil : nom, description, schéma, effets, approbation."""
         return self._spec
 
     @property
@@ -158,9 +191,24 @@ class FunctionTool[**P, R]:
         return self._returns_data
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        """Appelle la fonction d'origine directement, hors de la boucle d'agent."""
         return self.fn(*args, **kwargs)
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Valide les arguments, appelle la fonction et traduit son résultat.
+
+        Une fonction synchrone s'exécute dans un thread du pool des outils.
+
+        Args:
+            arguments: Arguments du modèle.
+            context: Contexte de l'appel.
+
+        Returns:
+            Le résultat (voir ``to_output``).
+
+        Raises:
+            ToolError: Arguments invalides ; le message les liste pour le modèle.
+        """
         try:
             parsed = self._arguments.model_validate(arguments)
         except ValidationError as exc:
@@ -180,7 +228,15 @@ class FunctionTool[**P, R]:
 
 
 def to_output(result: object) -> ToolOutput:
-    """Traduit la valeur renvoyée par une fonction en ``ToolOutput``."""
+    """Traduit la valeur renvoyée par une fonction en ``ToolOutput``.
+
+    Args:
+        result: La valeur : ``ToolOutput``, ``Image``, ``str``, ``None``, ou
+            toute valeur sérialisable en JSON.
+
+    Returns:
+        Le résultat ; une valeur JSON donne un bloc JSON et ``data``.
+    """
     match result:
         case ToolOutput():
             return result
@@ -226,7 +282,23 @@ def tool[**P, R](
     timeout: float | None = None,
     offload_over: int | None = None,
 ) -> FunctionTool[P, R] | Callable[[Callable[P, R]], FunctionTool[P, R]]:
-    """Déclare une fonction comme outil, avec ou sans options."""
+    """Déclare une fonction comme outil, avec ou sans options.
+
+    Args:
+        fn: La fonction, quand le décorateur s'emploie sans parenthèses.
+        name: Nom de l'outil.
+        description: Description vue par le modèle.
+        side_effects: Effets de bord.
+        approval: Approbation.
+        idempotent: Vrai si refaire l'appel est sans risque.
+        on_unknown: Suite d'un appel interrompu d'effet inconnu.
+        timeout: Délai, en secondes.
+        offload_over: Seuil de déport, en caractères.
+
+    Returns:
+        Une ``FunctionTool`` (``@tool``), ou un décorateur qui en rend une
+        (``@tool(...)``).
+    """
 
     def wrap(target: Callable[P, R]) -> FunctionTool[P, R]:
         return FunctionTool(

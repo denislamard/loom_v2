@@ -240,6 +240,8 @@ def coverage(src: Path, prefixes: list[str]) -> tuple[int, int, list[str]]:
     Attendus : chaque module, chaque classe et fonction publique, et chaque
     fonction privée d'au moins ``LONG_PRIVATE`` lignes. Les méthodes magiques
     sont exclues, sauf ``__call__`` et ``__init__`` d'au moins autant de lignes.
+    Les signatures ``@overload`` aussi : la docstring est celle de
+    l'implémentation.
     """
     expected = documented = 0
     missing: list[str] = []
@@ -260,6 +262,8 @@ def coverage(src: Path, prefixes: list[str]) -> tuple[int, int, list[str]]:
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     continue
                 name = node.name
+                if not isinstance(node, ast.ClassDef) and any(_named(d) == "overload" for d in node.decorator_list):
+                    continue
                 size = (node.end_lineno or node.lineno) - node.lineno + 1
                 magic = name.startswith("__") and name.endswith("__")
                 if magic:
@@ -279,6 +283,15 @@ def coverage(src: Path, prefixes: list[str]) -> tuple[int, int, list[str]]:
 
         visit(tree.body, "")
     return expected, documented, missing
+
+
+def _named(decorator: ast.expr) -> str:
+    """Le nom d'un décorateur : ``overload`` pour ``@overload`` et ``@typing.overload``."""
+    if isinstance(decorator, ast.Name):
+        return decorator.id
+    if isinstance(decorator, ast.Attribute):
+        return decorator.attr
+    return ""
 
 
 # --- Programme ---------------------------------------------------------------

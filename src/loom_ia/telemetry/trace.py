@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""La trace d'un run, à relire : ses spans, tirés du journal (K5, K6, #29).
+"""La trace d'un run, à relire : ses spans, tirés du journal (fonctions K5 et K6, point 29).
 
 Ce sont les spans de l'export (``run_spans``, 6.1a) — mêmes noms, mêmes
 attributs ``gen_ai.*`` et ``loom.*`` —, pour le run **et ses sous-runs**, avec
@@ -45,20 +45,44 @@ from loom_ia.telemetry.spans import AttributeValue, SpanKind, SpanRecord, run_sp
 
 
 class TraceEvent(DomainModel):
-    """Un événement du journal, sur le span où il s'est produit."""
+    """Un événement du journal, sur le span où il s'est produit.
+
+    Attributes:
+        name: Type de l'événement.
+        at: Horodatage.
+        seq: Position dans le journal de la session.
+        status: Statut de l'événement (``ok``, ``error``…).
+        data: Sa charge, privée de ses champs de contenu (``redacted``).
+        content: Ses champs de contenu, par chemin ; ``None`` sans le droit de
+            les voir.
+    """
 
     name: str
     at: datetime
     seq: int
     status: str
-    # Sa charge, privée de ses champs de contenu (``redacted``).
     data: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
-    # Ses champs de contenu, par chemin ; ``None`` sans le droit de les voir.
     content: dict[str, JsonValue] | None = None
 
 
 class TraceSpan(DomainModel):
-    """Un span : ce qu'il est, quand, ce qu'il a coûté, ce qui s'y est passé."""
+    """Un span : ce qu'il est, quand, ce qu'il a coûté, ce qui s'y est passé.
+
+    Attributes:
+        span_id: Identifiant du span.
+        parent_span_id: Span parent.
+        run_id: Run du span.
+        name: Nom du span.
+        kind: Genre du span.
+        start: Début.
+        end: Fin, provisoire si le span est ouvert.
+        duration_ms: Durée, en millisecondes.
+        open: Pas encore fermé (run, étape ou appel en cours) : ``end`` est
+            provisoire.
+        error: Type de ce qui a échoué, jamais le message.
+        attributes: Attributs : modèle, tokens, coût, outil…
+        events: Les événements du span.
+    """
 
     span_id: str
     parent_span_id: str | None
@@ -68,16 +92,34 @@ class TraceSpan(DomainModel):
     start: datetime
     end: datetime
     duration_ms: float
-    # Pas encore fermé (run, étape ou appel en cours) : ``end`` est provisoire.
     open: bool = False
-    # Type de ce qui a échoué, jamais le message.
     error: str | None = None
     attributes: dict[str, AttributeValue] = Field(default_factory=dict[str, AttributeValue])
     events: tuple[TraceEvent, ...] = ()
 
 
 class Trace(DomainModel):
-    """La trace d'un run et de ses sous-runs."""
+    """La trace d'un run et de ses sous-runs.
+
+    Attributes:
+        run_id: Le run.
+        session_id: Sa session.
+        tenant_id: Son client.
+        trace_id: Identifiant de la trace : le run racine.
+        agent: Agent du run.
+        status: Statut du run.
+        finished: Vrai si le run est clos.
+        iterations: Appels de l'orchestrateur.
+        usage: Tokens consommés, sous-runs compris.
+        cost_usd: Coût en dollars.
+        active_ms: Temps de pilotage, sans attente ni pause.
+        output: Réponse finale, si le contenu est montré.
+        error_type: Nature de l'échec, s'il a échoué.
+        content: Vrai si les événements portent leur contenu (droit
+            ``read_content``).
+        spans: Les spans du run et de ses sous-runs, dans l'ordre où ils
+            s'ouvrent.
+    """
 
     run_id: RunId
     session_id: SessionId
@@ -89,11 +131,9 @@ class Trace(DomainModel):
     iterations: int
     usage: Usage
     cost_usd: float
-    # Temps de pilotage, sans attente ni pause.
     active_ms: float
     output: str | None = None
     error_type: str | None = None
-    # Vrai si les événements portent leur contenu.
     content: bool
     spans: tuple[TraceSpan, ...] = ()
 
@@ -103,6 +143,17 @@ def run_trace(events: Sequence[Event], run_id: RunId, *, content: bool) -> Trace
 
     ``events`` sont ceux de l'arbre du run, dans l'ordre du journal
     (``Loom.events``). Les spans sont rendus dans l'ordre où ils s'ouvrent.
+
+    Args:
+        events: Les événements de l'arbre du run.
+        run_id: Le run.
+        content: Vrai pour joindre le contenu (droit ``read_content``).
+
+    Returns:
+        La trace.
+
+    Raises:
+        ValueError: Aucun événement de ce run.
     """
     own = [e for e in events if e.run_id == run_id]
     if not own:
@@ -159,6 +210,7 @@ def _span(
     closed: set[str],
     content: bool,
 ) -> TraceSpan:
+    """Un span de la trace ; un run, une étape ou un appel d'outil sans clôture reste ouvert."""
     # Un span de modèle ou de juge n'a pas d'événement de clôture : il est fini
     # quand ce qu'il raconte est écrit. Seuls un run, une étape et un appel
     # d'outil restent ouverts.
@@ -182,7 +234,7 @@ def _span(
 def _event(source: Event, content: bool) -> TraceEvent:
     shown: dict[str, JsonValue] | None = None
     if content:
-        # Les corps bruts ne quittent pas le journal (6.1b).
+        # Les corps bruts ne quittent pas le journal (jalon J6.1b).
         shown = dict(contents(source)) if source.payload.export_content else {}
     charge = redacted(source).get("payload")
     return TraceEvent(

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Kit de test de loom-ia : faux modèles, faux outils, journaux fictifs (O2).
+"""Kit de test de loom-ia : faux modèles, faux outils, journaux fictifs (fonction O2).
 
-``Bench`` (J6.3c) met un agent de sa config au banc d'essai : faux modèles par
+``Bench`` (jalon J6.3c) met un agent de sa config au banc d'essai : faux modèles par
 identifiant, faux outils par nom, les contrôles d'un cas d'éval.
-``assert_replays`` (J6.3b) rejoue des journaux enregistrés : la non-régression
+``assert_replays`` (jalon J6.3b) rejoue des journaux enregistrés : la non-régression
 d'une config se teste comme le reste.
 """
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Surcharge des déclarations d'un outil par la config (#50).
+"""Surcharge des déclarations d'un outil par la config (point 50).
 
 Un outil déclare lui-même ses effets de bord, son idempotence, son délai et
 son seuil de déport ; la config peut les remplacer, et lui donner un contrat
@@ -29,20 +29,27 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import CallAssessment, Tool, ToolContext, assessed
 
-# Déclarations qu'une évaluation par appel peut donner, et que la config peut fixer.
 ASSESSED: Final = frozenset({"approval", "side_effects", "idempotent"})
+"""Déclarations qu'une évaluation par appel peut donner, et que la config peut fixer."""
 
 
 @dataclass(frozen=True, slots=True)
 class ConfiguredTool:
-    """Outil dont la déclaration a été modifiée par la config."""
+    """Outil dont la déclaration a été modifiée par la config.
+
+    Attributes:
+        tool: L'outil enveloppé.
+        spec: Sa déclaration, modifiée par la config.
+        fixed: Celles de ``ASSESSED`` que la config a données : elles valent
+            pour tous les appels.
+    """
 
     tool: Tool
     spec: ToolSpec
-    # Celles de ``ASSESSED`` que la config a données : elles valent pour tous les appels.
     fixed: frozenset[str] = frozenset()
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Appelle l'outil enveloppé tel quel."""
         return await self.tool.invoke(arguments, context)
 
     def assess_call(self, arguments: Mapping[str, JsonValue]) -> CallAssessment | None:
@@ -61,7 +68,7 @@ class ConfiguredTool:
             side_effects=self.spec.side_effects if "side_effects" in fixed else found.side_effects,
             idempotent=self.spec.idempotent if "idempotent" in fixed else found.idempotent,
             # Fixée par la config, l'approbation dit d'où elle vient, pas le motif de
-            # l'outil (test D7 du 18/10 : le motif doit nommer la bonne source).
+            # l'outil (essai de la fonction D7, 18/10 : le motif doit nommer la bonne source).
             reason=((EVERY_CALL if approval == "always" else None) if imposed else found.reason),
         )
 
@@ -85,7 +92,22 @@ def configure(
     output: OutputContract | None = None,
     skill: str | None = None,
 ) -> Tool:
-    """Applique les valeurs données ; ``None`` garde ce que l'outil déclare."""
+    """Applique les valeurs données ; ``None`` garde ce que l'outil déclare.
+
+    Args:
+        tool: L'outil.
+        description: Description vue par le modèle.
+        timeout: Délai, en secondes.
+        side_effects: Effets de bord.
+        approval: Approbation.
+        idempotent: Vrai si refaire l'appel est sans risque.
+        offload_over: Seuil de déport, en caractères.
+        output: Contrat de sortie.
+        skill: Mode d'emploi ajouté à la description (vérifié).
+
+    Returns:
+        L'outil tel quel si rien n'est donné, sinon une ``ConfiguredTool``.
+    """
     if skill is not None:
         # ``model_copy`` ne valide rien : le contrôle se fait là où le skill sert.
         skill = checked_skill(skill)

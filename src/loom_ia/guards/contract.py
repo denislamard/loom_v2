@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Contrats de sortie : normalisation, contrôle, réparation, échec (E1, E2, E4, E5, #20).
+"""Contrats de sortie : normalisation, contrôle, réparation, échec (fonctions E1, E2, E4 et E5, point 20).
 
 Le contrat est une politique fournie par loom-ia, ``loom.contract``, branchée
 en tête des politiques d'un agent : ``on_output`` pour la réponse finale (le
@@ -68,34 +68,55 @@ from loom_ia.core.schema_errors import schema_problem
 _TOO_NESTED: Final = "le JSON est trop imbriqué pour être contrôlé"
 
 CONTRACT_POLICY: Final = "loom.contract"
+"""Nom de la politique des contrats dans le journal."""
 GUARD: Final = "contract"
+"""Nom du guard dans ``guard.checked``."""
 
-# Les espaces et le saut de ligne avant la fermeture restent dans le groupe, que
-# les appelants strip() : les écarter dans le motif le rendait quadratique.
 _WHOLE_FENCE: Final = re.compile(r"```[\w-]*[ \t]*\n(.*?)```", re.DOTALL)
-# Une ouverture de bloc au milieu d'un corps : le texte compte plusieurs blocs.
+"""Les espaces et le saut de ligne avant la fermeture restent dans le groupe,
+que les appelants strip() : les écarter dans le motif le rendait
+quadratique.
+"""
 _FENCE_LINE: Final = re.compile(r"^ {0,3}```", re.MULTILINE)
+"""Une ouverture de bloc au milieu d'un corps : le texte compte plusieurs blocs."""
 _OPENING: Final = re.compile(r"```[\w-]*[ \t]*\n")
 
 
 @dataclass(frozen=True, slots=True)
 class Checked:
-    """Résultat du contrôle d'une sortie."""
+    """Résultat du contrôle d'une sortie.
 
-    # Sortie retenue : normalisée si la normalisation l'a changée.
+    Attributes:
+        text: Sortie retenue : normalisée si la normalisation l'a changée.
+        normalized: Vrai si la normalisation a changé la sortie.
+        problems: Ce qui ne va pas, une phrase par règle ; vide si la sortie
+            convient.
+        data: Objet JSON validé par le schéma.
+    """
+
     text: str
     normalized: bool
     problems: tuple[str, ...] = ()
-    # Objet JSON validé par le schéma.
     data: JsonValue = None
 
     @property
     def ok(self) -> bool:
+        """Vrai si la sortie tient toutes les règles du contrat."""
         return not self.problems
 
 
 def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checked:
-    """Contrôle une sortie ; ``data`` : ses données structurées, s'il y en a (outil)."""
+    """Contrôle une sortie ; ``data`` : ses données structurées, s'il y en a (outil).
+
+    Args:
+        contract: Le contrat : schéma, motifs exigés ou interdits, longueurs,
+            sortie non vide.
+        text: La sortie.
+        data: Ses données structurées.
+
+    Returns:
+        La sortie retenue (normalisée), ses problèmes, et l'objet JSON validé.
+    """
     schema = contract.json_schema
     kept = normalize(text, json_expected=schema is not None) if contract.normalize else text
     normalized = kept != text
@@ -129,7 +150,7 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
                 location = ".".join(str(part) for part in error.absolute_path) or "(racine)"
                 said = f"{location} : {schema_problem(error)}"
                 # ``required`` lève une erreur par propriété absente, et chacune
-                # les nomme toutes : au test E4 du 19/10, la même ligne revenait.
+                # les nomme toutes : à l'essai de la fonction E4 du 19/10, la même ligne revenait.
                 if said not in problems:
                     problems.append(said)
     if contract.must_match is not None:
@@ -157,7 +178,12 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
 
 
 def normalize(text: str, *, json_expected: bool = False) -> str:
-    """Sortie corrigée sans appel au modèle : bloc de code retiré, JSON extrait, espaces."""
+    """Sortie corrigée sans appel au modèle : bloc de code retiré, JSON extrait, espaces.
+
+    Args:
+        text: La sortie.
+        json_expected: Vrai si un schéma attend du JSON : il est extrait.
+    """
     kept = text.strip()
     kept = _unfenced(kept)
     if not json_expected or _parses(kept):
@@ -174,9 +200,16 @@ def diagnostic(contract: OutputContract, problems: tuple[str, ...]) -> str:
     """Diagnostic donné à l'auteur de la sortie pour qu'il la répare.
 
     Les règles que la sortie tient déjà sont rappelées : sans elles, l'auteur
-    corrige un point et en casse un autre qu'il ignore (test E4 du 19/10 : un
+    corrige un point et en casse un autre qu'il ignore (essai de la fonction E4, 19/10 : un
     motif exigé ajouté, qui était aussi interdit). Le schéma, lui, est toujours
     donné en entier.
+
+    Args:
+        contract: Le contrat.
+        problems: Les problèmes de la sortie.
+
+    Returns:
+        Le texte à donner à l'auteur : problèmes, règles déjà tenues, schéma.
     """
     lines = ["La sortie ne respecte pas son contrat :", *(f"- {p}" for p in problems)]
     kept = _kept_rules(contract, problems)
@@ -201,17 +234,27 @@ def refusal(
     """Refus d'une sortie de rôle ou d'outil, dit à l'orchestrateur.
 
     ``by`` : ce qui refuse, « son contrat de sortie » ou « son juge <nom> ». Au
-    test E5 du 19/10, le refus d'un juge sur un rôle portait aussi la consigne
+    essai de la fonction E5 du 19/10, le refus d'un juge sur un rôle portait aussi la consigne
     de réparation : Haiku a rappelé le rôle à l'identique, puis écrit la sortie
     lui-même, hors du juge.
 
     Ce n'est pas le diagnostic de réparation : l'orchestrateur n'est pas l'auteur
-    de la sortie et ne peut pas la corriger. Au test E1 du 19/10, la consigne
+    de la sortie et ne peut pas la corriger. À l'essai de la fonction E1 du 19/10, la consigne
     « Réponds de nouveau avec la sortie corrigée » lui faisait relancer l'appel
     identique, refusé de la même façon. Le texte dit donc une règle, pas une
     panne, et demande de ne pas refaire l'appel tel quel. Ni la sortie (elle peut
     porter un secret, qui passerait dans le journal et sous les yeux du modèle),
     ni le schéma (il pousse le modèle à fabriquer le résultat lui-même).
+
+    Args:
+        name: Nom du rôle ou de l'outil.
+        problems: Les problèmes.
+        role: Vrai pour un rôle, faux pour un outil.
+        repairs: Réparations déjà tentées.
+        by: Ce qui refuse.
+
+    Returns:
+        Le message d'erreur que lit l'orchestrateur.
     """
     listed = "\n".join(f"- {p}" for p in problems)
     if role:
@@ -257,22 +300,38 @@ class ContractGuard:
 
     @property
     def name(self) -> str:
+        """``loom.contract``."""
         return CONTRACT_POLICY
 
     @property
     def points(self) -> frozenset[HookPoint]:
+        """``after_tool``, et ``on_output`` si l'agent a un contrat de réponse finale."""
         if self.output is None:
             return frozenset({"after_tool"})
         return frozenset({"after_tool", "on_output"})
 
     @property
     def decisions(self) -> frozenset[DecisionKind]:
+        """``replace``, ``retry`` et ``fail``."""
         return frozenset({"replace", "retry", "fail"})
 
     def __repr__(self) -> str:
         return f"ContractGuard(sortie finale : {self.output is not None})"
 
     async def decide(self, subject: PolicySubject, context: PolicyContext) -> Decision:
+        """Contrôle la réponse finale (``on_output``) ou le résultat d'un rôle ou d'un outil sous contrat (``after_tool``).
+
+        Un résultat d'outil déjà en erreur n'est pas contrôlé.
+
+        Args:
+            subject: Le sujet du point d'accroche.
+            context: Contexte de la politique (réparations déjà demandées, contrôles
+                enregistrés).
+
+        Returns:
+            ``CONTINUE`` ou ``Replace`` (sortie normalisée) si la sortie convient ;
+            sinon ``Retry`` avec le diagnostic, ou la décision de ``on_failure``.
+        """
         match subject:
             case OnOutput(output=message) if self.output is not None:
                 return self._final(self.output, message, context)

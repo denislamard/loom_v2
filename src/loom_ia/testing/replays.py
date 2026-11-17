@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Non-régression depuis les traces, dans un test (O2, O3, J6.3b).
+"""Non-régression depuis les traces, dans un test (fonctions O2 et O3, jalon J6.3b).
 
     async def test_la_relance_se_rejoue() -> None:
         await assert_replays("loom.yaml", *Path("journaux").glob("*.jsonl"))
@@ -37,7 +37,19 @@ async def assert_replays(
     qui reste inachevé sont des écarts comme les autres. Sans journal, rien ne
     serait éprouvé : c'est aussi un échec.
 
-    Rend ce que chaque journal a donné, pour qui veut en vérifier davantage.
+    Args:
+        config: La config chargée, ou le chemin de ``loom.yaml``.
+        *journals: Les journaux JSONL (``loom sessions export``,
+            ``Bench.export``).
+        register: Objets Python référençables par leur nom.
+        environ: Environnement où lire les secrets.
+
+    Returns:
+        Ce que chaque journal a donné, pour qui veut en vérifier davantage.
+
+    Raises:
+        AssertionError: Aucun journal, ou au moins un écart : la première
+            requête qui diffère, run inachevé, journal illisible.
     """
     if not journals:
         raise AssertionError("assert_replays : aucun journal — rien ne serait éprouvé")
