@@ -80,6 +80,7 @@ class ModelError(Exception):
         retry_after: float | None = None,
         by_client: bool = False,
     ) -> None:
+        """Crée l'erreur ; les arguments sont décrits dans la docstring de la classe."""
         super().__init__(message)
         self.kind: ModelErrorKind = kind
         self.message = message
