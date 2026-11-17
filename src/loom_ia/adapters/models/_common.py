@@ -3,7 +3,7 @@
 
 Ce module n'importe aucun SDK.
 
-Images (#14) : le moteur remplace chaque référence de fichier avant l'appel,
+Images (point 14) : le moteur remplace chaque référence de fichier avant l'appel,
 par les octets de l'image (``inline_data``) ou par une mention. Un adaptateur
 ne reçoit donc jamais de ``ArtifactRefBlock`` ; s'il en reçoit un, c'est une
 erreur de montage.
@@ -34,11 +34,11 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import ModelError
 
-# Clé transmise aux serveurs sans authentification (vLLM, Ollama…), faute d'``api_key_env``.
 NO_API_KEY: Final = "not-needed"
+"""Clé transmise aux serveurs sans authentification (vLLM, Ollama…), faute d'``api_key_env``."""
 
-# Variable proposée quand un modèle de l'API officielle n'a pas d'``api_key_env``.
 KEY_VARIABLES: Final = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+"""Variable proposée quand un modèle de l'API officielle n'a pas d'``api_key_env``."""
 
 
 def keyless(error: ModelError, spec: ModelSpec, *, sent_key: bool) -> ModelError:
@@ -72,11 +72,10 @@ def custom_header_names(variable: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-# Préfixe d'un résultat d'outil en erreur, pour les API sans indicateur dédié.
 ERROR_PREFIX: Final = "[erreur] "
-# Nom du schéma de sortie transmis aux API OpenAI (B9).
+"""Préfixe d'un résultat d'outil en erreur, pour les API sans indicateur dédié."""
 OUTPUT_SCHEMA_NAME: Final = "output"
-# Mots-clés de schéma que le mode strict des API OpenAI accepte.
+"""Nom du schéma de sortie transmis aux API OpenAI (fonction B9)."""
 _STRICT_KEYWORDS: Final = frozenset(
     {
         "type",
@@ -102,6 +101,7 @@ _STRICT_KEYWORDS: Final = frozenset(
         "maxItems",
     }
 )
+"""Mots-clés de schéma que le mode strict des API OpenAI accepte."""
 
 _QUOTA_HINTS: Final = frozenset({"insufficient_quota", "billing_error", "billing_hard_limit_reached"})
 _FILTER_HINTS: Final = frozenset({"content_filter", "content_policy_violation"})
@@ -197,6 +197,7 @@ def output_text(output: ToolOutput) -> str:
 
 
 def json_text(data: JsonValue) -> str:
+    """Une valeur JSON en texte, sans échapper les caractères non ASCII."""
     return json.dumps(data, ensure_ascii=False)
 
 
@@ -216,6 +217,7 @@ def unreadable_json(error: json.JSONDecodeError) -> ModelError:
 
 
 def unresolved(block: ArtifactRefBlock) -> ModelError:
+    """L'erreur d'une référence de fichier que le moteur n'a pas remplacée avant l'appel (``invalid_request``)."""
     return ModelError(
         "invalid_request",
         f"Référence de fichier {block.uri!r} non résolue : le moteur la remplace avant l'appel",

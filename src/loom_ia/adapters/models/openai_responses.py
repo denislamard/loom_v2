@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Adaptateur ``sdk: openai``, ``api: responses`` : API Responses d'OpenAI (#7, #9, B1).
+"""Adaptateur ``sdk: openai``, ``api: responses`` : API Responses d'OpenAI (points 7 et 9, fonction B1).
 
 Sans état chez le fournisseur : ``store: false``, toute la conversation part
 à chaque appel, et le raisonnement revient chiffré
@@ -21,7 +21,7 @@ Sans état chez le fournisseur : ``store: false``, toute la conversation part
 - la limite de sortie passe par ``max_output_tokens`` ; ``tool_choice`` tel
   quel ; un outil est ``strict`` si son schéma en suit les règles ;
 - le schéma de sortie (``output_schema``) devient ``text.format``
-  (``json_schema``) pour un modèle déclaré ``native_json: true`` (B9) ;
+  (``json_schema``) pour un modèle déclaré ``native_json: true`` (fonction B9) ;
 - fin du flux : ``response.completed`` ou ``response.incomplete`` la dit. Sans
   l'un ni l'autre, le flux a été coupé : l'appel échoue en ``transient``. Un
   événement de flux, ou une réponse non streamée, au JSON invalide aussi.
@@ -110,13 +110,15 @@ from loom_ia.core.ports import ModelError
 logger = logging.getLogger(__name__)
 
 PROVIDER: Final = "openai"
-# Le raisonnement revient chiffré, pour être renvoyé sans rien garder chez le fournisseur.
-# Envoyé sans condition, même pour un modèle déclaré ``thinking: false`` (MOD-1, décidé) :
-# un modèle à raisonnement non déclaré en a besoin entre deux tours d'outils.
-# Non vérifié sur l'API réelle : si un modèle sans raisonnement refuse ce paramètre, le
-# conditionner à ``thinking`` en adaptant
-# test_request_is_stateless_and_sends_encrypted_reasoning_back.
+"""Nom du fournisseur, tel que le journal et la télémétrie l'écrivent."""
 INCLUDE: Final[list[ResponseIncludable]] = ["reasoning.encrypted_content"]
+"""Le raisonnement revient chiffré, pour être renvoyé sans rien garder chez le
+fournisseur. Envoyé sans condition, même pour un modèle déclaré ``thinking:
+false`` (MOD-1, décidé) : un modèle à raisonnement non déclaré en a besoin
+entre deux tours d'outils. Non vérifié sur l'API réelle : si un modèle sans
+raisonnement refuse ce paramètre, le conditionner à ``thinking`` en adaptant
+test_request_is_stateless_and_sends_encrypted_reasoning_back.
+"""
 
 type _Item = dict[str, object]
 
@@ -131,6 +133,19 @@ class OpenAIResponsesModel:
         api_key: str,
         http_client: httpx2.AsyncClient | None = None,
     ) -> None:
+        """Prépare le client du SDK, sans retries et sans rien lire de l'environnement.
+
+        L'adresse vient de ``base_url``, à défaut celle de l'API officielle : le SDK
+        ne lit pas ``OPENAI_BASE_URL``. Les en-têtes que l'environnement ajouterait sont
+        omis (``OPENAI_ORG_ID, OPENAI_PROJECT_ID, OPENAI_CUSTOM_HEADERS``), le délai total est ``timeouts.total``. Sans
+        ``api_key_env``, aucune clé n'est envoyée : un 401 le dira.
+
+        Args:
+            spec: Le modèle déclaré.
+            api_key: Clé de l'API (``NO_API_KEY`` : aucune).
+            http_client: Client HTTP à utiliser, par exemple celui qui garde les
+                échanges bruts (``RecordingClient``) ; à défaut, celui du SDK.
+        """
         self.spec = spec
         # Sans ``api_key_env``, aucune clé n'est envoyée : un 401 le dira.
         self._sent_key = api_key != NO_API_KEY
@@ -145,15 +160,36 @@ class OpenAIResponsesModel:
 
     @property
     def provider(self) -> str:
+        """Nom du fournisseur : ``openai``."""
         return PROVIDER
 
     async def aclose(self) -> None:
+        """Ferme le client du SDK."""
         await self._client.close()
 
     def __repr__(self) -> str:
         return f"OpenAIResponsesModel({self.spec.id!r}, model={self.spec.model!r})"
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        """Envoie la requête à l'API Responses et rend la réponse en morceaux neutres.
+
+        Rien n'est gardé chez le fournisseur (``store: false``) : le raisonnement
+        revient chiffré, pour être renvoyé. Le prompt système part en
+        ``instructions`` ; ``max_output_tokens`` est celui de la requête, puis du
+        modèle ; le schéma de sortie passe en ``text.format`` (``native_json``) ;
+        les ``params`` du modèle partent dans le corps. Sans ``capabilities.streaming``, la réponse entière est lue puis
+        rendue en flux simulé.
+
+        Args:
+            request: La requête neutre.
+
+        Yields:
+            Les morceaux de la réponse.
+
+        Raises:
+            ModelError: Erreur de l'API ou du transport, classée ; flux coupé avant
+                sa fin (``transient``) ; JSON illisible (``transient``).
+        """
         capabilities = self.spec.capabilities
         items = to_input_items(request.messages, thinking=capabilities.thinking)
         tools = to_response_tools(request)
@@ -237,6 +273,11 @@ def to_input_items(messages: Sequence[Message], *, thinking: bool = False) -> li
 
 
 def to_response_tools(request: ModelRequest) -> list[FunctionToolParam]:
+    """Les outils proposés, au format de l'API ; ``strict`` seulement si le schéma d'entrée en suit les règles.
+
+    Args:
+        request: La requête neutre.
+    """
     tools: list[FunctionToolParam] = []
     for tool in request.tools:
         parameters: dict[str, object] = {**tool.input_schema}
@@ -253,7 +294,7 @@ def to_response_tools(request: ModelRequest) -> list[FunctionToolParam]:
 
 
 def to_text_config(schema: dict[str, JsonValue]) -> ResponseTextConfigParam:
-    """Schéma de sortie du contrat → ``text.format`` (B9)."""
+    """Schéma de sortie du contrat → ``text.format`` (fonction B9)."""
     return {
         "format": {
             "type": "json_schema",
@@ -386,6 +427,14 @@ class StreamParser:
         self._finished = False
 
     def feed(self, event: ResponseStreamEvent) -> list[ModelChunk]:
+        """Traduit un événement du flux en morceaux neutres.
+
+        ``response.completed`` ou ``response.incomplete`` marque la fin du flux ;
+        ``response.failed`` et une erreur de flux lèvent ``ModelError``.
+
+        Args:
+            event: Événement brut du SDK.
+        """
         match event:
             case ResponseOutputItemAddedEvent(item=ResponseFunctionToolCall() as call):
                 return [self.call_started(call, event.output_index)]
@@ -432,6 +481,12 @@ class StreamParser:
         return chunks
 
     def call_started(self, call: ResponseFunctionToolCall, index: int) -> ToolCallStarted:
+        """Le début d'un appel d'outil, numéroté par sa place dans la sortie.
+
+        Args:
+            call: L'appel annoncé.
+            index: Sa place dans la sortie.
+        """
         self._calls.add(index)
         return ToolCallStarted(index=index, call_id=call.call_id, name=call.name)
 

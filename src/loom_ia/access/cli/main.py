@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Ligne de commande ``loom`` (N4).
+"""Ligne de commande ``loom`` (fonction N4).
 
     loom validate                  vérifie la config et monte les agents
     loom run demo "Bonjour"        lance un run (``--stream`` pour le direct,
@@ -178,22 +178,41 @@ from loom_ia.usage import describe as describe_budget
 from loom_ia.usage import render as render_report
 
 PROG: Final = "loom"
-# Utilisateur des commandes qui agissent, faute de ``--user`` (D-10).
+"""Nom du programme."""
 USER_ENV: Final = "LOOM_USER"
+"""Utilisateur des commandes qui agissent, faute de ``--user`` (décision D-10 des utilisateurs et rôles)."""
 DEFAULT_CONFIG: Final = Path("loom.yaml")
+"""Fichier de configuration, sans ``--config``."""
 MISSING_EXTRA: Final = "{what} demande l'extra '{extra}' (installer l'extra : loom-ia[{extra}])"
+"""Message d'une commande dont l'extra n'est pas installé."""
 
-# Codes de sortie.
 OK: Final = 0
+"""Code de sortie : la commande a abouti."""
 FAILED: Final = 1
+"""Code de sortie : la commande a échoué (run en échec, élément inconnu, journal illisible…)."""
 REFUSED: Final = 2
-# ``loom report --period`` : l'écriture d'avant (``--periode jour|mois``) reste comprise.
+"""Code de sortie : la demande est refusée (config, droits, arguments, budget…)."""
 _PERIODS: Final = {"day": "day", "month": "month", "jour": "day", "mois": "month"}
-# Délai au-delà duquel `loom validate` ne dit plus qu'une clé expire bientôt.
+"""``loom report --period`` : l'écriture d'avant (``--periode jour|mois``) reste comprise."""
 _BIENTOT: Final = timedelta(days=7)
+"""Délai au-delà duquel `loom validate` ne dit plus qu'une clé expire bientôt."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Point d'entrée de ``loom`` : lit la ligne de commande, lance la sous-commande et traduit ses erreurs en code de sortie.
+
+    Les refus sont dits sur stderr et rendent 2 : config invalide ; agent, run,
+    approbation ou client inconnu ; accès refusé ; utilisateur manquant ;
+    demande mal formée ; budget ou quota atteint ; run mené ailleurs ; journal
+    occupé ; stockage pas prêt ; clé de sceau absente ; entrée standard fermée ;
+    erreur d'entrée-sortie. Un journal illisible ou altéré, et Ctrl-C, rendent 1.
+
+    Args:
+        argv: Arguments, sans le nom du programme ; à défaut, ceux du process.
+
+    Returns:
+        Le code de sortie : 0 (``OK``), 1 (``FAILED``) ou 2 (``REFUSED``).
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -259,7 +278,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SealError as error:
         # Une clé absente ou autre (MissingKey) : l'effet voulu d'un effacement de
         # clé, ou une variable oubliée — un refus, comme le 424 de la REST, pas une
-        # panne ; le message nomme le client et l'empreinte (test P1 du 23/10).
+        # panne ; le message nomme le client et l'empreinte (essai de la fonction P1, 23/10).
         print(f"Journal scellé : {error!s}", file=sys.stderr)
         return REFUSED
     except EOFError:
@@ -278,13 +297,25 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """L'analyseur de la ligne de commande : options globales, puis une sous-commande par action.
+
+    Sous-commandes : ``validate``, ``run``, ``state``, ``resume``, ``replay``,
+    ``inspect``, ``eval``, ``approve``, ``reject``, ``answer``, ``serve``,
+    ``mcp``, ``keys create``, ``report``, ``sessions`` (``list``, ``show``,
+    ``files``, ``export``, ``delete``), ``worker``, ``retention``,
+    ``storage sql``, ``memory`` (``export``, ``import``, ``reindex``, ``eval``)
+    et ``schema``. Les commandes qui agissent prennent ``--user`` (à défaut
+    ``LOOM_USER``), celles qui visent un client ``--tenant``. Les options
+    globales (``--config``, ``--profile``, ``--env-file``, ``--no-env-file``)
+    se lisent avant comme après la sous-commande, où elles l'emportent.
+    """
     parser = argparse.ArgumentParser(prog=PROG, description="Agents loom en ligne de commande")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     _global_options(parser)
     commands = parser.add_subparsers(dest="command", required=True)
 
     def acting(command: argparse.ArgumentParser) -> argparse.ArgumentParser:
-        """Ajoute ``--user`` : l'utilisateur au nom duquel la commande agit (D-10)."""
+        """Ajoute ``--user`` : l'utilisateur au nom duquel la commande agit (décision D-10 des utilisateurs et rôles)."""
         command.add_argument(
             "--user",
             default=None,
@@ -294,7 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
         return command
 
     def tenanted(command: argparse.ArgumentParser) -> argparse.ArgumentParser:
-        """Ajoute ``--tenant`` : au nom de quel client la commande agit (L1)."""
+        """Ajoute ``--tenant`` : au nom de quel client la commande agit (fonction L1)."""
         command.add_argument(
             "--tenant",
             type=str,
@@ -650,7 +681,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     schema = commands.add_parser("schema", help="JSON Schema du fichier de configuration")
     schema.set_defaults(handler=cmd_schema)
-    # Au test M4 du 23/10, ``loom validate --profile prod`` était refusé : les
+    # À l'essai de la fonction M4 du 23/10, ``loom validate --profile prod`` était refusé : les
     # options globales se lisent aussi après la sous-commande, où elles l'emportent.
     for command in _subcommands(parser):
         _global_options(command, after=True)
@@ -722,7 +753,7 @@ def _config(args: argparse.Namespace, path: Path | None = None) -> LoomConfig:
     report = DISABLED if args.no_env_file else load_env_file(given, env_file=args.env_file)
     args.env_report = report
     config = load_config(given, profile=args.profile)
-    # Les refus de la commande s'écrivent au fichier d'audit de cette config (D-9).
+    # Les refus de la commande s'écrivent au fichier d'audit de cette config (décision D-9 des utilisateurs et rôles).
     audit.writing_to(config)
     if config.strict and (warning := report.prod_warning()) is not None:
         print(f"Avertissement : {warning}", file=sys.stderr)
@@ -730,6 +761,20 @@ def _config(args: argparse.Namespace, path: Path | None = None) -> LoomConfig:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
+    """``loom validate`` : vérifie la config, monte chaque agent pour chaque client, puis imprime le rapport.
+
+    Le verdict passe en tête, puis les sections CONFIGURATION, EXTENSIONS,
+    EXÉCUTION, ACCÈS et CLIENTS (ou AGENTS), et les avertissements.
+    ``--no-keys`` monte les agents sans créer leurs clients de modèle : une clé
+    d'API ou un SDK absent ne fait pas échouer. Si un montage échoue, le rapport
+    partiel s'imprime avec un verdict d'échec, avant l'erreur.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 si tout se monte ; une erreur remonte à ``main``, qui la traduit.
+    """
     # La racine du projet, résolue hors de la boucle : les chemins du rapport s'y rapportent.
     return asyncio.run(_validate(args, root=Path(args.config).resolve().parent))
 
@@ -765,12 +810,12 @@ async def _validate(args: argparse.Namespace, *, root: Path) -> int:
 
 # --- loom validate : le rapport ---------------------------------------------
 
-# Largeur visée d'une ligne du rapport : le verdict s'aligne à droite, les listes s'y replient.
 _WIDTH: Final = 88
-# Largeur minimale des libellés de section.
+"""Largeur visée d'une ligne du rapport : le verdict s'aligne à droite, les listes s'y replient."""
 _LABEL: Final = 11
-# Largeur d'une liste repliée, à droite des libellés.
+"""Largeur minimale des libellés de section."""
 _LISTED: Final = _WIDTH - 2 - _LABEL - 2
+"""Largeur d'une liste repliée, à droite des libellés."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -799,6 +844,7 @@ class _Section:
     lines: list[str] = field(default_factory=list[str])
 
     def add(self, label: str, value: str, more: Iterable[str] = ()) -> None:
+        """Ajoute un champ aligné : libellé, valeur, et lignes de suite."""
         self.fields.append(_Field(label, value, tuple(more)))
 
     def add_listed(self, label: str, names: Iterable[str]) -> None:
@@ -809,17 +855,27 @@ class _Section:
 
 @dataclass(slots=True)
 class _Report:
-    """Ce que ``loom validate`` imprime ; ``root`` est le dossier de la config."""
+    """Ce que ``loom validate`` imprime ; ``root`` est le dossier de la config.
+
+    Attributes:
+        config: Fichier de configuration, tel que donné.
+        root: Dossier de la config : les chemins du rapport s'y rapportent.
+        sections: Sections, dans l'ordre d'impression.
+        warnings: Avertissements, chacun dit une fois.
+        mounted: Agents montés, tous clients confondus.
+        marks: Marques de droits montrées dans l'arbre des agents : la légende
+            n'explique qu'elles.
+    """
 
     config: Path
     root: Path
     sections: list[_Section] = field(default_factory=list[_Section])
     warnings: list[_Warning] = field(default_factory=list[_Warning])
     mounted: int = 0
-    # Marques de droits montrées dans l'arbre des agents : la légende n'explique qu'elles.
     marks: set[str] = field(default_factory=set[str])
 
     def section(self, title: str) -> _Section:
+        """Ouvre une section à la suite du rapport, et la rend."""
         found = _Section(title)
         self.sections.append(found)
         return found
@@ -897,6 +953,12 @@ def _packed(names: list[str], width: int) -> list[str]:
 
 
 def _configuration(report: _Report, config: LoomConfig, args: argparse.Namespace, printed: set[str]) -> None:
+    """Section CONFIGURATION : profil, fichier d'environnement, modèles et clients.
+
+    Le profil actif et ses surcharges, le fichier d'environnement lu, les
+    modèles déclarés et les clients ; avec les avertissements sur les clés
+    d'API et les modèles.
+    """
     section = report.section("CONFIGURATION")
     active, declared = _profile_said(config, args.profile)
     section.add("Profil", active)
@@ -917,6 +979,7 @@ def _configuration(report: _Report, config: LoomConfig, args: argparse.Namespace
 
 
 def _extensions(report: _Report, config: LoomConfig, registry: Registry) -> None:
+    """Section EXTENSIONS : outils fournis utilisés, paquets de points d'entrée installés, sources d'outils déclarées, outils et politiques enregistrés."""
     section = report.section("EXTENSIONS")
     references = {ref.python for spec in config.agents for ref in spec.python_tools}
     provided = sorted(ref for ref in references if is_builtin(ref))
@@ -964,6 +1027,12 @@ def _package_lines(config: LoomConfig) -> list[str]:
 
 
 def _execution(report: _Report, config: LoomConfig, printed: set[str]) -> None:
+    """Section EXÉCUTION : stockages, file, bus, chiffrement, rétention et télémétrie.
+
+    Journal, artefacts, idempotence, file, bus, chiffrement, rétention et
+    télémétrie, avec les avertissements de chacun (variable absente, rien de
+    chiffré, rien ne s'efface…).
+    """
     section = report.section("EXÉCUTION")
     storage = config.storage
     section.add("Journal", _storage_said("Journal", storage.events, report))
@@ -999,7 +1068,7 @@ def _execution(report: _Report, config: LoomConfig, printed: set[str]) -> None:
         report.warn("Rétention", "aucune : rien ne s'efface")
     else:
         section.add("Rétention", _retention_line(config))
-    # Au test K4 du 21/10, rien ne disait ce qui sort du journal : ni le
+    # À l'essai de la fonction K4 du 21/10, rien ne disait ce qui sort du journal : ni le
     # collecteur, ni la capture, ni les motifs de masquage.
     first, *more = _telemetry_lines(config)
     section.add("Télémétrie", first, more)
@@ -1041,6 +1110,7 @@ def _telemetry_lines(config: LoomConfig) -> list[str]:
 
 
 def _access(report: _Report, config: LoomConfig) -> None:
+    """Section ACCÈS : rôles, comptes, journal des refus, clés d'API, MCP HTTP et portes (déclencheurs ``POST …/v1/hooks/<nom>``)."""
     section = report.section("ACCÈS")
     security = config.security
     first, *more = _role_lines(config, report)
@@ -1214,8 +1284,7 @@ def _sealing_line(config: LoomConfig) -> str:
 
 
 def _sealing_report(config: LoomConfig) -> tuple[list[str], list[str]]:
-    """Une ligne par client — l'empreinte de sa clé ou son absence —, et à part
-    les avertissements du trousseau.
+    """Une ligne par client — l'empreinte de sa clé ou son absence —, et à part les avertissements du trousseau.
 
     L'empreinte est imprimée, jamais la clé : elle suffit à voir que deux
     clients scellent avec la même, ou que celle d'un client a changé. Un
@@ -1296,7 +1365,7 @@ def _user_lines(config: LoomConfig) -> list[str]:
 
 
 def _key_lines(config: LoomConfig, report: _Report) -> list[str]:
-    """Ce que chaque clé d'API permet ; ce qui cloche va aux avertissements (J5.2a, #39)."""
+    """Ce que chaque clé d'API permet ; ce qui cloche va aux avertissements (jalon J5.2a, point 39)."""
     now = datetime.now(UTC)
     security = config.security
     lines: list[str] = []
@@ -1307,7 +1376,7 @@ def _key_lines(config: LoomConfig, report: _Report) -> list[str]:
             details.append(f"client {user.tenant}")
         if key.scopes is not None:
             details.append(f"restreinte à {_listed(key.scopes)}")
-            # Une clé restreint, elle n'ajoute jamais (D-4) : une permission que
+            # Une clé restreint, elle n'ajoute jamais (décision D-4 des utilisateurs et rôles) : une permission que
             # l'utilisateur n'a pas ne lui donne rien.
             missing = [p for p in key.scopes if p not in security.permissions_of(user.id)]
             if missing:
@@ -1340,7 +1409,7 @@ def _key_lines(config: LoomConfig, report: _Report) -> list[str]:
 
 
 def _tenant_lines(tenant: Tenant) -> list[str]:
-    """Ce qu'un client surcharge, en quelques lignes lisibles (L1, #34)."""
+    """Ce qu'un client surcharge, en quelques lignes lisibles (fonction L1, point 34)."""
     spec = tenant.spec
     if spec is None:
         return []
@@ -1373,18 +1442,18 @@ def _tenant_lines(tenant: Tenant) -> list[str]:
         lines.append(f"stockage : {events.backend}{where}")
     capture = spec.telemetry.capture
     if capture != CaptureOverride():
-        # Au test K4 du 21/10, « rien de surchargé » pour un client qui surchargeait
+        # À l'essai de la fonction K4 du 21/10, « rien de surchargé » pour un client qui surchargeait
         # sa capture.
         lines.append(f"capture : {_capture_said(tenant.config.capture_for(tenant.id))}")
     return lines or ["rien de surchargé"]
 
 
-# Marques d'un droit dans l'arbre des agents, et ce que dit la légende.
 _ASKS: Final = "*"
+"""Marques d'un droit dans l'arbre des agents, et ce que dit la légende."""
 _UNGUARDED: Final = "!"
 _MARKS: Final = {_ASKS: "* = approbation requise", _UNGUARDED: "! = destructif, sans approbation"}
-# Largeur minimale du nom d'une branche.
 _BRANCH: Final = 11
+"""Largeur minimale du nom d'une branche."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1652,7 +1721,7 @@ def _chain(models: tuple[str, ...], mapped: Mapping[str, str] | None = None) -> 
 
     « → » sépare les secours ; un modèle qu'un client fait correspondre à un
     autre s'écrit ``OPUS (HAIKU pour ce client)``, pour ne pas se lire comme un
-    secours (test E6 du 19/10 : sous « client dupont », le juge affichait
+    secours (essai de la fonction E6, 19/10 : sous « client dupont », le juge affichait
     « modèle OPUS » alors que ce client le fait tourner sur HAIKU).
     """
     shown = [f"{model} ({mapped[model]} pour ce client)" if mapped and mapped.get(model, model) != model else model for model in models]
@@ -1678,8 +1747,8 @@ def _contracts(spec: AgentSpec) -> list[tuple[str, OutputContract, bool]]:
     return found
 
 
-# Longueur montrée d'un message de repli : le contrat se lit d'une ligne.
 _FALLBACK_SHOWN: Final = 40
+"""Longueur montrée d'un message de repli : le contrat se lit d'une ligne."""
 
 
 def _skill_size(text: str) -> str:
@@ -1690,7 +1759,7 @@ def _skill_size(text: str) -> str:
 def _contract_line(contract: OutputContract, *, repairs: bool) -> str:
     """Un contrat en une ligne : ses règles, ses réparations, ce qui se passe à l'échec.
 
-    Au test E1 du 19/10, ``validate`` montrait que ``loom.contract`` était posé,
+    À l'essai de la fonction E1 du 19/10, ``validate`` montrait que ``loom.contract`` était posé,
     mais pas ce qu'il exigeait. Les motifs sont montrés tels quels ; un schéma,
     par ses champs requis.
     """
@@ -1726,6 +1795,23 @@ def _contract_line(contract: OutputContract, *, repairs: bool) -> str:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """``loom run <agent> <message>`` : lance un run et attend sa fin ; la réponse sur stdout, le bilan sur stderr.
+
+    Options : ``--session`` (journal où rattacher le run), ``--run-id``,
+    ``--attach`` (image jointe, répétable), ``--state CLE=VALEUR`` (state posé à
+    l'ouverture, répétable), ``--judges auto|force|skip``, ``--stream``
+    (réponse et déroulé au fil de l'eau), ``--json``, ``--json --onlydata``
+    (seulement ``data``), ``-q`` (bilan tu). Sans ``--run-id``, dans une
+    session, le message peut répondre à une question qu'un run attend.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 si le run a abouti, ou attend une réponse à une question ; 1 sinon ;
+        2 pour une demande refusée (``--onlydata`` sans ``--json``, pièce jointe
+        illisible, clé de ``--state`` donnée deux fois).
+    """
     if args.onlydata and not args.json:
         print("--onlydata ne s'emploie qu'avec --json", file=sys.stderr)
         return REFUSED
@@ -1813,7 +1899,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 async def _budgets_reached(loom: Loom, result: RunResult, tenant: TenantId | None) -> list[BudgetExceeded]:
     """Plafonds atteints pendant le run, lus dans son journal (sous-runs compris).
 
-    Au test J4 du 21/10, ni la console ni le résumé ne disaient qu'un budget
+    À l'essai de la fonction J4 du 21/10, ni la console ni le résumé ne disaient qu'un budget
     avait arrêté le run ou l'avait averti : seul le journal le montrait. Le
     déroulé ``--stream`` en a déjà une ligne. Lu par la même instance que le
     run : un journal en mémoire n'existe que dans ce process.
@@ -1869,6 +1955,17 @@ def cmd_state(args: argparse.Namespace) -> int:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
+    """``loom resume <run_id>`` : reprend un run interrompu et attend sa fin.
+
+    Un run déjà terminé n'est pas repris : la commande le dit, avec la
+    commande ``loom inspect`` qui le relit.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 si le run aboutit, attend une réponse, ou était déjà terminé ; 1 sinon.
+    """
     config = _config(args)
     _console(config)
     session = SessionId(args.session) if args.session else None
@@ -1884,7 +1981,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
     outcome = asyncio.run(go())
     if isinstance(outcome, RunStatus):
-        # Au test A6 du 17/10, un run clos réaffichait son résultat, en code 1
+        # À l'essai de la fonction A6 du 17/10, un run clos réaffichait son résultat, en code 1
         # s'il avait échoué : rien ne disait qu'il n'y avait rien à reprendre.
         where = f" --session {args.session}" if args.session else ""
         tenant_flag = f" --tenant {args.tenant}" if args.tenant else ""
@@ -1902,7 +1999,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     Le code de sortie fait de la commande un garde-fou : une config qui ne
     reproduit plus un run de référence se voit en CI, sans lire la sortie. En
     variante, s'écarter est le but : le code dit seulement si la variante est
-    allée au bout (0) ou a échoué (1). Avec ``--journal`` (J6.3b), chaque run
+    allée au bout (0) ou a échoué (1). Avec ``--journal`` (jalon J6.3b), chaque run
     fini du fichier est rejoué ; un seul qui diverge, ou un run inachevé,
     rend 1.
     """
@@ -2047,7 +2144,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     else:
         _say("\n".join(render_trace(trace, full=args.full)))
         if stalled:
-            # Au test H1 du 20/10, rien ne disait qu'un run arrêté en plein vol
+            # À l'essai de la fonction H1 du 20/10, rien ne disait qu'un run arrêté en plein vol
             # était à reprendre, ni comment.
             where = f" --session {args.session}" if args.session else ""
             tenant_flag = f" --tenant {args.tenant}" if args.tenant else ""
@@ -2107,8 +2204,8 @@ def _replay_code(report: ReplayReport) -> int:
     return OK if report.identical else FAILED
 
 
-# Ordre dans lequel le rapport dit le sort des appels d'outil de la variante.
 _FATE_ORDER: Final[tuple[ToolFate, ...]] = ("journal", "run", "relaunched", "double", "refused")
+"""Ordre dans lequel le rapport dit le sort des appels d'outil de la variante."""
 
 
 def _print_variant(report: ReplayReport, comparison: Comparison, export: Path | None) -> None:
@@ -2160,7 +2257,7 @@ def _tokens(side: RunSide) -> str:
 
 
 def cmd_decide(args: argparse.Namespace) -> int:
-    """Tranche ce qu'un run attend, puis pilote sa reprise (#17).
+    """Tranche ce qu'un run attend, puis pilote sa reprise (point 17).
 
     La décision met un travail ``resume`` en file **dans cette instance** :
     sans ``--no-wait``, c'est donc ce terminal qui mène le run à son terme et
@@ -2171,7 +2268,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
 
     Avec une file servie par un courtier (``storage.queue.backend: rabbitmq``),
     le travail de reprise part au worker : ce terminal n'a rien à attendre, et
-    relire le run aussitôt montrerait encore la pause (test H7 du 21/10 :
+    relire le run aussitôt montrerait encore la pause (essai de la fonction H7, 21/10 :
     « Statut : paused », code 1, pendant que le worker concluait). La commande
     dit donc à qui la reprise est confiée et sort en 0, comme avec ``--no-wait``.
     """
@@ -2318,11 +2415,17 @@ class _Hint:
 
 @dataclass(slots=True)
 class _Target:
-    """L'appel ``ask`` visé par ``loom answer``, et de quoi montrer la commande."""
+    """L'appel ``ask`` visé par ``loom answer``, et de quoi montrer la commande.
+
+    Attributes:
+        pending: La question visée.
+        hint: De quoi viser le bon run dans la commande montrée.
+        sent: Les réponses envoyées, numéros remplacés par les libellés (pour
+            l'écho).
+    """
 
     pending: PendingQuestion
     hint: _Hint
-    # Les réponses envoyées, numéros remplacés par les libellés (pour l'écho).
     sent: list[list[str]] | None = None
 
 
@@ -2451,6 +2554,19 @@ def _json_object(text: str) -> dict[str, JsonValue] | None:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
+    """``loom report`` : consommation d'un run, d'une session, ou du client sur une période.
+
+    Un run (``run_id``), une session (``--session``), ou le client sur la
+    journée ou le mois en cours (``--period day|month``).
+
+    ``--json`` pour le rapport en JSON.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 ; 1 pour un run inconnu ; 2 sans run, session ni période.
+    """
     config = _config(args)
     _reading(config)
     if args.period is not None:
@@ -2518,14 +2634,14 @@ def _consumption_json(found: TenantConsumption) -> dict[str, JsonValue]:
     }
 
 
-# Avertissement des commandes qui relisent le journal quand il est en mémoire.
 MEMORY_JOURNAL: Final = "Journal en mémoire : il ne vit que le temps d'un process ; cette commande ne voit pas les runs des autres commandes loom."
+"""Avertissement des commandes qui relisent le journal quand il est en mémoire."""
 
 
 def _warn_memory_journal(config: LoomConfig, args: argparse.Namespace) -> None:
     """Dit, sur stderr, qu'un journal ``memory`` ne garde rien d'une commande à l'autre.
 
-    Au test F5 du 19/10, ``loom sessions list`` répondait « Aucune session. »
+    À l'essai de la fonction F5 du 19/10, ``loom sessions list`` répondait « Aucune session. »
     juste après un run : exact — chaque commande ouvre un journal vide —, mais
     rien ne le disait. Le journal regardé est celui du client de la commande.
     """
@@ -2536,6 +2652,17 @@ def _warn_memory_journal(config: LoomConfig, args: argparse.Namespace) -> None:
 
 
 def cmd_sessions_list(args: argparse.Namespace) -> int:
+    """``loom sessions list`` : sessions du client, la plus récemment écrite d'abord (identifiant, nombre d'événements, date).
+
+    ``--json`` pour la liste en JSON. Un journal en mémoire est signalé : il
+    est vide à chaque commande.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0.
+    """
     config = _config(args)
     _reading(config)
     _warn_memory_journal(config, args)
@@ -2735,6 +2862,17 @@ def _extracted_names(files: Sequence[SessionFile]) -> list[str]:
 
 
 def cmd_sessions_export(args: argparse.Namespace) -> int:
+    """``loom sessions export <session_id>`` : écrit les événements de la session en JSONL, sur stdout ou dans ``--out``.
+
+    C'est le format que relisent ``loom replay --journal`` et les cas de rejeu
+    des évals.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 ; 1 pour une session inconnue.
+    """
     config = _config(args)
     _reading(config)
     _warn_memory_journal(config, args)
@@ -2759,6 +2897,17 @@ def cmd_sessions_export(args: argparse.Namespace) -> int:
 
 
 def cmd_sessions_delete(args: argparse.Namespace) -> int:
+    """``loom sessions delete <session_id>`` : supprime la session — journal, fichiers et clés d'idempotence (RGPD).
+
+    Demande confirmation, sauf avec ``--yes``.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 ; 1 pour une session inconnue ; 2 si la suppression n'est pas
+        confirmée.
+    """
     config = _config(args)
     _reading(config)
     _warn_memory_journal(config, args)
@@ -2823,6 +2972,17 @@ def cmd_retention(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    """``loom serve`` : sert l'API REST (extra ``http``) ; ``--host`` et ``--port`` remplacent ceux de ``server.http``.
+
+    Imprime d'abord le bandeau (``serving_banner``). ``--reload`` relance le
+    serveur quand un fichier de la config change ; refusé en profil prod.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 à l'arrêt ; 2 sans l'extra ``http``, ou ``--reload`` refusé.
+    """
     config = _config(args)
     apply_logging(config)
     try:
@@ -2869,7 +3029,7 @@ def _serve_reloading(config: LoomConfig, args: argparse.Namespace, host: str, po
 def _cache_said(usage: Usage) -> str:
     """Le cache, quand il y en a : « tokens : 18/35 » ne compte que l'entrée hors cache.
 
-    Au test J1 du 21/10, la console disait « 50/543 » quand le rapport, cache
+    À l'essai de la fonction J1 du 21/10, la console disait « 50/543 » quand le rapport, cache
     compris, disait « 4499/543 », sans qu'aucun des deux nomme le cache.
     """
     if not (usage.cache_read_tokens or usage.cache_write_tokens):
@@ -2894,7 +3054,7 @@ def serving_banner(config: LoomConfig, given: str | None, host: str, port: int, 
     print(f"Agents     : {_listed(agent.name for agent in config.agents if agent.expose.rest)}")
     if config.server.mcp.http:
         # Même port, même authentification : la clé dit le client à chaque
-        # requête, ce que le stdio ne peut pas faire (J5.2b).
+        # requête, ce que le stdio ne peut pas faire (jalon J5.2b).
         publies = _listed(agent.name for agent in config.agents if agent.expose.mcp)
         print(f"MCP HTTP   : http://{host}:{port}{http.base_path}/mcp")
         print(f"Outils MCP : {publies}")
@@ -2908,6 +3068,14 @@ def serving_banner(config: LoomConfig, given: str | None, host: str, port: int, 
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
+    """``loom mcp`` : sert les agents en MCP sur stdio (extra ``mcp``), au nom de ``--user`` ; rien d'autre ne passe sur stdout.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 à l'arrêt ; 2 sans l'extra ``mcp``.
+    """
     config = _config(args)
     apply_logging(config)
     try:
@@ -2930,6 +3098,21 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
 
 def cmd_keys_create(args: argparse.Namespace) -> int:
+    """``loom keys create <id> --user <utilisateur>`` : fabrique une clé d'API et imprime le bloc ``security.api_keys`` à ajouter à la config.
+
+    La clé n'est affichée qu'une fois : la config n'en garde que l'empreinte.
+    Options : ``--scope`` (permission gardée, répétable ; défaut : toutes),
+    ``--agent`` (agent autorisé, répétable ; défaut : tous), ``--expires``
+    (date ou durée : ``2027-01-01``, ``90j``, ``12h``), ``--rate-limit``
+    (requêtes par minute). Une clé qui peut approuver sans ``read_content`` est
+    signalée : les arguments d'un appel en attente lui sont masqués.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 ; 2 pour un ``--expires`` illisible.
+    """
     key = new_api_key()
     scopes: list[str] | None = args.scope
     agents: list[str] = args.agent or []
@@ -2982,6 +3165,17 @@ def _deadline(given: str | None) -> datetime | None:
 
 
 def cmd_worker(args: argparse.Namespace) -> int:
+    """``loom worker`` : consomme la file des tâches de fond jusqu'à Ctrl-C ou SIGTERM, ``--jobs`` tâches de front.
+
+    Reprend d'abord, pour chaque client, les runs restés en plan. Demande une
+    file servie par un courtier (``storage.queue.backend: rabbitmq``).
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0 à l'arrêt.
+    """
     return asyncio.run(_worker(args))
 
 
@@ -2990,7 +3184,7 @@ async def _worker(args: argparse.Namespace) -> int:
 
     La reprise d'abord : un worker qui démarre est souvent celui qui remplace
     un worker mort, et ce qui restait en plan n'est dans aucune file — il est
-    au journal (H3).
+    au journal (fonction H3).
     """
     config = _config(args)
     apply_logging(config)
@@ -3077,7 +3271,7 @@ def cmd_storage_sql(args: argparse.Namespace) -> int:
     config = _config(args)
     stores = (config.storage.events, config.storage.idempotency)
     if all(store.backend != "postgres" for store in stores):
-        # Au test N4 du 23/10, le SQL sortait sans rien dire : ce n'est pas celui
+        # À l'essai de la fonction N4 du 23/10, le SQL sortait sans rien dire : ce n'est pas celui
         # de la config, qui ne déclare aucun stockage Postgres.
         print(
             "Aucun stockage Postgres déclaré (storage.events, storage.idempotency) : "
@@ -3095,6 +3289,14 @@ def cmd_memory(args: argparse.Namespace) -> int:
 
 
 def cmd_schema(args: argparse.Namespace) -> int:
+    """``loom schema`` : imprime le JSON Schema du fichier de configuration.
+
+    Args:
+        args: Arguments de la commande.
+
+    Returns:
+        0.
+    """
     print(json.dumps(config_json_schema(), ensure_ascii=False, indent=2))
     return OK
 
@@ -3115,6 +3317,7 @@ class _Live:
         self._open = False
 
     def show(self, item: StreamItem) -> None:
+        """Affiche un morceau du flux : le texte sur stdout ; sur stderr, la ligne de déroulé d'un événement qui en a une, et une réponse reprise."""
         if isinstance(item, TextDelta):
             sys.stdout.write(_for_stdout(item.text))
             sys.stdout.flush()
@@ -3137,7 +3340,7 @@ class _Live:
 
 
 def _tenant(args: argparse.Namespace) -> TenantId | None:
-    """Client demandé par ``--tenant`` ; ``None`` laisse la config décider (#33)."""
+    """Client demandé par ``--tenant`` ; ``None`` laisse la config décider (point 33)."""
     given = getattr(args, "tenant", None)
     return TenantId(given) if given else None
 
@@ -3153,7 +3356,7 @@ def _command(args: argparse.Namespace) -> str:
 
 
 def _acting(args: argparse.Namespace, config: LoomConfig) -> tuple[Actor, TenantId]:
-    """L'utilisateur de la commande et son client (D-10).
+    """L'utilisateur de la commande et son client (décision D-10 des utilisateurs et rôles).
 
     ``--user``, sinon ``LOOM_USER`` — qui peut se poser dans le ``.env`` du
     projet, que ``loom`` lit avant tout. L'identité est **déclarative** : la
@@ -3249,7 +3452,7 @@ def _report(
     else:
         if not quiet:
             # La sortie standard porte la réponse ; un échec se dit sur stderr, à la
-            # ligne « Erreur » (au test L2 du 22/10, il était aussi recopié ici).
+            # ligne « Erreur » (à l'essai de la fonction L2 du 22/10, il était aussi recopié ici).
             if result.pending_questions:
                 # La question est ce que l'utilisateur doit lire : elle part sur stdout,
                 # après ce que le modèle a écrit en la posant (essai Haiku, ask-09).
@@ -3259,7 +3462,7 @@ def _report(
                 print(_for_stdout(result.text))
             elif result.status is not RunStatus.PAUSED:
                 print("—")
-            # En pause, rien encore à répondre : stdout reste vide (test H4 du 20/10).
+            # En pause, rien encore à répondre : stdout reste vide (essai de la fonction H4, 20/10).
         if not brief:
             usage = result.usage
             _say(
@@ -3270,7 +3473,7 @@ def _report(
             )
             _say(f"Run        : {result.run_id}", file=sys.stderr)
             for summary in summaries:
-                # Au test F3 du 19/10, rien ne disait que la session avait été résumée.
+                # À l'essai de la fonction F3 du 19/10, rien ne disait que la session avait été résumée.
                 _say(f"Compaction : {describe_compaction(summary)}", file=sys.stderr)
             for hit in budgets:
                 action = "run arrêté" if hit.action == "stop" else "avertissement"
@@ -3448,7 +3651,7 @@ def _verdicts(result: RunResult) -> list[str]:
         outcome = "refusée" if verdict.blocked else "acceptée"
         lines.append(f"{verdict.judge} ({subject}), tentative {verdict.attempt} — {outcome} : {notes(verdict.criteria)}")
     # Un juge sauté se dit aussi : sans ligne, rien ne distinguait une réponse jugée
-    # et acceptée d'une réponse que personne n'a jugée (test E3 du 19/10).
+    # et acceptée d'une réponse que personne n'a jugée (essai de la fonction E3, 19/10).
     for skipped in result.skipped_judges:
         subject = "réponse finale" if skipped.target == "output" else skipped.target.replace("role:", "rôle ", 1)
         lines.append(f"{skipped.judge} ({subject}) — non jugée : {SKIP_REASONS[skipped.reason]}")
@@ -3462,8 +3665,8 @@ def _listed(names: Iterable[str]) -> str:
 def _console(config: LoomConfig) -> None:
     """Les logs d'une commande qui rend compte du run : ce qu'elle dit elle-même en est écarté.
 
-    Au test L2 du 22/10, un 401 se lisait trois fois (log ERROR, ligne « Erreur »,
-    sortie standard) ; en J4, le refus d'un client deux fois. Un log marqué
+    À l'essai de la fonction L2 du 22/10, un 401 se lisait trois fois (log ERROR, ligne « Erreur »,
+    sortie standard) ; à l'essai de la fonction J4, le refus d'un client deux fois. Un log marqué
     ``TOLD`` revient à l'appelant — ici, la commande, qui le dit une fois.
     """
     apply_logging(config).addFilter(lambda record: not getattr(record, TOLD, False))
@@ -3473,7 +3676,7 @@ def _reading(config: LoomConfig) -> None:
     """Les logs d'une commande qui ne lance rien : sans les avertissements de montage.
 
     Ils concernent ce qui tourne (file servie par un courtier, collecteurs) ;
-    au test H7 du 21/10, ``sessions show`` les répétait à chaque appel, en K4
+    à l'essai de la fonction H7 du 21/10, ``sessions show`` les répétait à chaque appel, à celui de la fonction K4
     aussi. ``validate``, ``run`` et le service les disent toujours.
     """
     apply_logging(config).addFilter(lambda record: not getattr(record, SETUP, False))

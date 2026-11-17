@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Fabrique des clients de modèles : le champ ``sdk`` choisit l'adaptateur (#9).
+"""Fabrique des clients de modèles : le champ ``sdk`` choisit l'adaptateur (point 9).
 
 Les SDK sont des extras, importés seulement quand un modèle les utilise. La
 clé est lue dans la variable nommée par ``api_key_env`` ; elle n'apparaît
@@ -32,7 +32,7 @@ def create_model_client(
     """Client du modèle ``spec``.
 
     ``http_client`` remplace le client HTTP du SDK (tests, proxy). ``record``
-    lui donne un client qui garde ses échanges bruts (J6.1b) — dans le
+    lui donne un client qui garde ses échanges bruts (jalon J6.1b) — dans le
     registre que le moteur ouvre, et seulement là ; le modèle simulé, qui n'a
     pas d'HTTP, y dépose un échange synthétique de lui-même.
     """
