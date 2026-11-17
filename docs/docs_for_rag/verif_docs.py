@@ -31,7 +31,7 @@ fonctions privées longues.
 
 Usage::
 
-    uv run python scripts/verif_docs.py [--base REF] [--repo CHEMIN] [--python INTERPRÉTEUR] [--lot CHEMIN…]
+    uv run python docs/docs_for_rag/verif_docs.py [--base REF] [--repo CHEMIN] [--python INTERPRÉTEUR] [--lot CHEMIN…]
 
 Les conventions sont dans ``docs/docs_for_rag/conventions.md``.
 

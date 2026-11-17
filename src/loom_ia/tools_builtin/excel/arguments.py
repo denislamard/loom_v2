@@ -4,6 +4,23 @@
 Le modèle décrit ce que **sont** les données — types de colonne, rôles des
 lignes et des cellules, formules —, jamais leur apparence. Pydantic
 seulement : ni openpyxl, ni disque.
+
+Les modèles d'un onglet n'ont pas de docstring : elle partirait dans le
+schéma, envoyé au modèle à chaque appel. Ils sont décrits ici :
+
+- ``ColumnSpec`` : une colonne, son en-tête (``header``) et son type de
+  valeur (``type``, ``text`` par défaut).
+- ``RowSpec`` : une ligne donnée dans l'appel. ``cells`` : ses valeurs dans
+  l'ordre des colonnes, « =… » pour une formule, ou une ``CellSpec`` qui porte
+  son propre rôle ou un commentaire ; ``role`` : le rôle de la ligne
+  (``Role``), qui donne sa couleur ; ``note`` : son commentaire.
+- ``DataSource`` : un fichier de données qui remplit l'onglet à la place de
+  ``rows`` (.csv, .json ou .xlsx) ; ``sheet`` : l'onglet lu dans un .xlsx.
+- ``SheetSpec`` : un onglet. ``name``, ``columns``, puis ses lignes, données
+  (``rows``) ou lues (``data``), l'un ou l'autre ; ``totals`` : en-tête →
+  agrégat, calculé par une formule sous la colonne.
+- ``ChartedSheetSpec`` : le même onglet avec ``charts``, ses graphiques
+  (``ChartSpec``) ; c'est celui que voit un outil monté avec ``charts``.
 """
 
 from collections.abc import Mapping, Sequence
@@ -51,6 +68,11 @@ type Role = Literal["input", "formula", "assumption", "total", "note"]
 
 
 class _Model(BaseModel):
+    """La base des modèles d'arguments : figés, sans champ inconnu.
+
+    Sa docstring ne part pas dans le schéma : Pydantic ne la transmet pas aux sous-classes.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 

@@ -183,7 +183,7 @@ convention = "google"
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
-include = ["src", "tests", "examples", "scripts"]
+include = ["src", "tests", "examples", "scripts", "docs/docs_for_rag"]
 
 [tool.pytest.ini_options]
 # Une marque mal écrite ou une clé de configuration inconnue est une erreur, pas un avertissement.

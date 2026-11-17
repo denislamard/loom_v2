@@ -76,7 +76,7 @@ Le glossaire des codes (`docs/docs_for_rag/glossaire.md`) donne le sens de chacu
 
 ## 3. Docstrings qui ne sont pas que de la doc
 
-Certaines docstrings sont lues par le code. Les modifier change ce que voit un modèle, un éditeur ou un client de l'API. Le script de vérification (`scripts/verif_docs.py`) les photographie avant et après chaque lot.
+Certaines docstrings sont lues par le code. Les modifier change ce que voit un modèle, un éditeur ou un client de l'API. Le script de vérification (`docs/docs_for_rag/verif_docs.py`) les photographie avant et après chaque lot.
 
 | Où | Qui la lit | Règle |
 |---|---|---|
@@ -350,7 +350,7 @@ DEFAULT_MAX_ROWS: Final = 200
 2. Lancer le script de vérification depuis la racine du dépôt :
 
    ```bash
-   uv run python scripts/verif_docs.py --lot loom_ia/core/events loom_ia/core/model
+   uv run python docs/docs_for_rag/verif_docs.py --lot loom_ia/core/events loom_ia/core/model
    ```
 
    Il compare l'arbre de travail à `main` (`--base` pour une autre référence). Ce qu'il faut obtenir :

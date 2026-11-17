@@ -68,6 +68,11 @@ défaut (50 000), comme la lecture d'un classeur.
 
 
 class _Model(BaseModel):
+    """La base des modèles d'arguments : figés, sans champ inconnu.
+
+    Sa docstring ne part pas dans le schéma : Pydantic ne la transmet pas aux sous-classes.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
@@ -77,12 +82,29 @@ class _Model(BaseModel):
 
 
 class Heading(_Model):
+    """Bloc ``heading`` : un titre du document.
+
+    Pas de description dans le schéma : ``_light`` la retire, la description de l'outil explique le vocabulaire.
+
+    Attributes:
+        type: ``heading``.
+        text: Le texte du titre (l'emphase seule).
+        level: Le niveau, de 1 à 3.
+    """
+
     type: Literal["heading"]
     text: str
     level: Annotated[int, Field(ge=1, le=3)] = 1
 
 
 class Paragraph(_Model):
+    r"""Bloc ``paragraph`` : un paragraphe de texte, avec le balisage permis (gras, italique, souligné, liens, notes, renvois).
+
+    Attributes:
+        type: ``paragraph``.
+        text: Le texte ; ``\n`` va à la ligne dans le même paragraphe.
+    """
+
     type: Literal["paragraph"]
     text: str
 
@@ -102,6 +124,14 @@ class Item(_Model):
 
 
 class ListBlock(_Model):
+    """Bloc ``list`` : une liste à puces ou numérotée, jusqu'à trois niveaux (``Item``, ``SubItem``).
+
+    Attributes:
+        type: ``list``.
+        items: Les éléments : un texte, ou un élément qui porte une sous-liste.
+        ordered: Vrai pour une liste numérotée.
+    """
+
     type: Literal["list"]
     items: Annotated[list[str | Item], Field(min_length=1)]
     ordered: bool = False
@@ -114,9 +144,20 @@ class CheckList(ListBlock):
 
 
 class Column(_Model):
+    """Une colonne d'un tableau.
+
+    Attributes:
+        header: Son en-tête, qui la désigne aussi dans ``totals``, ``compute``
+            et les graphiques.
+        type: Son type de valeur (``text``, ``integer``, ``amount_eur``…) :
+            l'outil écrit les valeurs à la française.
+        compute: Une colonne calculée par l'outil, ligne par ligne, par une
+            formule sur les nombres de la ligne (``"{Qté} * {PU HT}"``) : les
+            lignes ne la donnent pas.
+    """
+
     header: Annotated[str, Field(min_length=1)]
     type: ColumnType = "text"
-    # Une colonne calculée par l'outil, ligne par ligne : les lignes ne la donnent pas.
     compute: str | None = None
 
 
@@ -128,6 +169,18 @@ class Group(_Model):
 
 
 class Table(_Model):
+    """Bloc ``table`` : un tableau.
+
+    Attributes:
+        type: ``table``.
+        columns: Ses colonnes.
+        rows: Ses lignes, une liste de valeurs chacune, ou des groupes de
+            lignes (``Group``).
+        totals: En-tête → agrégat (``sum``, ``average``, ``count``, ``min``,
+            ``max``), calculé par l'outil ; un sous-total par groupe.
+        caption: Sa légende.
+    """
+
     type: Literal["table"]
     columns: Annotated[list[Column], Field(min_length=1)]
     rows: list[list[Scalar] | Group]
@@ -136,12 +189,28 @@ class Table(_Model):
 
 
 class Note(_Model):
+    """Bloc ``note`` : un encadré, ce que le lecteur doit retenir ou une mise en garde.
+
+    Attributes:
+        type: ``note``.
+        text: Son texte.
+        title: Son titre.
+    """
+
     type: Literal["note"]
     text: str
     title: str | None = None
 
 
 class Quote(_Model):
+    """Bloc ``quote`` : une citation.
+
+    Attributes:
+        type: ``quote``.
+        text: Le texte cité.
+        source: Sa source.
+    """
+
     type: Literal["quote"]
     text: str
     source: str | None = None
@@ -152,6 +221,13 @@ type ChartKind = Literal["bar", "horizontal_bar", "line", "pie"]
 
 
 class Series(_Model):
+    """Une série d'un graphique aux données en ligne.
+
+    Attributes:
+        name: Son nom, dans la légende.
+        values: Ses valeurs, une par libellé.
+    """
+
     name: str
     values: list[Scalar]
 
@@ -164,6 +240,22 @@ class FromTable(_Model):
 
 
 class Chart(_Model):
+    """Bloc ``chart`` : un graphique, si l'outil le permet (``blocks``).
+
+    Ses données viennent du tableau qui le précède (``from_table``), ou sont données en ligne (``categories`` et ``series``) : l'un ou l'autre.
+
+    Attributes:
+        type: ``chart``.
+        kind: ``bar``, ``horizontal_bar``, ``line`` ou ``pie``.
+        title: Son titre.
+        categories: Les libellés, pour des données en ligne.
+        series: Les séries, pour des données en ligne.
+        value_type: Le type des valeurs en ligne ; ``from_table`` prend celui
+            des colonnes.
+        from_table: Les colonnes du tableau qui précède.
+        caption: Sa légende.
+    """
+
     type: Literal["chart"]
     kind: ChartKind = "bar"
     title: str | None = None
@@ -190,6 +282,18 @@ type ImageWidth = Literal["full", "half", "small"]
 
 
 class Image(_Model):
+    """Bloc ``image`` : une image PNG ou JPEG, si l'outil le permet (``blocks``).
+
+    Attributes:
+        type: ``image``.
+        path: « <dossier>/<chemin> » d'un fichier d'un dossier qui a le droit
+            ``read`` : l'outil le lit lui-même.
+        width: ``full`` (par défaut), ``half`` ou ``small`` (un logo).
+        caption: Sa légende, dessous.
+        alt: Ce que montre l'image pour qui ne la voit pas ; la légende à
+            défaut.
+    """
+
     type: Literal["image"]
     path: str
     width: ImageWidth = "full"
@@ -202,12 +306,27 @@ MAX_SIGNERS: Final = 4
 
 
 class Signature(_Model):
+    """Bloc ``signature`` : la zone de signature, si l'outil le permet (``blocks``).
+
+    Attributes:
+        type: ``signature``.
+        signers: Un libellé par signataire (« Le client »), ``MAX_SIGNERS`` au
+            plus.
+        mention: La mention au-dessus des signatures (« Bon pour accord »).
+    """
+
     type: Literal["signature"]
     signers: Annotated[list[str], Field(min_length=1, max_length=MAX_SIGNERS)]
     mention: str | None = None
 
 
 class Contents(_Model):
+    """Bloc ``toc`` : le sommaire, tiré des titres, si l'outil le permet (``blocks``).
+
+    Attributes:
+        type: ``toc``.
+    """
+
     type: Literal["toc"]
 
 
@@ -232,6 +351,13 @@ class Fields(_Model):
 
 
 class Code(_Model):
+    """Bloc ``code`` : du texte préformaté (code, commande, journal), écrit tel quel, si l'outil le permet (``blocks``).
+
+    Attributes:
+        type: ``code``.
+        text: Le texte, ``MAX_CODE_LINES`` lignes au plus.
+    """
+
     type: Literal["code"]
     text: str
 
@@ -244,6 +370,17 @@ class TaxColumns(_Model):
 
 
 class InvoiceTotals(_Model):
+    """Bloc ``invoice_totals`` : le récapitulatif de TVA d'une facture, si l'outil le permet (``blocks``).
+
+    L'outil écrit le total HT, la TVA de chaque taux, le total TTC et, avec ``paid``, l'acompte et le net à payer.
+
+    Attributes:
+        type: ``invoice_totals``.
+        from_table: Les colonnes des montants HT et des taux du tableau qui
+            précède.
+        paid: L'acompte déjà versé.
+    """
+
     type: Literal["invoice_totals"]
     from_table: TaxColumns
     paid: Scalar | None = None
