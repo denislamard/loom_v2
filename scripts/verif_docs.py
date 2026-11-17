@@ -5,8 +5,8 @@ Deux contrôles, entre une référence git (``--base``, ``main`` par défaut) et
 l'arbre de travail :
 
 1. **Code inchangé.** Chaque module de ``src/`` est comparé sur son AST, sans
-   ses docstrings (module, classe, fonction). Les commentaires ne sont pas dans
-   l'AST : les modifier est permis. Toute autre différence (un ``Field``, une
+   ses docstrings (module, classe, fonction, attribut). Les commentaires ne
+   sont pas dans l'AST : les modifier est permis. Toute autre différence (un ``Field``, une
    chaîne, un ordre) fait échouer le contrôle.
 2. **Textes exposés.** Certaines docstrings ne sont pas que de la doc : le code
    les lit. On en prend un instantané des deux côtés :
@@ -56,13 +56,26 @@ from typing import cast
 # --- 1. AST sans docstrings -------------------------------------------------
 
 
+def _is_text(statement: ast.stmt) -> bool:
+    """Vrai pour une instruction qui n'est qu'une chaîne : docstring, ou docstring d'attribut."""
+    return isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant) and isinstance(statement.value.value, str)
+
+
 def _strip_docstrings(tree: ast.AST) -> ast.AST:
-    """Retire la docstring de chaque module, classe et fonction ; un corps vidé reçoit ``pass``."""
+    """Retire les chaînes seules sur leur ligne ; un corps vidé reçoit ``pass``.
+
+    Ce sont les docstrings de module, de classe et de fonction, et les
+    docstrings d'attribut (une chaîne juste après une affectation, que griffe
+    rattache à la constante ou au champ). Une chaîne seule n'a aucun effet à
+    l'exécution, où qu'elle soit.
+    """
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            body = node.body
-            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
-                node.body = body[1:] or [ast.Pass()]
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if isinstance(block, list) and block and all(isinstance(item, ast.stmt) for item in cast(list[object], block)):
+                statements = cast(list[ast.stmt], block)
+                kept = [statement for statement in statements if not _is_text(statement)]
+                setattr(node, field, kept or [ast.Pass()])
     return tree
 
 

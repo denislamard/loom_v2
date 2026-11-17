@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Ports des outils (#15, #18, #19).
+"""Ports des outils : l'outil, le contexte de son appel, et la source d'outils (points 15, 18 et 19, fonction D1).
 
-Un outil se décrit par un ``ToolSpec`` et s'exécute avec ``invoke``. Python,
-MCP, rôles et sous-agents implémentent ce même port.
+Un outil se décrit par un ``ToolSpec`` et s'exécute avec ``invoke``. Outils
+Python (``@tool``), MCP, rôles délégués, sous-agents, outils forgés et outils
+fournis ``loom.*`` implémentent ce même port.
 
 Une source d'outils (``ToolSource``, un serveur MCP par exemple) fournit ses
 outils au début de chaque run : ils peuvent changer d'un run à l'autre, et la
@@ -10,8 +11,14 @@ source peut être indisponible. La liste obtenue reste fixe jusqu'à la fin du
 run, pour que les requêtes au modèle restent stables.
 
 Un paquet installé fournit une source par un point d'entrée du groupe
-``loom_ia.tools`` (J6.4b) : il désigne une fabrique (``ToolSourceFactory``),
-que loom appelle avec ce que la config déclare pour elle.
+``loom_ia.tools`` (phase 6.4b, fonction D12) : il désigne une fabrique
+(``ToolSourceFactory``), que loom appelle avec ce que la config déclare pour
+elle.
+
+Un outil signale une erreur à corriger par le modèle en levant ``ToolError`` :
+l'exécuteur la rattrape et rend son message au modèle comme résultat en
+erreur. Un outil dont les effets dépendent de l'appel l'évalue appel par appel
+(``AssessedTool``, ``CallAssessment``).
 """
 
 import hashlib
@@ -32,12 +39,20 @@ from loom_ia.core.ports.idempotency import IdempotencyStore
 
 
 def idempotency_key(run_id: RunId, call_id: str) -> str:
-    """Clé technique d'un appel : identique à chaque reprise du même appel (#18)."""
+    """Clé technique d'un appel : identique à chaque reprise du même appel (point 18).
+
+    Args:
+        run_id: Le run de l'appel.
+        call_id: L'identifiant de l'appel.
+
+    Returns:
+        L'empreinte SHA-256, en hexadécimal, de ``<run_id>:<call_id>``.
+    """
     return hashlib.sha256(f"{run_id}:{call_id}".encode()).hexdigest()
 
 
-# Signalement d'un effet déjà mémorisé, avec la clé sous laquelle il l'est.
 type ReuseNote = Callable[[str], None]
+"""Signalement d'un effet déjà mémorisé, avec la clé sous laquelle il l'est (``ToolContext.on_reuse``)."""
 
 
 class SeenFiles(Protocol):
@@ -48,7 +63,7 @@ class SeenFiles(Protocol):
     """
 
     def find(self, name: str) -> ArtifactRefBlock | None:
-        """Le dernier fichier de ce nom (nom donné, ou nom dans le stockage)."""
+        """Le dernier fichier vu sous ce nom (nom donné, ou nom dans le stockage), ou ``None``."""
         ...
 
     def names(self) -> tuple[str, ...]:
@@ -56,7 +71,19 @@ class SeenFiles(Protocol):
         ...
 
     async def read(self, file: ArtifactRefBlock, *, max_bytes: int) -> bytes:
-        """Ses octets ; ``ValueError`` au-delà de ``max_bytes``, ``LookupError`` s'il manque."""
+        """Lit les octets d'un fichier vu.
+
+        Args:
+            file: La référence rendue par ``find``.
+            max_bytes: Taille au-delà de laquelle la lecture est refusée.
+
+        Returns:
+            Les octets, en clair.
+
+        Raises:
+            ValueError: Le fichier dépasse ``max_bytes``.
+            LookupError: Le fichier manque dans le stockage.
+        """
         ...
 
 
@@ -68,13 +95,65 @@ class RunResults(Protocol):
     """
 
     async def read(self, ref: str) -> JsonValue:
-        """Ses données (``data``), sinon son texte ; ``ToolError`` qui dit pourquoi sinon."""
+        """Lit un résultat d'outil du run.
+
+        Args:
+            ref: La référence que le modèle voit en tête du résultat
+                (``result:3``).
+
+        Returns:
+            Les données du résultat (``data``), sinon son texte.
+
+        Raises:
+            ToolError: La référence est inconnue, ou désigne un résultat du
+                tour en cours ; le message dit pourquoi.
+        """
         ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ToolContext:
-    """Ce qu'un outil sait de l'appel en cours."""
+    """Ce qu'un outil sait de l'appel en cours ; le moteur le passe à ``invoke``.
+
+    Un outil Python le reçoit s'il déclare un paramètre de ce type. Hors du
+    moteur (outil appelé directement), les champs facultatifs sont absents.
+
+    Attributes:
+        tenant_id: Client du run.
+        session_id: Session du run.
+        run_id: Run de l'appel.
+        call_id: Identifiant de l'appel, donné par le modèle.
+        agent: Agent du run.
+        caller: Contexte de l'appelant : client, utilisateur, passerelle,
+            métadonnées (fonction A8).
+        idempotency: Magasin d'idempotence du run (points 18 et 49) : c'est
+            par ici qu'un outil décoré retrouve l'effet qu'il a déjà produit.
+            Absent hors moteur.
+        replay_unknown: Vrai si un humain a approuvé cet appel après un effet
+            d'état inconnu (points 17 et 18) : l'outil décoré reprend la
+            réservation périmée et refait l'effet. Vaut pour ce seul appel.
+        on_reuse: Appelé, avec sa clé, par un outil qui rend un effet déjà
+            mémorisé au lieu d'agir (point 49). Le moteur en fait un
+            ``idempotency.reused`` : sans lui, le journal ne dirait pas
+            pourquoi l'appel n'a rien fait, le magasin partagé n'y écrivant
+            rien. Absent hors moteur.
+        state: State de la session tel qu'au début du lot de l'appel, en
+            lecture : les clés que l'agent déclare, valeurs par défaut
+            comprises. Ce qu'un voisin du même lot écrit n'y est pas encore.
+            Vide hors moteur, et dans un sous-run.
+        files: Fichiers de la conversation, en lecture (``SeenFiles``).
+            Absent hors moteur, et sans stockage d'artefacts.
+        results: Résultats d'outils du run, en lecture (``RunResults``).
+            Absent hors moteur.
+        keeps_state: Vrai si le run tient le state de la session : un run
+            racine ordinaire d'un agent qui en déclare un (décision D3 du
+            state de session). Faux dans un sous-run et hors moteur.
+        cancelled: Événement levé quand le moteur rend la main sans attendre
+            l'outil : délai dépassé, run annulé (décision B-2 du délai et des
+            threads). Un outil qui travaille dans un thread le regarde entre
+            deux étapes, et s'arrête : Python ne sait pas arrêter un thread de
+            l'extérieur. Absent hors moteur.
+    """
 
     tenant_id: TenantId
     session_id: SessionId
@@ -82,43 +161,36 @@ class ToolContext:
     call_id: str
     agent: str
     caller: CallerContext = field(default_factory=CallerContext)
-    # Magasin d'idempotence du run (#18, #49) : c'est par ici qu'un outil
-    # décoré retrouve l'effet qu'il a déjà produit. Absent hors moteur.
     idempotency: IdempotencyStore | None = field(default=None, compare=False)
-    # Un humain a approuvé cet appel après un effet d'état inconnu (#17, #18) :
-    # l'outil décoré reprend la réservation périmée et refait l'effet. Vaut
-    # pour ce seul appel, et pour personne d'autre.
     replay_unknown: bool = False
-    # Appelé, avec sa clé, par un outil qui rend un effet déjà mémorisé au
-    # lieu d'agir (#49). Le moteur en fait un ``idempotency.reused`` : sans
-    # lui, le journal ne dirait pas pourquoi l'appel n'a rien fait, le
-    # magasin partagé n'y écrivant rien. Absent hors moteur.
     on_reuse: ReuseNote | None = field(default=None, compare=False)
-    # State de la session tel qu'au début du lot de l'appel, en lecture : les
-    # clés que l'agent déclare, valeurs par défaut comprises. Ce qu'un voisin
-    # du même lot écrit n'y est pas encore. Vide hors moteur, et dans un sous-run.
     state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
-    # Fichiers de la conversation, en lecture (``SeenFiles``). Absent hors
-    # moteur, et sans stockage d'artefacts.
     files: SeenFiles | None = field(default=None, compare=False)
-    # Résultats du run, en lecture (``RunResults``). Absent hors moteur.
     results: RunResults | None = field(default=None, compare=False)
-    # Vrai si le run tient le state de la session : un run racine ordinaire d'un
-    # agent qui en déclare un (D3). Faux dans un sous-run et hors moteur.
     keeps_state: bool = False
-    # Levé quand le moteur rend la main sans attendre l'outil : délai dépassé, run
-    # annulé (B-2). Un outil qui travaille dans un thread le regarde entre deux
-    # étapes, et s'arrête : Python ne sait pas arrêter un thread de l'extérieur.
-    # Absent hors moteur.
     cancelled: threading.Event | None = field(default=None, compare=False)
 
     @property
     def idempotency_key(self) -> str:
+        """Clé technique de cet appel (``idempotency_key(run_id, call_id)``), stable à chaque reprise."""
         return idempotency_key(self.run_id, self.call_id)
 
 
 class ToolError(Exception):
-    """Erreur dont le message est destiné au modèle, pour qu'il corrige son appel."""
+    """Erreur d'un outil dont le message est destiné au modèle, pour qu'il corrige son appel.
+
+    L'exécuteur la rattrape : l'appel se termine en erreur
+    (``tool.completed`` avec ``is_error``), et ``message`` est rendu au modèle
+    comme résultat. Le run continue. Toute autre exception d'un outil est
+    aussi rattrapée et journalisée en avertissement ; le modèle lit alors
+    « Erreur de l'outil <nom> : <type>: <message> ».
+
+    Args:
+        message: Texte rendu au modèle, tel quel.
+
+    Attributes:
+        message: Le même texte.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
@@ -126,28 +198,53 @@ class ToolError(Exception):
 
 
 class UnknownEffect(ToolError):
-    """Réservation périmée : l'effet a peut-être eu lieu, personne ne le sait (#18).
+    """Réservation périmée : l'effet a peut-être eu lieu, personne ne le sait (point 18).
 
     C'est une ``ToolError``, donc son message vaut pour le modèle. Mais
     l'exécuteur la reconnaît et applique ce que l'outil a déclaré en
-    ``on_unknown`` : rendre l'erreur, ou suspendre le run pour qu'un humain
-    vérifie avant de refaire.
+    ``on_unknown`` : ``error`` (défaut) rend l'erreur, ``pause`` suspend le
+    run pour qu'un humain vérifie avant de refaire.
     """
 
 
 @runtime_checkable
 class Tool(Protocol):
-    """Outil appelable par un agent.
+    """Contrat d'un outil appelable par un agent (fonction D1).
 
+    Le moteur lit ``spec`` pour exposer l'outil au modèle, valide les
+    arguments par ``spec.input_schema``, puis appelle ``invoke``.
     ``isinstance`` vérifie seulement la présence de ``spec`` et ``invoke`` :
     c'est ce qui sert à reconnaître un outil dans la config.
+
+    Implémentations fournies : ``FunctionTool`` (``@tool``, ``tools.python``),
+    les enveloppes de ``tools.configured`` et ``tools.idempotent``, les outils
+    MCP (``adapters.mcp.source``), les outils forgés
+    (``adapters.firecracker.forge``) et les outils fournis ``loom.*``
+    (``tools_builtin``).
     """
 
     @property
-    def spec(self) -> ToolSpec: ...
+    def spec(self) -> ToolSpec:
+        """Définition de l'outil : nom, description, schéma des arguments, effets, approbation, délai."""
+        ...
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
-        """Exécute l'appel ; les arguments ont déjà été validés par le schéma."""
+        """Exécute un appel.
+
+        Args:
+            arguments: Arguments de l'appel, déjà validés par le schéma
+                (``execution.tools.validate_arguments``) et références
+                ``$ref`` résolues.
+            context: Ce que l'outil sait de l'appel.
+
+        Returns:
+            Le résultat, rendu au modèle : blocs de contenu, données
+            structurées, ou erreur.
+
+        Raises:
+            ToolError: Erreur à corriger par le modèle ; son message lui est
+                rendu.
+        """
         ...
 
 
@@ -167,17 +264,25 @@ class CallAssessment:
     La décision ne dépend que des arguments et de la configuration de
     l'outil : elle est la même à chaque reprise, et au rejeu. Les effets sont
     toujours à dire : ils décident si l'appel peut être refait.
+
+    Attributes:
+        side_effects: Effets de cet appel : ``none``, ``reversible`` ou
+            ``irreversible``.
+        approval: ``always`` si cet appel attend un humain, ``never`` sinon.
+            Défaut : ``never``.
+        idempotent: Vrai si refaire cet appel ne double pas son effet.
+        reason: Motif montré à l'approbateur quand ``approval`` vaut
+            ``always``.
     """
 
     side_effects: SideEffects
     approval: Literal["never", "always"] = "never"
     idempotent: bool = False
-    # Motif montré à l'approbateur quand ``approval`` vaut ``always``.
     reason: str | None = None
 
     @property
     def safe_to_retry(self) -> bool:
-        """Vrai si refaire l'appel après une interruption est sans risque (#18)."""
+        """Vrai si refaire l'appel après une interruption est sans risque : sans effet, ou idempotent (point 18)."""
         return self.side_effects == "none" or self.idempotent
 
 
@@ -193,24 +298,44 @@ class AssessedTool(Protocol):
     """
 
     def assess_call(self, arguments: Mapping[str, JsonValue]) -> CallAssessment | None:
-        """L'évaluation de cet appel ; ``None`` : la déclaration fixe vaut."""
+        """Évalue un appel d'après ses arguments.
+
+        Args:
+            arguments: Les arguments de l'appel.
+
+        Returns:
+            Ce que demande cet appel ; ``None`` : la déclaration fixe
+            (``spec``) vaut.
+        """
         ...
 
 
 class _Declared(Protocol):
+    """Tout ce qui a une déclaration ``spec`` : un outil, ou une enveloppe d'outil."""
+
     @property
-    def spec(self) -> ToolSpec: ...
+    def spec(self) -> ToolSpec:
+        """Définition de l'outil."""
+        ...
 
 
 _SEVERITY: dict[SideEffects, int] = {"none": 0, "reversible": 1, "irreversible": 2}
 
 
 def strictest_side_effects(tool: _Declared, arguments: Mapping[str, JsonValue]) -> SideEffects:
-    """Les effets de l'appel, l'évaluation ne pouvant que durcir la déclaration.
+    """Les effets d'un appel, l'évaluation ne pouvant que durcir la déclaration.
 
     Pour qui juge un appel avant que ses références ne soient résolues et que
     les politiques ne remplacent ses arguments (rejeu, évaluations) : les
     arguments vus ne sont pas forcément ceux qui partiront.
+
+    Args:
+        tool: L'outil.
+        arguments: Les arguments vus.
+
+    Returns:
+        Le plus grave des effets déclarés (``spec.side_effects``) et évalués
+        (``assess_call``), de ``none`` à ``irreversible``.
     """
     declared = tool.spec.side_effects
     found = assessed(tool, arguments)
@@ -225,6 +350,15 @@ def assessed(tool: object, arguments: Mapping[str, JsonValue]) -> CallAssessment
     Une évaluation qui échoue vaut la plus prudente — approbation exigée, effet
     irréversible : un défaut de l'outil ne doit pas laisser passer un appel
     qu'il aurait retenu.
+
+    Args:
+        tool: L'outil, évaluateur ou non.
+        arguments: Les arguments de l'appel.
+
+    Returns:
+        L'évaluation ; en cas d'exception, une évaluation ``approval:
+        always``, ``irreversible``, dont le motif nomme l'exception ; ``None``
+        si l'outil n'a pas ``assess_call``.
     """
     if not isinstance(tool, AssessedTool):
         return None
@@ -240,7 +374,14 @@ def assessed(tool: object, arguments: Mapping[str, JsonValue]) -> CallAssessment
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SourceContext:
-    """Le run pour lequel une source ouvre ses outils."""
+    """Le run pour lequel une source ouvre ses outils.
+
+    Attributes:
+        tenant_id: Client du run.
+        session_id: Session du run.
+        run_id: Le run.
+        agent: Agent du run.
+    """
 
     tenant_id: TenantId
     session_id: SessionId
@@ -251,8 +392,21 @@ class SourceContext:
 class SourceUnavailable(Exception):
     """La source ne peut pas fournir ses outils (serveur injoignable, erreur de protocole…).
 
-    ``attempted`` est faux quand la source a refusé sans essayer (attente
-    avant une nouvelle connexion) : ce refus ne compte pas pour le disjoncteur.
+    Le moteur en fait un ``tool.source_unavailable`` : le run continue sans
+    ses outils, ou échoue si la source est requise.
+
+    Args:
+        source: Nom de la source.
+        message: Pourquoi.
+        attempted: Faux quand la source a refusé sans essayer (attente avant
+            une nouvelle connexion) : ce refus ne compte pas pour le
+            disjoncteur. Défaut : vrai.
+
+    Attributes:
+        source: Nom de la source.
+        message: Pourquoi ; le message de l'exception est « <source> :
+            <message> ».
+        attempted: La source a-t-elle essayé.
     """
 
     def __init__(self, source: str, message: str, *, attempted: bool = True) -> None:
@@ -264,7 +418,7 @@ class SourceUnavailable(Exception):
 
 @runtime_checkable
 class ToolSource(Protocol):
-    """Fournisseur d'outils découverts au début d'un run (serveur MCP…)."""
+    """Fournisseur d'outils découverts au début d'un run : serveur MCP, source d'un paquet (``tool_sources``), forge."""
 
     @property
     def name(self) -> str:
@@ -277,16 +431,26 @@ class ToolSource(Protocol):
         ...
 
     def open(self, context: SourceContext) -> AbstractAsyncContextManager[Sequence[Tool]]:
-        """Outils disponibles pour ce run, jusqu'à la sortie du contexte.
+        """Ouvre les outils de la source pour un run, jusqu'à la sortie du contexte.
 
-        Lève ``SourceUnavailable`` si la source ne répond pas.
+        La liste reste fixe jusqu'à la fin du run, pour que les requêtes au
+        modèle restent stables.
+
+        Args:
+            context: Le run.
+
+        Returns:
+            Un gestionnaire de contexte asynchrone qui rend les outils.
+
+        Raises:
+            SourceUnavailable: La source ne répond pas.
         """
         ...
 
 
 @runtime_checkable
 class ToolSourceFactory(Protocol):
-    """Ce qu'un point d'entrée ``loom_ia.tools`` désigne : de quoi faire une source (J6.4b).
+    """Ce qu'un point d'entrée ``loom_ia.tools`` désigne : de quoi faire une source (phase 6.4b, fonction D12).
 
     loom l'appelle au montage d'un agent qui référence la source, une fois par
     agent et par client, avec :
@@ -323,4 +487,20 @@ class ToolSourceFactory(Protocol):
         params: Mapping[str, JsonValue],
         secrets: Mapping[str, str],
         base_dir: Path,
-    ) -> ToolSource: ...
+    ) -> ToolSource:
+        """Fabrique la source, sans travailler.
+
+        Args:
+            name: Nom de la source dans la config.
+            params: Ses ``params``, à vérifier ici.
+            secrets: Table des secrets du client, en lecture seule.
+            base_dir: Dossier du fichier de config.
+
+        Returns:
+            La source.
+
+        Raises:
+            ValueError: Les ``params`` ne conviennent pas ; le message dit ce
+                qui ne va pas.
+        """
+        ...

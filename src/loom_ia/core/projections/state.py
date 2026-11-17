@@ -13,13 +13,16 @@ Ce qui compte, dans l'ordre du journal :
 - le state posé par l'application, à l'ouverture de chaque run racine,
   quel que soit le sort du run ;
 - les écritures d'un run racine terminé avec succès, à sa clôture, sans
-  celles des appels qu'une réparation a retirés de l'historique (D2) ;
+  celles des appels qu'une réparation a retirés de l'historique (décision D2
+  du state de session) ;
 - en dernier, les écritures du run en cours, s'il est désigné : il voit
   les siennes avant d'être terminé.
 
-Les sous-runs et les runs de compaction n'y entrent pas (D3), comme dans
-l'historique. ``None`` efface une clé (D10). Les valeurs par défaut valent
-pour une clé absente ; elles ne sont jamais écrites.
+Les sous-runs et les runs de compaction n'y entrent pas (décision D3), comme
+dans l'historique. ``None`` efface une clé (décision D10). Les valeurs par
+défaut valent pour une clé absente ; elles ne sont jamais écrites.
+
+Voir ``docs/state-et-context.md`` et ``docs/state_v2_analyse.md``.
 """
 
 import copy
@@ -41,9 +44,16 @@ def session_state(
 ) -> dict[str, JsonValue]:
     """State de la session après ces événements.
 
-    ``run_id`` : run en cours, dont les écritures comptent déjà. ``defaults`` :
-    valeur de chaque clé absente du state. Le state rendu est une copie : le
-    modifier ne touche ni aux événements lus, ni aux valeurs par défaut.
+    Args:
+        events: Le journal de la session, dans l'ordre.
+        run_id: Run en cours, dont les écritures comptent déjà, même avant
+            sa fin.
+        defaults: Valeur de chaque clé absente du state (``default:`` d'une
+            clé déclarée).
+
+    Returns:
+        Le state, clé → valeur. C'est une copie : la modifier ne touche ni
+        aux événements lus, ni aux valeurs par défaut.
     """
     journal = list(events)
     started = {e.run_id for e in journal if isinstance(e.payload, RunStarted)}
@@ -71,12 +81,20 @@ def session_state(
 def state_of_run(base: Mapping[str, JsonValue], run: RunState, *, before: int | None = None) -> dict[str, JsonValue]:
     """State que voit un run en cours : la session avant lui, ce qui est posé, ce qu'il a écrit.
 
-    ``base`` : le state de la session avant le run (``session_state`` des
-    événements qui le précèdent). ``before`` : position, dans les messages du
-    run, de la réponse du modèle dont le lot s'exécute ; seules comptent alors
-    les écritures des lots précédents. Un outil voit ainsi le state au début de
-    son lot, quel que soit l'ordre dans lequel ses voisins finissent, et la
-    reprise d'un lot interrompu lui montre le même.
+    Un outil voit ainsi le state au début de son lot, quel que soit l'ordre
+    dans lequel ses voisins finissent, et la reprise d'un lot interrompu lui
+    montre le même.
+
+    Args:
+        base: Le state de la session avant le run (``session_state`` des
+            événements qui le précèdent).
+        run: L'état du run.
+        before: Position, dans les messages du run, de la réponse du modèle
+            dont le lot s'exécute ; seules comptent alors les écritures des
+            lots précédents. ``None`` : toutes.
+
+    Returns:
+        Le state, en copie.
     """
     values = dict(base)
     _merge(values, run.posed_state)
@@ -87,12 +105,12 @@ def state_of_run(base: Mapping[str, JsonValue], run: RunState, *, before: int | 
 
 
 def _counted(run: RunState) -> bool:
-    """Run dont le state compte pour la session : un run racine ordinaire (D3)."""
+    """Run dont le state compte pour la session : un run racine ordinaire (décision D3 du state de session)."""
     return run.parent_run_id is None and run.kind == "normal"
 
 
 def _kept(run: RunState) -> dict[str, JsonValue]:
-    """Écritures d'un run terminé que garde l'historique de la session (D2).
+    """Écritures d'un run terminé que garde l'historique de la session (décision D2 du state de session).
 
     Une réparation retire de l'historique la réponse refusée et les résultats
     de ses appels : leurs écritures sont écartées avec eux, pour que le
@@ -109,7 +127,7 @@ def _kept(run: RunState) -> dict[str, JsonValue]:
 
 
 def _merge(values: dict[str, JsonValue], delta: Mapping[str, JsonValue]) -> None:
-    """Applique un delta au state : ``None`` efface la clé (D10)."""
+    """Applique un delta au state : ``None`` efface la clé (décision D10 du state de session)."""
     for key, value in delta.items():
         if value is None:
             values.pop(key, None)

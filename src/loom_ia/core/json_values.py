@@ -3,16 +3,31 @@
 
 En Python, ``True == 1`` et ``0 == False`` : comparer par ``==`` des valeurs
 venues du JSON confond un booléen et un nombre. ``same_json`` les sépare, et
-garde ce que le JSON tient pour égal : ``2`` vaut ``2.0``. Sert au forge (le
-résultat d'un exemple contre celui qu'attend son auteur) et aux contrôles d'une
-éval (``fields``, arguments de ``called``).
+garde ce que le JSON tient pour égal : ``2`` vaut ``2.0``.
+
+Utilisé par la forge (``adapters/firecracker/forge.py`` : le résultat d'un
+exemple contre celui qu'attend son auteur) et par les contrôles d'une éval
+(``fields``, arguments de ``called``).
 """
 
 from typing import cast
 
 
 def same_json(left: object, right: object) -> bool:
-    """Égalité de valeurs JSON : un booléen n'est pas un nombre, 2 vaut 2.0."""
+    """Égalité de deux valeurs JSON : un booléen n'est pas un nombre, 2 vaut 2.0.
+
+    La comparaison descend dans les objets (mêmes clés, valeurs égales) et les
+    listes (même longueur, éléments égaux dans l'ordre). Une valeur qui n'est
+    pas du JSON (un tuple, un objet Python) n'est égale à rien, sauf ``None`` à
+    ``None``.
+
+    Args:
+        left: Première valeur, telle que la donne ``json.loads``.
+        right: Seconde valeur.
+
+    Returns:
+        Vrai si les deux valeurs sont égales au sens du JSON.
+    """
     if isinstance(left, bool) or isinstance(right, bool):
         # True et False sont uniques : 1 n'est pas True.
         return left is right

@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Projection de l'état d'un run (#3).
+"""Projection de l'état d'un run : le ``RunState`` rejoué depuis le journal (point 3, fonctions H1 à H3).
+
+C'est ce qui rend un run sérialisable et reprenable : après un plantage, le
+moteur relit le journal, rejoue l'état par ``fold`` et reprend où le run en
+était (appels lancés, approbations, questions, réparations).
 
 ``apply`` enregistre des faits : il ne décide rien. Les décisions (appeler
 un outil, changer d'état) sont prises par le moteur et arrivent ici sous
@@ -7,10 +11,10 @@ forme d'événements, dont ``run.transitioned``.
 
 Une réponse de modèle qui sert un appel d'outil (rôle délégué, C2) n'entre
 pas dans la conversation de l'orchestrateur : seuls son usage et son coût
-s'ajoutent au run. Un sous-agent (C5) a son propre run ; sa consommation
+s'ajoutent au run (fonction C2). Un sous-agent (fonction C5) a son propre run ; sa consommation
 arrive avec le ``tool.completed`` de l'appel.
 
-Politiques (#2) : ``policy.decided`` enregistre ce qui doit survivre à une
+Politiques (point 2) : ``policy.decided`` enregistre ce qui doit survivre à une
 reprise — une réparation décidée mais pas encore demandée (``Retry``), les
 arguments remplacés d'un appel, la réponse finale remplacée — et compte les
 réparations de chaque politique. Le message de réparation (``message.user``
@@ -22,7 +26,7 @@ State de la session : le résultat réussi d'un outil peut porter des
 modèle et rangées dans ``state_writes``, dans l'ordre des appels ;
 ``session_state`` en tire le state de la session.
 
-Les événements de catégorie ``session`` (J4.1) sont ignorés : ils décrivent
+Les événements de catégorie ``session`` (phase 4.1) sont ignorés : ils décrivent
 la session, pas le run, et s'écrivent après sa clôture. Une concession
 (``run.claimed``) écrite après l'état final est absorbée de même : elle
 décrit le pilote, pas le run, et rend sa lecture possible aux journaux de la
@@ -91,11 +95,38 @@ from loom_ia.core.model import (
 
 
 class ProjectionError(Exception):
-    """Le journal est incohérent avec l'état reconstruit (divergence)."""
+    """Le journal est incohérent avec l'état reconstruit (divergence).
+
+    Exemples : un événement avant ``run.started``, un ``run.started`` en
+    double, un événement après l'état final, une transition depuis un autre
+    état que l'état reconstruit, un résultat pour un appel inconnu, une
+    décision d'approbation sans demande ou déjà tranchée. Le message nomme le
+    run, le type d'événement et son ``seq``.
+    """
 
 
 def apply(state: RunState | None, event: Event) -> RunState:
-    """État après application d'un événement du même run."""
+    """Applique un événement à l'état d'un run : enregistre un fait, sans rien décider.
+
+    Ce qui change selon l'événement : la conversation (demande, réponses de
+    l'orchestrateur, résultats d'outils), les appels en attente, la
+    consommation, le statut (par ``run.transitioned`` et les événements
+    terminaux), les approbations et questions ouvertes ou tranchées, les
+    réparations, les écritures du state, les artefacts, les bascules de
+    modèle, les budgets dépassés. Les marqueurs de session, une concession ou
+    une décision écrite après l'état final ne font qu'avancer ``last_seq``.
+
+    Args:
+        state: L'état avant l'événement ; ``None`` pour le premier événement
+            du run, qui doit être son ``run.started``.
+        event: L'événement suivant du run.
+
+    Returns:
+        Le nouvel état (copie ; l'ancien n'est pas modifié).
+
+    Raises:
+        ProjectionError: L'événement est incohérent avec l'état reconstruit.
+    """
     payload = event.payload
     if state is None:
         if not isinstance(payload, RunStarted):
@@ -208,10 +239,10 @@ def apply(state: RunState | None, event: Event) -> RunState:
         case ModelFellBack(slot=slot, to_model=to_model):
             update["models"] = {**state.models, slot: to_model}
         case StepCompleted(duration_ms=elapsed):
-            # Temps de pilotage cumulé : c'est lui que borne le délai (A6).
+            # Temps de pilotage cumulé : c'est lui que borne le délai (fonction A6).
             update["active_ms"] = state.active_ms + elapsed
         case ModelRetried(usage=Usage() as usage, cost_usd=cost):
-            # Tentative ratée mais facturée (J1) : son coût compte, pas comme un appel.
+            # Tentative ratée mais facturée (fonction J1) : son coût compte, pas comme un appel.
             update |= {"usage": state.usage + usage, "cost_usd": state.cost_usd + (cost or 0.0)}
         case ModelRetried() | ModelExchanged() | ToolSourceUnavailable() | CircuitOpened():
             pass
@@ -314,7 +345,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
 
 
 def _restated(messages: tuple[Message, ...], call_id: str, arguments: dict[str, JsonValue]) -> tuple[Message, ...]:
-    """Réécrit un appel de la conversation avec les arguments qui vont vraiment partir.
+    """Réécrit un appel de la conversation avec les arguments qui vont vraiment partir (point 17).
 
     Le modèle doit lire ce qui a eu lieu, et non ce qu'il avait demandé :
     sinon le résultat de l'outil contredit son propre appel, et il en conclut
@@ -423,6 +454,7 @@ _ABSENT: object = object()
 
 
 def _granted(approval: PendingApproval) -> bool:
+    """Vrai pour une demande d'approbation accordée."""
     return approval.outcome is not None and approval.outcome.verdict == "granted"
 
 
@@ -480,7 +512,7 @@ def _closes(status: RunStatus, event: Event) -> bool:
 
 
 def _terminal_result(state: RunState, event: Event) -> ToolResultBlock:
-    """Résultat de l'outil terminal, dernier message du run (#13)."""
+    """Résultat de l'outil terminal, dernier message du run (point 13) ; ``ProjectionError`` s'il n'est pas unique."""
     last = state.messages[-1] if state.messages else None
     results = [b for b in last.blocks if isinstance(b, ToolResultBlock)] if last else []
     if len(results) != 1:
@@ -497,7 +529,7 @@ def _written(state: RunState, call_id: str, values: dict[str, JsonValue]) -> tup
     change d'une exécution à l'autre, et au rejeu, où ils sont instantanés.
     L'ordre des appels ne dépend que de la réponse du modèle, comme celui des
     résultats dans une requête (``in_call_order``) : c'est lui qui départage
-    deux écritures d'une même clé (D9).
+    deux écritures d'une même clé (décision D9 du state de session).
     """
     turn, rank = len(state.messages), 0
     for position in range(len(state.messages) - 1, -1, -1):
@@ -510,13 +542,27 @@ def _written(state: RunState, call_id: str, values: dict[str, JsonValue]) -> tup
 
 
 def _require_pending(state: RunState, call_id: str, event: Event) -> tuple[PendingCall, ...]:
+    """Les appels en attente du run ; ``ProjectionError`` si ``call_id`` n'en fait pas partie."""
     if state.pending(call_id) is None:
         raise ProjectionError(f"Run {state.run_id} : {event.type} pour l'appel inconnu {call_id!r} (seq {event.seq})")
     return state.pending_calls
 
 
 def fold(events: Iterable[Event], run_id: RunId) -> RunState:
-    """Reconstruit l'état d'un run à partir du journal (autres runs ignorés)."""
+    """Reconstruit l'état d'un run à partir du journal.
+
+    Args:
+        events: Le journal de la session (ou ses événements du run), dans
+            l'ordre.
+        run_id: Le run à reconstruire ; les autres runs et les marqueurs de
+            session sont ignorés.
+
+    Returns:
+        L'état du run après son dernier événement.
+
+    Raises:
+        ProjectionError: Aucun événement pour ce run, ou journal incohérent.
+    """
     state: RunState | None = None
     for event in events:
         if event.run_id == run_id and event.category != "session":
@@ -531,6 +577,16 @@ def fold_all(events: Iterable[Event]) -> dict[RunId, RunState]:
 
     Les marqueurs de session n'y entrent pas : ils décrivent la session, et
     celui qui les écrit peut ne pas être dans la fenêtre relue.
+
+    Args:
+        events: Les événements, dans l'ordre du journal ; chaque run doit y
+            commencer par son ``run.started``.
+
+    Returns:
+        Run → état.
+
+    Raises:
+        ProjectionError: Journal incohérent.
     """
     states: dict[RunId, RunState] = {}
     for event in events:
@@ -546,6 +602,15 @@ def awaiting_in_session(events: Iterable[Event]) -> tuple[PendingApproval, ...]:
     arrête son parent), dans l'ordre du journal. Un run racine fini n'attend
     plus rien, même si un sous-run est resté en pause (journaux d'avant leur
     fermeture avec le parent) ; un run de compaction n'entre pas en compte.
+
+    Sert à ``loom sessions show`` et aux accès, qui montrent ce qu'une session
+    attend.
+
+    Args:
+        events: Le journal de la session.
+
+    Returns:
+        Les demandes en attente, dans l'ordre du journal.
     """
     states = fold_all(events)
 
@@ -566,6 +631,12 @@ def asking_in_session(events: Iterable[Event]) -> tuple[PendingQuestion, ...]:
     """Questions sans réponse des runs racine encore ouverts d'un journal.
 
     Comme ``awaiting_in_session`` : celles du run racine et de ses sous-runs.
+
+    Args:
+        events: Le journal de la session.
+
+    Returns:
+        Les questions ouvertes (outil ``loom.ask``), dans l'ordre du journal.
     """
     states = fold_all(events)
 

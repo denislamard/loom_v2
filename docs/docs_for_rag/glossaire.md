@@ -4,13 +4,14 @@ Ce glossaire donne le sens des codes que les docstrings et les commentaires de `
 
 ## 1. Codes ambigus
 
-Trois familles de codes se recouvrent. Pendant la réécriture, chaque occurrence est résolue d'après son contexte, puis qualifiée.
+Plusieurs familles de codes se recouvrent. Pendant la réécriture, chaque occurrence est résolue d'après son contexte, puis qualifiée.
 
 | Code | Sens possibles | Comment trancher |
 |---|---|---|
 | `D1` à `D14` | **Fonction** de la famille D, Outils (`fonctions.md`). **Décision** D1 à D13 du state de session (`fonctions.md`, point 51, et `docs/state-et-context.md`). **Essai** de la fonction D*n* (`docs/loom_testing.md`), écrit « test D7 du 18/10 ». | Dans un passage sur le state de session (clés, taille, ordre des écritures, message de fin de requête), c'est une décision du state : écrire « (décision D7 du state de session) ». « test D*n* du 18/10 » devient « (essai de la fonction D*n*, 18/10) ». Ailleurs, c'est une fonction : « (fonction D3) ». Si le contexte ne suffit pas (par exemple `(N3, D4)` dans `access/mcp_server/server.py`), demander à Denis. |
 | `J1` à `J5` | **Fonction** de la famille J, Coûts et budgets. **Jalon** J1 à J6 (`jalons.md`). | Un passage sur les tokens, les coûts ou les budgets désigne une fonction : « (fonction J4) ». Avec une phase (`J4.1`, `J6.3b`), c'est un jalon : « (jalon J4.1) ». |
 | `#n` | **Point** *n* à trancher de `fonctions.md` (1 à 52). **Entrée** `#00n` du backlog. | Sans zéros de tête, c'est un point : « (point 18) ». Avec trois chiffres (`#015`), c'est le backlog : « (backlog #015) ». |
+| `M1` | **Fonction** M1, configuration déclarative (`fonctions.md`). **Règle** M1 de l'analyse moteur du state : une réponse écrite avec `loom.state` termine le run (`docs/state_analyse_moteur.md`). | Dans un passage sur `loom.state` ou la fin d'un run (`core/projections/history.py`, `engine/loop.py`), c'est la règle : « (règle M1, `docs/state_analyse_moteur.md`) ». Ailleurs, la fonction. |
 
 ### Décisions des analyses d'impact (`D-n`, `B-n`)
 

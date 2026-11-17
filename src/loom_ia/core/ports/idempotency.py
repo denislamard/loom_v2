@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Mémoire des effets déjà produits, par clé (#18, #49).
+"""Mémoire des effets déjà produits, par clé (points 18 et 49, fonction D11).
 
 Un outil à effet de bord peut être exécuté deux fois : parce que son appel a
 été interrompu entre l'effet et son enregistrement au journal, ou parce que le
@@ -20,6 +20,12 @@ que le magasin retient avec la clé ; ``complete`` et ``release`` ne s'appliquen
 que si on leur présente ce jeton. Il est **optionnel** : sans lui, rien n'est
 contrôlé, comme avant — un appelant ou un magasin qui n'en connaît pas reste
 valable.
+
+Implémentations fournies (``adapters/idempotency``) : en mémoire, SQLite,
+Postgres et Redis ; et le magasin ``journal`` (défaut), qui écrit
+``idempotency.recorded`` dans le journal du run. Le magasin se déclare sous
+``storage.idempotency`` ; une clé **métier**, visible d'un run à l'autre,
+exige un magasin partagé et durable.
 """
 
 from dataclasses import dataclass
@@ -31,11 +37,15 @@ from loom_ia.core.model.tooling import IdempotencyRecord
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class KeyScope:
-    """De qui est une clé : le client qui la porte, la session qui l'a créée.
+    """De qui est une clé d'idempotence : le client qui la porte, la session qui l'a créée.
 
     Le client cadre la clé — deux artisans ne se partagent pas « relance du
     devis D-2026-042 ». La session dit de quoi la clé est la trace, et c'est
     par elle qu'on l'efface quand la session s'efface (RGPD).
+
+    Attributes:
+        tenant_id: Client qui porte la clé.
+        session_id: Session qui l'a créée.
     """
 
     tenant_id: TenantId
@@ -44,7 +54,7 @@ class KeyScope:
 
 @runtime_checkable
 class IdempotencyStore(Protocol):
-    """Magasin de clés d'idempotence (#49)."""
+    """Magasin de clés d'idempotence (point 49)."""
 
     async def get(self, key: str) -> IdempotencyRecord | None:
         """Ce que le magasin sait de cette clé, ou ``None`` s'il ne la connaît pas.
@@ -52,8 +62,14 @@ class IdempotencyStore(Protocol):
         Un résultat hors de sa durée de vie n'est **pas** rendu : il n'a plus
         cours, et le rendre ferait croire à un effet encore mémorisé. Une
         réservation périmée, elle, est rendue telle quelle — c'est la trace
-        d'un effet d'état inconnu, et c'est à l'appelant d'en décider (#18),
+        d'un effet d'état inconnu, et c'est à l'appelant d'en décider (point 18),
         non au magasin de l'effacer.
+
+        Args:
+            key: La clé.
+
+        Returns:
+            La fiche de la clé (réservée ou tenue, résultat), ou ``None``.
         """
         ...
 
@@ -64,24 +80,35 @@ class IdempotencyStore(Protocol):
         réservation **périmée** peut être reprise — c'est le seul chemin par
         lequel un effet d'état inconnu est rejoué, et il faut le vouloir.
 
-        ``scope`` dit de qui est la clé : le magasin le retient pour pouvoir
-        l'oublier avec sa session ou avec son client.
+        Args:
+            key: La clé.
+            ttl: Durée de la réservation, en secondes ; passée, elle est
+                périmée.
+            scope: De qui est la clé : le magasin le retient pour pouvoir
+                l'oublier avec sa session ou avec son client.
+            holder: Jeton opaque, propre à cette prise de clé ; le magasin le
+                retient, et la reprise d'une réservation périmée le remplace.
 
-        ``holder`` : jeton opaque, propre à cette prise de clé ; le magasin le
-        retient, et la reprise d'une réservation périmée le remplace.
+        Returns:
+            Vrai si la clé est prise ; faux si quelqu'un la tient déjà.
         """
         ...
 
     async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
         """Enregistre ce que l'effet a rendu : la clé cesse d'être une réservation.
 
-        ``ttl`` : durée pendant laquelle le résultat reste consultable ;
-        ``None`` laisse le magasin décider.
+        Args:
+            key: La clé, réservée par ``reserve``.
+            result: Ce que l'outil a rendu, tel qu'il sera rendu à un appel
+                qui demande le même effet.
+            ttl: Durée pendant laquelle le résultat reste consultable, en
+                secondes ; ``None`` laisse le magasin décider.
+            holder: Avec un jeton, l'enregistrement n'a lieu que s'il est
+                celui de la clé ; celui d'un détenteur périmé, dont la clé a
+                été reprise, n'a **aucun effet** (et ne lève pas).
 
-        ``holder`` : avec un jeton, l'enregistrement n'a lieu que s'il est celui
-        de la clé ; celui d'un détenteur périmé, dont la clé a été reprise,
-        n'a **aucun effet** (et ne lève pas). Une clé que le magasin ne connaît
-        plus lève ``KeyError``, avec ou sans jeton.
+        Raises:
+            KeyError: Le magasin ne connaît plus la clé, avec ou sans jeton.
         """
         ...
 
@@ -91,16 +118,26 @@ class IdempotencyStore(Protocol):
         À n'appeler que si l'on en est sûr : un échec avant tout effet de
         bord. Dans le doute, on laisse la réservation expirer.
 
-        ``holder`` : avec un jeton, la clé n'est rendue que si elle est encore
-        à ce détenteur ; sinon elle est à quelqu'un d'autre, et n'est pas touchée.
+        Args:
+            key: La clé réservée.
+            holder: Avec un jeton, la clé n'est rendue que si elle est encore
+                à ce détenteur ; sinon elle est à quelqu'un d'autre, et n'est
+                pas touchée.
         """
         ...
 
     async def forget(self, tenant_id: TenantId, session_id: SessionId | None = None) -> int:
         """Oublie les clés d'un client, ou de l'une de ses sessions (RGPD).
 
-        Rend le nombre de clés effacées. Une clé oubliée rend son effet
-        reproductible : c'est le prix de la suppression, et il est assumé —
-        la trace de cet effet disparaît de toute façon avec la session.
+        Une clé oubliée rend son effet reproductible : c'est le prix de la
+        suppression, et il est assumé — la trace de cet effet disparaît de
+        toute façon avec la session.
+
+        Args:
+            tenant_id: Le client.
+            session_id: Une de ses sessions ; ``None`` : toutes.
+
+        Returns:
+            Le nombre de clés effacées.
         """
         ...

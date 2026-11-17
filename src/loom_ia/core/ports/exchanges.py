@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Enregistrement des échanges bruts avec un fournisseur (#31, J6.1b).
+"""Enregistrement des échanges bruts avec un fournisseur (point 31, phase 6.1b).
 
 Un échange est une requête HTTP et sa réponse, telles qu'elles ont circulé :
 méthode, adresse, en-têtes, corps. C'est l'équivalent de ``log_response`` en
@@ -14,6 +14,10 @@ journal. Sans registre ouvert, rien n'est gardé.
 
 Un ``ContextVar`` et non un argument : l'appel HTTP a lieu tout au fond du
 SDK, que loom ne contrôle pas, mais dans la même tâche que la tentative.
+
+Chaque échange gardé devient un événement ``model.exchanged``, après les
+retouches (secrets retirés, octets de fichier remplacés, corps coupé au-delà
+de ``capture.raw_max_bytes``).
 """
 
 from collections.abc import Generator, Mapping
@@ -25,11 +29,22 @@ from typing import Final
 
 @dataclass(frozen=True, slots=True)
 class RawExchange:
-    """Une requête et sa réponse, telles qu'elles ont circulé.
+    """Une requête HTTP à un fournisseur et sa réponse, telles qu'elles ont circulé.
 
-    ``status`` est absent quand aucune réponse n'est arrivée (réseau, délai) ;
-    ``error`` dit alors pourquoi. ``synthetic`` marque l'échange d'un modèle
-    simulé, qui n'a pas fait d'HTTP.
+    Attributes:
+        method: Méthode HTTP.
+        url: Adresse appelée, telle quelle (les secrets sont retirés plus
+            tard, à l'écriture de ``model.exchanged``).
+        request_body: Corps de la requête, en octets.
+        response_body: Corps de la réponse ; vide sans réponse.
+        status: Statut HTTP ; ``None`` quand aucune réponse n'est arrivée
+            (réseau, délai), et ``error`` dit alors pourquoi.
+        request_headers: En-têtes de la requête.
+        response_headers: En-têtes de la réponse.
+        duration_ms: Durée de l'échange, en millisecondes.
+        error: Erreur de transport, sans réponse.
+        synthetic: Vrai pour l'échange d'un modèle simulé, qui n'a pas fait
+            d'HTTP.
     """
 
     method: str
@@ -45,12 +60,17 @@ class RawExchange:
 
 
 class ExchangeLog:
-    """Les échanges d'une tentative, dans l'ordre où ils se sont terminés."""
+    """Le registre des échanges d'une tentative d'appel, dans l'ordre où ils se sont terminés.
+
+    Attributes:
+        exchanges: Les échanges déposés par le client HTTP.
+    """
 
     def __init__(self) -> None:
         self.exchanges: list[RawExchange] = []
 
     def record(self, exchange: RawExchange) -> None:
+        """Dépose un échange terminé ; appelé par le client HTTP d'un adaptateur."""
         self.exchanges.append(exchange)
 
 
@@ -58,13 +78,20 @@ _CURRENT: Final[ContextVar[ExchangeLog | None]] = ContextVar("loom_exchange_log"
 
 
 def exchange_log() -> ExchangeLog | None:
-    """Le registre ouvert pour la tentative en cours, s'il y en a un."""
+    """Le registre ouvert pour la tentative en cours, ou ``None`` : rien n'est alors gardé."""
     return _CURRENT.get()
 
 
 @contextmanager
 def recording(log: ExchangeLog) -> Generator[ExchangeLog]:
-    """Ouvre ``log`` pour ce qui s'exécute dans le bloc, dans cette tâche."""
+    """Ouvre un registre pour ce qui s'exécute dans le bloc, dans cette tâche.
+
+    Args:
+        log: Le registre de la tentative.
+
+    Yields:
+        Le même registre, ouvert jusqu'à la sortie du ``with``.
+    """
     token = _CURRENT.set(log)
     try:
         yield log

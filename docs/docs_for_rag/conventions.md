@@ -325,7 +325,12 @@ La docstring devient la description de l'opération dans l'OpenAPI. Elle dit ce 
 
 ### 4.13 Constantes
 
-Les constantes publiques qui fixent un comportement (limites, défauts) se documentent dans la section `Attributes:` de la docstring du module, avec leur valeur. Une constante privée garde son commentaire.
+Une constante publique qui fixe un comportement (limite, défaut, clé) se documente par une **docstring d'attribut** : une chaîne placée juste après l'affectation, que griffe rattache à la constante. C'est la forme déjà employée dans `core/__init__.py`. On y donne le sens de la constante, son unité, et où elle sert. Une constante privée garde son commentaire.
+
+```python
+DEFAULT_MAX_ROWS: Final = 200
+"""Lignes rendues au modèle par une lecture de ``loom.sql``, sauf ``max_rows`` de la base."""
+```
 
 ## 5. Ce qui est exigé, et ce qui ne l'est pas
 

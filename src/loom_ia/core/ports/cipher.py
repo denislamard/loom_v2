@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Port du sceau : fermer et ouvrir des octets avec la clé d'un client (#30, §11.5).
+"""Port du sceau : fermer et ouvrir des octets avec la clé d'un client (point 30, conception §11.5, fonction P1).
 
 Le journal garde les contenus complets — c'est lui qui fait foi (#22). Ce
 port permet de les garder **illisibles au repos** : la charge d'un événement
@@ -22,6 +22,9 @@ manque au lieu de la deviner.
 authentifié. Un sceau ouvert avec un ``aad`` différent de celui qui l'a
 fermé est refusé, ce qui interdit de déplacer un sceau — d'un journal à un
 autre, d'une position à une autre, d'un fichier à un autre.
+
+Implémentation fournie : AES-256-GCM (``adapters/crypto/aesgcm.py``, extra
+``crypto``). Le sceau se déclare sous ``storage.encryption`` (phase 5.5b).
 """
 
 from collections.abc import Sequence
@@ -31,7 +34,7 @@ from loom_ia.core.model.ids import TenantId
 
 
 class SealError(Exception):
-    """Un sceau n'a pas pu être fermé ou ouvert."""
+    """Un sceau n'a pas pu être fermé ou ouvert ; base de ``MissingKey`` et ``SealBroken``."""
 
 
 class MissingKey(SealError):
@@ -57,11 +60,33 @@ class Cipher(Protocol):
         ...
 
     def seal(self, clear: bytes, aad: bytes) -> bytes:
-        """Ferme ces octets ; ``aad`` est authentifié, pas chiffré."""
+        """Ferme des octets avec la clé.
+
+        Args:
+            clear: Les octets en clair.
+            aad: Données authentifiées, pas chiffrées (le journal et la
+                position, le chemin d'un fichier) : il faudra les mêmes pour
+                ouvrir.
+
+        Returns:
+            Le sceau.
+        """
         ...
 
     def unseal(self, sealed: bytes, aad: bytes) -> bytes:
-        """Ouvre ces octets ; ``SealBroken`` si le sceau ne correspond pas."""
+        """Ouvre un sceau fermé par cette clé.
+
+        Args:
+            sealed: Le sceau.
+            aad: Les mêmes données authentifiées qu'à la fermeture.
+
+        Returns:
+            Les octets en clair.
+
+        Raises:
+            SealBroken: Le sceau ne correspond pas : octets ou ``aad``
+                altérés, ou sceau déplacé.
+        """
         ...
 
 
@@ -69,13 +94,22 @@ class Keyring(Protocol):
     """Les clés des clients, telles que la configuration les désigne."""
 
     def ciphers(self, tenant_id: TenantId) -> Sequence[Cipher]:
-        """Clés de ce client : la première ferme, toutes peuvent ouvrir.
+        """Clés d'un client : la première ferme, toutes peuvent ouvrir.
 
-        Lève ``MissingKey`` quand ce client n'en a aucune : un trousseau
-        existe parce que la config a demandé le sceau, et écrire en clair
-        sous prétexte qu'une clé manque serait exactement la fuite que le
-        sceau est là pour empêcher. Elle la lève aussi quand celle de tête
-        manque alors qu'une clé de queue est là : sceller avec cette dernière,
-        sans rien dire, ferait d'un renouvellement qui n'a pas lieu un succès.
+        Args:
+            tenant_id: Le client.
+
+        Returns:
+            Ses clés, la clé courante en tête, puis les anciennes, gardées
+            pour ouvrir ce qu'elles ont fermé.
+
+        Raises:
+            MissingKey: Le client n'a aucune clé : un trousseau existe parce
+                que la config a demandé le sceau, et écrire en clair sous
+                prétexte qu'une clé manque serait exactement la fuite que le
+                sceau est là pour empêcher. Aussi quand la clé de tête manque
+                alors qu'une clé de queue est là : sceller avec cette
+                dernière, sans rien dire, ferait d'un renouvellement qui n'a
+                pas lieu un succès.
         """
         ...

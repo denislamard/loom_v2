@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""JSON Schema des événements : contrat de l'interface de suivi (K2).
+"""JSON Schema des événements : contrat de l'interface de suivi (fonction K2).
 
 Le schéma est **ouvert** : aucun objet n'y refuse une propriété qu'il ne
 décrit pas. C'est la règle d'évolution du journal (``conception.md``) —
@@ -7,8 +7,9 @@ ajouter un champ optionnel ne change pas ``schema_version``, et un lecteur
 plus ancien ignore ce qu'il ne connaît pas, comme loom lui-même depuis 2.0.4.
 Un schéma fermé (``additionalProperties: false``, ce que Pydantic tire de
 modèles ``extra="forbid"``) ferait refuser par un validateur les événements
-d'une version plus récente de loom, à version de schéma égale (test K2 du
-21/10). L'écriture, elle, reste stricte : c'est Pydantic qui la garde.
+d'une version plus récente de loom, à version de schéma égale (essai de la
+fonction K2 du 21/10). L'écriture, elle, reste stricte : c'est Pydantic qui
+la garde.
 """
 
 from typing import Any, cast
@@ -19,7 +20,12 @@ from loom_ia.core.events.envelope import Event
 
 
 def event_json_schema() -> dict[str, Any]:
-    """Schéma JSON d'un événement écrit, tel qu'il est sérialisé, ouvert aux champs ajoutés."""
+    """Schéma JSON d'un événement écrit, tel qu'il est sérialisé, ouvert aux champs ajoutés.
+
+    Returns:
+        Le schéma de ``Event`` en mode sérialisation, sans aucun
+        ``additionalProperties: false``.
+    """
     schema = TypeAdapter(Event).json_schema(mode="serialization")
     _open(schema)
     return schema

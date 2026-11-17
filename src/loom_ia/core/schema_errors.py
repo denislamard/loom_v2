@@ -9,6 +9,12 @@ l'outil a écrit. ``schema_problem`` ne dit que ce que le schéma exige — des 
 code ou du schéma, que son auteur a écrits — et, de la valeur, son genre ou sa
 taille : jamais son contenu (seuls les noms de propriétés en trop sont cités). Le
 chemin de la valeur est dit à part par l'appelant.
+
+Utilisé partout où une valeur venue d'un utilisateur, d'un modèle ou d'un outil
+est validée par un JSON Schema : arguments d'un appel d'outil
+(``engine/executor.py``), sortie contrôlée par un contrat ou lue par un juge
+(``guards/contract.py``, ``guards/judge.py``), valeurs du state de session
+(``engine/session_state.py``, ``tools_builtin/state.py``).
 """
 
 from collections.abc import Sequence
@@ -82,7 +88,24 @@ def _extra(error: ValidationError) -> str:
 
 
 def schema_problem(error: ValidationError) -> str:
-    """Ce que le schéma exige de la valeur, sans la recopier."""
+    """Dit ce que le schéma exige de la valeur, sans la recopier.
+
+    Chaque mot-clé de JSON Schema a sa phrase : le type attendu et le genre
+    reçu (« doit être un entier (reçu : du texte) »), les valeurs permises
+    (``enum``, ``const``, coupées à 120 caractères), les propriétés requises
+    absentes, les tailles (reçue et attendue), les bornes, le motif, le
+    format. Pour ``additionalProperties``, les noms des propriétés en trop sont
+    cités, car un nom est de la structure. Un mot-clé inconnu donne une phrase
+    générale qui le nomme.
+
+    Args:
+        error: Erreur levée par ``jsonschema`` ; son chemin
+            (``error.absolute_path``) n'est pas dit ici, l'appelant le dit à
+            part.
+
+    Returns:
+        Une phrase en français, sans le contenu de la valeur fautive.
+    """
     keyword = str(error.validator)
     expected = error.validator_value
     instance = error.instance
