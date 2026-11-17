@@ -357,6 +357,6 @@ DEFAULT_MAX_ROWS: Final = 200
    - « Code hors docstrings » et « Vu par le modèle » : **inchangés** ;
    - « Schémas JSON » et « Descriptions OpenAPI » : relire les écarts ;
    - « Couverture du lot » : 100 %.
-3. Lancer `uv run ruff check --select D --ignore D105,D107 <chemins>` : rien à signaler. La convention Google est réglée dans `pyproject.toml` (`[tool.ruff.lint.pydocstyle]`). Les règles `D` ne seront activées pour tout le dépôt qu'au lot 14.
+3. Lancer `uv run ruff check <chemins>` : rien à signaler. Les règles `D` sont actives pour tout le dépôt depuis le lot 14 (`select` de `[tool.ruff.lint]`, sans D105 ni D107 ; les essais sont dispensés des règles de présence, D100 à D104). La convention Google est réglée dans `pyproject.toml` (`[tool.ruff.lint.pydocstyle]`).
 4. Lancer `ruff format --check`, `pyright` et `pytest` : au vert.
 5. Denis relit le diff et commite.

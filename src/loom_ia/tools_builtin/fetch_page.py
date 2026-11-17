@@ -45,7 +45,7 @@ async def fetch_page(url: str) -> str:
     À utiliser pour consulter une page dont on connaît l'adresse, ou suivre un lien
     trouvé dans une page déjà lue. Ne gère ni JavaScript, ni connexion à un compte,
     ni PDF, ni image.
-    """
+    """  # noqa: D205  # Docstring vue par le modèle (description de l'outil) : à ne pas reformater.
     page = await download(url)
     # Décoder et analyser une grosse page prend jusqu'à une seconde ou deux : hors de
     # la boucle asyncio, pour ne pas figer le moteur ni les outils lancés en parallèle.

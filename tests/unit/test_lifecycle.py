@@ -313,8 +313,7 @@ async def _until_called(loom: Loom, tool: str, *, limit: float = 10.0) -> None:
 
 
 def test_a_cancel_whose_caller_gives_up_still_closes_the_run(patient: ConfigFactory) -> None:
-    """L'appelant de ``cancel`` est coupé par son délai pendant l'arrêt : l'arrêt va au bout,
-    puis le délai remonte (``TimeoutError``) au lieu d'être avalé."""
+    """L'appelant de ``cancel`` est coupé par son délai pendant l'arrêt : l'arrêt va au bout, puis le délai remonte (``TimeoutError``) au lieu d'être avalé."""
     path = patient(attente=5.0, code=TENACE)
 
     async def go() -> tuple[bool, list[Event]]:

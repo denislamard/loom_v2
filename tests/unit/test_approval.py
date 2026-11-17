@@ -292,8 +292,10 @@ def test_an_approver_can_correct_the_arguments(atelier: ConfigFactory) -> None:
 
 
 def test_a_deferred_approval_sends_what_the_approver_saw(atelier: ConfigFactory) -> None:
-    """La politique redirige l'envoi, l'approbateur l'accorde plus tard : c'est la compta qui
-    le reçoit. Avant la correction, l'envoi partait au destinataire d'origine du modèle."""
+    """La politique redirige l'envoi, l'approbateur l'accorde plus tard : c'est la compta qui le reçoit.
+
+    Avant la correction, l'envoi partait au destinataire d'origine du modèle.
+    """
 
     async def go() -> tuple[dict[str, Any], str]:
         async with Loom.from_config(atelier(policies=[{"hook": "corrige_destinataire"}])) as loom:
@@ -934,7 +936,6 @@ def test_a_decision_is_written_where_its_request_waited(atelier: ConfigFactory) 
     au span racine du run la séparait de la demande qu'elle tranche, alors
     qu'un approbateur en ligne les écrit d'un bloc.
     """
-
     # Deux journaux : chaque moitié doit trouver une seule demande.
     boucle, dehors = SessionId("en-ligne"), SessionId("asynchrone")
 

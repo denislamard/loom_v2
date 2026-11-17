@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.3 : évaluer un agent — des cas, leurs attendus, des variantes comparées.
+r"""Phase 6.3 : évaluer un agent — des cas, leurs attendus, des variantes comparées.
 
     uv run python tests/examples/j6/evals.py                     # tous les cas
     uv run python tests/examples/j6/evals.py --cas suite
     uv run python tests/examples/j6/evals.py --cas regression
     uv run python tests/examples/j6/evals.py --cas banc
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j6/evals.py --reel
 
 Config : celle de J4 (``tests/examples/j4/relance/``), réglée comme
@@ -116,8 +116,7 @@ class Controle:
         return "oui" if vrai else "NON"
 
     def saute(self, quoi: str, *, partie: bool = False) -> None:
-        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire,
-        sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
+        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire, sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
         (self.parties if partie else self.sautes).append(quoi)
 
     def bilan(self, joues: int) -> bool | None:
@@ -197,8 +196,7 @@ JUGEMENTS: list[dict[str, Any]] = [
 
 
 def scripte(config: LoomConfig, acces: Any) -> LoomConfig:
-    """L'orchestrateur scripté selon le devis demandé, un second qui oublie l'envoi, et le
-    juge d'éval."""
+    """L'orchestrateur scripté selon le devis demandé, un second qui oublie l'envoi, et le juge d'éval."""
     relance = [{**reponse, "with_text": "D-2026-042"} for reponse in copy.deepcopy(acces.MAIN)]
     inconnu: list[dict[str, Any]] = [
         {
@@ -477,8 +475,7 @@ def _journal(path: Path) -> list[Event]:
 
 
 def la_suite_rejouee(acces: Any, *, reel: bool) -> dict[str, Any]:
-    """La suite de la relance — une variante, sans juge d'éval — et un cas qui rejoue ses
-    journaux."""
+    """La suite de la relance — une variante, sans juge d'éval — et un cas qui rejoue ses journaux."""
     decrite = {k: v for k, v in la_suite(acces, reel=reel).items() if k != "judge"}
     return {
         **decrite,
@@ -506,8 +503,7 @@ async def evalue(
     cas: list[str],
     export: Path | None = None,
 ) -> tuple[EvalReport, int]:
-    """La suite jouée par une instance de ``config`` ; et combien de sessions son journal a
-    reçues."""
+    """La suite jouée par une instance de ``config`` ; et combien de sessions son journal a reçues."""
     async with Loom(config, environ=environ) as loom:
         loom.register(acces.ENVOI, acces.envoyer_email)
         loom.register(DOUBLURE, faux_envoi)

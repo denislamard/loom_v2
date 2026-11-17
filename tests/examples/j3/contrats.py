@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 3.2 : un contrat de sortie, la normalisation et la réparation par le modèle auteur.
+r"""Phase 3.2 : un contrat de sortie, la normalisation et la réparation par le modèle auteur.
 
     uv run python tests/examples/j3/contrats.py                        # variante a : normalisation
     uv run python tests/examples/j3/contrats.py --variante r           # réparation par le rôle
     uv run python tests/examples/j3/contrats.py --variante e --echec unverified
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j3/contrats.py --reel
 
 Même config que ``politiques.py`` (``tests/examples/j3/relance/``). Le rôle

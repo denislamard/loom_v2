@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.1b : ce qu'un artisan peut dépenser dans sa journée, et à quelle vitesse.
+r"""Phase 5.1b : ce qu'un artisan peut dépenser dans sa journée, et à quelle vitesse.
 
     uv run python tests/examples/j5/quotas.py                       # les quatre cas
     uv run python tests/examples/j5/quotas.py --cas budget
     uv run python tests/examples/j5/quotas.py --cas quota
     uv run python tests/examples/j5/quotas.py --cas reprise
     uv run --extra http python tests/examples/j5/quotas.py --cas debit
-    uv run --env-file .env --extra http --extra anthropic --extra openai \\
+    uv run --env-file .env --extra http --extra anthropic --extra openai \
         python tests/examples/j5/quotas.py --reel
 
 Config : ``tests/examples/j5/relance/``, celle de la phase 5.1a. Les plafonds et les

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 2.4 : un sous-agent qui vérifie le travail de l'orchestrateur.
+r"""Phase 2.4 : un sous-agent qui vérifie le travail de l'orchestrateur.
 
     uv run --extra mcp python tests/examples/j2/sous_agent.py                  # modèles simulés
-    uv run --env-file .env --extra mcp --extra anthropic --extra openai \\
+    uv run --env-file .env --extra mcp --extra anthropic --extra openai \
         python tests/examples/j2/sous_agent.py --reel
 
 Même config que ``client_mcp.py`` et ``vision.py`` (``tests/examples/j2/assistant/``).

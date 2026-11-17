@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.2a : ce qu'une clé d'API a le droit de faire, et de lire.
+r"""Phase 5.2a : ce qu'une clé d'API a le droit de faire, et de lire.
 
     uv run --extra http python tests/examples/j5/securite.py            # les trois cas
     uv run --extra http python tests/examples/j5/securite.py --cas cles
     uv run --extra http python tests/examples/j5/securite.py --cas masquage
     uv run --extra http python tests/examples/j5/securite.py --cas expiration
-    uv run --env-file .env --extra http --extra anthropic --extra openai \\
+    uv run --env-file .env --extra http --extra anthropic --extra openai \
         python tests/examples/j5/securite.py --reel
 
 Config : ``tests/examples/j5/relance/``, celle de 5.1a. Les clés sont déclarées **en

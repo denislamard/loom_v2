@@ -309,9 +309,12 @@ def _statements(text: str) -> list[str]:
 
 
 def test_the_declared_store_gets_the_whole_schema(demo: ConfigFactory) -> None:
-    """Test F5 du 19/10 : la sortie de ``loom storage sql`` d'une config en Postgres
-    n'avait que le schéma de la 2.0 ; sans ``loom_schema``, loom tentait de migrer à
-    l'ouverture avec le rôle de connexion, qui n'en a pas le droit."""
+    """Test F5 du 19/10.
+
+    La sortie de ``loom storage sql`` d'une config en Postgres n'avait que le schéma de
+    la 2.0 ; sans ``loom_schema``, loom tentait de migrer à l'ouverture avec le rôle de
+    connexion, qui n'en a pas le droit.
+    """
     sql = postgres_ddl(load_config(demo(storage=PG_STORAGE)))
     assert EVENTS_UPGRADE in sql and f"CREATE TABLE IF NOT EXISTS {SCHEMA_TABLE}" in sql
     assert "ADD COLUMN IF NOT EXISTS ingested" in sql

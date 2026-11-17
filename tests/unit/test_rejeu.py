@@ -357,9 +357,11 @@ async def test_a_subagent_is_read_not_relaunched(tree: ConfigFactory) -> None:
 
 @pytest.mark.parametrize("vision", [False, True], ids=["mention", "octets"])
 async def test_a_run_with_an_attachment_replays_identically(demo: ConfigFactory, vision: bool) -> None:
-    """Le journal porte la requête avec ses références de fichiers, pas leurs octets : le rejeu,
-    à l'identique comme en variante, retrouve la réponse sous cette empreinte (modèle aveugle ou
-    non : mention textuelle ou image)."""
+    """Le journal porte la requête avec ses références de fichiers, pas leurs octets.
+
+    Le rejeu, à l'identique comme en variante, retrouve la réponse sous cette empreinte
+    (modèle aveugle ou non : mention textuelle ou image).
+    """
     model = {**MODEL, "capabilities": {"vision": vision}}
     photo = Attachment(data=PNG, name="photo.png")
     async with Loom(load_config(demo(models=[model]))) as loom:
@@ -505,8 +507,7 @@ async def test_a_run_that_failed_on_a_model_call_replays_identically(demo: Confi
 
 
 async def test_a_completed_run_does_not_get_a_failure_to_serve(demo: ConfigFactory, tmp_path: Path) -> None:
-    """Seul un run fini sur une panne de modèle se la voit resservir : un appel en
-    trop dans un run réussi reste une divergence."""
+    """Seul un run fini sur une panne de modèle se la voit resservir : un appel en trop dans un run réussi reste une divergence."""
     jsonl = {"events": {"backend": "jsonl", "path": "data"}}
     path = demo(storage=jsonl, models=[_failing({"text": ANSWER})])
     async with Loom.from_config(path) as loom:
@@ -1157,8 +1158,7 @@ async def test_a_variant_that_changes_nothing_is_served_entirely(variante: Path)
 
 
 async def test_another_model_runs_for_real_and_never_sends_again(variante: Path) -> None:
-    """Le modèle change : ses appels partent ; le rôle, à demande identique, est servi ;
-    le calcul se lit au journal ; l'envoi ailleurs n'est jamais exécuté."""
+    """Le modèle change : ses appels partent ; le rôle, à demande identique, est servi ; le calcul se lit au journal ; l'envoi ailleurs n'est jamais exécuté."""
     run_id = await enregistre(variante)
     async with Loom.from_config(variante) as loom:
         report = await loom.replay(run_id, session_id=SESSION, mode="variant", models={"main": "AUTRE"})
@@ -1220,8 +1220,10 @@ def test_two_failures_of_different_causes_are_not_the_same_answer() -> None:
 
 
 async def test_the_journal_is_asked_with_the_written_request_and_the_model_gets_the_files() -> None:
-    """Une requête que le journal ne connaît pas part pour de vrai avec ses fichiers résolus,
-    mais c'est la requête écrite (références) que le livre compare à ses empreintes."""
+    """Une requête inconnue du journal part pour de vrai, fichiers résolus.
+
+    Mais c'est la requête écrite (références) que le livre compare à ses empreintes.
+    """
     files = InMemoryArtifactStore()
     uri = artifact_uri("default", "s1", PNG, "image/png")
     await files.put(uri, PNG)
@@ -1772,8 +1774,7 @@ async def test_the_call_order_decides_the_state_live_and_in_replay(etat: Path) -
 
 
 async def test_a_variant_keeps_the_journal_state_and_poses_what_runs_anew(etat: Path) -> None:
-    """Ce qui ne change rien est servi avec son state ; un outil exécuté ou doublé pose le sien,
-    un refus rien."""
+    """Ce qui ne change rien est servi avec son state ; un outil exécuté ou doublé pose le sien, un refus rien."""
     [premier, _] = await relances(etat)
     original = [e for e in await journal(etat) if e.run_id == premier]
 

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 3.1 : des politiques qui décident, à chaque point d'accroche d'un run.
+r"""Phase 3.1 : des politiques qui décident, à chaque point d'accroche d'un run.
 
     uv run python tests/examples/j3/politiques.py                  # modèles simulés
     uv run python tests/examples/j3/politiques.py --plafond 2      # arrêt par plafond_appels
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j3/politiques.py --reel
 
 La config est dans ``tests/examples/j3/relance/`` ; les politiques de l'exemple

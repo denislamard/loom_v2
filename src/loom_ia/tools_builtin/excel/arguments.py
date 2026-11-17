@@ -54,7 +54,7 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ColumnSpec(_Model):
+class ColumnSpec(_Model):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     header: Annotated[
         str,
         Field(
@@ -73,13 +73,13 @@ class CellSpec(_Model):
     note: str | None = None
 
 
-class RowSpec(_Model):
+class RowSpec(_Model):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     cells: Annotated[list[Scalar | CellSpec], Field(description="Dans l'ordre des colonnes ; « =… » : formule.")]
     role: Role | None = None
     note: Annotated[str | None, Field(description="Commentaire de la ligne (source…).")] = None
 
 
-class DataSource(_Model):
+class DataSource(_Model):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     path: Annotated[
         str,
         Field(
@@ -97,7 +97,7 @@ class DataSource(_Model):
         return self
 
 
-class SheetSpec(_Model):
+class SheetSpec(_Model):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     name: str
     columns: Annotated[list[ColumnSpec], Field(min_length=1)]
     rows: list[RowSpec] | None = None
@@ -134,7 +134,7 @@ class ChartSpec(_Model):
 
 # Le même onglet, avec ses graphiques : ce que voit un outil monté avec ``charts``.
 # Pas de docstring : elle partirait dans le schéma, envoyé au modèle à chaque appel.
-class ChartedSheetSpec(SheetSpec):
+class ChartedSheetSpec(SheetSpec):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     charts: list[ChartSpec] | None = None
 
     def chart_specs(self) -> Sequence[ChartSpec]:

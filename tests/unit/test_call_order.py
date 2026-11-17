@@ -654,7 +654,7 @@ SESSION_E2E = SessionId("ordre")
 
 
 def deroule(events: Sequence[Event]) -> list[str]:
-    """Le journal en court : « called lire#0 », « completed lire#0 → version 1 »…
+    """Le journal en court : « called lire#0 », « completed lire#0 → version 1 », etc.
 
     Le numéro est la place de l'appel dans la réponse du modèle (fin de son identifiant).
     """
@@ -757,9 +757,11 @@ def test_without_ordering_the_read_after_a_write_to_approve_runs_before_the_paus
 
 
 def test_ordering_changes_neither_the_consumption_nor_the_model_requests(tmp_path: Path) -> None:
-    """Mêmes itérations, même consommation, mêmes requêtes au modèle (empreintes) : les
-    résultats lui parviennent dans l'ordre des appels (``in_call_order``), quel que soit
-    leur ordre d'arrivée — seul le texte de la relecture change."""
+    """Mêmes itérations, même consommation, mêmes requêtes au modèle (empreintes).
+
+    Les résultats lui parviennent dans l'ordre des appels (``in_call_order``), quel que
+    soit leur ordre d'arrivée — seul le texte de la relecture change.
+    """
 
     async def go(order: str) -> tuple[RunResult, list[str]]:
         folder = tmp_path / order
@@ -803,8 +805,11 @@ def test_the_live_display_follows_the_new_journal_order(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("approval", [None, "always"])
 def test_a_journal_written_without_ordering_replays_identically(tmp_path: Path, approval: str | None) -> None:
-    """Un journal d'avant (lecture passée avant l'écriture) se rejoue à l'identique avec l'ordre :
-    les résultats viennent du journal, et la requête au modèle les range dans l'ordre des appels."""
+    """Un journal d'avant (lecture passée avant l'écriture) se rejoue à l'identique avec l'ordre.
+
+    Les résultats viennent du journal, et la requête au modèle les range dans l'ordre
+    des appels.
+    """
 
     async def record() -> Path:
         path = atelier(tmp_path, order="free", approval=approval)

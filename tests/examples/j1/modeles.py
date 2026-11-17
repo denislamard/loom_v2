@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 1.4 : l'agent demo sur un vrai fournisseur, ou sur le modèle ``fake``.
+r"""Phase 1.4 : l'agent demo sur un vrai fournisseur, ou sur le modèle ``fake``.
 
     uv run python tests/examples/j1/modeles.py
-    uv run --extra anthropic python tests/examples/j1/modeles.py --sdk anthropic \\
+    uv run --extra anthropic python tests/examples/j1/modeles.py --sdk anthropic \
         --base-url https://api.minimax.io/anthropic --model MiniMax-M2 --key-env M3_API_KEY
-    uv run --extra openai python tests/examples/j1/modeles.py --sdk openai \\
-        --base-url https://api.together.xyz/v1 --model openai/gpt-oss-120b \\
+    uv run --extra openai python tests/examples/j1/modeles.py --sdk openai \
+        --base-url https://api.together.xyz/v1 --model openai/gpt-oss-120b \
         --key-env TOGETHER_API_KEY
 
 La réponse s'affiche au fil du flux, puis le journal du run, écrit en JSONL

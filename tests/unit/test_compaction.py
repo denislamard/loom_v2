@@ -751,8 +751,7 @@ def broken(failure: BaseException) -> SummaryResolver:
 
 
 async def test_a_storage_not_ready_stops_the_run_before_the_summary() -> None:
-    """Test F5 du 19/10 : une base non préparée faisait journaliser une trace
-    « résumé impossible, le run part sans », puis le run échouait quand même."""
+    """Test F5 du 19/10 : une base non préparée faisait journaliser une trace « résumé impossible, le run part sans », puis le run échouait quand même."""
     from loom_ia.core.ports import StorageNotReady
 
     class Unprepared(InMemoryEventStore):
@@ -1063,8 +1062,7 @@ def test_without_the_session_scope_the_role_is_refused(withrole: Callable[..., P
 
 
 def test_the_safety_net_names_the_run_it_protects(conversation: ConfigFactory, tmp_path: Path) -> None:
-    """Le résumé du filet porte ``triggered_by``, comme le résumé bloquant : sans lui, rien
-    ne le rattachait au run qui s'ouvrait."""
+    """Le résumé du filet porte ``triggered_by``, comme le résumé bloquant : sans lui, rien ne le rattachait au run qui s'ouvrait."""
     path = conversation(compaction={"over_tokens": 40, "hard_tokens": 60, "keep_last": 1})
 
     async def go() -> tuple[RunId, list[Event]]:

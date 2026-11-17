@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 3.3 : un juge vérifie la relance, et le rôle corrige lui-même ce qu'il a inventé.
+r"""Phase 3.3 : un juge vérifie la relance, et le rôle corrige lui-même ce qu'il a inventé.
 
     uv run python tests/examples/j3/juge.py                      # refus du juge, puis correction
     uv run python tests/examples/j3/juge.py --echantillon 0      # run non tiré : pas de jugement
     uv run python tests/examples/j3/juge.py --echantillon 0 --juges force
     uv run python tests/examples/j3/juge.py --juges skip
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j3/juge.py --reel
 
 Même config que ``politiques.py`` et ``contrats.py`` (``tests/examples/j3/relance/``).

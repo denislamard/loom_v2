@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Styles de document de ``loom.word`` : la charte de l'outil, le style et la mise en page
-d'un modèle.
+"""Styles de document de ``loom.word`` : la charte de l'outil, le style et la mise en page d'un modèle.
 
 Un fichier de style est une liste de styles nommés (``text``, ``heading1``…) et quelques
 réglages ; ``default.yaml`` en est le point de départ, que la charte puis le style du
@@ -366,9 +365,11 @@ WORD_INLINE: Final[dict[tuple[str, str, str], str]] = {
 
 
 def test_no_visual_length_in_the_code() -> None:
-    """Ni distance ni espace dans l'écriture Word : ils viennent de default.yaml. Restent
-    des unités, des identifiants, et des mécaniques nommées ici (``WORD_NUMBERS``,
-    ``WORD_INLINE``)."""
+    """Ni distance ni espace dans l'écriture Word : ils viennent de default.yaml.
+
+    Restent des unités, des identifiants, et des mécaniques nommées ici
+    (``WORD_NUMBERS``, ``WORD_INLINE``).
+    """
     folder = Path(word_package.__file__).parent
     writers = [folder / name for name in ("writer.py", "style.py", "chart.py", "image.py")]
     assert set().union(*(numeric_constants(source) for source in writers)) == set(WORD_NUMBERS)
@@ -378,8 +379,7 @@ def test_no_visual_length_in_the_code() -> None:
 
 
 def test_default_yaml_is_a_style_file_like_any_other() -> None:
-    """``default.yaml`` se lit comme une charte ; ses couleurs de graphique sont celles
-    d'``excel`` et de ``pdf``."""
+    """``default.yaml`` se lit comme une charte ; ses couleurs de graphique sont celles d'``excel`` et de ``pdf``."""
     from loom_ia.tools_builtin._chart_style import GRID, PALETTE, TEXT
 
     house_file = load_style(DEFAULT_FILE.read_text(encoding="utf-8"))
@@ -480,8 +480,7 @@ async def test_header_footer_logo_and_watermark(tmp_path: Path) -> None:
 
 
 async def test_the_house_footer_has_no_page_numbers(tmp_path: Path) -> None:
-    """Le pied de default.yaml n'écrit rien : des mentions ajoutées viennent seules, et une
-    charte qui veut les numéros de page les demande."""
+    """Le pied de default.yaml n'écrit rien : des mentions ajoutées viennent seules, et une charte qui veut les numéros de page les demande."""
     tool = make(tmp_path, style={"spec": {"page": {"footer": {"lines": ["SIRET 812 345 678 00021"]}}}})
     path = await write(tool, "d", FACTURE)
     footer = part(path, "word/footer1.xml")
@@ -515,17 +514,19 @@ BAND_TABLE: Final[dict[str, Any]] = {
 
 
 def band_style(*, footer: dict[str, Any] | None = None, **page: Any) -> Style:
-    """Le style de ``BAND_TABLE`` : son style ``footer`` complété de ``footer``, son
-    ``page.footer`` de ``page`` (``None`` : clé retirée)."""
+    """Le style de ``BAND_TABLE`` : son style ``footer`` complété de ``footer``, son ``page.footer`` de ``page`` (``None`` : clé retirée)."""
     content = {key: value for key, value in {**BAND_TABLE["page"]["footer"], **page}.items() if value is not None}
     spec = {**BAND_TABLE, "footer": {**BAND_TABLE["footer"], **(footer or {})}, "page": {"footer": content}}
     return resolve(StyleFile.model_validate(spec))
 
 
 def test_a_band_table_is_read_and_checked() -> None:
-    """La table d'un pied : son contenu dans ``page.footer``, ses cellules en court (un
-    texte, des lignes) ou nommant leur style ; ses filets et l'écart entre ses colonnes,
-    des propriétés de son style ; refusée avec les zones, mal formée."""
+    """La table d'un pied.
+
+    Son contenu dans ``page.footer``, ses cellules en court (un texte, des lignes) ou
+    nommant leur style ; ses filets et l'écart entre ses colonnes, des propriétés de son
+    style ; refusée avec les zones, mal formée.
+    """
     footer = band_style().footer
     assert footer is not None and footer.table is not None and footer.lines
     table = footer.table
@@ -581,9 +582,12 @@ def test_a_band_table_is_read_and_checked() -> None:
 
 
 async def test_each_line_of_a_band_has_its_alignment(tmp_path: Path) -> None:
-    """Une des ``lines`` : un texte, au style de l'en-tête ou du pied, ou ``{text, style}``,
-    au style qu'elle nomme ; dans un en-tête, centrée si son style ne dit pas d'alignement ;
-    ``center`` seul toujours centré, même si le style du pied ne l'est pas."""
+    """Une des ``lines``.
+
+    Un texte, au style de l'en-tête ou du pied, ou ``{text, style}``, au style qu'elle
+    nomme ; dans un en-tête, centrée si son style ne dit pas d'alignement ; ``center``
+    seul toujours centré, même si le style du pied ne l'est pas.
+    """
     spec = {
         "header_right": {"base": "header", "align": "right"},
         "footer_center": {"base": "footer", "align": "center"},
@@ -610,8 +614,7 @@ async def test_each_line_of_a_band_has_its_alignment(tmp_path: Path) -> None:
 
 
 async def test_a_zone_takes_the_characters_of_its_style(tmp_path: Path) -> None:
-    """Une zone au style qu'elle nomme : sa police, sa taille, sa couleur, son gras, en
-    propriétés de caractère dans la ligne des zones."""
+    """Une zone au style qu'elle nomme : sa police, sa taille, sa couleur, son gras, en propriétés de caractère dans la ligne des zones."""
     spec = {
         "footer_page": {"base": "footer", "bold": True, "color": "1F3A5F"},
         "page": {"footer": {"left": "Gauche", "right": {"text": "{page}", "style": "footer_page"}}},
@@ -623,10 +626,13 @@ async def test_a_zone_takes_the_characters_of_its_style(tmp_path: Path) -> None:
 
 
 async def test_a_footer_table_in_word(tmp_path: Path) -> None:
-    """Le pied en table : les lignes de toute la largeur, puis la table ; le cadre du style
-    sur la table, pas sur ses paragraphes ; l'écart en deux moitiés autour du filet
-    intérieur ; les numéros de page en champs, dans le style de cellule ; un paragraphe
-    d'un point pour finir."""
+    """Le pied en table.
+
+    Les lignes de toute la largeur, puis la table ; le cadre du style sur la table, pas
+    sur ses paragraphes ; l'écart en deux moitiés autour du filet intérieur ; les
+    numéros de page en champs, dans le style de cellule ; un paragraphe d'un point pour
+    finir.
+    """
     tool = make(tmp_path, style={"spec": BAND_TABLE})
     path = await write(tool, "t", FACTURE)
     footer = part(path, "word/footer1.xml")
@@ -649,8 +655,11 @@ async def test_a_footer_table_in_word(tmp_path: Path) -> None:
 
 
 async def test_a_header_table_with_its_logo_and_the_watermark(tmp_path: Path) -> None:
-    """L'en-tête en table : le logo dans sa cellule, les lignes sous la table, centrées ;
-    le filigrane dans le paragraphe qui clôt l'en-tête, pas dans une cellule."""
+    """L'en-tête en table.
+
+    Le logo dans sa cellule, les lignes sous la table, centrées ; le filigrane dans le
+    paragraphe qui clôt l'en-tête, pas dans une cellule.
+    """
     charte = {
         "header_title": {"base": "header", "align": "right"},
         "page": {
@@ -913,8 +922,11 @@ async def test_a_section_of_fixed_text(tmp_path: Path) -> None:
 
 
 async def test_proposed_styles(tmp_path: Path) -> None:
-    """Un style à toi qui a une description : proposé au modèle de langage, sur son type de
-    bloc ; la charte dans la description de l'outil, le style d'un modèle à sa lecture."""
+    """Un style à toi qui a une description.
+
+    Proposé au modèle de langage, sur son type de bloc ; la charte dans la description
+    de l'outil, le style d'un modèle à sa lecture.
+    """
     charte = {
         "important_note": {
             "base": "note",
@@ -987,9 +999,12 @@ def test_the_files_first_then_the_bases() -> None:
 
 
 def test_the_property_registry_is_the_only_list() -> None:
-    """Le registre est la seule liste des propriétés : le fichier lu (``Props``) et le style
-    résolu (``Look``) en ont les noms, ni plus ni moins ; chacune dit sa valeur et son rôle ;
-    une propriété propre va à des styles prévus, et une commune n'a pas de propriétaire."""
+    """Le registre est la seule liste des propriétés.
+
+    Le fichier lu (``Props``) et le style résolu (``Look``) en ont les noms, ni plus ni
+    moins ; chacune dit sa valeur et son rôle ; une propriété propre va à des styles
+    prévus, et une commune n'a pas de propriétaire.
+    """
     assert set(Props.model_fields) == PROPERTY_NAMES
     assert set(Look.__dataclass_fields__) == PROPERTY_NAMES - {"base", "description"}
     assert len(PROPERTY_NAMES) == len(PROPERTIES)  # pas de doublon
@@ -1013,8 +1028,7 @@ DOCS: Final = Path(__file__).resolve().parents[2] / "docs"
 
 
 def _rows(text: str, section: str) -> list[list[str]]:
-    """Les lignes des tableaux d'une section (« ## 8. ») de ``docs/style_format.md``,
-    cellule par cellule, celles qui commencent par un nom."""
+    """Les lignes des tableaux d'une section (« ## 8. ») de ``docs/style_format.md``, cellule par cellule, celles qui commencent par un nom."""
     part = text.split(f"\n## {section}. ", 1)[1].split("\n## ", 1)[0]
     return [[cell.strip() for cell in line.strip()[1:-1].split("|")] for line in part.splitlines() if line.startswith("| `")]
 
@@ -1024,10 +1038,13 @@ def _named(cell: str) -> list[str]:
 
 
 def test_the_format_document_matches_the_registry() -> None:
-    """``docs/style_format.md`` dit le format tel que le code le lit : chaque propriété du
-    registre (§ 8), sa famille, son unité, les styles qui la portent ; chaque style prévu et
-    sa base (§ 7), et, sur la ligne de chaque style qui porte une propriété propre, cette
-    propriété ; chaque réglage (§ 5). La doc des outils les nomme tous."""
+    """``docs/style_format.md`` dit le format tel que le code le lit.
+
+    Chaque propriété du registre (§ 8), sa famille, son unité, les styles qui la portent
+    ; chaque style prévu et sa base (§ 7), et, sur la ligne de chaque style qui porte
+    une propriété propre, cette propriété ; chaque réglage (§ 5). La doc des outils les
+    nomme tous.
+    """
     text = (DOCS / "style_format.md").read_text(encoding="utf-8")
     properties = {name: cells for cells in _rows(text, "8") for name in _named(cells[0])}
     assert set(properties) == PROPERTY_NAMES
@@ -1059,8 +1076,7 @@ def test_the_format_document_matches_the_registry() -> None:
 
 
 def test_keys_renamed_in_2_0_21_are_refused_with_their_new_name() -> None:
-    """Le format des styles de 2.0.21 (docs/style_format.md) : une clé d'avant est refusée
-    avec celle qui la remplace."""
+    """Le format des styles de 2.0.21 (docs/style_format.md) : une clé d'avant est refusée avec celle qui la remplace."""
     for given, said in (
         ({"text": {"font": "Arial"}}, r"text → body : le style de base s'appelle body"),
         ({"page": {"size": "A4"}}, r"page\.size → page\.paper : renommé en 2\.0\.21"),
@@ -1097,9 +1113,11 @@ def test_keys_renamed_in_2_0_21_are_refused_with_their_new_name() -> None:
 
 
 async def test_a_right_rule_vertical_borders_and_the_vertical_alignment(tmp_path: Path) -> None:
-    """``border_right`` (un filet à droite, enfin), ``borders: vertical`` (les filets entre
-    colonnes et sur les côtés), ``valign`` d'un tableau : centré par default.yaml, en haut
-    si la charte le dit ; dans une table de pied, celui du style de la cellule."""
+    """``border_right`` (un filet à droite, enfin), ``borders: vertical`` (les filets entre colonnes et sur les côtés), ``valign`` d'un tableau.
+
+    Centré par default.yaml, en haut si la charte le dit ; dans une table de pied, celui
+    du style de la cellule.
+    """
     spec = {
         "note": {"border_right": "1pt 1F3A5F"},
         "table": {"borders": "vertical", "valign": "top"},
@@ -1127,10 +1145,12 @@ async def test_a_right_rule_vertical_borders_and_the_vertical_alignment(tmp_path
 
 
 def test_lengths_and_shares_take_their_unit() -> None:
-    """Une longueur prend son unité (pt, mm, cm, in), et un nombre seul celle de sa
-    propriété : pt pour la typographie et les espacements, cm pour la géométrie ; une
-    largeur de section ou de colonne, une proportion (%). Le même style, écrit des deux
-    façons, est le même."""
+    """Une longueur prend son unité (pt, mm, cm, in), et un nombre seul celle de sa propriété.
+
+    Pt pour la typographie et les espacements, cm pour la géométrie ; une largeur de
+    section ou de colonne, une proportion (%). Le même style, écrit des deux façons, est
+    le même.
+    """
     written = {
         "body": {"size": "11pt", "space_after": "0,5cm", "indent": "3mm"},
         "fields": {"label_width": "40mm"},
@@ -1165,9 +1185,12 @@ def test_lengths_and_shares_take_their_unit() -> None:
 
 
 def test_one_to_four_lengths_in_the_order_of_css() -> None:
-    """``border_space`` et ``padding`` : une à quatre longueurs, dans l'ordre de CSS (une :
-    les quatre côtés ; deux : en haut et en bas, puis les côtés ; trois : en haut, les
-    côtés, en bas ; quatre : en haut, à droite, en bas, à gauche)."""
+    """``border_space`` et ``padding``.
+
+    Une à quatre longueurs, dans l'ordre de CSS (une : les quatre côtés ; deux : en haut
+    et en bas, puis les côtés ; trois : en haut, les côtés, en bas ; quatre : en haut, à
+    droite, en bas, à gauche).
+    """
     for given, sides in (
         ("4pt", (4.0, 4.0, 4.0, 4.0)),
         ("4pt 8pt", (4.0, 8.0, 4.0, 8.0)),
@@ -1191,11 +1214,13 @@ def test_one_to_four_lengths_in_the_order_of_css() -> None:
 
 
 async def test_the_distances_and_spaces_of_the_page_come_from_the_style(tmp_path: Path) -> None:
-    """Les distances et les espaces que le code écrivait en dur viennent du style
-    (default.yaml, et la charte qui les change) : l'en-tête et le pied au bord, l'écart et
-    l'espace après des sections côte à côte, le cadre d'une section, l'écart entre un filet
-    et le texte, les marges et l'espace autour d'un tableau, les retraits d'une liste et du
-    sommaire, la place pour signer, l'espace après une image et un graphique."""
+    """Les distances et les espaces que le code écrivait en dur viennent du style (default.yaml, et la charte qui les change).
+
+    L'en-tête et le pied au bord, l'écart et l'espace après des sections côte à côte, le
+    cadre d'une section, l'écart entre un filet et le texte, les marges et l'espace
+    autour d'un tableau, les retraits d'une liste et du sommaire, la place pour signer,
+    l'espace après une image et un graphique.
+    """
     spec: dict[str, Any] = {
         "page": {"header_distance": "2cm", "footer_distance": "8mm", "beside_gap": "1cm", "beside_space": "12pt"},
         "image": {"space_after": 9},
@@ -1253,9 +1278,11 @@ async def test_the_distances_and_spaces_of_the_page_come_from_the_style(tmp_path
 
 
 async def test_the_spacing_of_a_band_table_is_around_it(tmp_path: Path) -> None:
-    """L'espace avant et après du style d'une table d'en-tête ou de pied vaut autour
-    d'elle : un paragraphe de sa hauteur avant, l'espace avant le paragraphe qui la clôt ;
-    ses cellules n'ont que ce que leur style écrit en plus (0 sans lui)."""
+    """L'espace avant et après du style d'une table d'en-tête ou de pied vaut autour d'elle.
+
+    Un paragraphe de sa hauteur avant, l'espace avant le paragraphe qui la clôt ; ses
+    cellules n'ont que ce que leur style écrit en plus (0 sans lui).
+    """
     spec = {
         "footer": {"space_before": 4, "space_after": 6},
         "footer_page": {"base": "footer", "space_after": 2},
@@ -1590,8 +1617,7 @@ async def test_libreoffice_lays_out_the_report(tmp_path: Path, soffice: str) -> 
 
 
 async def test_sections_survive_libreoffice(tmp_path: Path, soffice: str) -> None:
-    """Un document repris par LibreOffice (docx → docx) : ses signets restent, ses sections
-    se relisent, côte à côte comprises."""
+    """Un document repris par LibreOffice (docx → docx) : ses signets restent, ses sections se relisent, côte à côte comprises."""
     tool = styled(tmp_path)
     path = await write_sections(tool, "facture", "facture", FACTURE_SECTIONS, title="Facture")
     again = convert(soffice, path, tmp_path / "repris", "docx:MS Word 2007 XML")

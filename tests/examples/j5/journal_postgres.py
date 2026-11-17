@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.3a : le journal en Postgres, et la barrière que la base pose elle-même.
+r"""Phase 5.3a : le journal en Postgres, et la barrière que la base pose elle-même.
 
     uv run --extra postgres python tests/examples/j5/journal_postgres.py
     uv run --extra postgres python tests/examples/j5/journal_postgres.py --cas barriere
-    uv run --extra postgres python tests/examples/j5/journal_postgres.py \\
+    uv run --extra postgres python tests/examples/j5/journal_postgres.py \
         --dsn postgresql://loom:loom@127.0.0.1:5432/loom
-    uv run --env-file .env --extra postgres --extra anthropic --extra openai \\
+    uv run --env-file .env --extra postgres --extra anthropic --extra openai \
         python tests/examples/j5/journal_postgres.py --reel
 
 Il faut un vrai Postgres : l'exemple dit quoi lancer s'il n'en trouve pas, et

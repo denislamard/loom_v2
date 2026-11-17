@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.1a : deux artisans, un seul agent, et rien qui passe de l'un à l'autre.
+r"""Phase 5.1a : deux artisans, un seul agent, et rien qui passe de l'un à l'autre.
 
     uv run python tests/examples/j5/clients.py                        # les quatre cas
     uv run python tests/examples/j5/clients.py --cas isolation
     uv run python tests/examples/j5/clients.py --cas surcharges
     uv run --extra mcp python tests/examples/j5/clients.py --cas mcp
     uv run --extra http --extra mcp python tests/examples/j5/clients.py --cas acces
-    uv run --env-file .env --extra http --extra mcp --extra anthropic \\
+    uv run --env-file .env --extra http --extra mcp --extra anthropic \
         --extra openai python tests/examples/j5/clients.py --reel
 
 Config : ``tests/examples/j5/relance/``, reprise de celle du jalon J4 et complétée

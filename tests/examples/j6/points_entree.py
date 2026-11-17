@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.4b : des outils fournis par un paquet installé (points d'entrée ``loom_ia.tools``).
+r"""Phase 6.4b : des outils fournis par un paquet installé (points d'entrée ``loom_ia.tools``).
 
     uv run python tests/examples/j6/points_entree.py                 # tous les cas
     uv run python tests/examples/j6/points_entree.py --cas source
     uv run python tests/examples/j6/points_entree.py --cas absent
     uv run python tests/examples/j6/points_entree.py --cas doublon
-    uv run --env-file .env --extra anthropic \\
+    uv run --env-file .env --extra anthropic \
         python tests/examples/j6/points_entree.py --reel
 
 Le paquet : ``carnet-devis`` (module ``carnet_devis``), le carnet de devis d'un
@@ -172,8 +172,7 @@ class Controle:
         return "oui" if vrai else "NON"
 
     def saute(self, quoi: str, *, partie: bool = False) -> None:
-        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire,
-        sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
+        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire, sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
         (self.parties if partie else self.sautes).append(quoi)
 
     def bilan(self, joues: int) -> bool | None:

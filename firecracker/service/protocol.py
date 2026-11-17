@@ -54,6 +54,7 @@ class ExecdError(Exception):
         self.detail = detail
 
     def as_payload(self) -> dict[str, Any]:
+        """L'erreur telle que le client la reçoit : ``{ok: false, error: {kind, message, detail}}``."""
         err: dict[str, Any] = {"kind": self.kind, "message": self.message}
         if self.detail:
             err["detail"] = self.detail
@@ -77,11 +78,11 @@ class Conn:
 
     @property
     def sock(self) -> socket.socket:
+        """Le socket de la connexion."""
         return self._sock
 
     async def _recv_exactly(self, n: int) -> bytes:
-        """Lit exactement n octets. TCP/vsock ne garantit pas la taille d'un
-        segment : un `recv(n)` unique renverrait couramment moins."""
+        """Lit exactement n octets. TCP/vsock ne garantit pas la taille d'un segment : un `recv(n)` unique renverrait couramment moins."""
         if n == 0:
             return b""
         buf = bytearray()
@@ -93,6 +94,12 @@ class Conn:
         return bytes(buf)
 
     async def read_frame(self) -> tuple[dict[str, Any], bytes]:
+        """Lit une trame : longueur et en-tête JSON, longueur et corps.
+
+        Raises:
+            ProtocolError: Longueur hors bornes, ou en-tête qui n'est pas un objet JSON.
+            ConnectionClosed: La connexion s'est fermée.
+        """
         raw = await self._recv_exactly(4)
         header_len = int.from_bytes(raw, "big")
         if header_len == 0 or header_len > MAX_HEADER:
@@ -117,6 +124,11 @@ class Conn:
         return header, body
 
     async def write_frame(self, header: dict[str, Any], body: bytes = b"") -> None:
+        """Écrit une trame en un seul envoi.
+
+        Raises:
+            ProtocolError: En-tête ou corps trop grand.
+        """
         # separators compact : le header voyage souvent a vide ou presque,
         # autant ne pas payer les espaces.
         header_bytes = json.dumps(header, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -131,6 +143,7 @@ class Conn:
         await self._loop.sock_sendall(self._sock, frame)
 
     def close(self) -> None:
+        """Ferme le socket, sans erreur s'il l'est déjà."""
         try:
             self._sock.close()
         except OSError:

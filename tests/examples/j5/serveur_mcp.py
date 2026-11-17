@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.2b : le serveur MCP en HTTP, et la clé qui dit le client.
+r"""Phase 5.2b : le serveur MCP en HTTP, et la clé qui dit le client.
 
     uv run --extra http --extra mcp python tests/examples/j5/serveur_mcp.py
     uv run --extra http --extra mcp python tests/examples/j5/serveur_mcp.py --cas clients
     uv run --extra http --extra mcp python tests/examples/j5/serveur_mcp.py --cas portees
     uv run --extra http --extra mcp python tests/examples/j5/serveur_mcp.py --cas transport
-    uv run --env-file .env --extra http --extra mcp --extra anthropic \\
+    uv run --env-file .env --extra http --extra mcp --extra anthropic \
         --extra openai python tests/examples/j5/serveur_mcp.py --reel
 
 Config : ``tests/examples/j5/relance/``, celle de 5.1a, plus des clés posées **en

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.5b : le sceau — contenus illisibles au repos, une clé par client.
+r"""Phase 5.5b : le sceau — contenus illisibles au repos, une clé par client.
 
     uv run --extra crypto python tests/examples/j5/chiffrement.py        # les trois cas
     uv run --extra crypto python tests/examples/j5/chiffrement.py --cas scelle
     uv run --extra crypto python tests/examples/j5/chiffrement.py --cas efface
     uv run --extra crypto python tests/examples/j5/chiffrement.py --cas clients
-    uv run --env-file .env --extra crypto --extra anthropic --extra openai \\
+    uv run --env-file .env --extra crypto --extra anthropic --extra openai \
         python tests/examples/j5/chiffrement.py --reel
 
 Un seul extra en plus des modèles : ``crypto``. Le journal, les fichiers et

@@ -1205,8 +1205,10 @@ async def test_reading_a_template_the_tool_does_not_know(modeled: WordTool, tool
 
 
 async def test_a_document_whose_sections_are_lost(modeled: WordTool, disk: Path) -> None:
-    """Un document qui dit suivre un modèle, sans les signets de ses sections (écrit avant
-    2.1.0, ou dont on a coupé et recollé les sections) : relu en document libre."""
+    """Un document qui dit suivre un modèle, sans les signets de ses sections (écrit avant 2.1.0, ou dont on a coupé et recollé les sections).
+
+    Relu en document libre.
+    """
     await call(
         modeled,
         path="sortie/r.docx",
@@ -1277,8 +1279,7 @@ def test_templates_are_read_when_the_config_loads(demo: ConfigFactory, tmp_path:
 
 
 def test_a_shape_and_its_fallback_count_once() -> None:
-    """B-2 : Word range une forme deux fois, en dessin (``mc:Choice``) et en VML de secours
-    (``mc:Fallback``) ; la relecture ne la compte qu'une fois."""
+    """B-2 : Word range une forme deux fois, en dessin (``mc:Choice``) et en VML de secours (``mc:Fallback``) ; la relecture ne la compte qu'une fois."""
     mc = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
     shape = f'<w:r><mc:AlternateContent {mc}><mc:Choice Requires="wps"><w:drawing/></mc:Choice><mc:Fallback><w:pict/></mc:Fallback></mc:AlternateContent></w:r>'
     body = f"<w:p>{shape}<w:r><w:t>Une zone de texte, puis une image.</w:t></w:r></w:p><w:p><w:r><w:drawing/></w:r></w:p><w:p>{shape}</w:p>"
@@ -1288,7 +1289,7 @@ def test_a_shape_and_its_fallback_count_once() -> None:
 
 
 async def test_windows_line_endings_become_line_breaks(tool: WordTool, disk: Path) -> None:
-    """B-3 : un \\r\\n ou un \\r venu du modèle est un saut de ligne, pas un \\r dans le XML."""
+    r"""B-3 : un \r\n ou un \r venu du modèle est un saut de ligne, pas un \r dans le XML."""
     await call(
         tool,
         path="sortie/crlf.docx",
@@ -1439,9 +1440,12 @@ async def test_a_document_without_rich_text_has_no_footnotes(disk: Path) -> None
 
 
 async def test_reads_links_notes_and_references_from_elsewhere(disk: Path) -> None:
-    """Un document d'ailleurs : un renvoi en champ complexe (celui qu'écrit Word) ou en lien
-    interne, vers un signet de titre ; une note de fin ; un lien hors des schémas permis
-    revient en texte ; un renvoi vers un signet qui n'est pas un titre, son texte."""
+    """Un document d'ailleurs.
+
+    Un renvoi en champ complexe (celui qu'écrit Word) ou en lien interne, vers un signet
+    de titre ; une note de fin ; un lien hors des schémas permis revient en texte ; un
+    renvoi vers un signet qui n'est pas un titre, son texte.
+    """
     hyperlink = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
     rels = "http://schemas.openxmlformats.org/package/2006/relationships"
     r = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'

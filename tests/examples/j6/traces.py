@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.1 : les traces d'un run dans un collecteur OpenTelemetry, ses échanges, ses logs.
+r"""Phase 6.1 : les traces d'un run dans un collecteur OpenTelemetry, ses échanges, ses logs.
 
     uv run --extra otel python tests/examples/j6/traces.py                  # les cinq cas
     uv run --extra otel python tests/examples/j6/traces.py --cas otel
     uv run --extra otel python tests/examples/j6/traces.py --cas otel --collecteur http://localhost:4318
-    uv run --env-file .env --extra otel --extra anthropic --extra openai \\
+    uv run --env-file .env --extra otel --extra anthropic --extra openai \
         python tests/examples/j6/traces.py --reel
 
 Les cas demandent l'extra ``otel``, sauf ``logs`` ; sans lui, ils se sautent

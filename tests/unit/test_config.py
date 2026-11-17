@@ -510,8 +510,7 @@ def test_each_config_gets_its_own_neighbour_modules(tmp_path: Path) -> None:
 
 
 def test_a_module_loom_did_not_import_as_a_neighbour_is_never_replaced(tmp_path: Path) -> None:
-    """Un module de la bibliothèque standard que deux dossiers de config ombreraient reste le
-    même."""
+    """Un module de la bibliothèque standard que deux dossiers de config ombreraient reste le même."""
     avant = sys.modules["json"]
     for folder in (tmp_path / "a", tmp_path / "b"):
         folder.mkdir()

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.5a : les profils dev et prod — la même config, deux exigences.
+r"""Phase 5.5a : les profils dev et prod — la même config, deux exigences.
 
     uv run python tests/examples/j5/profils.py                     # les trois cas
     uv run python tests/examples/j5/profils.py --cas provenance
     uv run python tests/examples/j5/profils.py --cas durcit
     uv run python tests/examples/j5/profils.py --cas assouplit
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j5/profils.py --reel
 
 Config : ``tests/examples/j5/relance/``, celle de 5.1a. Les surcharges et les

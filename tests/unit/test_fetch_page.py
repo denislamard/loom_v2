@@ -631,8 +631,11 @@ async def test_an_element_without_known_end_is_no_landmark(web: Web) -> None:
 
 
 async def test_a_long_site_header_no_longer_hides_the_content(web: Web) -> None:
-    """La structure de la page de cours de Boursorama : un en-tête de site de plus de
-    20 000 caractères, puis main, qui commence par l'en-tête de la fiche (titre et cours)."""
+    """La structure de la page de cours de Boursorama.
+
+    Un en-tête de site de plus de 20 000 caractères, puis main, qui commence par
+    l'en-tête de la fiche (titre et cours).
+    """
     menus = "".join(f'<li><a href="/rubrique/{n}">Rubrique {n}</a></li>' for n in range(1500))
     html = f"""<a href="#main-content">Aller au contenu principal</a>
     <header class="l-header"><nav><ul>{menus}</ul></nav></header>

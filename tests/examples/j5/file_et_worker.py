@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.3b : la file chez un courtier, et les workers qui mènent les runs.
+r"""Phase 5.3b : la file chez un courtier, et les workers qui mènent les runs.
 
     uv run --extra rabbitmq python tests/examples/j5/file_et_worker.py
     uv run --extra rabbitmq python tests/examples/j5/file_et_worker.py --cas reprise
-    uv run --extra rabbitmq python tests/examples/j5/file_et_worker.py \\
+    uv run --extra rabbitmq python tests/examples/j5/file_et_worker.py \
         --url amqp://loom:loom@127.0.0.1:5672/
-    uv run --env-file .env --extra rabbitmq --extra anthropic --extra openai \\
+    uv run --env-file .env --extra rabbitmq --extra anthropic --extra openai \
         python tests/examples/j5/file_et_worker.py --reel
 
 Il faut un vrai RabbitMQ : l'exemple dit quoi lancer s'il n'en trouve pas.

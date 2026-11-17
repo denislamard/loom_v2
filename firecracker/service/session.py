@@ -227,15 +227,15 @@ def _shortened(text: str, budget: int) -> tuple[str, bool]:
 
 
 def _fitted(reply: dict) -> dict:
-    """La reponse ramenee a la taille d'un en-tete de trame, ou remplacee par une erreur.
+    r"""La reponse ramenee a la taille d'un en-tete de trame, ou remplacee par une erreur.
 
     stdout et stderr sont limites en OCTETS (CAPTURE_LIMIT), mais voyagent en JSON :
-    un octet de controle y coute six octets (\\u00XX), un guillemet deux. Deux flux
+    un octet de controle y coute six octets (\u00XX), un guillemet deux. Deux flux
     pleins peuvent donc depasser seuls MAX_HEADER. Ils sont alors raccourcis, par
     moities successives et en le disant (`stdout_truncated`, `stderr_truncated`),
     jusqu'a ce que la reponse tienne. Si le reste — resultat, manifeste de out/ — ne
     tient pas non plus, ou si un texte n'est pas de l'UTF-8 (result.json peut porter
-    un « \\ud800 » : du JSON valide, mais pas du texte), le client recoit une erreur
+    un « \ud800 » : du JSON valide, mais pas du texte), le client recoit une erreur
     qui le dit, et non une connexion coupee sans un mot.
     """
     fitted = dict(reply)
@@ -307,6 +307,8 @@ class _ConnectionEnded(Exception):
 
 
 class Session:
+    """Une session : ses dossiers, son état, et les méthodes du protocole."""
+
     def __init__(self, conn: Conn, cfg: Any, exec_sem: asyncio.Semaphore) -> None:
         self.conn = conn
         self.cfg = cfg
@@ -321,6 +323,7 @@ class Session:
 
     # -- cycle de vie ------------------------------------------------------ #
     def setup(self) -> None:
+        """Crée la racine de la session et ses dossiers ``code/``, ``in/``, ``out/``, ``work/`` et ``run/``, ceux-ci au compte sandbox."""
         # La racine de session RESTE a root (0711) : le compte sandbox la traverse, mais
         # n'y peut ni creer, ni renommer, ni supprimer. Il ne peut donc ni remplacer
         # code/, in/, out/, work/ par un lien, ni poser un piege a cote de job.json — ce
@@ -390,6 +393,10 @@ class Session:
 
     # -- boucle ------------------------------------------------------------ #
     async def serve(self) -> None:
+        """Sert les trames de la connexion jusqu'à sa fermeture, une méthode à la fois.
+
+        Pendant un job, la lecture continue pour voir la connexion se fermer.
+        """
         # La lecture de la trame suivante, quand elle a ete lancee pendant un
         # job : la boucle la reprend telle quelle, sans en lancer une autre.
         reading: asyncio.Future | None = None
@@ -470,6 +477,11 @@ class Session:
                 job.cancel()
 
     async def dispatch(self, method: Any, header: dict, body: bytes) -> tuple[dict, bytes]:
+        """Appelle le gestionnaire de la méthode.
+
+        Raises:
+            ExecdError: Méthode inconnue, ou ``file.get`` avant la fin d'un job.
+        """
         handlers = {
             "hello": self.m_hello,
             "file.put": self.m_file_put,
@@ -492,6 +504,7 @@ class Session:
 
     # -- methodes ---------------------------------------------------------- #
     async def m_hello(self, header: dict, body: bytes) -> tuple[dict, bytes]:
+        """``hello`` : vérifie la version du protocole, et rend la session, les versions et les plafonds."""
         asked = header.get("protocol", PROTOCOL_VERSION)
         if asked != PROTOCOL_VERSION:
             raise ExecdError(
@@ -595,12 +608,19 @@ class Session:
         return {"ok": True, "path": rel, "written": len(body), "total": total}, b""
 
     async def m_file_put(self, header: dict, body: bytes) -> tuple[dict, bytes]:
+        """``file.put`` : écrit un morceau de fichier dans ``in/``."""
         return await self._put(header, body, "in", is_code=False)
 
     async def m_code_put(self, header: dict, body: bytes) -> tuple[dict, bytes]:
+        """``code.put`` : écrit un morceau de code dans ``code/``."""
         return await self._put(header, body, "code", is_code=True)
 
     async def m_file_get(self, header: dict, body: bytes) -> tuple[dict, bytes]:
+        """``file.get`` : lit un morceau d'un fichier de ``out/`` (8 Mo au plus).
+
+        Raises:
+            ExecdError: Fichier absent ou illisible.
+        """
         rel = header.get("path")
         target = safe_join(self.root / "out", rel)
         offset = int(header.get("offset", 0) or 0)
@@ -623,6 +643,7 @@ class Session:
         }, data
 
     async def m_reset(self, header: dict, body: bytes) -> tuple[dict, bytes]:
+        """``reset`` : arrête le job en cours, vide la session et la remet à l'état ``READY``."""
         self._close_handles()
         if self._proc is not None and self._proc.returncode is None:
             self._kill_group()
@@ -639,6 +660,11 @@ class Session:
 
     # -- execution --------------------------------------------------------- #
     async def m_tool_exec(self, header: dict, body: bytes) -> tuple[dict, bytes]:
+        """``tool.exec`` : exécute le point d'entrée dans le runner, sous les limites demandées, et rend son résultat et le manifeste de ``out/``.
+
+        Raises:
+            ExecdError: Point d'entrée ou arguments invalides, ou limites au-delà des plafonds.
+        """
         entrypoint = header.get("entrypoint")
         if not isinstance(entrypoint, str) or not entrypoint:
             raise ExecdError("protocol", "entrypoint manquant")

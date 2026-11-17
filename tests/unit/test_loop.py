@@ -1702,7 +1702,6 @@ async def test_a_pilot_whose_claim_was_taken_writes_nothing_more(store: EventSto
 
 async def test_a_claim_taken_then_handed_back_still_stops_the_former_pilot(store: EventStore, ticks: Ticks) -> None:
     """Un autre a pris le run puis l'a rendu : l'état de l'ancien pilote est périmé."""
-
     seen: list[RunState] = []
 
     async def taken_and_back(run: RunState) -> None:

@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.2 : rejouer un run, à l'identique ou en variante, voir où il s'écarte, le relire.
+r"""Phase 6.2 : rejouer un run, à l'identique ou en variante, voir où il s'écarte, le relire.
 
     uv run python tests/examples/j6/replay.py                       # les cinq cas
     uv run python tests/examples/j6/replay.py --cas identique
     uv run python tests/examples/j6/replay.py --cas variante
     uv run --extra http --extra mcp python tests/examples/j6/replay.py --cas inspect
     uv run --extra sqlite python tests/examples/j6/replay.py --cas j4    # tes runs de J4, rejoués
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j6/replay.py --reel
 
 Config des cas ``identique``, ``divergence`` et ``inspect`` :
@@ -114,8 +114,7 @@ class Controle:
         return "oui" if vrai else "NON"
 
     def saute(self, quoi: str, *, partie: bool = False) -> None:
-        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire,
-        sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
+        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire, sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
         (self.parties if partie else self.sautes).append(quoi)
 
     def bilan(self, joues: int) -> bool | None:
@@ -155,8 +154,7 @@ def deplacee(
     prompt_main: str | None = None,
     prompt_role: str | None = None,
 ) -> LoomConfig:
-    """La config de ``relance/`` (ou ``depuis``), journal dans ``dossier`` ; un prompt
-    changé si demandé.
+    """La config de ``relance/`` (ou ``depuis``), journal dans ``dossier`` ; un prompt changé si demandé.
 
     Le prompt changé est celui du fichier **plus une phrase** : c'est la plus
     petite modification qui change une requête.

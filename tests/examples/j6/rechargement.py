@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.4a : ``loom serve --reload`` — le serveur relancé quand un fichier de la config change.
+r"""Phase 6.4a : ``loom serve --reload`` — le serveur relancé quand un fichier de la config change.
 
     uv run --extra http python tests/examples/j6/rechargement.py                  # tous les cas
     uv run --extra http python tests/examples/j6/rechargement.py --cas prompt
@@ -7,7 +7,7 @@
     uv run --extra http python tests/examples/j6/rechargement.py --cas casse
     uv run --extra http python tests/examples/j6/rechargement.py --cas donnees
     uv run --extra http python tests/examples/j6/rechargement.py --cas prod
-    uv run --env-file .env --extra http --extra anthropic --extra openai \\
+    uv run --env-file .env --extra http --extra anthropic --extra openai \
         python tests/examples/j6/rechargement.py --reel
 
 Config : celle de J4 (``tests/examples/j4/relance/``), **copiée** dans un dossier
@@ -104,8 +104,7 @@ class Controle:
         return "oui" if vrai else "NON"
 
     def saute(self, quoi: str, *, partie: bool = False) -> None:
-        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire,
-        sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
+        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire, sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
         (self.parties if partie else self.sautes).append(quoi)
 
     def bilan(self, joues: int) -> bool | None:
@@ -165,8 +164,7 @@ def port_libre() -> int:
 
 
 def lancer(fichier: Path, console: Path, environ: dict[str, str], *options: str) -> tuple[subprocess.Popen[bytes], int]:
-    """``loom serve --reload`` sur la copie, sa console dans ``console`` ; rend le process et son
-    port."""
+    """``loom serve --reload`` sur la copie, sa console dans ``console`` ; rend le process et son port."""
     port = port_libre()
     sortie = console.open("ab")
     process = subprocess.Popen(
@@ -237,8 +235,7 @@ def compte(console: Path, ligne: str) -> int:
 
 
 def releve(console: Path, process: subprocess.Popen[bytes], changer: Callable[[], object]) -> tuple[str, str]:
-    """Fait un changement et attend que le superviseur ait tranché ; rend son verdict et ce qu'il
-    a dit.
+    """Fait un changement et attend que le superviseur ait tranché ; rend son verdict et ce qu'il a dit.
 
     Le verdict : ``recharge``, ``refuse``, ou ``rien`` si rien n'est venu dans le délai.
     """
