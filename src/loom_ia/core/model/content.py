@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Blocs de contenu des messages et résultat d'outil (#8, #15).
+"""Blocs de contenu des messages et résultat d'outil (points 8 et 15, fonctions B2 et D8).
 
 Le format est neutre : chaque adaptateur de modèle le traduit vers le format
 de son fournisseur. Les données propres à un fournisseur (signature du
 raisonnement, identifiant d'item…) vivent dans ``provider_meta``, typé par
 fournisseur ; un adaptateur ne lit que son entrée.
+
+Blocs, par ``type`` : ``text``, ``json``, ``artifact`` (référence d'un
+fichier), ``inline_data`` (octets de passage, jamais journalisés),
+``reasoning``, ``tool_call`` et ``tool_result``. Un résultat d'outil
+(``ToolOutput``) ne porte que des blocs de sortie : texte, JSON, référence ou
+octets.
 """
 
 from typing import Annotated, Literal, Self, cast
@@ -15,33 +21,59 @@ from loom_ia.core.model.base import DomainModel
 
 
 class AnthropicMeta(DomainModel):
+    """Données d'un bloc propres à Anthropic, à renvoyer telles quelles au fournisseur (point 8).
+
+    Attributes:
+        provider: ``anthropic``.
+        signature: Signature d'un bloc de raisonnement.
+        redacted_data: Raisonnement masqué par le fournisseur, opaque.
+    """
+
     provider: Literal["anthropic"] = "anthropic"
     signature: str | None = None
     redacted_data: str | None = None
 
 
 class OpenAIMeta(DomainModel):
+    """Données d'un bloc propres aux API OpenAI et compatibles, à renvoyer au fournisseur (point 8).
+
+    Attributes:
+        provider: ``openai``.
+        item_id: API Responses : identifiant de l'élément de raisonnement.
+        encrypted_content: API Responses : son contenu chiffré, à renvoyer.
+        reasoning_field: API Chat : champ où le fournisseur a donné le
+            raisonnement (``reasoning``, ``reasoning_content``) ; il y est
+            renvoyé (point 7, backlog #015).
+    """
+
     provider: Literal["openai"] = "openai"
-    # API Responses : élément de raisonnement et son contenu chiffré, à renvoyer.
     item_id: str | None = None
     encrypted_content: str | None = None
-    # API Chat : champ où le fournisseur a donné le raisonnement (``reasoning``,
-    # ``reasoning_content``) ; il y est renvoyé (#7, backlog #015).
     reasoning_field: str | None = None
 
 
 type ProviderMeta = Annotated[AnthropicMeta | OpenAIMeta, Field(discriminator="provider")]
+"""Données propres à un fournisseur, discriminées par ``provider``."""
 
 
 class _Block(DomainModel):
-    # Point de cache neutre (#8) : chaque adaptateur le traduit.
+    """Champs communs à tous les blocs de contenu.
+
+    Attributes:
+        cache_breakpoint: Point de cache neutre (point 8) : chaque adaptateur
+            le traduit (``cache_control`` pour Anthropic). Défaut : faux.
+        provider_meta: Fournisseur → ses données propres. Écrites
+            ``{"anthropic": {"signature": …}}``, le fournisseur se déduit de la
+            clé ; la clé et le ``provider`` doivent s'accorder.
+    """
+
     cache_breakpoint: bool = False
     provider_meta: dict[str, ProviderMeta] = Field(default_factory=dict)
 
     @field_validator("provider_meta", mode="before")
     @classmethod
     def _infer_provider(cls, value: object) -> object:
-        # {"anthropic": {"signature": …}} : le fournisseur est déduit de la clé.
+        """Déduit ``provider`` de la clé : ``{"anthropic": {"signature": …}}``."""
         if not isinstance(value, dict):
             return value
         result: dict[object, object] = {}
@@ -55,6 +87,7 @@ class _Block(DomainModel):
 
     @model_validator(mode="after")
     def _check_provider_keys(self) -> Self:
+        """Refuse une entrée dont la clé n'est pas son fournisseur."""
         for key, meta in self.provider_meta.items():
             if key != meta.provider:
                 raise ValueError(f"provider_meta[{key!r}] contient des données du fournisseur {meta.provider!r}")
@@ -62,17 +95,42 @@ class _Block(DomainModel):
 
 
 class TextBlock(_Block):
+    """Bloc de texte.
+
+    Attributes:
+        type: ``text``.
+        text: Le texte.
+    """
+
     type: Literal["text"] = "text"
     text: str
 
 
 class JsonBlock(_Block):
+    """Bloc de données JSON, dans un résultat d'outil.
+
+    Attributes:
+        type: ``json``.
+        data: Les données.
+    """
+
     type: Literal["json"] = "json"
     data: JsonValue
 
 
 class ArtifactRefBlock(_Block):
-    """Référence vers un fichier du stockage d'artefacts, jamais ses octets."""
+    """Référence vers un fichier du stockage d'artefacts, jamais ses octets.
+
+    Le moteur résout les références en octets (``InlineDataBlock``) au moment
+    d'appeler un modèle qui sait lire le fichier (point 14).
+
+    Attributes:
+        type: ``artifact``.
+        uri: Référence du fichier (``artifact://…``).
+        media_type: Type MIME.
+        size: Taille en octets, si elle est connue.
+        name: Nom du fichier, tel que le modèle le voit.
+    """
 
     type: Literal["artifact"] = "artifact"
     uri: str
@@ -86,7 +144,14 @@ class InlineDataBlock(_Block):
 
     Deux usages : le résultat d'un outil avant son stockage (le moteur le
     remplace par un ``ArtifactRefBlock``), et une requête au modèle après la
-    résolution des références (#14).
+    résolution des références (point 14). Un événement qui en porterait est
+    refusé.
+
+    Attributes:
+        type: ``inline_data``.
+        media_type: Type MIME.
+        data: Les octets ; en base64 dans le JSON.
+        name: Nom du fichier.
     """
 
     model_config = ConfigDict(ser_json_bytes="base64", val_json_bytes="base64")
@@ -98,16 +163,34 @@ class InlineDataBlock(_Block):
 
 
 class ReasoningBlock(_Block):
-    """Raisonnement du modèle, neutre vis-à-vis du fournisseur (#7)."""
+    """Raisonnement du modèle, neutre vis-à-vis du fournisseur (point 7).
+
+    Renvoyé au même modèle pendant ses tours d'outils (``thinking``), retiré
+    de l'historique de session.
+
+    Attributes:
+        type: ``reasoning``.
+        text: Texte du raisonnement ; vide s'il est chiffré ou masqué.
+        model_id: Modèle qui l'a produit : après une bascule de modèle, le
+            raisonnement d'un autre modèle est écarté.
+    """
 
     type: Literal["reasoning"] = "reasoning"
     text: str = ""
-    # Modèle qui l'a produit : après une bascule de modèle, le raisonnement
-    # d'un autre fournisseur est écarté.
     model_id: str | None = None
 
 
 class ToolCallBlock(_Block):
+    """Appel d'outil demandé par le modèle, dans un message ``assistant``.
+
+    Attributes:
+        type: ``tool_call``.
+        call_id: Identifiant de l'appel, donné par le modèle.
+        name: Nom de l'outil.
+        arguments: Arguments de l'appel ; quand une politique ou un
+            approbateur les remplace, la conversation montre ceux qui partent.
+    """
+
     type: Literal["tool_call"] = "tool_call"
     call_id: str
     name: str
@@ -115,47 +198,71 @@ class ToolCallBlock(_Block):
 
 
 type OutputBlock = Annotated[TextBlock | JsonBlock | ArtifactRefBlock | InlineDataBlock, Field(discriminator="type")]
+"""Bloc qu'un résultat d'outil peut porter : texte, JSON, référence de fichier ou octets de passage."""
 
 
 class ToolOutput(DomainModel):
-    """Résultat d'un outil (#15)."""
+    """Résultat d'un outil, rendu au modèle et journalisé dans ``tool.completed`` (point 15, fonction D8).
+
+    Attributes:
+        blocks: Ce que le modèle lit : texte, JSON, références de fichiers.
+        data: Données structurées, pour les références ``$ref`` d'un appel
+            suivant, la réponse structurée et l'interface.
+        is_error: Vrai pour un résultat en erreur (``ToolError``, délai,
+            refus) ; le modèle le lit comme tel.
+        artifacts: URI des fichiers produits par l'appel (fonction G3).
+        offloaded: URI du contenu complet quand il a été déporté (au-delà de
+            ``offload_over``) ; les blocs n'en montrent alors qu'un aperçu
+            (point 16).
+        unverified: Sortie gardée bien qu'elle ne respecte pas son contrat
+            (``on_failure: unverified``).
+        fallback: Sortie remplacée par le message de repli d'un contrat ou
+            d'un juge (``on_failure: fallback``) ; omis du journal quand il
+            est faux.
+        state: Écritures du state de la session : ``{clé: valeur}``, ``None``
+            efface la clé. Le journal les garde dans ``tool.completed``, que le
+            rejeu ressert tel quel ; la projection les retire du résultat
+            montré au modèle. Omis quand il est vide : un résultat sans state
+            se sérialise comme avant, et les empreintes des requêtes ne
+            changent pas.
+        state_refused: Écritures du state refusées (décision D8 du state de
+            session) : une ligne par clé, avec le motif. Le résultat reste un
+            succès — l'outil a pu produire son effet — et le modèle lit ces
+            lignes à la suite du résultat (``state_note``). Omis quand il est
+            vide.
+    """
 
     blocks: tuple[OutputBlock, ...] = ()
-    # Données structurées pour $ref, la réponse structurée et l'interface.
     data: JsonValue = None
     is_error: bool = False
-    # URI des artefacts produits (G3).
     artifacts: tuple[str, ...] = ()
-    # URI du contenu complet quand il a été déporté ; les blocs n'en montrent
-    # alors qu'un aperçu (#16).
     offloaded: str | None = None
-    # Sortie gardée bien qu'elle ne respecte pas son contrat (``on_failure: unverified``).
     unverified: bool = False
-    # Sortie remplacée par le message de repli d'un contrat ou d'un juge
-    # (``on_failure: fallback``) ; omis du journal quand il est faux.
     fallback: bool = Field(default=False, exclude_if=lambda value: not value)
-    # Écritures du state de la session : ``{clé: valeur}``, ``None`` efface la
-    # clé. Le journal les garde dans ``tool.completed``, que le rejeu ressert
-    # tel quel ; la projection les retire du résultat montré au modèle. Omis
-    # quand il est vide : un résultat sans state se sérialise comme avant, et
-    # les empreintes des requêtes ne changent pas.
     state: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue], exclude_if=lambda value: not value)
-    # Écritures du state refusées (D8) : une ligne par clé, avec le motif. Le
-    # résultat reste un succès — l'outil a pu produire son effet — et le modèle
-    # lit ces lignes à la suite du résultat (``state_note``). Omis quand il est vide.
     state_refused: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @classmethod
     def text(cls, text: str, *, is_error: bool = False) -> Self:
+        """Résultat fait d'un seul bloc de texte.
+
+        Args:
+            text: Le texte.
+            is_error: Vrai pour un résultat en erreur.
+
+        Returns:
+            Le résultat.
+        """
         return cls(blocks=(TextBlock(text=text),), is_error=is_error)
 
     @property
     def state_note(self) -> str:
-        """Ce que le modèle lit des écritures refusées, à la suite du résultat ; vide sinon."""
+        """Ce que le modèle lit des écritures refusées, à la suite du résultat : une ligne ``[state] …`` par clé ; vide sinon."""
         return "\n".join(f"[state] {line}" for line in self.state_refused)
 
     @classmethod
     def error(cls, message: str) -> Self:
+        """Résultat en erreur, fait d'un seul bloc de texte : le message lu par le modèle."""
         return cls.text(message, is_error=True)
 
     @property
@@ -165,6 +272,14 @@ class ToolOutput(DomainModel):
 
 
 class ToolResultBlock(_Block):
+    """Résultat d'un appel d'outil, dans un message ``tool``.
+
+    Attributes:
+        type: ``tool_result``.
+        call_id: Identifiant de l'appel servi.
+        output: Le résultat.
+    """
+
     type: Literal["tool_result"] = "tool_result"
     call_id: str
     output: ToolOutput
@@ -174,10 +289,18 @@ type ContentBlock = Annotated[
     TextBlock | JsonBlock | ArtifactRefBlock | InlineDataBlock | ReasoningBlock | ToolCallBlock | ToolResultBlock,
     Field(discriminator="type"),
 ]
+"""Bloc de contenu d'un message, discriminé par ``type``."""
 
 
 def has_inline_data(blocks: tuple[ContentBlock, ...] | tuple[OutputBlock, ...]) -> bool:
-    """Vrai si des octets de fichier traînent dans ces blocs (interdit au journal)."""
+    """Vrai si des octets de fichier traînent dans ces blocs, résultats d'outils compris (interdit au journal).
+
+    Args:
+        blocks: Blocs d'un message ou d'un résultat.
+
+    Returns:
+        Vrai si un ``InlineDataBlock`` s'y trouve, à tout niveau.
+    """
     for block in blocks:
         if isinstance(block, InlineDataBlock):
             return True

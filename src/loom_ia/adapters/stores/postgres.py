@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Journal d'événements en Postgres : mode service, plusieurs process (F5, #5).
+"""Journal d'événements en Postgres : mode service, plusieurs process (fonction F5, point 5).
 
 Même table, mêmes colonnes et mêmes index qu'en SQLite — l'événement entier
 rangé en texte dans ``event``, les facettes à part en ``jsonb`` — à trois
@@ -51,20 +51,23 @@ from loom_ia.core.ports import SequenceConflict, SessionRecord, journal_key
 
 _COLUMNS: Final = "tenant_id, session_id, seq, event_id, ts, run_id, root_run_id, type, category, status, agent, role, facets, event"
 _INSERT: Final = f"INSERT INTO {EVENTS_TABLE} ({_COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)"
-# Un verrou par journal, tenu jusqu'à la fin de la transaction. ``hashtext``
-# peut faire se rencontrer deux journaux : ils s'attendent, c'est tout.
 _LOCK: Final = "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)"
-# Un second verrou, par client, pris juste avant l'insertion : la colonne
-# ``ingested`` est tirée d'une séquence, et sans lui une transaction qui
-# tire 10 puis valide après celle qui a tiré 11 ferait manquer la ligne 10 à
-# un suiveur déjà passé. Tenu jusqu'à la validation, il rend l'ordre des
-# valeurs égal à celui de la visibilité. Pris après le verrou du journal,
-# toujours dans cet ordre : pas d'interblocage.
+"""Un verrou par journal, tenu jusqu'à la fin de la transaction. ``hashtext``
+peut faire se rencontrer deux journaux : ils s'attendent, c'est tout.
+"""
 _INGEST_LOCK: Final = "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)"
+"""Un second verrou, par client, pris juste avant l'insertion : la colonne
+``ingested`` est tirée d'une séquence, et sans lui une transaction qui tire
+10 puis valide après celle qui a tiré 11 ferait manquer la ligne 10 à un
+suiveur déjà passé. Tenu jusqu'à la validation, il rend l'ordre des valeurs
+égal à celui de la visibilité. Pris après le verrou du journal, toujours
+dans cet ordre : pas d'interblocage.
+"""
 _LAST_SEQ: Final = f"SELECT COALESCE(MAX(seq), 0) FROM {EVENTS_TABLE} WHERE tenant_id = $1 AND session_id = $2"
 
 
 def _row(event: Event, codec: JournalCodec) -> tuple[Any, ...]:
+    """Les colonnes d'une ligne : l'enveloppe, les facettes en JSON, et l'événement rangé par le codec."""
     return (
         event.tenant_id,
         event.session_id,
@@ -91,15 +94,23 @@ class _Conditions:
         self.values: list[Any] = []
 
     def add(self, clause: str, value: Any) -> None:
+        """Ajoute une clause ; ``{n}`` y devient le numéro de sa valeur (``$1``, ``$2``…)."""
         self.values.append(value)
         self.clauses.append(clause.format(n=len(self.values)))
 
     @property
     def where(self) -> str:
+        """Les clauses, jointes par ``AND``."""
         return " AND ".join(self.clauses)
 
 
 def _conditions(query: EventQuery) -> _Conditions:
+    """Clauses SQL qui réduisent la recherche ; ``EventQuery.refine`` tranche ensuite.
+
+    Client, colonnes indexées, facettes (contenance ``@>`` : présente et de
+    cette valeur), bornes de temps, et reprise après un événement dans l'ordre
+    d'écriture (``ingested``).
+    """
     found = _Conditions()
     found.add("tenant_id = ${n}", query.tenant_id)
     simple: list[tuple[str, Any]] = [
@@ -149,6 +160,15 @@ class PostgresEventStore:
         codec: JournalCodec = PLAIN,
         limits: PoolLimits = DEFAULT_LIMITS,
     ) -> None:
+        """Prépare le pool de connexions de la table des événements, avec son DDL et sa mise à niveau.
+
+        Args:
+            dsn: Adresse de la base.
+            role: Rôle applicatif pris par chaque connexion, que la politique de
+                lignes vise ; ``None`` : celui de la connexion.
+            codec: Forme de la colonne ``event`` : en clair ou scellée.
+            limits: Taille et délais du pool.
+        """
         self._codec = codec
         self._pg = PostgresPool(
             dsn,
@@ -166,6 +186,25 @@ class PostgresEventStore:
     # --- Écriture ---------------------------------------------------------
 
     async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
+        """Écrit un lot à la suite du journal d'une session (``EventStore.append``).
+
+        Dans une transaction : verrou consultatif sur le journal, contrôle de
+        séquence, verrou d'ingestion du client, insertion. Une violation de la clé
+        primaire devient un ``SequenceConflict`` : deux écrivains ont franchi le
+        verrou, l'appelant relit et rejoue.
+
+        Args:
+            drafts: Le lot, dans un seul journal (même client, même session).
+            expected_seq: Dernier ``seq`` connu de l'appelant ; ``None`` désactive
+                ce contrôle.
+
+        Returns:
+            Les événements écrits, numérotés à la suite.
+
+        Raises:
+            SequenceConflict: Le journal a avancé depuis ``expected_seq`` ; rien
+                n'est écrit.
+        """
         if not drafts:
             return []
         tenant_id, session_id = journal_key(drafts)
@@ -198,6 +237,14 @@ class PostgresEventStore:
         after_seq: int = 0,
         run_id: RunId | None = None,
     ) -> list[Event]:
+        """Lit le journal d'une session, dans l'ordre des ``seq`` (``EventStore.read``).
+
+        Args:
+            tenant_id: Le client.
+            session_id: La session.
+            after_seq: Ne rend que les événements après ce ``seq`` ; 0 : tout.
+            run_id: Ne rend que les événements de ce run.
+        """
         sql = (
             f"SELECT event FROM {EVENTS_TABLE}"
             " WHERE tenant_id = $1 AND session_id = $2 AND seq > $3"
@@ -209,6 +256,14 @@ class PostgresEventStore:
         return await self._events(tenant_id, sql, values)
 
     async def query(self, query: EventQuery) -> list[Event]:
+        """Cherche des événements dans les journaux d'un client (``EventStore.query``).
+
+        Clauses SQL sur les colonnes indexées et les facettes, dans l'ordre
+        d'écriture (``ingested``), puis ``EventQuery.refine``.
+
+        Args:
+            query: Les critères, l'ordre et la pagination (``EventQuery``).
+        """
         found = _conditions(query)
         sql = f"SELECT event FROM {EVENTS_TABLE} WHERE {found.where} ORDER BY ingested LIMIT ${len(found.values) + 1}"
         events = await self._events(query.tenant_id, sql, [*found.values, query.limit])
@@ -220,6 +275,7 @@ class PostgresEventStore:
         return [self._codec.loads(str(row["event"])) for row in rows]
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Dernier ``seq`` du journal d'une session ; 0 s'il est vide ou inconnu."""
         async with self._pg.transaction(tenant_id) as connection:
             return await self._last_seq(connection, tenant_id, session_id)
 
@@ -227,9 +283,14 @@ class PostgresEventStore:
         found = await connection.fetchval(_LAST_SEQ, tenant_id, session_id)
         return int(found or 0)
 
-    # --- Sessions (F7) ----------------------------------------------------
+    # --- Sessions (fonction F7) ----------------------------------------------------
 
     async def sessions(self, tenant_id: TenantId) -> list[SessionRecord]:
+        """Sessions d'un client, de la plus récemment écrite à la plus ancienne (fonction F7).
+
+        Args:
+            tenant_id: Le client.
+        """
         async with self._pg.transaction(tenant_id) as connection:
             rows = await connection.fetch(
                 f"SELECT session_id, MAX(seq) AS last_seq, MAX(ts) AS updated_at"
@@ -247,6 +308,10 @@ class PostgresEventStore:
         ]
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Supprime le journal d'une session (RGPD) ; rend le nombre d'événements supprimés.
+
+        Seul ``DELETE`` est accordé au rôle applicatif, jamais ``UPDATE``.
+        """
         async with self._pg.transaction(tenant_id) as connection:
             status = await connection.execute(
                 f"DELETE FROM {EVENTS_TABLE} WHERE tenant_id = $1 AND session_id = $2",
@@ -256,4 +321,5 @@ class PostgresEventStore:
         return rows_touched(status)
 
     async def aclose(self) -> None:
+        """Ferme le pool de connexions."""
         await self._pg.aclose()

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Juge : politique fournie ``loom.judge.<nom>`` (E3, E6, #21).
+"""Juge : politique fournie ``loom.judge.<nom>`` (fonctions E3 et E6, point 21).
 
 Un juge est branché d'office après le guard des contrats : la forme d'une
 sortie est contrôlée d'abord, son fond ensuite. Il porte sur la réponse
@@ -26,7 +26,7 @@ Déroulé, pour chaque sortie :
    ``repair.max_attempts`` le permet ; ensuite ``on_failure`` décide, comme
    pour un contrat (``fail``, ``unverified``, ``fallback``).
 
-Secours (B4, #10) : un juge peut déclarer ses ``fallbacks``. Une bascule est
+Secours (fonction B4, point 10) : un juge peut déclarer ses ``fallbacks``. Une bascule est
 journalisée dans le span de l'appel du juge ; le run garde ensuite le secours
 pour ce juge (adhérence, emplacement ``judge:<nom>``).
 
@@ -105,8 +105,11 @@ from loom_ia.engine.refs import RefError
 from loom_ia.guards.contract import refusal, visible_text
 
 JUDGE_POLICY_PREFIX: Final = "loom.judge"
+"""Préfixe du nom de la politique d'un juge (``loom.judge.<nom>``)."""
 JUDGE_GUARD: Final = "judge"
+"""Nom du guard dans ``guard.checked``."""
 VERDICT_TOOL: Final = "verdict"
+"""Nom de l'outil que le juge doit appeler."""
 
 JUDGE_SYSTEM: Final = """\
 Tu es un juge. Tu évalues une sortie produite par un autre modèle (<output>), \
@@ -119,9 +122,10 @@ est faux, cité tel quel, ou pourquoi le critère est respecté.
 - Juge la sortie à la lumière du contexte fourni (demande, résultats d'outils, \
 arguments). Ce qui ne figure pas dans ce contexte n'est pas établi.
 - Réponds en appelant l'outil verdict, une seule fois, avec une entrée par critère."""
+"""Prompt système d'un juge."""
 
-# Prédicat de ``when.condition`` : synchrone ou non.
 type Condition = Callable[[JudgeInput], bool | Awaitable[bool]]
+"""Prédicat de ``when.condition`` : synchrone ou non."""
 
 
 def judge_policy_name(judge: str) -> str:
@@ -131,34 +135,56 @@ def judge_policy_name(judge: str) -> str:
 
 @dataclass(frozen=True, kw_only=True)
 class JudgeDefinition:
-    """Un juge tel que le moteur l'exécute : critères, contexte, déclenchement, suite."""
+    """Un juge tel que le moteur l'exécute : critères, contexte, déclenchement, suite.
+
+    Attributes:
+        name: Nom du juge (``output`` pour la réponse finale, le nom du rôle
+            pour un rôle, sauf ``name`` déclaré).
+        role: Rôle dont la sortie est jugée ; ``None`` pour la réponse finale.
+        criteria: Les critères : nom, règle, seuil, bloquant ou non.
+        context: Contexte reçu par le juge, comme un rôle.
+        sample: Proportion des runs jugés, entre 0 et 1 (tirage déterministe
+            par run et par juge).
+        condition: Prédicat ``when.condition`` résolu ; ``None`` : pas de
+            condition.
+        tenants: Clients dont les runs sont jugés ; ``None`` : tous.
+        profiles: Profils où ce juge travaille, et celui qui est actif (jalon
+            J5.5a) : les deux sont connus au montage, mais comparés à
+            l'exécution pour que le journal dise qu'un juge déclaré a été
+            sauté, et pourquoi.
+        profile: Profil actif.
+        repair: Réparations demandées à l'auteur de la sortie refusée.
+        on_failure: Suite d'une sortie encore refusée : ``fail``,
+            ``unverified`` ou ``fallback``.
+        fallback_message: Message de repli, avec ``fallback``.
+        max_tokens: Réglage propre au juge : remplace celui de son modèle.
+        params: Paramètres propres au juge, sur ceux de son modèle.
+        timeout: Délai du juge, en secondes ; sans lui, ceux de son modèle et
+            son retry le bornent.
+        on_error: Erreur du juge : ``block`` fait échouer le run, ``allow``
+            laisse passer la sortie.
+    """
 
     name: str
-    # Rôle dont la sortie est jugée ; None pour la réponse finale.
     role: str | None = None
     criteria: tuple[Criterion, ...]
     context: tuple[ContextItem, ...] = ()
     sample: float = 1.0
     condition: Condition | None = None
     tenants: frozenset[str] | None = None
-    # Profils où ce juge travaille, et celui qui est actif (5.5a) : les deux
-    # sont connus au montage, mais comparés à l'exécution pour que le journal
-    # dise qu'un juge déclaré a été sauté, et pourquoi.
     profiles: frozenset[str] | None = None
     profile: str | None = None
     repair: RepairSettings = field(default_factory=RepairSettings)
     on_failure: OnFailure = "fail"
     fallback_message: str | None = None
-    # Réglages propres au juge : remplacent ceux de son modèle.
     max_tokens: int | None = None
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
-    # Délai du juge ; sans lui, ceux de son modèle et son retry le bornent.
     timeout: float | None = None
-    # Erreur du juge : ``block`` fait échouer le run, ``allow`` laisse passer la sortie.
     on_error: OnError = "block"
 
     @property
     def target(self) -> str:
+        """Cible dans le journal : ``output`` ou ``role:<nom>``."""
         return "output" if self.role is None else f"role:{self.role}"
 
     @property
@@ -169,13 +195,20 @@ class JudgeDefinition:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Judged:
-    """Sortie à juger, telle que le point d'accroche la donne."""
+    """Sortie à juger, telle que le point d'accroche la donne.
+
+    Attributes:
+        text: Texte de la sortie.
+        data: Ses données structurées, s'il y en a.
+        arguments: Arguments du rôle jugé.
+        call_id: Appel du rôle jugé ; ``None`` pour la réponse finale.
+        output: Résultat d'outil jugé (rôle) ; ``None`` pour la réponse finale.
+    """
 
     text: str
     data: JsonValue = None
     arguments: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     call_id: str | None = None
-    # Résultat d'outil jugé (rôle) ; None pour la réponse finale.
     output: ToolOutput | None = None
 
 
@@ -192,11 +225,21 @@ class JudgeGuard(TracingPolicy):
         fallbacks: Sequence[ModelLink] = (),
         breakers: CircuitBreakers | None = None,
     ) -> None:
+        """Prépare le juge et l'outil ``verdict`` de ses critères.
+
+        Args:
+            definition: Le juge.
+            model: Client du modèle du juge.
+            model_spec: Définition de ce modèle.
+            artifacts: Stockage des fichiers, pour les pièces jointes du contexte.
+            fallbacks: Secours du modèle, dans l'ordre (fonction B4, point 10).
+            breakers: Disjoncteurs partagés de l'instance.
+        """
         self.definition = definition
         self.model = model
         self.model_spec = model_spec
         self.artifacts = artifacts
-        # Secours du modèle du juge, dans l'ordre (B4, #10).
+        # Secours du modèle du juge, dans l'ordre (fonction B4, point 10).
         self.fallbacks = tuple(fallbacks)
         self.breakers = breakers
         self.tool = verdict_tool(definition.criteria)
@@ -204,20 +247,38 @@ class JudgeGuard(TracingPolicy):
 
     @property
     def name(self) -> str:
+        """``loom.judge.<nom>``."""
         return judge_policy_name(self.definition.name)
 
     @property
     def points(self) -> frozenset[HookPoint]:
+        """``on_output`` pour la réponse finale, ``after_tool`` pour un rôle."""
         return frozenset({"on_output" if self.definition.role is None else "after_tool"})
 
     @property
     def decisions(self) -> frozenset[DecisionKind]:
+        """``replace``, ``retry`` et ``fail``."""
         return frozenset({"replace", "retry", "fail"})
 
     def __repr__(self) -> str:
         return f"JudgeGuard({self.definition.name!r}, {self.definition.target}, modèle {self.model_spec.id!r})"
 
     async def decide_traced(self, subject: PolicySubject, context: PolicyContext, trace: Trace) -> Decision:
+        """Juge la sortie : déclenchement, appel du modèle, verdict, puis suite.
+
+        Args:
+            subject: Le sujet du point d'accroche.
+            context: Contexte de la politique (réparations déjà demandées).
+            trace: Reçoit les événements de l'appel du juge et ``judge.evaluated``.
+
+        Returns:
+            ``CONTINUE`` si la sortie passe ou n'est pas jugée (un ``guard.checked``
+            ``skipped`` dit pourquoi) ; ``Retry`` avec le diagnostic tant que les
+            réparations le permettent ; sinon la décision de ``on_failure``.
+
+        Raises:
+            PolicyFailure: Modèle en échec, verdict absent ou invalide.
+        """
         judged = self._judged(subject)
         if judged is None:
             return CONTINUE
@@ -249,7 +310,7 @@ class JudgeGuard(TracingPolicy):
             return CONTINUE
         reason = _listed(blocking)
         # Les critères bloquants déjà tenus sont rappelés : sans eux, l'auteur
-        # corrige un point et en perd un autre (test E3 du 19/10).
+        # corrige un point et en perd un autre (essai de la fonction E3, 19/10).
         refused = {s.name for s in blocking}
         kept = tuple(c for c in definition.criteria if c.blocking and c.name not in refused and any(s.name == c.name and s.passed for s in scores))
         feedback = diagnostic(definition.name, blocking, kept)
@@ -277,7 +338,7 @@ class JudgeGuard(TracingPolicy):
                 return None
 
     async def _skipped(self, state: RunState, judged: _Judged) -> SkipReason | None:
-        """Motif pour ne pas juger cette sortie, ou None : décidé par le code (#21)."""
+        """Motif pour ne pas juger cette sortie, ou None : décidé par le code (point 21)."""
         definition = self.definition
         match state.judges:
             case "skip":
@@ -314,7 +375,7 @@ class JudgeGuard(TracingPolicy):
         return None
 
     def chain(self) -> ModelChain:
-        """Modèle du juge et ses secours, avec les réglages du juge (B6)."""
+        """Modèle du juge et ses secours, avec les réglages du juge (fonction B6)."""
         definition = self.definition
         return ModelChain(
             links=(ModelLink(self.model_spec, self.model), *self.fallbacks),
@@ -328,7 +389,7 @@ class JudgeGuard(TracingPolicy):
     async def _evaluate(self, state: RunState, judged: _Judged, trace: Trace, context: PolicyContext) -> tuple[tuple[CriterionScore, ...], ModelSpec]:
         """Appel du juge, secours compris, journalisé ; les notes et le modèle qui a jugé."""
         definition, chain = self.definition, self.chain()
-        # Adhérence (#10) : après une bascule, le run reste sur le secours du juge.
+        # Adhérence (point 10) : après une bascule, le run reste sur le secours du juge.
         current = state.models.get(chain.slot)
         spec = chain.link(current).spec
         request = ModelRequest(
@@ -455,7 +516,15 @@ class JudgeGuard(TracingPolicy):
 
 
 def verdict_tool(criteria: tuple[Criterion, ...]) -> ToolDefinition:
-    """Outil imposé au juge : une note et un motif par critère."""
+    """Outil imposé au juge : une note et un motif par critère.
+
+    Args:
+        criteria: Les critères.
+
+    Returns:
+        L'outil ``verdict`` : une liste ``criteria``, une entrée par critère
+        (``name``, ``score`` entre 0 et 1, ``reason``), dans l'ordre donné.
+    """
     names: list[JsonValue] = [criterion.name for criterion in criteria]
     return ToolDefinition(
         name=VERDICT_TOOL,
@@ -498,6 +567,18 @@ def verdict_scores(
     Le verdict est l'appel de l'outil ``verdict``, contrôlé par son schéma
     (``validator``, sinon celui de ``verdict_tool(criteria)``). Lève
     ``PolicyFailure`` si la réponse n'en porte pas, ou un qui ne convient pas.
+
+    Args:
+        message: La réponse du juge.
+        criteria: Les critères.
+        judge: Nom du juge, pour le message d'erreur.
+        validator: Contrôle du schéma de ``verdict``.
+
+    Returns:
+        Une note par critère, avec son seuil et s'il est bloquant.
+
+    Raises:
+        PolicyFailure: Pas d'appel à ``verdict``, ou arguments invalides.
     """
     calls = [c for c in message.tool_calls if c.name == VERDICT_TOOL]
     if not calls:
@@ -529,10 +610,15 @@ def diagnostic(judge: str, refused: tuple[CriterionScore, ...], kept: tuple[Crit
     """Diagnostic donné à l'auteur de la sortie pour qu'il la répare.
 
     ``kept`` : les critères bloquants que la sortie tient déjà, avec leur règle
-    (pas le motif du juge, propre à la sortie refusée). Au test E3 du 19/10,
+    (pas le motif du juge, propre à la sortie refusée). À l'essai de la fonction E3 du 19/10,
     le diagnostic ne citait que le critère échoué (« trois phrases au plus ») :
     Haiku a raccourci sa réponse et perdu celui qu'elle tenait (« traite la
     demande »), refusé à son tour.
+
+    Args:
+        judge: Nom du juge.
+        refused: Les critères bloquants sous leur seuil, avec le motif.
+        kept: Les critères bloquants tenus.
     """
     lines = [f"Le juge {judge} refuse la sortie :"]
     lines += [f"- {s.name} (note {_score(s.score)}, seuil {_score(s.min_score)}) : {s.reason}" for s in refused]
@@ -544,7 +630,12 @@ def diagnostic(judge: str, refused: tuple[CriterionScore, ...], kept: tuple[Crit
 
 
 def correlated(judge: ModelSpec, evaluated: ModelSpec) -> bool:
-    """Vrai si le juge utilise le même modèle que la sortie qu'il évalue (E6)."""
+    """Vrai si le juge utilise le même modèle que la sortie qu'il évalue (fonction E6).
+
+    Args:
+        judge: Le modèle du juge.
+        evaluated: Le modèle qui a produit la sortie.
+    """
     return (judge.sdk, judge.base_url, judge.model) == (
         evaluated.sdk,
         evaluated.base_url,

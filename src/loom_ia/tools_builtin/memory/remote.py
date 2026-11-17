@@ -64,16 +64,18 @@ from loom_ia.tools_builtin.memory.protocol import (
 from loom_ia.tools_builtin.memory_params import ModelsSpec
 
 log = logging.getLogger("loom_ia.memory")
+"""Le journal de la mémoire."""
 
-# Après un repli, l'application est ressayée au premier lot passé ce délai, en secondes.
 REPROBE: Final = 30.0
-# Attente d'une application en cours de chargement, en secondes, et pas de la sonde.
+"""Après un repli, l'application est ressayée au premier lot passé ce délai, en secondes."""
 READY_WAIT: Final = 60.0
+"""Attente d'une application en cours de chargement, en secondes, et pas de la sonde."""
 READY_POLL: Final = 1.0
-# Attente maximale d'un 503 « file pleine » avant un nouvel essai, en secondes.
+"""Attente entre deux interrogations de l'état, pendant le chargement des modèles, en secondes."""
 BUSY_PAUSE_MAX: Final = 2.0
-# Tranche d'attente : un appel annulé n'attend pas plus.
+"""Attente maximale d'un 503 « file pleine » avant un nouvel essai, en secondes."""
 _TICK: Final = 0.1
+"""Tranche d'attente : un appel annulé n'attend pas plus."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +213,7 @@ class Connection:
             raise ModelRunError(f"{APP} : {message}")
 
     def close(self) -> None:
+        """Ferme le client HTTP, s'il est ouvert."""
         with self._lock:
             if self._client is not None:
                 self._client.close()
@@ -333,20 +336,25 @@ class RemoteEmbedder:
 
     @property
     def model_name(self) -> str:
+        """Le nom du modèle, tel que réglé."""
         return self._spec.embedder
 
     @property
     def dim(self) -> int:
+        """La dimension du dense de BGE-M3."""
         return bge_m3.DENSE_DIM
 
     @property
     def device(self) -> str | None:
+        """Où calcule le prochain lot."""
         return self.connection.device
 
     def load(self) -> None:
+        """Fait le premier contact avec l'application, ou charge le modèle du repli."""
         self.connection.run(self.connection.ensure, lambda local: local.embedder.load())
 
     def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
+        """Les vecteurs des textes, lot par lot, chaque lot par l'application ou par le repli."""
         found: list[Embedding] = []
         for batch in bge_m3.batches(list(texts)):
             checkpoint(cancel)
@@ -367,6 +375,7 @@ class RemoteEmbedder:
         return _decoded(answer)
 
     def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding:
+        """Les vecteurs d'une question."""
         return self.embed_documents([text], cancel)[0]
 
 
@@ -379,16 +388,20 @@ class RemoteReranker:
 
     @property
     def model_name(self) -> str:
+        """Le nom du reranker, tel que réglé."""
         return self._spec.reranker
 
     @property
     def device(self) -> str | None:
+        """Où calcule le prochain lot."""
         return self.connection.device
 
     def load(self) -> None:
+        """Fait le premier contact avec l'application, ou charge le reranker du repli."""
         self.connection.run(self.connection.ensure, lambda local: local.reranker.load())
 
     def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
+        """Un score par passage, lot par lot, chaque lot par l'application ou par le repli."""
         found: list[float] = []
         for batch in bge_m3.batches(list(passages)):
             checkpoint(cancel)
@@ -416,5 +429,6 @@ def _decoded(answer: EmbedResponse) -> list[Embedding]:
 
 
 def remote_models(target: Target, spec: ModelsSpec) -> tuple[RemoteEmbedder, RemoteReranker]:
+    """L'embedder et le reranker servis par l'application, sur une même connexion."""
     connection = Connection(target, spec)
     return RemoteEmbedder(connection, spec), RemoteReranker(connection, spec)

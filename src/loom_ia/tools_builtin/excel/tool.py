@@ -55,6 +55,15 @@ class ExcelTool:
         *,
         charts: bool = False,
     ) -> None:
+        """Prépare l'outil : dossiers, fuseau, recalcul, graphiques ; ses arguments et sa description en découlent.
+
+        Args:
+            space: Les dossiers permis.
+            zone: Le fuseau des dates-heures.
+            recalc: Le recalcul par LibreOffice ; ``None`` : aucun.
+            unsafe: Pourquoi la lecture n'est pas sûre (lxml trop ancien), s'il y a lieu.
+            charts: Proposer les graphiques.
+        """
         self._space = space
         self._charts = charts
         # Le schéma vu par le modèle n'a les graphiques que s'ils servent.
@@ -82,6 +91,7 @@ class ExcelTool:
 
     @property
     def spec(self) -> ToolSpec:
+        """La définition de l'outil."""
         return self._spec
 
     def settings(self) -> Settings:
@@ -145,6 +155,11 @@ class ExcelTool:
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Lit un classeur (``read``), ou en écrit un (``write``), hors de la boucle asyncio.
+
+        Raises:
+            ToolError: Arguments, chemin, droit ou classeur refusés.
+        """
         request = parse(arguments, self._call)
         if isinstance(request, ReadArguments):
             source = self._workbook(request.path)
@@ -187,6 +202,11 @@ class ExcelTool:
     # --- Exécution ----------------------------------------------------------------------
 
     def _perform(self, request: ExcelArguments, located: Located, sources: Mapping[str, Located]) -> dict[str, JsonValue]:
+        """Écrit le classeur.
+
+        Données chargées, description validée, onglets écrits, recalcul s'il est demandé
+        ; rend le chemin, les onglets et les avertissements.
+        """
         try:
             loaded = {
                 data.path: read_rows(
@@ -231,6 +251,7 @@ class ExcelTool:
         return summary
 
     def _perform_read(self, request: ReadArguments, source: Located) -> dict[str, JsonValue]:
+        """Lit un classeur : sans onglet, la liste des onglets et leur aperçu ; avec un onglet, les cellules d'une plage."""
         from loom_ia.tools_builtin.excel.reader import READ_CHARS, overview, read_range
 
         data = self._read(source)
@@ -286,6 +307,7 @@ def _with_data(request: ExcelArguments) -> Iterable[tuple[SheetSpec, DataSource]
 
 
 def _description(space: Folders, zone: ZoneInfo, recalc: bool, unsafe: str | None, *, charts: bool = False) -> str:
+    """La description de l'outil : ce qu'il écrit et lit, les dossiers et leurs droits, le fuseau, le recalcul et les graphiques."""
     writes = [folder.name for folder in space.folders if "write" in folder.rights]
     reads = [folder.name for folder in space.folders if "read" in folder.rights]
     lines = [
@@ -357,6 +379,7 @@ CHART_HELP: Final = (
     f"(une série, {MAX_SLICES} parts au plus) ; {MAX_CATEGORIES} libellés au plus sinon. "
     "Pour un graphique sur des données d'un autre onglet, les y mettre.",
 )
+"""Mode d'emploi des graphiques, ajouté à la description quand ``charts`` est vrai."""
 
 
 def build(params: BaseModel, context: BuiltinContext) -> ExcelTool:

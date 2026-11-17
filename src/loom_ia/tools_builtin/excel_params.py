@@ -47,11 +47,30 @@ from loom_ia.tools_builtin._office_params import (
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 
 DEFAULT_RECALC_TIMEOUT: Final = 60.0
+"""Délai du recalcul par LibreOffice sans réglage, en secondes."""
 REFERENCE: Final = "loom.excel"
+"""Référence de l'outil dans la config."""
 
 
 class ExcelParams(BaseModel):
-    """Paramètres de ``loom.excel``."""
+    """Paramètres de ``loom.excel``.
+
+    Attributes:
+        folders: Dossiers permis, au moins un ; le droit ``delete`` n'y a pas
+            cours.
+        timezone: Fuseau IANA où passe une date-heure qui en porte un : Excel
+            n'en connaît pas, la cellule reçoit l'heure de ce fuseau, sans
+            fuseau.
+        recalc: Recalculer le classeur avec LibreOffice avant de l'écrire : une
+            formule en erreur (#DIV/0!, #NAME?…) fait échouer l'appel, et le
+            fichier n'est pas écrit.
+        soffice: L'exécutable de LibreOffice ; par défaut ``soffice`` cherché
+            dans le PATH.
+        recalc_timeout: Délai du recalcul, en secondes.
+        charts: Des graphiques Excel liés aux cellules de leur onglet. Faux par
+            défaut : leur mode d'emploi et leur schéma coûtent à chaque appel
+            du modèle.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -61,17 +80,10 @@ class ExcelParams(BaseModel):
         AfterValidator(checked_folders(REFERENCE)),
         Field(json_schema_extra={"minItems": 1}),
     ]
-    # Fuseau IANA où passe une date-heure qui en porte un : Excel n'en connaît pas,
-    # la cellule reçoit l'heure de ce fuseau, sans fuseau.
     timezone: str = DEFAULT_TIMEZONE
-    # Recalculer le classeur avec LibreOffice avant de l'écrire : une formule en
-    # erreur (#DIV/0!, #NAME?…) fait échouer l'appel, et le fichier n'est pas écrit.
     recalc: bool = False
-    # L'exécutable de LibreOffice ; par défaut ``soffice`` cherché dans le PATH.
     soffice: Path | None = None
     recalc_timeout: PositiveFloat = DEFAULT_RECALC_TIMEOUT
-    # Des graphiques Excel liés aux cellules de leur onglet. Faux par défaut : leur
-    # mode d'emploi et leur schéma coûtent à chaque appel du modèle, comme pour word et pdf.
     charts: bool = False
 
     @model_validator(mode="after")

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Journal d'événements en fichiers JSONL : mode librairie et dev (#22).
+"""Journal d'événements en fichiers JSONL : mode librairie et dev (point 22).
 
 Un fichier par session : ``<racine>/<client>/<session>.jsonl``, un événement
 par ligne. Plusieurs process peuvent écrire dans le même journal : chaque
@@ -61,10 +61,13 @@ from loom_ia.core.ports import (
 logger = logging.getLogger(__name__)
 
 SUFFIX: Final = ".jsonl"
+"""Extension du fichier d'une session."""
 CORRUPT_SUFFIX: Final = ".corrupt"
-# Fin de fichier lue pour connaître le dernier événement sans relire tout le
-# journal ; au-delà (un événement plus gros que ça), on relit le fichier.
+"""Ajouté au nom du fichier qui reçoit les lignes finales incomplètes mises de côté."""
 TAIL_BYTES: Final = 64 * 1024
+"""Fin de fichier lue pour connaître le dernier événement sans relire tout le
+journal ; au-delà (un événement plus gros que ça), on relit le fichier.
+"""
 
 
 def _component(value: str, kind: str) -> str:
@@ -186,6 +189,14 @@ def _locked_read(path: Path) -> bytes:
 
 
 class JsonlEventStore:
+    """Journal durable en fichiers JSONL, un par session : ``<racine>/<client>/<session>.jsonl``.
+
+    Args:
+        root: Dossier racine des journaux.
+        codec: Forme des lignes : en clair (``PLAIN``) ou scellées
+            (``SealingCodec``).
+    """
+
     def __init__(self, root: str | os.PathLike[str], *, codec: JournalCodec = PLAIN) -> None:
         self._root = Path(root)
         self._codec = codec
@@ -194,6 +205,7 @@ class JsonlEventStore:
         self._tails_lock = threading.Lock()
 
     def path(self, tenant_id: TenantId, session_id: SessionId) -> Path:
+        """Chemin du fichier d'une session ; ``UnusableId`` si le client ou la session ne peut pas nommer un fichier."""
         tenant = _component(tenant_id, "Client")
         session = _component(session_id, "Session")
         return self._root / tenant / f"{session}{SUFFIX}"
@@ -201,6 +213,27 @@ class JsonlEventStore:
     # --- Écriture ---------------------------------------------------------
 
     async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
+        """Écrit un lot à la suite du journal d'une session (``EventStore.append``).
+
+        Sous verrou exclusif ``flock``, d'un seul bloc suivi d'un ``fsync`` : un
+        échec d'écriture rend au fichier sa taille d'avant le lot. Une ligne finale
+        incomplète, laissée par un plantage, est d'abord déplacée dans
+        ``<session>.jsonl.corrupt``.
+
+        Args:
+            drafts: Le lot, dans un seul journal (même client, même session).
+            expected_seq: Dernier ``seq`` connu de l'appelant ; ``None`` désactive
+                ce contrôle.
+
+        Returns:
+            Les événements écrits, numérotés à la suite.
+
+        Raises:
+            SequenceConflict: Le journal a avancé depuis ``expected_seq`` ; rien
+                n'est écrit.
+            UnusableId: Le client ou la session ne peut pas nommer un fichier.
+            JournalCorrupted: La dernière ligne complète est illisible.
+        """
         if not drafts:
             return []
         tenant_id, session_id = journal_key(drafts)
@@ -214,6 +247,7 @@ class JsonlEventStore:
         drafts: list[EventDraft],
         expected_seq: int | None,
     ) -> list[Event]:
+        """L'écriture d'un lot, dans un fil : verrou exclusif, contrôle de séquence, lot écrit d'un bloc, dernier ``seq`` retenu."""
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a+b") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
@@ -268,6 +302,17 @@ class JsonlEventStore:
         after_seq: int = 0,
         run_id: RunId | None = None,
     ) -> list[Event]:
+        """Lit le journal d'une session, dans l'ordre des ``seq`` (``EventStore.read``).
+
+        Sous verrou partagé. La ligne finale incomplète est ignorée ; une ligne
+        complète illisible lève ``JournalCorrupted``.
+
+        Args:
+            tenant_id: Le client.
+            session_id: La session.
+            after_seq: Ne rend que les événements après ce ``seq`` ; 0 : tout.
+            run_id: Ne rend que les événements de ce run.
+        """
         path = self.path(tenant_id, session_id)
         events = await asyncio.to_thread(self._read_sync, path)
         return [e for e in events if e.seq > after_seq and (run_id is None or e.run_id == run_id)]
@@ -276,6 +321,14 @@ class JsonlEventStore:
         return _parse(path, _locked_read(path), self._codec)
 
     async def query(self, query: EventQuery) -> list[Event]:
+        """Cherche des événements dans les journaux d'un client (``EventStore.query``).
+
+        Lit le journal de la session demandée, ou tous ceux du client, puis
+        laisse ``EventQuery.select`` filtrer, ordonner et paginer.
+
+        Args:
+            query: Les critères, l'ordre et la pagination (``EventQuery``).
+        """
         return await asyncio.to_thread(self._query_sync, query)
 
     def _query_sync(self, query: EventQuery) -> list[Event]:
@@ -288,13 +341,27 @@ class JsonlEventStore:
         return query.select(candidates)
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Dernier ``seq`` du journal d'une session ; 0 s'il est vide ou inconnu.
+
+        Lit la marque de la dernière ligne, par la fin du fichier, sans ouvrir sa
+        charge ; ``JournalCorrupted`` si cette ligne est illisible.
+        """
         path = self.path(tenant_id, session_id)
         last = await asyncio.to_thread(self._last_mark_strict, path)
         return last.seq if last is not None else 0
 
-    # --- Sessions (F7) ----------------------------------------------------
+    # --- Sessions (fonction F7) ----------------------------------------------------
 
     async def sessions(self, tenant_id: TenantId) -> list[SessionRecord]:
+        """Sessions d'un client, de la plus récemment écrite à la plus ancienne (fonction F7).
+
+        Lit la marque de la dernière ligne de chaque fichier, sans ouvrir de
+        charge, et saute une ligne illisible : un journal abîmé, ou dont la clé
+        est effacée, reste listable et supprimable.
+
+        Args:
+            tenant_id: Le client.
+        """
         return await asyncio.to_thread(self._sessions_sync, tenant_id)
 
     def _sessions_sync(self, tenant_id: TenantId) -> list[SessionRecord]:
@@ -331,6 +398,10 @@ class JsonlEventStore:
             return _strict_mark(path, _locked_read(path), self._codec, partial_start=False)
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Supprime le journal d'une session (RGPD) ; rend le nombre d'événements supprimés.
+
+        Supprime le fichier, et la ligne incomplète mise de côté (``.corrupt``).
+        """
         path = self.path(tenant_id, session_id)
         return await asyncio.to_thread(self._delete_sync, path)
 
@@ -344,4 +415,5 @@ class JsonlEventStore:
         return count
 
     async def aclose(self) -> None:
+        """Rien à fermer : aucun fichier ne reste ouvert."""
         return None

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Traductions entre MCP et loom-ia : déclarations d'outils, résultats (#15, #19).
+"""Traductions entre MCP et loom-ia : déclarations d'outils, résultats (points 15 et 19).
 
 **Annotations → déclarations.** Les annotations d'un serveur sont des
 indications, pas des garanties ; elles donnent seulement les valeurs par
@@ -14,7 +14,7 @@ modèle, que les outils Python retirent déjà.
 **Résultats.** Les blocs ``text`` deviennent des blocs texte, et le contenu
 structuré (``structuredContent``) le ``data`` du résultat. Images, audio et
 ressources binaires deviennent des octets (``inline_data``) que le moteur
-range dans le stockage d'artefacts avant d'écrire le résultat (#15) ; un
+range dans le stockage d'artefacts avant d'écrire le résultat (point 15) ; un
 lien de ressource reste une mention.
 """
 

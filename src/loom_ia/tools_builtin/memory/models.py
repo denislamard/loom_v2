@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from loom_ia.tools_builtin.memory.remote import Target
 
 log = logging.getLogger("loom_ia.memory")
+"""Le journal de la mémoire."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,13 @@ class SparseVec:
 
 @dataclass(frozen=True, slots=True)
 class Embedding:
+    """Les vecteurs d'un texte.
+
+    Attributes:
+        dense: Le vecteur dense, normalisé.
+        sparse: Les poids lexicaux.
+    """
+
     dense: list[float]
     sparse: SparseVec
 
@@ -49,10 +57,14 @@ class Embedder(Protocol):
     """Les vecteurs des textes. ``cancel`` levé, le calcul s'arrête au lot suivant."""
 
     @property
-    def model_name(self) -> str: ...
+    def model_name(self) -> str:
+        """Le nom du modèle : la base l'inscrit, et refuse un autre modèle."""
+        ...
 
     @property
-    def dim(self) -> int: ...
+    def dim(self) -> int:
+        """La dimension du dense."""
+        ...
 
     @property
     def device(self) -> str | None:
@@ -63,19 +75,31 @@ class Embedder(Protocol):
         """Charge les poids s'ils ne le sont pas : ce que fait le préchargement."""
         ...
 
-    def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]: ...
+    def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
+        """Les vecteurs des passages, dans l'ordre."""
+        ...
 
-    def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding: ...
+    def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding:
+        """Les vecteurs d'une question."""
+        ...
 
 
 class Reranker(Protocol):
-    @property
-    def model_name(self) -> str: ...
+    """Les scores de pertinence des passages pour une question. ``cancel`` levé, le calcul s'arrête au lot suivant."""
 
     @property
-    def device(self) -> str | None: ...
+    def model_name(self) -> str:
+        """Le nom du reranker."""
+        ...
 
-    def load(self) -> None: ...
+    @property
+    def device(self) -> str | None:
+        """Le device des poids chargés ; ``None`` tant qu'ils ne le sont pas."""
+        ...
+
+    def load(self) -> None:
+        """Charge les poids s'ils ne le sont pas : ce que fait le préchargement."""
+        ...
 
     def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
         """Un score par passage, entre 0 et 1."""
@@ -112,8 +136,8 @@ class ModelCancelled(Exception):
     """
 
 
-# Toutes les combien de secondes un appel qui attend le modèle regarde s'il est annulé.
 _CANCEL_POLL: Final = 0.1
+"""Toutes les combien de secondes un appel qui attend le modèle regarde s'il est annulé."""
 
 
 def checkpoint(cancel: threading.Event | None) -> None:
@@ -206,6 +230,7 @@ def unsupported_gpu(torch: Any, index: int = 0) -> str | None:
 
 
 def first_line(exc: BaseException) -> str:
+    """La première ligne du message d'une exception ; à défaut, le nom de son type."""
     text = str(exc).strip()
     line = text.splitlines()[0].strip() if text else ""
     return line or type(exc).__name__
@@ -259,6 +284,13 @@ class LazyModel[T]:
                 self._model = self._load()
 
     def run[R](self, fn: Callable[[T], R], cancel: threading.Event | None = None) -> R:
+        """Applique ``fn`` au modèle, chargé au premier appel, un appel à la fois.
+
+        Raises:
+            ModelCancelled: ``cancel`` levé.
+            ModelLoadError: Le chargement a échoué.
+            ModelRunError: Le calcul a échoué.
+        """
         self._acquire(cancel)
         try:
             checkpoint(cancel)
@@ -283,6 +315,11 @@ class LazyModel[T]:
             checkpoint(cancel)
 
     def _load(self) -> T:
+        """Charge le modèle sur son device et le vérifie.
+
+        Raises:
+            ModelLoadError: Dépendance absente, device refusé, modèle absent du cache hors ligne, ou autre échec ; le message dit quoi faire.
+        """
         device = "?"
         try:
             device = self._device()

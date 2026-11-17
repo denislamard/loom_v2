@@ -1,0 +1,151 @@
+# loom_ia.config.telemetry
+
+Module `loom_ia.config.telemetry` de loom_v2 (fichier `src/loom_ia/config/telemetry.py`).
+
+Ce que les exports emportent, ce qu'ils masquent, où ils vont (fonctions K3 et K4, points 29 et 30, conception §17.7).
+
+Le journal garde tout, toujours (point 30) : rien ici ne change ce qui y est écrit.
+Ces réglages disent ce qui **sort** du journal vers un collecteur.
+
+- `capture.exports` : `metadata` (le défaut) n'emporte que l'enveloppe et
+  ce qui n'est pas du contenu — types, statuts, durées, coûts, modèles, noms
+  d'outils ; `content` emporte aussi les champs que chaque charge déclare
+  comme contenu (`content_fields`), après masquage. Un client peut avoir
+  sa propre valeur (`tenants[].telemetry.capture`).
+- `redaction.patterns` : ce qui est masqué dans le contenu exporté. Quatre
+  motifs fournis (`secret`, `email`, `phone`, `iban`), qui
+  s'appliquent toujours, et des motifs à soi (`{name, regex}`) qui s'y
+  ajoutent. Le masquage ne touche que les exports : le journal et l'API
+  (portée `read_content`) ne le voient pas.
+- `exporters` : les collecteurs. Un seul type à ce jalon, `otel` (OTLP).
+- `capture.raw_exchanges` (jalon J6.1b) : en opt-in, chaque échange HTTP avec un
+  fournisseur entre **au journal** (`model.exchanged`), sous le sceau et la
+  rétention comme le reste ; il ne part jamais vers un collecteur que par ses
+  métadonnées.
+
+## Constantes de `loom_ia.config.telemetry`
+
+- `CaptureLevel = Literal['metadata', 'content']` : Ce qu'emportent les exports : métadonnées seules, ou contenu aussi.
+- `OtlpProtocol = Literal['http/protobuf', 'grpc']` : Protocole OTLP vers le collecteur.
+- `EXPORTER_TYPES = ('otel',)` : Types de collecteur connus.
+- `OTLP_ENDPOINT_ENV = 'OTEL_EXPORTER_OTLP_ENDPOINT'` : Variable lue par défaut : celle que nomme la spécification OTLP.
+- `RAW_MAX_BYTES = 256 * 1024` : Borne d'un corps brut par défaut : de quoi lire une requête de belle taille sans que chaque appel d'une longue session ne pèse des mégaoctets.
+- `DeclaredPattern = Annotated[Annotated[str, Tag('builtin')] | Annotated[RedactionPattern, Tag('own')], Discriminator(_pattern_kind)]` : Un nom de motif fourni, ou un motif à soi : la forme décide de la branche, pour que l'erreur porte sur celle-là seule.
+
+## Classe `loom_ia.config.telemetry.CaptureConfig`
+
+```python
+class CaptureConfig(DomainModel)
+```
+
+Ce qui sort du journal vers un collecteur, et ce qui s'y ajoute en opt-in (`telemetry.capture` ; conception §14.2).
+
+`raw_exchanges` ajoute au journal — et non aux exports — chaque requête
+HTTP au fournisseur et sa réponse (`model.exchanged`, jalon J6.1b), corps bornés
+à `raw_max_bytes` chacun.
+
+**Attributs :**
+
+- `exports` : `metadata` (défaut) : l'enveloppe et ce qui n'est pas du contenu ; `content` : aussi le contenu des charges, après masquage.
+- `raw_exchanges` : Ajoute au journal chaque échange HTTP brut avec un fournisseur (`model.exchanged`). Faux par défaut.
+- `raw_max_bytes` : Taille maximale de chaque corps gardé, en octets (256 Kio par défaut).
+
+## Classe `loom_ia.config.telemetry.CaptureOverride`
+
+```python
+class CaptureOverride(DomainModel)
+```
+
+Capture propre à un client : chaque clé absente reste celle de la racine.
+
+**Attributs :**
+
+- `exports` : `metadata` ou `content` ; absent : celui de la racine.
+- `raw_exchanges` : Échanges bruts au journal ; absent : réglage de la racine.
+- `raw_max_bytes` : Taille maximale d'un corps gardé ; absent : celle de la racine.
+
+### Méthode `loom_ia.config.telemetry.CaptureOverride.over`
+
+```python
+def over(self, root: CaptureConfig) -> CaptureConfig
+```
+
+La capture du client, clé par clé, sur celle de la racine.
+
+**Arguments :**
+
+- `root` : La capture de la racine.
+
+## Classe `loom_ia.config.telemetry.TenantTelemetry`
+
+```python
+class TenantTelemetry(DomainModel)
+```
+
+Ce qu'un client surcharge de la télémétrie : sa capture, rien d'autre.
+
+Les motifs de masquage et les collecteurs sont ceux du déploiement : un
+client choisit si son contenu part, pas où il va.
+
+**Attributs :**
+
+- `capture` : Capture propre au client.
+
+## Classe `loom_ia.config.telemetry.RedactionPattern`
+
+```python
+class RedactionPattern(DomainModel)
+```
+
+Motif de masquage déclaré par la config : un nom, une expression régulière.
+
+**Attributs :**
+
+- `name` : Nom du motif ; pas celui d'un motif fourni.
+- `regex` : Expression régulière (bornée en temps) ; elle ne doit pas accepter la chaîne vide.
+
+## Classe `loom_ia.config.telemetry.RedactionConfig`
+
+```python
+class RedactionConfig(DomainModel)
+```
+
+Motifs masqués dans le contenu exporté (`telemetry.redaction`).
+
+Les motifs fournis s'appliquent toujours : la liste ajoute les siens, et y
+place ceux des fournis qu'elle cite. Les fournis qu'elle ne cite pas passent
+avant elle, dans l'ordre par défaut — les secrets en premier.
+
+**Attributs :**
+
+- `patterns` : Motifs : noms des motifs fournis (`secret`, `email`, `phone`, `iban`) et motifs à soi (`{name, regex}`).
+
+### Méthode `loom_ia.config.telemetry.RedactionConfig.redactor`
+
+```python
+def redactor(self) -> Redactor
+```
+
+Le masqueur : les motifs fournis non cités d'abord, puis la liste dans son ordre.
+
+## Classe `loom_ia.config.telemetry.ExporterConfig`
+
+```python
+class ExporterConfig(DomainModel)
+```
+
+Un collecteur OpenTelemetry, joint en OTLP (`telemetry.exporters` ; point 29).
+
+La config nomme les **variables** qui portent l'adresse et les en-têtes,
+jamais leurs valeurs : un en-tête d'authentification est un secret. Les
+en-têtes s'écrivent comme `OTEL_EXPORTER_OTLP_HEADERS`
+(`clé=valeur,clé=valeur`).
+
+**Attributs :**
+
+- `type` : Type du collecteur : `otel`.
+- `endpoint_env` : Variable qui porte l'adresse du collecteur (`OTEL_EXPORTER_OTLP_ENDPOINT` par défaut) ; vide, le collecteur n'est pas monté.
+- `protocol` : `http/protobuf` (défaut) ou `grpc`.
+- `headers_env` : Variable qui porte les en-têtes (`clé=valeur,clé=valeur`).
+- `service_name` : Nom du service dans les traces (`loom-ia` par défaut).
+- `timeout` : Délai d'un envoi au collecteur, en secondes (10 par défaut).

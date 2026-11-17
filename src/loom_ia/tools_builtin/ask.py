@@ -22,6 +22,7 @@ from loom_ia.tools_builtin import BuiltinContext
 from loom_ia.tools_builtin.ask_params import AskParams
 
 NAME: Final = "ask"
+"""Nom de l'outil."""
 
 DESCRIPTION: Final = (
     "Pose une ou plusieurs questions à l'utilisateur et attend sa réponse, qui te revient "
@@ -35,6 +36,7 @@ DESCRIPTION: Final = (
     "Si tu reposes une question, dis d'abord en une phrase pourquoi la réponse précédente "
     "ne suffisait pas."
 )
+"""Description de l'outil, lue par le modèle."""
 
 SCHEMA: Final[dict[str, JsonValue]] = {
     "type": "object",
@@ -75,6 +77,7 @@ SCHEMA: Final[dict[str, JsonValue]] = {
     "required": ["questions"],
     "additionalProperties": False,
 }
+"""Schéma des arguments de l'outil, lu par le modèle."""
 
 
 class AskTool:
@@ -93,13 +96,16 @@ class AskTool:
 
     @property
     def spec(self) -> ToolSpec:
+        """La définition de l'outil : nom, description et schéma, délai d'expiration des questions."""
         return self._spec
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Jamais exécuté : le moteur pose la question et attend la réponse ; lève ``ToolError``."""
         raise ToolError("ask ne s'exécute pas : le moteur pose la question et attend la réponse.")
 
 
 def build(params: BaseModel, context: BuiltinContext) -> AskTool:
+    """Fabrique l'outil ``loom.ask`` à partir de ses paramètres."""
     if not isinstance(params, AskParams):
         raise TypeError(f"paramètres de loom.{NAME} attendus, reçu {type(params).__name__}")
     return AskTool(params.expires_in)

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Stockage d'artefacts dans un dossier local : mode librairie et dev (G2).
+"""Stockage d'artefacts dans un dossier local : mode librairie et dev (fonction G2).
 
 Un fichier par artefact : ``<racine>/<client>/<session>/<sha256>.<ext>``,
 chemin tiré de l'URI (segments encodés, jamais « .. »). Supprimer une
@@ -31,9 +31,16 @@ class LocalArtifactStore:
         return self.root / ArtifactLocation.parse(uri).relative_path()
 
     async def put(self, uri: str, data: bytes) -> None:
+        """Range des octets à une URI (``ArtifactStore.put``).
+
+        Un fichier déjà présent n'est pas réécrit (l'URI est adressée par le
+        contenu) ; l'écriture passe par un fichier temporaire renommé. ``ValueError``
+        si l'URI est invalide.
+        """
         await asyncio.to_thread(_write, self.path(uri), data)
 
     async def get(self, uri: str) -> bytes:
+        """Rend les octets d'un artefact ; ``ArtifactNotFound`` s'il n'y est pas (``ArtifactStore.get``)."""
         path = self.path(uri)
         try:
             return await asyncio.to_thread(path.read_bytes)
@@ -46,9 +53,14 @@ class LocalArtifactStore:
         return (self.root / location.relative_path()).parent
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Supprime les fichiers d'une session (RGPD) ; rend le nombre de fichiers retirés.
+
+        Le dossier de la session est supprimé.
+        """
         return await asyncio.to_thread(_remove, self.root, self.session_path(tenant_id, session_id))
 
     async def aclose(self) -> None:
+        """Rien à fermer."""
         pass
 
     def __repr__(self) -> str:

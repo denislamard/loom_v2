@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Jouer une suite d'évals : chaque variante montée à part, en mémoire (O1, J6.3a).
+"""Jouer une suite d'évals : chaque variante montée à part, en mémoire (fonction O1, jalon J6.3a).
 
 ``evaluate`` est ce que font ``Loom.evaluate`` et ``loom eval``. Pour chaque
 variante :
@@ -13,7 +13,7 @@ variante :
 3. chaque cas y est joué ``repeat`` fois, chaque run dans sa propre session ;
    ses contrôles sont évalués, puis le juge d'éval note ses critères.
 
-Un cas de rejeu (J6.3b) rejoue à l'identique, sur l'instance de la variante,
+Un cas de rejeu (jalon J6.3b) rejoue à l'identique, sur l'instance de la variante,
 chaque run de ses journaux — lus **avant** le premier run de l'éval : ceux
 qu'elle exporte ne seront rejoués qu'à la suivante.
 
@@ -77,6 +77,7 @@ from loom_ia.runtime import load_registry
 logger = logging.getLogger(__name__)
 
 CAP_REACHED = "plafond de dépense atteint ({spent:.4f} $ sur {cap:.4f} $)"
+"""Motif d'un run non joué parce que le plafond de dépense de la suite est atteint."""
 
 
 async def evaluate(
@@ -182,8 +183,10 @@ def _chosen(what: str, declared: Sequence[str], asked: Sequence[str]) -> set[str
 
 
 def _doubles(suite: EvalSuite, base: LoomConfig, registry: Registry | None) -> dict[str, Double]:
-    """Les doublures de la suite, résolues : un nom enregistré, ou ``module:fonction``
-    relatif à la suite."""
+    """Les doublures de la suite, résolues.
+
+    Chacune est un nom enregistré, ou ``module:fonction`` relatif à la suite.
+    """
     if not suite.doubles:
         return {}
     registry = registry if registry is not None else load_registry(base)
@@ -234,8 +237,7 @@ def _variant_config(suite: EvalSuite, base: LoomConfig, variant: EvalVariant, pr
 
 
 def _check_launch(config: LoomConfig, suite: EvalSuite, variant: EvalVariant, chosen: set[str]) -> None:
-    """L'agent existe dans la config de la variante, et chaque client des cas joués peut le
-    lancer."""
+    """Vérifie que l'agent existe dans la config de la variante, et que chaque client des cas joués peut le lancer."""
     names = AgentRegistry.from_config(config).names
     if suite.agent not in names:
         raise EvalError(f"Variante {variant.name} : l'agent {suite.agent!r} n'est pas dans la config (agents : {', '.join(sorted(names)) or 'aucun'})")
@@ -353,7 +355,7 @@ async def _play(
     )
 
 
-# --- Un cas de rejeu (J6.3b) ---------------------------------------------------------
+# --- Un cas de rejeu (jalon J6.3b) ---------------------------------------------------------
 
 type _Loaded = list[tuple[str, list[Event] | ReplayError]]
 

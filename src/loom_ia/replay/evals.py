@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Évaluer un agent : des cas, des attendus, des variantes à comparer (O1, J6.3a).
+"""Évaluer un agent : des cas, des attendus, des variantes à comparer (fonction O1, jalon J6.3a).
 
 Une **suite** (YAML) désigne une config et un agent, et porte des **cas** :
 une demande, et ce qu'on attend du run qu'elle lance. Chaque cas est joué pour
@@ -112,21 +112,25 @@ from loom_ia.guards import JUDGE_SYSTEM, verdict_scores, verdict_tool
 from loom_ia.replay.book import Divergence
 from loom_ia.replay.variant import Double, doubled
 
-# Un nom de cas ou de variante sert aussi de nom de fichier (``--export``).
 NAME_PATTERN: Final = r"^[A-Za-z0-9_.-]{1,64}$"
+"""Un nom de cas ou de variante sert aussi de nom de fichier (``--export``)."""
 BASE_VARIANT: Final = "base"
+"""Nom de la variante jouée quand la suite n'en déclare aucune : la config telle quelle."""
 EVAL_JUDGE: Final = "eval"
-# Qui tranche une approbation pendant une éval.
+"""Nom du juge d'éval dans ses appels de modèle (``judge:eval``) et ses verdicts."""
 EVAL_APPROVER: Final = "éval"
+"""Qui tranche une approbation pendant une éval."""
 REFUSED: Final = (
     "Non exécuté : éval. L'outil {name} a des effets de bord ({effects}) et la suite ne lui donne pas de doublure ; il n'est jamais exécuté pendant une éval."
 )
+"""Erreur rendue au modèle pour un outil à effets de bord sans doublure."""
 NOBODY: Final = "éval : cet appel s'exécuterait pour de vrai, et personne n'est là pour l'approuver"
-# Le contrôle d'un run rejoué (J6.3b).
+"""Motif du refus d'une approbation pour un appel qui s'exécuterait pour de vrai."""
 IDENTICAL: Final = "se rejoue à l'identique"
+"""Le contrôle d'un run rejoué (jalon J6.3b)."""
 
-# Ce que devient un appel d'outil pendant une éval.
 type EvalFate = Literal["double", "refused", "run"]
+"""Ce que devient un appel d'outil pendant une éval."""
 _FATES: Final[Mapping[EvalFate, str]] = {
     "double": "remplacé par sa doublure",
     "refused": "non exécuté : effets de bord",
@@ -142,7 +146,15 @@ class EvalError(Exception):
 
 
 class EvalCriterion(DomainModel):
-    """Un critère noté par le juge d'éval : une règle et son seuil."""
+    """Un critère noté par le juge d'éval : une règle et son seuil.
+
+    Attributes:
+        name: Nom du critère, unique pour un cas (critères du juge et du cas
+            confondus).
+        rule: La règle que le juge note.
+        min_score: Seuil de réussite, entre 0 et 1 (par défaut
+            ``DEFAULT_MIN_SCORE``).
+    """
 
     name: str = Field(pattern=CRITERION_NAME_PATTERN)
     rule: str = Field(min_length=1)
@@ -150,11 +162,19 @@ class EvalCriterion(DomainModel):
 
     @property
     def criterion(self) -> Criterion:
+        """Le critère au format des juges de l'agent (``Criterion``)."""
         return Criterion(name=self.name, rule=self.rule, min_score=self.min_score)
 
 
 class ToolExpectation(DomainModel):
-    """Un outil que le run doit appeler, avec au moins ces arguments."""
+    """Un outil que le run doit appeler, avec au moins ces arguments.
+
+    Attributes:
+        name: Nom de l'outil ; dans le YAML, un nom seul suffit (``called:
+            [chercher_devis]``).
+        arguments: Arguments attendus, comparés en partie : chacun doit être
+            là, avec cette valeur ; un objet se compare lui-même en partie.
+    """
 
     name: str = Field(min_length=1)
     arguments: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
@@ -179,19 +199,30 @@ class Expect(DomainModel):
     journal l'a gardé : ce que l'application a posé, ce que les outils des
     runs terminés ont écrit, sans valeur par défaut. ``null`` attend la clé
     absente.
+
+    Attributes:
+        status: Statut attendu du run ; sans lui, le run doit finir
+            ``completed``.
+        contains: Textes que la réponse doit contenir (non vides).
+        not_contains: Textes qu'elle ne doit pas contenir (non vides).
+        matches: Motifs cherchés dans le texte, avec un délai
+            (``core.bounded_regex``) ; ``(?i)``, ``(?s)`` s'y écrivent.
+        fields: Champs de la sortie structurée, par chemin pointé
+            (``lignes.0.total``), et leur valeur.
+        called: Outils que le run (son arbre) doit appeler, avec au moins ces
+            arguments.
+        not_called: Outils que le run ne doit jamais appeler.
+        state: Clés du state de la session après le run, et leur valeur ;
+            ``null`` : absente.
     """
 
     status: RunStatus | None = None
     contains: tuple[str, ...] = ()
     not_contains: tuple[str, ...] = ()
-    # Motifs cherchés dans le texte, avec un délai (``core.bounded_regex``) ;
-    # ``(?i)``, ``(?s)`` s'y écrivent.
     matches: tuple[str, ...] = ()
-    # Champs de la sortie structurée, par chemin pointé (``lignes.0.total``).
     fields: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
     called: tuple[ToolExpectation, ...] = ()
     not_called: tuple[str, ...] = ()
-    # Clés du state de la session après le run, et leur valeur ; ``null`` : absente.
     state: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
 
     @field_validator("contains", "not_contains", "matches")
@@ -213,6 +244,7 @@ class Expect(DomainModel):
 
     @property
     def count(self) -> int:
+        """Nombre de contrôles déterministes déclarés."""
         return (
             (self.status is not None)
             + len(self.contains)
@@ -226,17 +258,30 @@ class Expect(DomainModel):
 
 
 class EvalCase(DomainModel):
-    """Une demande et ce qu'on attend du run qu'elle lance — ou des journaux à rejouer."""
+    """Une demande et ce qu'on attend du run qu'elle lance — ou des journaux à rejouer.
+
+    Attributes:
+        name: Nom du cas, unique dans la suite ; il sert aussi de nom de
+            fichier (``--export``).
+        input: La demande envoyée à l'agent ; exclusif de ``replay``.
+        replay: Non-régression (jalon J6.3b) : motif des journaux dont chaque
+            run doit se rejouer à l'identique, relatif à la suite
+            (``journaux/*.jsonl``) ; exclusif de ``input``, et sans attendus,
+            critères, client ni state.
+        tenant: Client au nom duquel le cas est joué ; à défaut, celui de la
+            suite.
+        state: State que l'application pose à l'ouverture du run
+            (``Loom.run(state=…)``) : chaque cas part d'une session neuve, ses
+            clés obligatoires comprises.
+        expect: Contrôles déterministes.
+        criteria: Critères propres au cas, notés par le juge d'éval après les
+            siens ; ils exigent un ``judge`` dans la suite.
+    """
 
     name: str = Field(pattern=NAME_PATTERN)
     input: Annotated[str, Field(min_length=1)] | None = None
-    # Non-régression (J6.3b) : motif des journaux dont chaque run doit se
-    # rejouer à l'identique, relatif à la suite (``journaux/*.jsonl``).
     replay: Annotated[str, Field(min_length=1)] | None = None
-    # Client au nom duquel le cas est joué ; à défaut, celui de la suite.
     tenant: TenantId | None = None
-    # State que l'application pose à l'ouverture du run (``Loom.run(state=…)``) :
-    # chaque cas part d'une session neuve, ses clés obligatoires comprises.
     state: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
     expect: Expect = Expect()
     criteria: tuple[EvalCriterion, ...] = ()
@@ -264,22 +309,35 @@ class EvalCase(DomainModel):
 
 
 class EvalVariant(DomainModel):
-    """Une façon de jouer les cas : la config, une autre, ou d'autres modèles par étape."""
+    """Une façon de jouer les cas : la config, une autre, ou d'autres modèles par étape.
+
+    Attributes:
+        name: Nom de la variante, unique dans la suite ; il sert aussi de nom
+            de fichier (``--export``).
+        config: Autre fichier de config, relatif à la suite.
+        models: Étape de l'agent (``main``, un rôle, ``judge:<nom>``) → modèle
+            déclaré.
+    """
 
     name: str = Field(pattern=NAME_PATTERN)
-    # Autre fichier de config, relatif à la suite.
     config: Path | None = None
-    # Étape de l'agent (``main``, un rôle, ``judge:<nom>``) → modèle déclaré.
     models: dict[str, str] = Field(default_factory=dict[str, str])
 
 
 class EvalJudge(DomainModel):
-    """Le juge d'éval : un modèle de la config, et les critères de tous les cas."""
+    """Le juge d'éval : un modèle de la config, et les critères de tous les cas.
+
+    Attributes:
+        model: Modèle déclaré dans la config, qui sert de juge.
+        criteria: Critères communs, notés pour chaque cas (sauf les cas de
+            rejeu).
+        tool_results: Outils dont il voit les résultats, dans l'arbre du run
+            (décision du 06/10) : sans eux, il ne peut juger la réponse que sur
+            la demande.
+    """
 
     model: str = Field(min_length=1)
     criteria: tuple[EvalCriterion, ...] = ()
-    # Outils dont il voit les résultats, dans l'arbre du run (décision du
-    # 06/10) : sans eux, il ne peut juger la réponse que sur la demande.
     tool_results: tuple[str, ...] = ()
 
     @field_validator("tool_results")
@@ -290,25 +348,38 @@ class EvalJudge(DomainModel):
 
 
 class EvalSuite(DomainModel):
-    """Une suite d'évals, telle qu'un fichier YAML la décrit."""
+    """Une suite d'évals, telle qu'un fichier YAML la décrit.
+
+    Attributes:
+        version: Version du format ; seule ``1`` existe.
+        name: Nom de la suite ; par défaut, celui de son fichier.
+        config: Config de l'agent, relative à la suite ; à défaut, celle de
+            l'instance.
+        agent: Agent évalué.
+        tenant: Client par défaut des cas.
+        repeat: Nombre de fois où chaque cas est joué, par variante.
+        max_cost_usd: Plafond de dépense de la suite : runs et juge d'éval.
+            Atteint, les runs suivants ne partent pas, et le rapport le dit.
+        doubles: Outil → ``module:fonction`` (relatif à la suite) ou nom
+            enregistré.
+        judge: Juge d'éval ; requis dès qu'un cas porte des critères.
+        variants: Variantes à comparer ; sans elles, la seule variante ``base``
+            : la config telle quelle.
+        cases: Les cas, au moins un, de noms distincts.
+        base_dir: Dossier du fichier de la suite, posé au chargement.
+    """
 
     version: Literal[1] = 1
-    # Nom de la suite ; par défaut, celui de son fichier.
     name: str | None = None
-    # Config de l'agent, relative à la suite ; à défaut, celle de l'instance.
     config: Path | None = None
     agent: str = Field(min_length=1)
     tenant: TenantId | None = None
     repeat: PositiveInt = 1
-    # Plafond de dépense de la suite : runs et juge d'éval. Atteint, les runs
-    # suivants ne partent pas, et le rapport le dit.
     max_cost_usd: PositiveFloat | None = None
-    # Outil → ``module:fonction`` (relatif à la suite) ou nom enregistré.
     doubles: dict[str, str] = Field(default_factory=dict[str, str])
     judge: EvalJudge | None = None
     variants: tuple[EvalVariant, ...] = ()
     cases: tuple[EvalCase, ...] = Field(min_length=1)
-    # Dossier du fichier de la suite, posé au chargement.
     base_dir: Path | None = None
 
     @model_validator(mode="after")
@@ -329,6 +400,7 @@ class EvalSuite(DomainModel):
 
     @property
     def title(self) -> str:
+        """Nom de la suite ; ``suite`` à défaut."""
         return self.name or "suite"
 
     def criteria(self, case: EvalCase) -> tuple[Criterion, ...]:
@@ -339,6 +411,11 @@ class EvalSuite(DomainModel):
         return tuple(c.criterion for c in (*common, *case.criteria))
 
     def tenant_of(self, case: EvalCase) -> TenantId | None:
+        """Client au nom duquel ce cas est joué : le sien, sinon celui de la suite.
+
+        Args:
+            case: Le cas.
+        """
         return case.tenant or self.tenant
 
     def journals(self, case: EvalCase) -> list[Path]:
@@ -355,6 +432,7 @@ class EvalSuite(DomainModel):
         return sorted(path for path in found if path.is_file())
 
     def played_variants(self) -> tuple[EvalVariant, ...]:
+        """Les variantes jouées : celles de la suite, sinon la seule ``base``."""
         return self.variants or (EvalVariant(name=BASE_VARIANT),)
 
     def resolved(self, path: Path | None) -> Path | None:
@@ -399,7 +477,7 @@ def isolated(config: LoomConfig, scratch: Path) -> LoomConfig:
 
     Le journal et ses fichiers vivent dans ``scratch``, un dossier temporaire
     que l'éval efface en finissant — en JSONL, parce qu'une approbation exige
-    un journal durable (#28), même tranchée en ligne. File et bus en mémoire ;
+    un journal durable (point 28), même tranchée en ligne. File et bus en mémoire ;
     pas de sceau, pas de collecteur ; ni quotas ni plafonds de période des
     clients (leurs compteurs ne voient pas l'éval). Un magasin d'idempotence
     partagé devient une base SQLite dans ``scratch`` : ce que demande une clé
@@ -460,6 +538,18 @@ class EvalTools:
         self._effects: dict[tuple[str, str], str] = {}
 
     def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool:
+        """Vrai si l'éval répond à la place de l'outil : doublure ou refus.
+
+        Un rôle tourne, un sous-agent sans doublure aussi (ses outils passent ici).
+        Le sort de chaque appel est décidé une fois, avant les références et les
+        politiques : doublé s'il a une doublure, refusé s'il a des effets de bord,
+        exécuté sinon.
+
+        Args:
+            tool: L'outil appelé.
+            call: L'appel.
+            run_id: Run qui appelle.
+        """
         if tool.spec.kind == "role" or (tool.spec.kind == "agent" and call.name not in self.doubles):
             # De la logique, et un sous-agent sans doublure : ils tournent ; les outils
             # du sous-agent passent ici. Doublé, il ne tourne pas : sa doublure répond.
@@ -480,6 +570,7 @@ class EvalTools:
         return fate != "run"
 
     def from_journal(self, run_id: RunId, call_id: str) -> bool:
+        """Toujours faux : une éval ne lit aucun journal, doublure et refus sont des résultats neufs."""
         # Une éval ne lit aucun journal : doublure et refus sont des résultats neufs.
         return False
 
@@ -491,6 +582,7 @@ class EvalTools:
         arguments: Mapping[str, JsonValue],
         resolved: Mapping[str, JsonValue],
     ) -> tuple[ToolOutput, Consumption | None]:
+        """La réponse de la doublure, ou l'erreur qui dit au modèle que l'outil n'est pas exécuté (``REFUSED``)."""
         key = (run_id, call_id)
         if self.fates[key] == "double":
             return await doubled(self.doubles[name], name, resolved), None
@@ -509,6 +601,11 @@ class EvalTools:
 
 
 def eval_fate_label(fate: EvalFate) -> str:
+    """Le sort d'un appel pendant une éval, en clair.
+
+    Args:
+        fate: ``double``, ``refused`` ou ``run``.
+    """
     return _FATES[fate]
 
 
@@ -517,51 +614,76 @@ def eval_fate_label(fate: EvalFate) -> str:
 
 @dataclass(frozen=True, slots=True)
 class ToolUse:
-    """Un appel d'outil du run (de son arbre), tel qu'il est parti."""
+    """Un appel d'outil du run (de son arbre), tel qu'il est parti.
+
+    Attributes:
+        name: Nom de l'outil.
+        arguments: Ce que l'outil a reçu : références ``$ref`` résolues, puis
+            les arguments qu'une politique ``before_tool`` a mis à la place
+            (décision du 06/10, jalon J6.3c).
+        fate: Sort pendant l'éval ; ``None`` pour un rôle ou un sous-agent.
+        result: Ce que l'appel a rendu, tel que le journal le garde (``None`` :
+            pas de résultat) — un résultat déporté n'y a que son aperçu.
+        is_error: Le résultat est une erreur.
+        written: Les arguments tels que le modèle les a écrits, quand l'outil
+            en a reçu d'autres.
+    """
 
     name: str
-    # Ce que l'outil a reçu : références ``$ref`` résolues, puis les arguments
-    # qu'une politique ``before_tool`` a mis à la place (décision du 06/10, 6.3c).
     arguments: Mapping[str, JsonValue]
-    # Sort pendant l'éval ; ``None`` pour un rôle ou un sous-agent.
     fate: EvalFate | None = None
-    # Ce que l'appel a rendu, tel que le journal le garde (``None`` : pas de
-    # résultat) — un résultat déporté n'y a que son aperçu.
     result: str | None = None
     is_error: bool = False
-    # Les arguments tels que le modèle les a écrits, quand l'outil en a reçu d'autres.
     written: Mapping[str, JsonValue] | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Outcome:
-    """Ce qu'un run d'éval a rendu, de quoi le contrôler."""
+    """Ce qu'un run d'éval a rendu, de quoi le contrôler.
+
+    Attributes:
+        status: Statut du run.
+        text: Texte de la réponse finale.
+        data: Sortie structurée, s'il y en a une.
+        error_type: Type d'erreur d'un run en échec.
+        tools: Appels d'outil de l'arbre du run.
+        state: State de la session après le run, tel que le journal l'a gardé.
+    """
 
     status: RunStatus
     text: str
     data: JsonValue
     error_type: str | None
     tools: tuple[ToolUse, ...] = ()
-    # State de la session après le run, tel que le journal l'a gardé.
     state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
 
 type CheckKind = Literal["status", "text", "field", "tool", "judge", "replay", "state"]
+"""Sorte d'un contrôle, telle que le rapport la donne."""
 
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:
-    """Un contrôle ou un critère, et ce qu'il a trouvé."""
+    """Un contrôle ou un critère, et ce qu'il a trouvé.
+
+    Attributes:
+        label: Le contrôle ou le critère, en clair.
+        passed: Réussi ou non.
+        detail: Ce qui a été trouvé à la place, quand le contrôle tombe ; la
+            note et le motif du juge pour un critère. Un contrôle de texte ne
+            recopie pas le texte : le rapport le donne une fois, en entier,
+            sous le run.
+        kind: Sorte de contrôle : ``status``, ``text``, ``field``, ``tool``,
+            ``judge``, ``replay`` ou ``state``.
+    """
 
     label: str
     passed: bool
-    # Ce qui a été trouvé à la place, quand le contrôle tombe ; la note et le
-    # motif du juge pour un critère. Un contrôle de texte ne recopie pas le
-    # texte : le rapport le donne une fois, en entier, sous le run.
     detail: str = ""
     kind: CheckKind = "status"
 
     def as_json(self) -> dict[str, JsonValue]:
+        """Le contrôle en JSON (``--json`` de ``loom eval``)."""
         return {
             "label": self.label,
             "kind": self.kind,
@@ -711,7 +833,14 @@ def _score(value: float) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Judgment:
-    """Ce que le juge d'éval a rendu : les notes, ou pourquoi il n'en a pas."""
+    """Ce que le juge d'éval a rendu : les notes, ou pourquoi il n'en a pas.
+
+    Attributes:
+        scores: Note de chaque critère.
+        error: Pourquoi le juge n'a pas noté ; ``None`` s'il a noté.
+        usage: Tokens du juge.
+        cost_usd: Ce qu'il a coûté, en dollars.
+    """
 
     scores: tuple[CriterionScore, ...] = ()
     error: str | None = None
@@ -785,6 +914,7 @@ class EvalJudgeClient:
         return Judgment(scores=scores, usage=usage, cost_usd=cost)
 
     async def aclose(self) -> None:
+        """Ferme le client du juge, s'il lui appartient (``owned``)."""
         if self.owned:
             await self.client.aclose()
 
@@ -794,43 +924,60 @@ class EvalJudgeClient:
 
 @dataclass(frozen=True, slots=True)
 class EvalRun:
-    """Un cas joué une fois pour une variante, et ce que ses contrôles en disent."""
+    """Un cas joué une fois pour une variante, et ce que ses contrôles en disent.
+
+    Attributes:
+        case: Nom du cas.
+        variant: Nom de la variante.
+        attempt: Répétition, à partir de 1.
+        run_id: Identifiant du run ; ``None`` s'il n'a pas été lancé.
+        status: Statut final du run.
+        text: Texte de la réponse.
+        failure: Un run en échec : son type et son message.
+        checks: Résultats des contrôles et des critères.
+        usage: Tokens du run.
+        cost_usd: Ce qu'a coûté le run, en dollars (sous-agents et juges de
+            l'agent compris).
+        judge_cost_usd: Ce qu'a coûté le juge d'éval, compté à part.
+        active_ms: Temps actif du run, en millisecondes.
+        tools: Appels d'outil de l'arbre du run.
+        error: Le run n'a pas pu être lancé ou s'est interrompu : pourquoi.
+        skipped: Non joué (plafond de dépense atteint) : pourquoi.
+        journal: Cas de rejeu (jalon J6.3b) : le journal du run, rapporté à la
+            suite.
+        divergence: Cas de rejeu : là où le rejeu s'écarte du journal.
+    """
 
     case: str
     variant: str
-    # Répétition, à partir de 1.
     attempt: int
     run_id: RunId | None = None
     status: RunStatus | None = None
     text: str = ""
-    # Un run en échec : son type et son message.
     failure: str | None = None
     checks: tuple[CheckResult, ...] = ()
     usage: Usage = field(default_factory=Usage)
-    # Ce qu'a coûté le run (sous-agents et juges de l'agent compris)…
     cost_usd: float = 0.0
-    # … et le juge d'éval, à part.
     judge_cost_usd: float = 0.0
     active_ms: float = 0.0
     tools: tuple[ToolUse, ...] = ()
-    # Le run n'a pas pu être lancé ou s'est interrompu : pourquoi.
     error: str | None = None
-    # Non joué (plafond de dépense atteint) : pourquoi.
     skipped: str | None = None
-    # Cas de rejeu (J6.3b) : le journal du run, rapporté à la suite, et là où
-    # le rejeu s'en écarte.
     journal: str | None = None
     divergence: Divergence | None = None
 
     @property
     def passed(self) -> bool:
+        """Joué jusqu'au bout, et tous ses contrôles passent."""
         return self.skipped is None and self.error is None and all(c.passed for c in self.checks)
 
     @property
     def spent_usd(self) -> float:
+        """Ce qu'a coûté ce run, juge d'éval compris."""
         return self.cost_usd + self.judge_cost_usd
 
     def as_json(self) -> dict[str, JsonValue]:
+        """Le run en JSON (``--json`` de ``loom eval``)."""
         return {
             "case": self.case,
             "variant": self.variant,
@@ -871,10 +1018,17 @@ class EvalRun:
 
 @dataclass(frozen=True, slots=True)
 class VariantSummary:
-    """Une variante, cas par cas : combien de répétitions passent, et ce qu'elle a coûté."""
+    """Une variante, cas par cas : combien de répétitions passent, et ce qu'elle a coûté.
+
+    Attributes:
+        name: Nom de la variante.
+        cases: Cas → (répétitions qui passent, répétitions jouées).
+        skipped: Runs non joués (plafond de dépense atteint).
+        cost_usd: Ce qu'ont coûté ses runs, en dollars.
+        judge_cost_usd: Ce qu'a coûté le juge d'éval sur ses runs.
+    """
 
     name: str
-    # Cas → (répétitions qui passent, répétitions jouées).
     cases: Mapping[str, tuple[int, int]]
     skipped: int
     cost_usd: float
@@ -882,23 +1036,36 @@ class VariantSummary:
 
     @property
     def passed_cases(self) -> int:
+        """Cas joués dont toutes les répétitions passent."""
         return sum(1 for ok, played in self.cases.values() if played and ok == played)
 
 
 @dataclass(frozen=True, slots=True)
 class EvalReport:
-    """Ce qu'une suite a trouvé, variante par variante."""
+    """Ce qu'une suite a trouvé, variante par variante.
+
+    Attributes:
+        suite: Nom de la suite.
+        agent: Agent évalué.
+        repeat: Répétitions par cas.
+        variants: Variante → ce qui la distingue : sa config, ses modèles par
+            étape.
+        cases: Noms des cas, dans l'ordre de la suite.
+        runs: Tous les runs, joués ou non, de toutes les variantes.
+        max_cost_usd: Plafond de dépense de la suite.
+        judge_model: Modèle du juge d'éval, s'il y en a un.
+        replays: Cas de rejeu (jalon J6.3b) : leurs runs viennent de leurs
+            journaux.
+    """
 
     suite: str
     agent: str
     repeat: int
-    # Variante → ce qui la distingue : sa config, ses modèles par étape.
     variants: Mapping[str, Mapping[str, JsonValue]]
     cases: tuple[str, ...]
     runs: tuple[EvalRun, ...]
     max_cost_usd: float | None = None
     judge_model: str | None = None
-    # Cas de rejeu (J6.3b) : leurs runs viennent de leurs journaux.
     replays: tuple[str, ...] = ()
 
     @property
@@ -908,13 +1075,20 @@ class EvalReport:
 
     @property
     def spent_usd(self) -> float:
+        """Dépense de la suite : runs et juge d'éval."""
         return sum(run.spent_usd for run in self.runs)
 
     @property
     def skipped(self) -> int:
+        """Runs non joués (plafond de dépense atteint)."""
         return sum(1 for run in self.runs if run.skipped is not None)
 
     def summary(self, variant: str) -> VariantSummary:
+        """Le bilan d'une variante, cas par cas.
+
+        Args:
+            variant: Nom de la variante.
+        """
         runs = [run for run in self.runs if run.variant == variant]
         cases: dict[str, tuple[int, int]] = {}
         for case in self.cases:
@@ -929,6 +1103,7 @@ class EvalReport:
         )
 
     def as_json(self) -> dict[str, JsonValue]:
+        """Le rapport en JSON (``--json`` de ``loom eval``) : la suite, le bilan de chaque variante, puis chaque run."""
         return {
             "suite": self.suite,
             "agent": self.agent,
@@ -1000,6 +1175,11 @@ def _variant(described: Mapping[str, JsonValue]) -> str:
 
 
 def _case(case: str, runs: Sequence[EvalRun]) -> list[str]:
+    """Les lignes d'un cas pour une variante : sa marque, puis le détail de chaque essai qui tombe.
+
+    Pour un essai qui tombe : ses contrôles en échec et, si un contrôle de
+    texte tombe, le texte entier.
+    """
     played = [r for r in runs if r.skipped is None]
     passed = sum(1 for r in played if r.passed)
     if not played:

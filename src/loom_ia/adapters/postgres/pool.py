@@ -10,7 +10,7 @@ Quatre choses s'y jouent, et aucune ne va de soi.
 **Le DSN ne vient jamais de la config.** Elle nomme la variable
 d'environnement qui le porte (``dsn_env``), comme elle nomme déjà celle d'une
 clé d'API : un mot de passe n'a pas à se trouver dans un fichier versionné
-(§16.3).
+(conception §16.3).
 
 **Le schéma est créé à la première ouverture**, si le rôle connecté le peut.
 Sinon l'erreur renvoie vers ``loom storage sql``, dont la sortie s'applique
@@ -46,21 +46,27 @@ from asyncpg.pool import PoolConnectionProxy
 from loom_ia.adapters.postgres.sql import SCHEMA_TABLE, TENANT_SETTING, check_name
 from loom_ia.core.ports import JournalBusy, StorageNotReady
 
-# Connexion tenue le temps d'une transaction : ce que rend le pool, et non un
-# ``asyncpg.Connection``, qu'il enrobe.
 type Held = PoolConnectionProxy[asyncpg.Record]
+"""Connexion tenue le temps d'une transaction : ce que rend le pool, et non un
+``asyncpg.Connection``, qu'il enrobe.
+"""
 
-# Connexions gardées ouvertes par pool. Basse par défaut : un service de
-# quelques agents n'a pas besoin de dix connexions, et un client qui déclare
-# son propre stockage a son propre pool (§7.3).
 MIN_SIZE: Final = 1
+"""Connexions gardées ouvertes par pool. Basse par défaut : un service de
+quelques agents n'a pas besoin de dix connexions, et un client qui déclare
+son propre stockage a son propre pool (conception §7.3).
+"""
 MAX_SIZE: Final = 10
-# Délais par défaut, en secondes. Avant eux, rien ne bornait l'attente : un verrou
-# tenu par une transaction coincée gelait tous les ``append`` de la session, et un
-# pool épuisé faisait attendre ``acquire()`` sans fin.
+"""Connexions ouvertes au plus par pool."""
 COMMAND_TIMEOUT: Final = 60.0
+"""Délais par défaut, en secondes. Avant eux, rien ne bornait l'attente : un
+verrou tenu par une transaction coincée gelait tous les ``append`` de la
+session, et un pool épuisé faisait attendre ``acquire()`` sans fin.
+"""
 LOCK_TIMEOUT: Final = 10.0
+"""Attente d'un verrou par défaut, en secondes (``lock_timeout``) ; au-delà, ``JournalBusy``."""
 ACQUIRE_TIMEOUT: Final = 30.0
+"""Attente d'une connexion libre par défaut, en secondes ; au-delà, ``TimeoutError``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +78,13 @@ class PoolLimits:
     ligne), ``acquire_timeout`` l'attente d'une connexion libre du pool. Un
     dépassement lève : ``TimeoutError`` pour la première et la dernière,
     ``JournalBusy`` pour la seconde (``asyncpg.LockNotAvailableError`` en cause).
+
+    Attributes:
+        min_size: Connexions gardées ouvertes.
+        max_size: Connexions ouvertes au plus.
+        command_timeout: Délai d'une instruction, en secondes.
+        lock_timeout: Attente d'un verrou, en secondes.
+        acquire_timeout: Attente d'une connexion libre, en secondes.
     """
 
     min_size: int = MIN_SIZE
@@ -97,18 +110,22 @@ logger = logging.getLogger(__name__)
 
 _PRESENT: Final = "SELECT to_regclass($1)"
 _VERSION: Final = f"SELECT version FROM {SCHEMA_TABLE} WHERE component = $1"
-# Verrou consultatif de session, pris le temps de poser le schéma : tous les
-# process qui ouvrent un stockage Postgres sur la même base le partagent.
 _SCHEMA_LOCK: Final = "SELECT pg_advisory_lock(hashtext($1)::bigint)"
+"""Verrou consultatif de session, pris le temps de poser le schéma : tous les
+process qui ouvrent un stockage Postgres sur la même base le partagent.
+"""
 _SCHEMA_KEY: Final = "loom_ia/schema"
-# Réglages **de la transaction** (``true``) : le client pour la politique de lignes, et
-# le délai des verrous. Le pool d'asyncpg rend ses connexions avec ``RESET ALL`` — un
-# ``SET`` fait à l'ouverture ne survivrait pas à la première transaction.
 _SET_TENANT: Final = f"SELECT set_config('{TENANT_SETTING}', $1, true), set_config('lock_timeout', $2, true)"
+"""Réglages **de la transaction** (``true``) : le client pour la politique de
+lignes, et le délai des verrous. Le pool d'asyncpg rend ses connexions avec
+``RESET ALL`` — un ``SET`` fait à l'ouverture ne survivrait pas à la
+première transaction.
+"""
 _SET_LOCK: Final = "SELECT set_config('lock_timeout', $1, true)"
 
 
 DEFAULT_LIMITS: Final = PoolLimits()
+"""Taille et délais d'un pool sans réglage : de 1 à 10 connexions, 60 s par instruction, 10 s par verrou, 30 s pour une connexion."""
 
 
 class PostgresNotPrepared(StorageNotReady):
@@ -175,6 +192,19 @@ class PostgresPool:
         schema: tuple[str, int] | None = None,
         limits: PoolLimits = DEFAULT_LIMITS,
     ) -> None:
+        """Prépare le pool, sans l'ouvrir : il s'ouvre à la première requête.
+
+        Args:
+            dsn: Adresse de la base.
+            table: Table du stockage ; son absence fait appliquer ``ddl``.
+            ddl: SQL qui crée le stockage.
+            role: Rôle applicatif pris par chaque connexion ; ``None`` : aucun.
+            label: Nom du stockage dans les messages.
+            upgrade: SQL de mise à niveau, rejouable sans effet.
+            schema: (composant, version attendue), pour ne pas rejouer une mise à
+                niveau déjà faite.
+            limits: Taille et délais du pool.
+        """
         self._dsn = dsn
         self._schema = schema
         self._limits = limits
@@ -313,6 +343,7 @@ class PostgresPool:
                 ) from exc
 
     async def aclose(self) -> None:
+        """Ferme le pool, s'il est ouvert."""
         if self._pool is not None:
             await self._pool.close()
             self._pool = None

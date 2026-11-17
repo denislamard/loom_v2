@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Fabrique de journaux de runs fictifs, pour les tests et les exemples (O2).
+"""Fabrique de journaux de runs fictifs, pour les tests et les exemples (fonction O2).
 
-Les événements produits suivent la machine à états (#3) : étapes,
+Les événements produits suivent la machine à états (point 3) : étapes,
 transitions et clôture sont écrits comme le moteur le fera.
 """
 
@@ -62,6 +62,18 @@ class RunJournal:
         root_run_id: RunId | None = None,
         step_ms: float = 1.0,
     ) -> None:
+        """Prépare un run fictif.
+
+        Args:
+            agent: Nom de l'agent.
+            tenant_id: Client.
+            session_id: Session ; à défaut, celle du run.
+            run_id: Identifiant du run ; à défaut, un nouveau.
+            root_run_id: Run racine ; à défaut, le run lui-même.
+            step_ms: Durée donnée à chaque étape, en millisecondes : elle compte
+                dans ``RunState.active_ms``, donc dans le délai d'un run (fonction
+                A6).
+        """
         run_id = run_id or new_run_id()
         self.scope = RunScope(
             tenant_id=tenant_id,
@@ -72,7 +84,7 @@ class RunJournal:
         )
         self.status = RunStatus.READY_FOR_MODEL
         # Durée écrite dans chaque ``step.completed`` : c'est elle que cumule
-        # ``RunState.active_ms``, donc ce que borne le délai d'un run (A6).
+        # ``RunState.active_ms``, donc ce que borne le délai d'un run (fonction A6).
         self.step_ms = step_ms
         self.step = 0
         self.iterations = 0
@@ -84,6 +96,7 @@ class RunJournal:
 
     @property
     def run_id(self) -> RunId:
+        """Identifiant du run."""
         return self.scope.run_id
 
     def take(self) -> list[EventDraft]:
@@ -176,6 +189,13 @@ class RunJournal:
         cause: str | None = None,
         cause_event_id: EventId | None = None,
     ) -> Self:
+        """Transition vers ``to_state``.
+
+        Args:
+            to_state: L'état visé.
+            cause: Type de l'événement qui la provoque.
+            cause_event_id: Son identifiant.
+        """
         self._add(
             RunTransitioned(
                 from_state=self.status,
@@ -189,6 +209,7 @@ class RunJournal:
         return self
 
     def complete(self) -> Self:
+        """Clôture réussie : transition vers ``COMPLETED`` et ``run.completed`` (réponse : le dernier message de l'assistant)."""
         self.transition(RunStatus.COMPLETED, cause="model.responded")
         self._add(
             RunCompleted(
@@ -201,6 +222,12 @@ class RunJournal:
         return self
 
     def fail(self, error_type: str, error: str) -> Self:
+        """Clôture en échec : transition vers ``FAILED`` et ``run.failed``.
+
+        Args:
+            error_type: Nature de l'échec.
+            error: Message.
+        """
         self.transition(RunStatus.FAILED, cause=error_type)
         self._add(
             RunFailed(

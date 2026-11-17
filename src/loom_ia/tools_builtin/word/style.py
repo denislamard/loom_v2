@@ -46,57 +46,83 @@ _W: Final = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _HEAD: Final = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 _VML: Final = 'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
 _PLACEHOLDER: Final = re.compile(r"\{(page|pages|title)\}")
-# La numérotation des titres (réglage ``numbering``), à part des listes.
 HEADING_NUMBERING: Final = 900
-# Les styles que seule une disposition demande, par identifiant.
+"""La numérotation des titres (réglage ``numbering``), à part des listes."""
 HEADER: Final = "Header"
+"""Les styles que seule une disposition demande, par identifiant."""
 LAYOUT: Final = "LoomLayout"
-# Le nom du style de tableau de disposition : la relecture le reconnaît.
+"""Identifiant du style de tableau de disposition."""
 LAYOUT_NAME: Final = "loom layout"
-# Les blocs signature et toc, et la liste à cocher : leurs styles, que la relecture
-# reconnaît par leur nom.
+"""Le nom du style de tableau de disposition : la relecture le reconnaît."""
 SIGNATURE: Final = "LoomSignature"
+"""Les blocs signature et toc, et la liste à cocher : leurs styles, que la
+relecture reconnaît par leur nom.
+"""
 SIGNATURE_NAME: Final = "loom signature"
+"""Nom du style de la signature."""
 SIGNER: Final = "LoomSigner"
+"""Identifiant du style d'un signataire."""
 SIGNER_NAME: Final = "loom signer"
+"""Nom du style d'un signataire."""
 MENTION: Final = "LoomMention"
+"""Identifiant du style de la mention."""
 MENTION_NAME: Final = "loom mention"
+"""Nom du style de la mention."""
 CHECK: Final = "LoomCheck"
+"""Identifiant du style d'un élément à cocher."""
 CHECK_2: Final = "LoomCheck2"
+"""Identifiant du style d'un élément à cocher de second niveau."""
 CHECK_NAMES: Final = {CHECK: "loom checkbox", CHECK_2: "loom checkbox 2"}
-# La case : un glyphe, et la police de symboles de Windows qui l'a (LibreOffice en prend
-# une autre qui l'a). Une mécanique, comme les puces : pas une valeur de charte.
+"""Noms des styles des éléments à cocher."""
 CHECK_FONT: Final = "Segoe UI Symbol"
+"""La case : un glyphe, et la police de symboles de Windows qui l'a
+(LibreOffice en prend une autre qui l'a). Une mécanique, comme les puces :
+pas une valeur de charte.
+"""
 CHECKED: Final = "\u2612"
+"""Case cochée (☒)."""
 UNCHECKED: Final = "\u2610"
-# Le sommaire : les styles intégrés de Word (« TOC Heading », « toc 1 »…), qu'il reprend
-# à la mise à jour du champ.
-# Le bloc code, les champs (un tableau sans bordure, son libellé, sa valeur), le lien, la
-# note de bas de page (son texte, son appel).
+"""Case vide (☐)."""
 CODE: Final = "LoomCode"
+"""Le sommaire : les styles intégrés de Word (« TOC Heading », « toc 1 »…),
+qu'il reprend à la mise à jour du champ. Le bloc code, les champs (un
+tableau sans bordure, son libellé, sa valeur), le lien, la note de bas de
+page (son texte, son appel).
+"""
 FIELDS: Final = "LoomFields"
+"""Identifiant du style de tableau des champs."""
 FIELDS_NAME: Final = "loom fields"
+"""Nom du style de tableau des champs."""
 FIELD_LABEL: Final = "LoomFieldLabel"
+"""Identifiant du style d'un libellé de champ."""
 FIELD_VALUE: Final = "LoomFieldValue"
+"""Identifiant du style d'une valeur de champ."""
 HYPERLINK: Final = "Hyperlink"
+"""Identifiant du style intégré d'un lien."""
 FOOTNOTE_TEXT: Final = "FootnoteText"
+"""Identifiant du style intégré du texte d'une note."""
 FOOTNOTE_REFERENCE: Final = "FootnoteReference"
-# Les lignes d'un groupe et de son sous-total, et le récapitulatif de TVA : un style de
-# paragraphe à leur nom, que la relecture reconnaît.
+"""Identifiant du style intégré de l'appel d'une note."""
 TABLE_GROUP: Final = "LoomTableGroup"
+"""Les lignes d'un groupe et de son sous-total, et le récapitulatif de TVA : un
+style de paragraphe à leur nom, que la relecture reconnaît.
+"""
 TABLE_SUBTOTAL: Final = "LoomTableSubtotal"
+"""Identifiant du style d'une ligne de sous-total."""
 INVOICE_TOTALS: Final = "LoomInvoiceTotals"
-# La feuille d'émargement : le style de paragraphe de ses cellules.
+"""Identifiant du style du récapitulatif de TVA."""
 ATTENDANCE: Final = "LoomAttendance"
+"""La feuille d'émargement : le style de paragraphe de ses cellules."""
 TOC_HEADING: Final = "TOCHeading"
+"""Identifiant du style intégré du titre du sommaire."""
 TOC_LEVELS: Final = ("TOC1", "TOC2", "TOC3")
-# Le corps du texte, quand le style ``paragraph`` dit autre chose que ``text``.
+"""Identifiants des styles intégrés des niveaux du sommaire."""
 BODY: Final = "BodyText"
+"""Le corps du texte, quand le style ``paragraph`` dit autre chose que ``text``."""
 _JC: Final = {"left": "left", "center": "center", "right": "right", "justify": "both"}
-# La langue déclarée du document (correcteur, césure).
 LANGUAGES: Final[Mapping[Language, str]] = {"fr": "fr-FR", "en": "en-US"}
+"""La langue déclarée du document (correcteur, césure)."""
 
-# L'ordre des enfants de ``pPr`` et de ``rPr`` que le schéma impose.
 _PPR: Final = (
     "pStyle",
     "keepNext",
@@ -111,18 +137,20 @@ _PPR: Final = (
     "jc",
     "outlineLvl",
 )
+"""L'ordre des enfants de ``pPr`` et de ``rPr`` que le schéma impose."""
 _RPR: Final = ("rFonts", "b", "i", "caps", "vanish", "color", "sz", "u", "lang")
-# Les côtés d'un filet de paragraphe, et leur place dans ``border_space`` (l'ordre de CSS).
 _SIDE_OF: Final = {"top": 0, "right": 1, "bottom": 2, "left": 3}
+"""Les côtés d'un filet de paragraphe, et leur place dans ``border_space`` (l'ordre de CSS)."""
 _RULES: Final = ("border_top", "border_bottom", "border_left", "border_right", "border")
 _SPACING: Final = ("space_before", "space_after")
-# Ce que ``text`` met dans les valeurs par défaut du document, plutôt que dans Normal.
 _DEFAULT_RUN: Final = frozenset({"font", "color", "size"})
+"""Ce que ``text`` met dans les valeurs par défaut du document, plutôt que dans Normal."""
 _DEFAULT_PARAGRAPH: Final = frozenset({"space_before", "space_after", "line_spacing"})
 
 type Pieces = list[tuple[str, str]]
-# Ce qu'un style de tableau dit du tableau et de ses cellules, et pas de leur texte.
+"""Propriétés en XML, dans l'ordre du schéma : (nom de l'élément, son XML)."""
 _CELL_PROPS: Final = frozenset({"border", "border_top", "border_bottom", "border_left", "border_right", "fill"})
+"""Ce qu'un style de tableau dit du tableau et de ses cellules, et pas de leur texte."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,8 +163,7 @@ class Watermark:
 
 
 def watermark(style: Style) -> Watermark | None:
-    """Le filigrane : son texte (``page.watermark``), la police et la couleur du style
-    ``watermark`` ; ``None`` sans texte."""
+    """Le filigrane : son texte (``page.watermark``), la police et la couleur du style ``watermark`` ; ``None`` sans texte."""
     text = style.watermark
     if not text:
         return None
@@ -150,10 +177,12 @@ def jc(align: str) -> str:
 
 
 def half_points(size: float) -> int:
+    """Une taille en demi-points, l'unité de Word."""
     return round(size * 2)
 
 
 def twips(points: float) -> int:
+    """Une longueur en twips (1/20 de point), l'unité de Word."""
     return round(points * 20)
 
 
@@ -164,6 +193,7 @@ def _flag(name: str, value: bool, *, complex_script: bool = True) -> str:
 
 
 def fonts(name: str) -> str:
+    """La police d'un texte en XML, pour toutes les écritures."""
     return f'<w:rFonts w:ascii="{name}" w:hAnsi="{name}" w:eastAsia="{name}" w:cs="{name}"/>'
 
 
@@ -173,8 +203,7 @@ def _size(points: float) -> str:
 
 
 def run_pieces(props: Mapping[str, Any]) -> Pieces:
-    """Les propriétés de caractère d'un style : police, gras, italique, majuscules,
-    couleur, taille, soulignement."""
+    """Les propriétés de caractère d'un style : police, gras, italique, majuscules, couleur, taille, soulignement."""
     pieces: Pieces = []
     if (font := props.get("font")) is not None:
         pieces.append(("rFonts", fonts(font)))
@@ -194,8 +223,7 @@ def run_pieces(props: Mapping[str, Any]) -> Pieces:
 
 
 def _side(side: str, value: str, space: Sides | None) -> str:
-    """Un filet de paragraphe ; son écart au texte, ``border_space`` de son côté, en points
-    entiers (Word n'en écrit pas d'autres)."""
+    """Un filet de paragraphe ; son écart au texte, ``border_space`` de son côté, en points entiers (Word n'en écrit pas d'autres)."""
     rule = parse_rule(value)
     if rule is None:
         return f'<w:{side} w:val="nil"/>'
@@ -205,8 +233,7 @@ def _side(side: str, value: str, space: Sides | None) -> str:
 
 
 def paragraph_pieces(props: Mapping[str, Any], space: Sides | None = None) -> Pieces:
-    """Les propriétés de paragraphe d'un style : filets (à ``space`` du texte, le
-    ``border_space`` du style résolu), fond, espacements, retrait, alignement."""
+    """Les propriétés de paragraphe d'un style : filets (à ``space`` du texte, le ``border_space`` du style résolu), fond, espacements, retrait, alignement."""
     pieces: Pieces = []
     every = props.get("border")
     sides = [
@@ -247,6 +274,7 @@ def ordered(pieces: Pieces, order: tuple[str, ...]) -> str:
 
 
 def run_xml(props: Mapping[str, Any]) -> str:
+    """Les propriétés de caractère d'un style en XML, dans l'ordre du schéma."""
     return ordered(run_pieces(props), _RPR)
 
 
@@ -261,6 +289,7 @@ def _style(
     run: str = "",
     default: bool = False,
 ) -> str:
+    """Un style Word en XML : type, identifiant, nom, base, style suivant, propriétés de paragraphe et de caractère."""
     said = f'<w:style w:type="{kind}" w:styleId="{style_id}"'
     said += ' w:default="1">' if default else ">"
     said += f'<w:name w:val="{name}"/>'
@@ -287,9 +316,11 @@ def _named(
     next_style: str | None = None,
     mechanics: Pieces | None = None,
 ) -> str:
-    """Un style Word tiré d'un style nommé : ce qu'il écrit en plus de ``stop``, le style
-    loom de son style Word de base, et la mécanique (``mechanics``). Les filets et le fond
-    d'un tableau sont ceux du tableau et de ses cellules, pas du texte d'une cellule."""
+    """Un style Word tiré d'un style nommé : ce qu'il écrit en plus de ``stop``, le style loom de son style Word de base, et la mécanique (``mechanics``).
+
+    Les filets et le fond d'un tableau sont ceux du tableau et de ses cellules, pas du
+    texte d'une cellule.
+    """
     props = style.between(loom, stop)
     own = style.look(loom)
     if "table" in style.chain(loom):
@@ -315,6 +346,7 @@ def _named(
 
 
 def _heading(style: Style, level: int) -> str:
+    """Le style d'un titre de niveau ``level``, numéroté si le style numérote les titres."""
     numbered: Pieces = (
         [
             (
@@ -345,8 +377,6 @@ def paragraph_style(style: Style) -> str:
     return BODY if style.between("paragraph", "body") else "Normal"
 
 
-# Le style Word de chaque style prévu qui en a un (un paragraphe) : la base Word d'un style
-# à toi qui en part.
 WORD_IDS: Final[Mapping[str, str]] = {
     "body": "Normal",
     "document_title": "Title",
@@ -373,19 +403,24 @@ WORD_IDS: Final[Mapping[str, str]] = {
     "invoice_totals": INVOICE_TOTALS,
     "attendance": ATTENDANCE,
 }
+"""Le style Word de chaque style prévu qui en a un (un paragraphe) : la base
+Word d'un style à toi qui en part.
+"""
 
 
 def word_id(style: Style, name: str) -> str:
-    """Le style Word d'un style nommé : celui d'un style prévu, ou son nom pour un style à
-    toi (``paragraph`` : Normal, ou « Body Text » s'il dit autre chose que ``text``)."""
+    """Le style Word d'un style nommé.
+
+    Celui d'un style prévu, ou son nom pour un style à toi (``paragraph`` : Normal, ou «
+    Body Text » s'il dit autre chose que ``text``).
+    """
     if name == "paragraph":
         return paragraph_style(style)
     return WORD_IDS.get(name, name)
 
 
 def _custom(style: Style, used: Iterable[str]) -> str:
-    """Les styles à toi que le document emploie, et leurs bases à toi : chacun basé sur le
-    style Word de sa base, n'écrivant que ce qui lui est propre."""
+    """Les styles à toi que le document emploie, et leurs bases à toi : chacun basé sur le style Word de sa base, n'écrivant que ce qui lui est propre."""
     wanted: set[str] = set()
     for name in used:
         wanted.update(step for step in style.chain(name) if step not in WORD_IDS and step != "paragraph")
@@ -397,8 +432,7 @@ def _custom(style: Style, used: Iterable[str]) -> str:
 
 
 def styles_xml(style: Style, used: Iterable[str] = (), custom: Iterable[str] = ()) -> str:
-    """``styles.xml`` : un style Word par style nommé que l'outil emploie, et ceux que le
-    corps demande ; ``custom`` : les styles à toi qu'il emploie."""
+    """``styles.xml`` : un style Word par style nommé que l'outil emploie, et ceux que le corps demande ; ``custom`` : les styles à toi qu'il emploie."""
     wanted = set(used)
     text = style.between("body", None)
     language = LANGUAGES[style.language]
@@ -459,9 +493,11 @@ def _character(style_id: str, name: str, run: str) -> str:
 
 
 def _extra_styles(style: Style, wanted: set[str]) -> str:
-    """Les styles des blocs signature, toc, code et champs, de la liste à cocher, du lien et
-    des notes, des groupes de tableau, du récapitulatif de TVA et de l'émargement, que le
-    document emploie."""
+    """Les styles des blocs facultatifs que le document emploie.
+
+    Ceux des blocs signature, toc, code et champs, de la liste à cocher, du lien et des
+    notes, des groupes de tableau, du récapitulatif de TVA et de l'émargement.
+    """
     said = ""
     if CODE in wanted:
         said += _named(
@@ -537,8 +573,11 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
 
 
 def _toc_entry(style: Style, style_id: str, level: int, step: int) -> str:
-    """Une entrée du sommaire (« toc 1 » à « toc 3 ») : le style ``toc1`` à ``toc3``, à
-    gauche, en retrait de ``toc.level_indent`` par niveau (et de son ``indent``)."""
+    """Une entrée du sommaire (« toc 1 » à « toc 3 »).
+
+    Le style ``toc1`` à ``toc3``, à gauche, en retrait de ``toc.level_indent`` par
+    niveau (et de son ``indent``).
+    """
     loom = f"toc{level + 1}"
     props = style.between(loom, "body")
     indent = props.pop("indent", None)
@@ -559,24 +598,28 @@ def _toc_entry(style: Style, style_id: str, level: int, step: int) -> str:
 
 # --- Numérotations -----------------------------------------------------------------
 
-# Puces et numéros : deux niveaux, la sous-liste en retrait ; un troisième pour une liste
-# qui en a un (une définition à part : les documents à deux niveaux restent les mêmes).
 _LEVELS: Final = {
     False: (("bullet", "•"), ("bullet", "\u2013"), ("bullet", "\u25aa")),
     True: (("decimal", "%1."), ("lowerLetter", "%2)"), ("lowerRoman", "%3.")),
 }
+"""Puces et numéros : deux niveaux, la sous-liste en retrait ; un troisième
+pour une liste qui en a un (une définition à part : les documents à deux
+niveaux restent les mêmes).
+"""
 
 
 def _heading_texts(numbering: Numbering, article: str) -> tuple[str, str, str]:
-    """Le numéro de chaque niveau de titre : « 1. », ou « Article 1 » et un tiret
-    (``labels.article``)."""
+    """Le numéro de chaque niveau de titre : « 1. », ou « Article 1 » et un tiret (``labels.article``)."""
     first = f"{article} %1 \u2013" if numbering == "article" else "%1."
     return (first, "%1.%2", "%1.%2.%3")
 
 
 def _abstract(number: int, ordered: bool, indent: tuple[int, int], depth: int = 2) -> str:
-    """Une numérotation de liste : chaque niveau en retrait de ``indent[0]`` (twips), la
-    puce ou le numéro ``indent[1]`` avant le texte (``list.level_indent``, ``marker_space``)."""
+    """Une numérotation de liste.
+
+    Chaque niveau en retrait de ``indent[0]`` (twips), la puce ou le numéro
+    ``indent[1]`` avant le texte (``list.level_indent``, ``marker_space``).
+    """
     step, marker = indent
     said = f'<w:abstractNum w:abstractNumId="{number}"><w:multiLevelType w:val="hybridMultilevel"/>'
     for level, (kind, text) in enumerate(_LEVELS[ordered][:depth]):
@@ -602,8 +645,8 @@ def _heading_abstract(numbering: Numbering, article: str) -> str:
     return said + "</w:abstractNum>"
 
 
-# Les définitions à trois niveaux : à puces, numérotée.
 _DEEP: Final = 3
+"""Les définitions à trois niveaux : à puces, numérotée."""
 
 
 def numbering_xml(
@@ -612,9 +655,11 @@ def numbering_xml(
     headings: Numbering = "none",
     article: str = "Article",
 ) -> str:
-    """Une numérotation par liste (numérotée ?, à trois niveaux ?) : chaque liste numérotée
-    repart de 1. Les définitions (``abstractNum``) précèdent toutes les numérotations
-    (``num``) : Word l'exige."""
+    """Une numérotation par liste (numérotée ?, à trois niveaux ?) : chaque liste numérotée repart de 1.
+
+    Les définitions (``abstractNum``) précèdent toutes les numérotations (``num``) :
+    Word l'exige.
+    """
     lists = list(lists)
     said = _HEAD + f'<w:numbering xmlns:w="{_W}">' + _abstract(0, False, indent) + _abstract(1, True, indent)
     if headings != "none":
@@ -636,9 +681,11 @@ def numbering_xml(
 
 
 def _text(text: str, title: str, run: str = "") -> str:
-    """Un texte d'en-tête : ``{page}`` et ``{pages}`` en champs, ``{title}`` le titre du
-    document, le reste en segments ; ``run`` : leurs propriétés de caractère (le style d'une
-    zone)."""
+    """Un texte d'en-tête.
+
+    ``{page}`` et ``{pages}`` en champs, ``{title}`` le titre du document, le reste en
+    segments ; ``run`` : leurs propriétés de caractère (le style d'une zone).
+    """
     said = ""
     position = 0
     props = f"<w:rPr>{run}</w:rPr>" if run else ""
@@ -656,9 +703,12 @@ def _text(text: str, title: str, run: str = "") -> str:
 
 
 def _logo_gap(band: Band | None) -> str:
-    """L'écart entre le logo et son texte (``logo.gap``) : une espace insécable d'un point,
-    suivie de cet espacement de caractères — ce que Word et LibreOffice font tous deux
-    (LibreOffice ignore l'espacement d'un caractère sans largeur, et ``effectExtent``)."""
+    """L'écart entre le logo et son texte (``logo.gap``).
+
+    Une espace insécable d'un point, suivie de cet espacement de caractères — ce que
+    Word et LibreOffice font tous deux (LibreOffice ignore l'espacement d'un caractère
+    sans largeur, et ``effectExtent``).
+    """
     if band is None or band.logo is None or not band.logo.gap:
         return ""
     return f'<w:r><w:rPr><w:spacing w:val="{twips(band.logo.gap)}"/><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr><w:t xml:space="preserve">\u00a0</w:t></w:r>'
@@ -712,8 +762,7 @@ def band_xml(
     centered = '<w:jc w:val="center"/>'
 
     def runs(element: BandElement | None) -> str:
-        """Une zone : ses caractères au style de l'élément (police, taille, couleur, gras…),
-        le logo devant s'il le porte ; sa place est celle de la zone."""
+        """Une zone : ses caractères au style de l'élément (police, taille, couleur, gras…), le logo devant s'il le porte ; sa place est celle de la zone."""
         if element is None:
             return ""
         props = style.between(element.style, name) if style is not None and element.style else {}
@@ -770,9 +819,12 @@ def _has_rule(look: Look) -> bool:
 
 
 def _cell_paragraph(style_id: str, look: Look, align: str | None, content: str, spacing: tuple[float, float]) -> str:
-    """Un paragraphe d'une cellule : le style de l'en-tête, du pied ou de la cellule, sans
-    les filets, le fond ni le retrait du style, que porte la table ; son espace avant et
-    après, ``spacing`` (``Style.cell_spacing``), s'il n'est pas celui de son style."""
+    """Un paragraphe d'une cellule.
+
+    Le style de l'en-tête, du pied ou de la cellule, sans les filets, le fond ni le
+    retrait du style, que porte la table ; son espace avant et après, ``spacing``
+    (``Style.cell_spacing``), s'il n'est pas celui de son style.
+    """
     pieces: Pieces = [("pStyle", f'<w:pStyle w:val="{style_id}"/>')]
     if _has_rule(look):
         pieces.append(("pBdr", _NIL_BORDERS))
@@ -798,10 +850,12 @@ def _band_table(
     logo: str,
     word: Callable[[str], str] | None,
 ) -> str:
-    """La table d'un en-tête ou d'un pied : ses lignes, et les ``lines`` en lignes de toute
-    la largeur (``band_rows``). Le cadre et le fond du style vont sur la table, l'écart
-    au texte en marges des cellules du bord ; l'écart entre colonnes (``gap``) en deux
-    moitiés, de part et d'autre du filet intérieur."""
+    """La table d'un en-tête ou d'un pied : ses lignes, et les ``lines`` en lignes de toute la largeur (``band_rows``).
+
+    Le cadre et le fond du style vont sur la table, l'écart au texte en marges des
+    cellules du bord ; l'écart entre colonnes (``gap``) en deux moitiés, de part et
+    d'autre du filet intérieur.
+    """
     name = "header" if kind == "hdr" else "footer"
     table = band.table
     assert table is not None
@@ -910,8 +964,10 @@ def _band_table(
 
 
 def _band_space(kind: str, style: Style, height: int, *, before: int = 0, mark: str = "") -> str:
-    """Un paragraphe vide d'un en-tête ou d'un pied, haut de ``height`` twips, sans filet ni
-    fond : l'espace avant une table, ou le paragraphe qui la clôt (Word en veut un)."""
+    """Un paragraphe vide d'un en-tête ou d'un pied, haut de ``height`` twips, sans filet ni fond.
+
+    L'espace avant une table, ou le paragraphe qui la clôt (Word en veut un).
+    """
     look = style.look("header" if kind == "hdr" else "footer")
     pieces: Pieces = [
         ("pStyle", f'<w:pStyle w:val="{HEADER if kind == "hdr" else "Footer"}"/>'),
@@ -924,20 +980,22 @@ def _band_space(kind: str, style: Style, height: int, *, before: int = 0, mark: 
     return f'<w:p><w:pPr>{ordered(pieces, _PPR)}<w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr>{mark}</w:p>'
 
 
-# La hauteur du paragraphe qui clôt un en-tête ou un pied après sa table : un point.
 _BAND_END: Final = 20
+"""La hauteur du paragraphe qui clôt un en-tête ou un pied après sa table : un point."""
 
 
 def _band_end(kind: str, style: Style, watermark: Watermark | None, *, before: int = 0) -> str:
-    """Le paragraphe qui clôt un en-tête ou un pied après sa table : haut d'un point, à
-    ``before`` twips d'elle (l'espace après du style de la table) ; il porte le filigrane."""
+    """Le paragraphe qui clôt un en-tête ou un pied après sa table.
+
+    Haut d'un point, à ``before`` twips d'elle (l'espace après du style de la table) ;
+    il porte le filigrane.
+    """
     mark = _watermark(watermark) if watermark else ""
     return _band_space(kind, style, _BAND_END, before=before, mark=mark)
 
 
 def _watermark(watermark: Watermark) -> str:
-    """Le filigrane : un texte en diagonale, derrière le texte de chaque page (le style
-    ``watermark`` : sa police et sa couleur, à demi transparente).
+    """Le filigrane : un texte en diagonale, derrière le texte de chaque page (le style ``watermark`` : sa police et sa couleur, à demi transparente).
 
     La forme VML qu'écrit Word lui-même (« PowerPlusWaterMarkObject ») ; LibreOffice la
     lit et l'imprime.

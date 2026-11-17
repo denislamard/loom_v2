@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Clients : ce qu'ils surchargent, et la config qui en découle (L1, #33, #34).
+"""Clients : ce qu'ils surchargent, et la config qui en découle (fonction L1, points 33 et 34).
 
 Un client est toujours présent ; en mode librairie, c'est ``default``, et il
-ne surcharge rien (#33). Dès que la config déclare des ``tenants``, la liste
+ne surcharge rien (point 33). Dès que la config déclare des ``tenants``, la liste
 est **fermée** : un client qu'elle ne nomme pas est refusé, plutôt que servi
 en silence avec les réglages de tout le monde.
 
@@ -17,14 +17,18 @@ l'identifiant ``M3_MAIN`` désigne le modèle qu'il a choisi. Un seul endroit
 à réécrire, et la correspondance vaut donc partout d'un coup —
 orchestrateur, rôles, juges, chaînes de secours, compaction — sans qu'aucun
 agent ne change. La config ainsi obtenue repasse les contrôles de cohérence
-(M5) : un remplacement qui ne sait pas appeler d'outils ou lire une image
+(fonction M5) : un remplacement qui ne sait pas appeler d'outils ou lire une image
 est refusé au démarrage, pour le client qui le demande.
 
 Ses budgets suivent le même chemin : le ``budgets`` de la racine, surchargé
 clé par clé par celui du client, remplace celui de la config résolue. Un agent
 monté pour ce client reçoit donc les bons plafonds de run et de session sans
 que ``build_agent`` ait à connaître les clients, et les plafonds par période
-(``budgets.tenant``, J5.1b) voyagent au même endroit.
+(``budgets.tenant``, jalon J5.1b) voyagent au même endroit.
+
+Config : ``tenants`` (``id``, ``agents``, ``tools_deny``, ``models``,
+``approvals``, ``secrets``, ``variables``, ``budgets``, ``quotas``,
+``storage``, ``retention``, ``telemetry``).
 """
 
 from collections.abc import Mapping
@@ -57,21 +61,34 @@ class UnknownTenant(Unknown):
 
 @dataclass(frozen=True, slots=True)
 class Tenant:
-    """Un client, et tout ce qui le distingue au montage de ses agents."""
+    """Un client, et tout ce qui le distingue au montage de ses agents.
+
+    Attributes:
+        id: Identifiant du client.
+        config: Configuration vue par ce client : la correspondance des
+            modèles et ses budgets appliqués.
+        secrets: Table de ses secrets, telle qu'elle descend aux adaptateurs
+            (fonction L2).
+        spec: Sa fiche dans ``tenants`` ; ``None`` pour ``default`` sans
+            clients déclarés.
+        provided: Vrai quand la table vient d'un gestionnaire de secrets
+            passé par l'application (``Loom(..., secrets=...)``), pas de
+            l'environnement : un secret absent ne se dit alors pas « variable
+            d'environnement » (fonction M3).
+    """
 
     id: TenantId
-    # Configuration vue par ce client : la correspondance des modèles appliquée.
     config: LoomConfig
-    # Table de ses secrets, telle qu'elle descend aux adaptateurs (L2).
     secrets: Mapping[str, str]
     spec: TenantSpec | None = None
-    # Vrai quand la table vient d'un gestionnaire de secrets passé par
-    # l'application (``Loom(..., secrets=...)``), pas de l'environnement : un
-    # secret absent ne se dit alors pas « variable d'environnement » (M3).
     provided: bool = False
 
     def allows(self, agent: str) -> bool:
-        """Vrai si ce client peut lancer cet agent (L1)."""
+        """Vrai si ce client peut lancer cet agent (fonction L1).
+
+        Args:
+            agent: Nom de l'agent.
+        """
         return self.spec is None or self.spec.allows(agent)
 
     @property
@@ -81,12 +98,12 @@ class Tenant:
 
     @property
     def approvals(self) -> Mapping[str, Approval]:
-        """Approbations imposées par ce client, par nom d'outil (#17)."""
+        """Approbations imposées par ce client, par nom d'outil (point 17)."""
         return self.spec.approvals if self.spec is not None else {}
 
     @property
     def variables(self) -> Mapping[str, JsonValue]:
-        """Valeurs des variables citées par les prompts (§6)."""
+        """Valeurs des variables citées par les prompts (conception §6)."""
         return self.spec.variables if self.spec is not None else {}
 
     @property
@@ -96,12 +113,12 @@ class Tenant:
 
     @property
     def budget(self) -> TenantBudget:
-        """Plafonds de ce client par période (J5.1b) ; déjà fusionnés dans sa config."""
+        """Plafonds de ce client par période (jalon J5.1b) ; déjà fusionnés dans sa config."""
         return self.config.budgets.tenant
 
     @property
     def quotas(self) -> Quotas:
-        """Débit accordé à ce client (L3)."""
+        """Débit accordé à ce client (fonction L3)."""
         return self.spec.quotas if self.spec is not None else Quotas()
 
 
@@ -110,7 +127,18 @@ class Tenants:
 
     La résolution a lieu à la construction : une correspondance de modèles
     incohérente est une erreur de démarrage, pas une erreur au premier run
-    du client concerné (M1).
+    du client concerné (fonction M1).
+
+    Args:
+        config: La configuration.
+        environ: Environnement à lire pour les secrets ; ``os.environ`` par
+            défaut.
+        secrets: Gestionnaire de secrets de l'application ; à défaut, les
+            secrets sont lus dans l'environnement (``EnvironmentSecrets``).
+
+    Raises:
+        ConfigError: Une correspondance de modèles rend la config d'un
+            client incohérente.
     """
 
     def __init__(
@@ -120,6 +148,7 @@ class Tenants:
         environ: Mapping[str, str] | None = None,
         secrets: SecretProvider | None = None,
     ) -> None:
+        """Résout chaque client : sa config, sa table de secrets."""
         self._config = config
         self._secrets = secrets if secrets is not None else EnvironmentSecrets(config, environ)
         self._provided = not isinstance(self._secrets, EnvironmentSecrets)
@@ -140,10 +169,18 @@ class Tenants:
         return not self._open
 
     def all(self) -> tuple[Tenant, ...]:
+        """Tous les clients résolus."""
         return tuple(self._tenants[tenant_id] for tenant_id in self._declared)
 
     def get(self, tenant_id: TenantId | None = None) -> Tenant:
-        """Un client par son identifiant ; ``None`` désigne ``default``."""
+        """Un client par son identifiant ; ``None`` désigne ``default``.
+
+        Args:
+            tenant_id: Le client.
+
+        Raises:
+            UnknownTenant: Client que la config ne nomme pas.
+        """
         wanted = tenant_id or DEFAULT_TENANT
         found = self._tenants.get(wanted)
         if found is None:

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Appel d'un modèle : fichiers, fenêtre de contexte, délais, nouvelles tentatives (B3, B7, #14).
+"""Appel d'un modèle : fichiers, fenêtre de contexte, délais, nouvelles tentatives (fonctions B3 et B7, point 14).
 
 La politique de retry est celle de loom-ia, pas celle des SDK (désactivée) :
 chaque tentative ratée est annoncée par un ``model.retried``, que le moteur
@@ -22,10 +22,13 @@ journal est interrogé avec la requête **d'origine**, références de fichiers
 comprises (c'est elle qu'a hachée ``request_hash``) ; seul le flux d'un vrai
 appel reçoit la requête résolue.
 
-Échanges bruts (J6.1b) : avec ``raw_max_bytes``, chaque tentative ouvre un
+Échanges bruts (jalon J6.1b) : avec ``raw_max_bytes``, chaque tentative ouvre un
 registre (``recording``) où le client HTTP de l'adaptateur dépose ce qu'il a
 envoyé et reçu ; à la fin de la tentative, réussie ou non, chaque échange sort
 en ``model.exchanged``, **avant** le ``model.retried`` ou la réponse.
+
+Réglages d'un modèle : ``retry`` (tentatives, délais), ``timeouts``
+(``first_token``, ``idle``, ``total``), ``capabilities.context_window``.
 """
 
 import asyncio
@@ -64,6 +67,7 @@ from loom_ia.engine.media import IMAGE_TOKENS, MediaResolver
 logger = logging.getLogger(__name__)
 
 type Sleep = Callable[[float], Awaitable[None]]
+"""Attente de n secondes ; ``asyncio.sleep`` sauf dans les tests."""
 
 
 def responded(
@@ -76,7 +80,23 @@ def responded(
     message: Message | None = None,
     call_id: str | None = None,
 ) -> ModelResponded:
-    """Événement d'une réponse obtenue ; ``message`` remplace celui de la réponse."""
+    """Événement d'une réponse obtenue ; ``message`` remplace celui de la réponse.
+
+    Args:
+        request: Requête d'origine, dont l'empreinte (``request_hash``) et
+            les parties sont recopiées.
+        response: La réponse.
+        spec: Le modèle de la config qui a répondu ; son tarif donne le coût.
+        attempts: Tentatives sur ce modèle, la dernière comprise.
+        latency_ms: Durée de l'appel, en millisecondes.
+        message: Message à écrire à la place de celui de la réponse (une
+            réponse retouchée par une politique, par exemple).
+        call_id: Appel d'outil délégué auquel la réponse appartient, s'il y
+            en a un.
+
+    Returns:
+        L'événement ``model.responded``.
+    """
     return ModelResponded(
         model_id=response.model_id,
         model=spec.id,
@@ -94,7 +114,17 @@ def responded(
 
 
 def estimate_tokens(request: ModelRequest) -> int:
-    """Estimation grossière des tokens d'entrée d'une requête."""
+    """Estimation grossière des tokens d'entrée d'une requête.
+
+    Longueur du JSON du système, des messages et des outils, divisée par
+    ``CHARS_PER_TOKEN``. Les images comptent à part (``IMAGE_TOKENS``).
+
+    Args:
+        request: La requête.
+
+    Returns:
+        Le nombre estimé de tokens.
+    """
     payload = request.model_dump(mode="json", include={"system", "messages", "tools"})
     return len(json.dumps(payload, ensure_ascii=False)) // CHARS_PER_TOKEN
 
@@ -107,7 +137,16 @@ class _Progress:
 
 
 class ModelCall:
-    """Exécute les appels d'un modèle selon sa définition."""
+    """Exécute les appels d'un modèle selon sa définition.
+
+    Attributes:
+        client: Client du fournisseur.
+        spec: Définition du modèle.
+        on_chunk: Diffusion en direct de la réponse.
+        media: Résolution des références de fichiers pour ce modèle.
+        raw_max_bytes: Borne d'un corps brut gardé ; ``None`` : les échanges
+            ne sont pas gardés.
+    """
 
     def __init__(
         self,
@@ -119,6 +158,18 @@ class ModelCall:
         sleep: Sleep = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
     ) -> None:
+        """Prépare l'appel d'un modèle.
+
+        Args:
+            client: Client du fournisseur ; un ``Recorded`` fait garder les
+                échanges bruts, où qu'il serve (orchestrateur, rôles, juges,
+                secours).
+            spec: Définition du modèle.
+            on_chunk: Diffusion en direct de la réponse.
+            artifacts: Magasin de fichiers, pour résoudre les références.
+            sleep: Attente entre deux tentatives.
+            jitter: Tirage de la part aléatoire du délai, entre 0 et 1.
+        """
         self.client = client
         self.spec = spec
         self.on_chunk = on_chunk
@@ -139,6 +190,19 @@ class ModelCall:
         rejouable, si les tentatives sont épuisées, ou si un fichier de la
         requête ne peut pas être envoyé — après les échanges de la dernière
         tentative, qui sont justement ceux qu'on voudra lire.
+
+        Args:
+            request: La requête, références de fichiers non résolues.
+
+        Yields:
+            Les ``model.exchanged`` de chaque tentative, un ``model.retried``
+            par tentative ratée suivie d'une autre, puis la réponse.
+
+        Raises:
+            ModelError: ``context_overflow`` si la requête estimée dépasse la
+                fenêtre ; erreur définitive (``auth``, ``invalid_request``,
+                ``truncated``…) ; tentatives épuisées ; fichier impossible à
+                envoyer.
         """
         self._check_context(request)
         sent = await self.media.resolve(request)
@@ -166,11 +230,11 @@ class ModelCall:
             if delay is None:
                 if billed is not None:
                     # La dernière tentative ratée n'est annoncée que si elle a été
-                    # facturée : son usage entre ainsi dans les comptes (J1).
+                    # facturée : son usage entre ainsi dans les comptes (fonction J1).
                     yield self._retried(request, failure, attempt, 0.0, billed, final=True)
                 raise failure
             # Une panne resservie par le rejeu (``by_client``) n'est pas une panne
-            # du fournisseur : au test O3 du 23/10, elle s'écrivait en WARNING.
+            # du fournisseur : à l'essai de la fonction O3 du 23/10, elle s'écrivait en WARNING.
             logger.log(
                 logging.DEBUG if failure.by_client else logging.WARNING,
                 "Tentative %d/%d du modèle %s ratée (%s) : nouvel essai dans %.1f s",
@@ -198,6 +262,17 @@ class ModelCall:
         *,
         final: bool = False,
     ) -> ModelRetried:
+        """``model.retried`` d'une tentative ratée.
+
+        Args:
+            request: La requête.
+            failure: L'erreur de la tentative.
+            attempt: Rang de la tentative, à partir de 1.
+            delay: Attente avant la suivante, en secondes.
+            billed: Usage annoncé par le fournisseur avant l'échec ; il est
+                facturé.
+            final: Vrai si aucune tentative ne suit.
+        """
         return ModelRetried(
             model_id=request.model_id,
             model=self.spec.id,
@@ -228,6 +303,11 @@ class ModelCall:
         ]
 
     def _check_context(self, request: ModelRequest) -> None:
+        """Vérifie que la requête estimée, sortie comprise, tient dans la fenêtre du modèle.
+
+        Raises:
+            ModelError: ``context_overflow``, avec l'estimation et la fenêtre.
+        """
         window = self.spec.capabilities.context_window
         if window is None:
             return
@@ -241,7 +321,13 @@ class ModelCall:
             )
 
     def _retry_delay(self, error: ModelError, attempt: int) -> float | None:
-        """Attente avant la tentative suivante, ou None pour abandonner."""
+        """Attente avant la tentative suivante, ou ``None`` pour abandonner.
+
+        ``None`` pour une erreur non rejouable ou au-delà de
+        ``retry.max_attempts`` ; le ``retry_after`` du fournisseur s'il ne
+        dépasse pas ``retry.max_delay`` (au-delà, abandon) ; sinon le délai
+        exponentiel de ``retry``.
+        """
         policy = self.spec.retry
         if not error.retryable or attempt >= policy.max_attempts:
             return None
@@ -250,10 +336,17 @@ class ModelCall:
         return policy.backoff(attempt, self._jitter())
 
     async def _attempt(self, request: ModelRequest, sent: ModelRequest, progress: _Progress) -> ModelResponse:
-        """Une tentative : ``request`` est la requête d'origine, ``sent`` celle qui part."""
+        """Une tentative : ``request`` est la requête d'origine, ``sent`` celle qui part.
+
+        Raises:
+            ModelError: ``truncated`` si la sortie s'est arrêtée sur
+                ``max_tokens`` ; ``transient`` pour un flux coupé, vide ou trop
+                lent. L'usage annoncé avant l'échec est porté par l'erreur
+                (fonction J1).
+        """
         if isinstance(self.client, AnsweringClient):
-            # Rejeu (J6.2a) : la réponse est connue, entière ; sans flux, rien
-            # ne se perd en route. En variante (J6.2b), une requête inconnue
+            # Rejeu (jalon J6.2a) : la réponse est connue, entière ; sans flux, rien
+            # ne se perd en route. En variante (jalon J6.2b), une requête inconnue
             # du journal part pour de vrai, par le flux. Le journal connaît la
             # requête d'origine (son empreinte porte sur les références de
             # fichiers) ; seul le vrai appel reçoit la requête résolue.
@@ -276,7 +369,7 @@ class ModelCall:
                 )
             require_end(accumulator)
         except ModelError as error:
-            # Ce que le fournisseur a annoncé avant l'échec lui reste dû (J1).
+            # Ce que le fournisseur a annoncé avant l'échec lui reste dû (fonction J1).
             error.usage = accumulator.usage
             raise
         return accumulator.result(model_id=request.model_id, provider=self.client.provider)
@@ -288,6 +381,13 @@ class ModelCall:
         (l'entrée annoncée par le fournisseur à l'ouverture du flux) ne compte ni
         pour lui, ni pour ce qui a été diffusé. Son délai court donc depuis le
         début de la tentative, quoi qu'il arrive avant.
+
+        Délais : ``timeouts.first_token`` jusqu'au premier contenu,
+        ``timeouts.idle`` entre deux morceaux ensuite, ``timeouts.total`` pour
+        tout le flux.
+
+        Raises:
+            ModelError: ``transient`` quand un délai est dépassé.
         """
         timeouts = self.spec.timeouts
         loop = asyncio.get_running_loop()

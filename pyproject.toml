@@ -168,12 +168,22 @@ per-file-target-version = { "firecracker/**/*.py" = "py312" }
 exclude = ["*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF", "D"]
+# Docstrings des méthodes magiques et des ``__init__`` : facultatives (conventions.md).
+ignore = ["D105", "D107"]
+
+[tool.ruff.lint.per-file-ignores]
+# Un essai n'a pas à être documenté ; une docstring qu'il a suit tout de même la forme.
+"tests/**/*.py" = ["D100", "D101", "D102", "D103", "D104"]
+
+[tool.ruff.lint.pydocstyle]
+# Docstrings au format Google (docs/docs_for_rag/conventions.md).
+convention = "google"
 
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
-include = ["src", "tests", "examples", "scripts"]
+include = ["src", "tests", "examples", "scripts", "docs/docs_for_rag"]
 
 [tool.pytest.ini_options]
 # Une marque mal écrite ou une clé de configuration inconnue est une erreur, pas un avertissement.

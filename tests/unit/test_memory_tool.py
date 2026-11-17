@@ -495,8 +495,11 @@ async def test_a_word_file_is_stored_with_its_sections(memory: MemoryTool, works
 
 
 async def test_a_word_invoice_is_stored_as_it_shows(memory: MemoryTool, workspace: Path) -> None:
-    """Une facture de ``loom.word`` : ses lots, ses sous-totaux et son récapitulatif de TVA,
-    tels qu'affichés (la relecture d'outil les rend pour réécrire, pas pour lire)."""
+    """Une facture de ``loom.word``.
+
+    Ses lots, ses sous-totaux et son récapitulatif de TVA, tels qu'affichés (la
+    relecture d'outil les rend pour réécrire, pas pour lire).
+    """
     from zoneinfo import ZoneInfo
 
     from loom_ia.tools_builtin._document.arguments import DocumentCall, parse, variant

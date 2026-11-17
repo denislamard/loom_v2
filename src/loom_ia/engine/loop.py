@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Boucle d'exécution d'un run : ``step`` et ``drive`` (#3, A2, A4).
+"""Boucle d'exécution d'un run : ``step`` et ``drive`` (point 3 ; fonctions A2 et A4).
 
 ``step`` fait une seule chose, déduite de l'état reconstruit :
 
@@ -12,7 +12,7 @@
 ``drive`` écrit chaque événement dès qu'il est produit, l'applique à l'état,
 et recommence tant que le run peut avancer. La reprise après un plantage est
 donc le cas normal : l'état relu dit si l'effet a eu lieu, et un appel
-d'outil commencé mais non terminé est traité par l'exécuteur (#18).
+d'outil commencé mais non terminé est traité par l'exécuteur (point 18).
 
 Plafond d'itérations : au retour des outils, si le modèle a été appelé
 ``max_iterations`` fois, le run passe en ``FINALIZING`` ; le dépassement est
@@ -21,12 +21,12 @@ réponse forcée part sans outils, avec une consigne en dernier message de sa
 requête (``FINALIZE_HINT``, jamais journalisée) : répondre en texte avec ce
 qui est déjà obtenu.
 
-Outil terminal (#13) : seul dans son tour et sans erreur, sa sortie devient
+Outil terminal (point 13) : seul dans son tour et sans erreur, sa sortie devient
 la réponse finale. ``run.completed`` désigne alors son ``tool.completed``
 au lieu de recopier la sortie. Appelé avec d'autres outils, il redevient un
 outil ordinaire et l'orchestrateur compose la réponse.
 
-Réponse écrite avec ``loom.state`` (state v2, M1) : quand le modèle écrit sa
+Réponse écrite avec ``loom.state`` (state v2, règle M1, ``docs/state_analyse_moteur.md``) : quand le modèle écrit sa
 réponse et, dans la même réponse, n'appelle que ``loom.state``, tous ces
 appels réussis sans écriture refusée, son texte est la réponse finale, sans
 le rappeler — rappelé, il en réécrirait une autre. Elle passe par les mêmes
@@ -35,10 +35,10 @@ contrôles que toute réponse finale (``_final``). Analyse :
 
 Rôles et sous-agents : si l'un d'eux est proposé dans le run, chaque résultat
 montré au modèle porte sa référence (``[result:3]``) et le prompt système
-explique ``$ref`` (#12). Dans la requête, les résultats d'un tour suivent
+explique ``$ref`` (point 12). Dans la requête, les résultats d'un tour suivent
 l'ordre des appels, quel que soit leur ordre d'arrivée dans le journal.
 
-Politiques (#1, #2) : ``before_model`` s'exécute avant l'appel du modèle
+Politiques (points 1 et 2) : ``before_model`` s'exécute avant l'appel du modèle
 (requête remplacée, arrêt vers ``FINALIZING``, échec) ; ``after_model`` et
 ``on_output`` au moment de décider de la suite d'une réponse, pour qu'une
 reprise après un plantage les évalue aussi. Une réparation (``Retry``) écrit
@@ -47,7 +47,7 @@ puis écrit le diagnostic (``message.user`` de ``kind: repair``) : le modèle
 répond de nouveau, sans outils si la politique l'a demandé. Les politiques
 d'outils sont appliquées par l'exécuteur.
 
-Contrats et diffusion (#20, #11) : les guards sont des politiques ; leurs
+Contrats et diffusion (points 20 et 11) : les guards sont des politiques ; leurs
 contrôles (``guard.checked``) précèdent leurs décisions dans le journal. Une
 réponse finale structurée (schéma de sortie de l'agent) porte son objet
 JSON dans ``run.completed`` ; une réponse gardée hors contrat y est marquée
@@ -57,42 +57,42 @@ au fil de l'eau, et une réparation envoie d'abord un ``StreamReset`` ; avec
 de cette réponse, et la réponse finale seulement une fois ses contrôles
 passés, qu'elle vienne de l'orchestrateur ou d'un rôle terminal.
 
-Schéma natif (B9) : un appel de l'orchestrateur qui ne peut pas appeler
+Schéma natif (fonction B9) : un appel de l'orchestrateur qui ne peut pas appeler
 d'outil (réponse forcée, réparation sans outils, agent sans outils) porte le
 schéma de la réponse finale (``output_schema``) ; l'adaptateur le transmet
 au fournisseur si le modèle a la capacité ``native_json``.
 
-Secours (B4, #10) : l'appel de l'orchestrateur passe par sa chaîne
+Secours (fonction B4, point 10) : l'appel de l'orchestrateur passe par sa chaîne
 (``RunContext.chain``, ``main`` puis ``fallbacks``) : tentatives, bascules
 (``model.fell_back``) et disjoncteur ouvert (``circuit.opened``) sont écrits
 dans le span de l'étape. Après une bascule, le run reste sur le secours
 (``RunState.models``) ; la requête est construite pour lui, avant les
 politiques ``before_model``.
 
-Budgets (J4) : ``before_model`` reçoit la consommation des runs précédents
+Budgets (fonction J4) : ``before_model`` reçoit la consommation des runs précédents
 de la session (``session``), calculée dans le journal par ``drive`` ; un
 sous-run reçoit la part de budget de son parent dans son ``run.started``.
 
-Juges (#21) : un juge est une politique fournie qui appelle son modèle ; cet
+Juges (point 21) : un juge est une politique fournie qui appelle son modèle ; cet
 appel est écrit dans son propre span, au nom de ``judge:<nom>``, avant son
 verdict (``judge.evaluated``). Son coût entre dans ``run.completed`` (ou
 ``run.failed``), écrit dans la même décision ; il ne compte pas dans les
 itérations. Le choix de l'appelant (``judges`` : ``auto``, ``force``,
 ``skip``) est écrit dans ``run.started`` et hérité par les sous-runs.
 
-Pièces jointes (G1) : validées avant tout écrit (signature binaire, type,
+Pièces jointes (fonction G1) : validées avant tout écrit (signature binaire, type,
 taille), rangées dans le stockage d'artefacts, annoncées par un
 ``artifact.stored`` chacune, puis jointes au message de l'utilisateur en
-références. Chaque appel de modèle les résout selon ses capacités (#14).
+références. Chaque appel de modèle les résout selon ses capacités (point 14).
 
 State de la session (option C) : l'application en pose à l'ouverture d'un run
 racine, écrit dans son ``run.started`` après contrôle — ou le run est refusé
-avant tout écrit, comme pour une pièce jointe (``StateRefused``, D13). Un
+avant tout écrit, comme pour une pièce jointe (``StateRefused``, décision D13 du state de session). Un
 orchestrateur qui déclare ``main.context`` reçoit le state à chaque appel,
 même vide : celui des runs précédents, ce que l'application a posé et ce que
 les outils du run ont écrit, en dernier message de la requête (avant la
 consigne d'une réponse forcée), jamais journalisé comme message, et avant les
-politiques ``before_model`` (D4). Sans ``main.context``, la requête ne change pas.
+politiques ``before_model`` (décision D4 du state de session). Sans ``main.context``, la requête ne change pas.
 """
 
 import asyncio
@@ -227,17 +227,20 @@ from loom_ia.engine.writer import ClaimConflict, RunExists, RunMoved, SessionWri
 
 logger = logging.getLogger(__name__)
 
-# ``error_type`` du run qui s'ouvre sur une session dont l'historique est illisible.
 HISTORY_UNREADABLE: Final = "session.unreadable"
+"""``error_type`` du run qui s'ouvre sur une session dont l'historique est illisible."""
 DEFAULT_MAX_ITERATIONS: Final = 10
-# Règle du moteur journalisée comme une décision de politique (#13, backlog #008).
+"""Appels du modèle avant la réponse forcée, par défaut (``max_iterations``)."""
 TERMINAL_RULE: Final = "loom.terminal"
+"""Règle du moteur journalisée comme une décision de politique (point 13, backlog #008).
 
-# Événements d'un appel de modèle, journalisés dans son span.
+Elle dit qu'un outil terminal appelé avec d'autres redevient ordinaire.
+"""
+
 _CALL_EVENTS: Final = (ModelExchanged, ModelRetried, ModelFellBack, CircuitOpened, ModelResponded)
+"""Événements d'un appel de modèle, journalisés dans son span."""
 
 
-# Événements que l'exécuteur rend tels quels, sans enveloppe d'appel.
 _BARE_EVENTS: Final = (
     ToolCalled,
     ToolCompleted,
@@ -249,6 +252,7 @@ _BARE_EVENTS: Final = (
     QuestionAnswered,
     QuestionExpired,
 )
+"""Événements que l'exécuteur rend tels quels, sans enveloppe d'appel."""
 
 _ACTIONABLE: Final = frozenset(
     {
@@ -259,11 +263,72 @@ _ACTIONABLE: Final = frozenset(
         RunStatus.FAILED,
     }
 )
+"""États d'où un run peut avancer seul."""
 
 
 @dataclass(frozen=True, kw_only=True)
 class RunContext:
-    """Dépendances et réglages d'un agent ; rien de ce qui est ici n'est journalisé."""
+    """Dépendances et réglages d'un agent ; rien de ce qui est ici n'est journalisé.
+
+    Construit au montage d'un agent (``agents/``) ; ``drive`` en tire une copie
+    pour chaque run, avec l'écrivain, l'historique et le state de la session.
+
+    Attributes:
+        agent: Nom de l'agent.
+        store: Journal des événements.
+        model: Client du modèle ``main``.
+        model_spec: Définition du modèle ``main``.
+        tools: Outils de l'agent.
+        system: Prompt système de l'orchestrateur.
+        max_iterations: Appels du modèle avant la réponse forcée
+            (``FINALIZING``) ; 10 par défaut.
+        max_tokens: Réglage du rôle ``main`` (fonction B6) : remplace celui du
+            modèle.
+        params: Paramètres du rôle ``main`` : surchargent
+            ``model_spec.params`` clé par clé.
+        on_chunk: Reçoit les morceaux du flux du modèle, pour la diffusion en
+            direct.
+        attachments: Pièces jointes acceptées à l'entrée d'un run (fonction
+            G1).
+        keep_images: Images des tours précédents dans la requête (fonction
+            F4) : mentionnées (``last_run``) ou renvoyées en octets (``all``).
+        writer: Écrivain du journal, posé par ``drive`` pour le run en cours :
+            les sous-agents écrivent leur run avec lui.
+        policies: Politiques de l'agent, dans l'ordre déclaré (points 1 et
+            2) ; les guards en tête.
+        turns: Historique de la session avant ce run, groupé par tour, posé
+            par ``drive`` pour les contextes déclarés (points 12 et 23).
+        summary: Dernier résumé de compaction de la session ; même règle.
+        session_state: State de la session avant ce run, posé par ``drive``
+            pour un agent qui en déclare : vide pour un sous-run et un run de
+            compaction, qui ne le reçoivent pas.
+        state_keys: Clés du state que l'orchestrateur reçoit à chaque appel
+            (``main.context``, décision D4 du state de session) : ``()`` pour
+            toutes celles déclarées, ``None`` pour aucune.
+        output: Contrat de la réponse finale : son schéma donne la réponse
+            structurée (fonction A7).
+        stream_output: Diffusion de la réponse finale : ``live`` (au fil de
+            l'eau) ou ``after_guards`` (après ses contrôles, point 11).
+        fallbacks: Secours du modèle ``main``, dans l'ordre (fonction B4,
+            point 10).
+        breakers: Disjoncteurs des modèles, partagés par les runs d'une
+            instance ``Loom``.
+        timeout: Délai maximal du run, en secondes (fonction A6). Il borne le
+            temps de pilotage cumulé (``RunState.active_ms``), pas l'horloge :
+            une reprise garde le budget qui reste. ``None`` : pas de délai.
+        worker_id: Instance qui pilote, pour la concession (point 27).
+            ``None`` : pas de concession — un ``drive`` appelé directement, ou
+            un sous-run, que son parent pilote déjà.
+        lease: Durée de la concession, en secondes ; renouvelée au tiers.
+        approval: Approbations de l'agent (point 17) : délai, effet d'une
+            expiration, droit exigé.
+        approver: Approbateur en ligne (point 28) : il tranche dans la boucle,
+            et le run ne passe jamais par ``PAUSED``. Sans lui, l'approbation
+            est asynchrone.
+        answerer: Répondeur en ligne (``docs/wait_answer.md``) : il répond aux
+            questions ``ask`` dans la boucle (elicitation MCP, script). Sans
+            lui, le run attend en ``PAUSED``.
+    """
 
     agent: str
     store: EventStore
@@ -272,57 +337,26 @@ class RunContext:
     tools: ToolExecutor = field(default_factory=ToolExecutor)
     system: str = ""
     max_iterations: int = DEFAULT_MAX_ITERATIONS
-    # Réglages du rôle ``main`` (B6) : ``max_tokens`` remplace celui du modèle,
-    # ``params`` surcharge ``model_spec.params`` clé par clé.
     max_tokens: int | None = None
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
-    # Reçoit les morceaux du flux du modèle, pour la diffusion en direct.
     on_chunk: ChunkCallback | None = None
-    # Pièces jointes acceptées à l'entrée d'un run (G1).
     attachments: AttachmentPolicy = field(default_factory=AttachmentPolicy)
-    # Images des tours précédents dans la requête (F4) : mentionnées
-    # (``last_run``) ou renvoyées en octets (``all``).
     keep_images: KeepImages = "all"
-    # Écrivain du journal, posé par ``drive`` pour le run en cours : les
-    # sous-agents écrivent leur run avec lui.
     writer: SessionWriter | None = None
-    # Politiques de l'agent, dans l'ordre déclaré (#1, #2) ; les guards en tête.
     policies: Policies = field(default_factory=Policies)
-    # Historique de la session avant ce run, groupé par tour, et dernier résumé
-    # de compaction : posés par ``drive`` pour les contextes déclarés (#12, #23).
     turns: tuple[tuple[Message, ...], ...] = ()
     summary: str | None = None
-    # State de la session avant ce run, posé par ``drive`` pour un agent qui en
-    # déclare : vide pour un sous-run et un run de compaction, qui ne le reçoivent pas.
     session_state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
-    # Clés du state que l'orchestrateur reçoit à chaque appel (``main.context``,
-    # D4) : () pour toutes celles déclarées, None pour aucune.
     state_keys: tuple[str, ...] | None = None
-    # Contrat de la réponse finale : son schéma donne la réponse structurée (A7).
     output: OutputContract | None = None
-    # Diffusion de la réponse finale : au fil de l'eau, ou après ses contrôles (#11).
     stream_output: StreamOutput = "live"
-    # Secours du modèle ``main``, dans l'ordre (B4, #10).
     fallbacks: tuple[ModelLink, ...] = ()
-    # Disjoncteurs des modèles, partagés par les runs d'une instance ``Loom``.
     breakers: CircuitBreakers | None = None
-    # Délai maximal du run, en secondes (A6). Il borne le temps de pilotage
-    # cumulé (``RunState.active_ms``), pas l'horloge : une reprise garde le
-    # budget qui reste. ``None`` : pas de délai.
     timeout: float | None = None
-    # Instance qui pilote, pour la concession (#27). ``None`` : pas de
-    # concession — un ``drive`` appelé directement, ou un sous-run, que son
-    # parent pilote déjà.
     worker_id: str | None = None
-    # Durée de la concession, en secondes ; renouvelée au tiers.
     lease: float = DEFAULT_LEASE
-    # Approbations de l'agent (#17) : délai, effet d'une expiration, droit exigé.
     approval: ApprovalSettings = field(default_factory=ApprovalSettings)
-    # Approbateur en ligne (#28) : il tranche dans la boucle, et le run ne
-    # passe jamais par ``PAUSED``. Sans lui, l'approbation est asynchrone.
     approver: Approver | None = None
-    # Répondeur en ligne (wait_answer) : il répond aux questions ``ask`` dans la
-    # boucle (elicitation MCP, script). Sans lui, le run attend en ``PAUSED``.
     answerer: Answerer | None = None
 
     @property
@@ -331,7 +365,7 @@ class RunContext:
         return self.tools.artifacts
 
     def chain(self, *, on_chunk: ChunkCallback | None = None) -> ModelChain:
-        """Modèle ``main`` et ses secours, avec les réglages du rôle (B6)."""
+        """Modèle ``main`` et ses secours, avec les réglages du rôle (fonction B6)."""
         return ModelChain(
             links=(ModelLink(self.model_spec, self.model), *self.fallbacks),
             slot=MAIN_ROLE,
@@ -345,18 +379,27 @@ class RunContext:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ParentRun:
-    """Run parent d'un sous-run, et l'appel qui l'a lancé (#4)."""
+    """Run parent d'un sous-run, et l'appel qui l'a lancé (point 4).
+
+    Attributes:
+        run_id: Le run parent.
+        root_run_id: Racine de l'arbre ; l'enfant en hérite.
+        call_id: Appel du parent qui lance l'enfant.
+        depth: Profondeur du parent ; l'enfant est à ``depth + 1``.
+        span_id: Span de l'appel dans le parent : parent du span racine de
+            l'enfant.
+        judges: Juges choisis pour le parent : l'enfant hérite du même choix
+            (point 21).
+        budget: Part du budget du parent donnée à l'enfant (``budget_share``,
+            fonction J4).
+    """
 
     run_id: RunId
     root_run_id: RunId
     call_id: str
-    # Profondeur du parent ; l'enfant est à ``depth + 1``.
     depth: int
-    # Span de l'appel dans le parent : parent du span racine de l'enfant.
     span_id: SpanId | None = None
-    # Juges choisis pour le parent : l'enfant hérite du même choix (#21).
     judges: JudgesMode = "auto"
-    # Part du budget du parent donnée à l'enfant (``budget_share``, J4).
     budget: RunBudget | None = None
 
 
@@ -387,19 +430,44 @@ async def begin_run(
     l'écrivain de la session (``writer``) : il hérite de sa racine et du choix
     de ses juges, et sa profondeur est celle du parent plus un.
 
-    ``judges`` (#21) : ``auto``, chaque juge selon son ``when`` ; ``force``,
+    ``judges`` (point 21) : ``auto``, chaque juge selon son ``when`` ; ``force``,
     tous les juges ; ``skip``, aucun.
 
     ``kind`` et ``triggered_by`` marquent un run système : la compaction d'une
-    session (#23) tourne dans le journal de cette session sans entrer dans son
+    session (point 23) tourne dans le journal de cette session sans entrer dans son
     historique. ``trigger`` nomme la porte d'entrée déclarée qui a ouvert le
-    run (H6) : une facette du journal, pour savoir ce qu'une porte a lancé.
+    run (fonction H6) : une facette du journal, pour savoir ce qu'une porte a lancé.
 
     ``state`` : écritures du state de la session par l'application (``None``
     efface la clé), pour un run racine ordinaire seulement. Contrôlées comme
     celles d'un outil, elles vont dans ``run.started`` ; une écriture refusée,
     ou une clé ``required`` restée sans valeur, lève ``StateRefused`` (une
-    ``ValueError``) avant tout écrit (D13).
+    ``ValueError``) avant tout écrit (décision D13 du state de session).
+
+    Args:
+        ctx: L'agent.
+        prompt: La demande, texte ou message.
+        attachments: Pièces jointes, validées puis rangées (un
+            ``artifact.stored`` chacune).
+        session_id: Session ; à défaut, le run est son propre journal.
+        context: Contexte de l'appelant (client, utilisateur, rôles…).
+        run_id: Identifiant choisi par l'appelant ; à défaut, un nouveau.
+        parent: Run parent d'un sous-run.
+        writer: Écrivain de la session.
+        judges: Choix des juges.
+        kind: ``normal`` ou un run système (compaction).
+        triggered_by: Run qui a déclenché un run système.
+        trigger: Porte d'entrée déclarée qui a ouvert le run.
+        state: Écritures du state par l'application.
+
+    Returns:
+        L'état du run ouvert, projeté des événements écrits.
+
+    Raises:
+        RunExists: Le ``run_id`` existe déjà.
+        AttachmentError: Pièce jointe refusée.
+        StateRefused: State refusé, ou clé ``required`` sans valeur.
+        SessionUnreadable: Historique de la session illisible (run racine).
     """
     message = Message.user(prompt) if isinstance(prompt, str) else prompt
     if message.role != "user":
@@ -479,6 +547,13 @@ class SessionUnreadable(Exception):
     Le sauter en silence ferait répondre l'agent avec une mémoire amputée ;
     l'ouvrir pour le faire échouer laisserait un run échoué de plus à chaque
     tentative. Rien n'est écrit : le run illisible est à réparer à part.
+
+    Args:
+        session_id: La session.
+        error: L'erreur de la projection.
+
+    Attributes:
+        session_id: La session.
     """
 
     def __init__(self, session_id: SessionId, error: Exception) -> None:
@@ -494,7 +569,7 @@ async def check_state(
     session_id: SessionId,
     run_id: RunId | None = None,
 ) -> None:
-    """Contrôle, sans rien écrire, le state avec lequel s'ouvrirait un run racine (D13).
+    """Contrôle, sans rien écrire, le state avec lequel s'ouvrirait un run racine (décision D13 du state de session).
 
     ``begin_run`` fait ce contrôle lui-même ; il se fait ici plus tôt quand
     l'ouverture est précédée d'une écriture — la compaction de sécurité d'une
@@ -504,6 +579,17 @@ async def check_state(
     Rien n'est relu quand rien ne peut être refusé : aucun state posé, aucune
     clé ``required``. Un ``run_id`` choisi qui existe déjà est laissé à
     ``begin_run`` : une demande rejouée garde sa réponse (``RunExists``).
+
+    Args:
+        ctx: L'agent.
+        state: Le state posé par l'application.
+        tenant_id: Client de la session.
+        session_id: La session.
+        run_id: Identifiant choisi pour le run, s'il y en a un.
+
+    Raises:
+        StateRefused: State refusé, ou clé ``required`` sans valeur.
+        SessionUnreadable: Historique de la session illisible.
     """
     posed = dict(state or {})
     _accepts_state(ctx, posed)
@@ -527,7 +613,7 @@ def _accepts_state(ctx: RunContext, posed: Mapping[str, JsonValue]) -> None:
 
 
 def _check_opening(ctx: RunContext, posed: Mapping[str, JsonValue], prior: Mapping[str, JsonValue]) -> None:
-    """Le state posé, puis les clés obligatoires, sur le state de la session (D6, D7, D13)."""
+    """Le state posé, puis les clés obligatoires, sur le state de la session (décisions D6, D7 et D13 du state de session)."""
     rules = ctx.tools.state_rules
     if not rules:
         return
@@ -592,6 +678,20 @@ async def drive(
     dans le même journal. Il n'a pas d'historique de session. Un run de
     compaction non plus : son segment est déjà dans sa demande, et lui ajouter
     l'historique le ferait payer deux fois et résumer au-delà de sa coupe.
+
+    Args:
+        ctx: L'agent.
+        run_id: Le run.
+        session_id: Sa session ; à défaut, ``run_id``.
+        tenant_id: Client de la session ; à défaut, le client par défaut.
+        writer: Écrivain de la session (celui du parent pour un sous-run).
+
+    Returns:
+        L'état du run à l'arrêt : terminé (``COMPLETED``, ``FAILED``,
+        ``CANCELLED``) ou en attente (``PAUSED``, ``WAITING_CHILD``).
+
+    Raises:
+        ClaimConflict: Un autre pilote tient la concession du run.
     """
     tenant = tenant_id or DEFAULT_TENANT
     session = session_id or SessionId(run_id)
@@ -614,7 +714,7 @@ async def drive(
     except RunMoved as moved:
         return await _closed_elsewhere(ctx, run_id, tenant, session, moved)
     # La vue du pilote s'ouvre aussitôt la concession écrite, sans attente entre les
-    # deux : tout ce qui s'écrit ensuite sur la session passe sous ses yeux (#27).
+    # deux : tout ce qui s'écrit ensuite sur la session passe sous ses yeux (point 27).
     held: AbstractContextManager[SessionWriter] = nullcontext(journal) if claimed is None else journal.held(run_id, claimed.worker_id)
     try:
         with held as piloting:
@@ -666,13 +766,13 @@ async def _closed_elsewhere(ctx: RunContext, run_id: RunId, tenant: TenantId, se
 
 
 async def _taken_over(ctx: RunContext, run_id: RunId, tenant: TenantId, session: SessionId, taken: ClaimConflict) -> RunState:
-    """Un autre worker a pris la concession en plein pilotage : le pilote s'arrête (#27).
+    """Un autre worker a pris la concession en plein pilotage : le pilote s'arrête (point 27).
 
     Son bail a expiré sans être renouvelé — store injoignable, process gelé —,
     et l'autre a repris le run. Rien n'a été écrit depuis cette prise : ce qui
     était en cours (un appel de modèle, un outil) est allé au bout ou a été
     coupé, et son résultat n'est pas écrit ; le nouveau pilote traite l'appel
-    resté en suspens comme après un plantage (#18). Si le run a été mené à son
+    resté en suspens comme après un plantage (point 18). Si le run a été mené à son
     terme entre-temps, le journal le dit et son état est rendu, comme pour un
     run clos ailleurs ; sinon ``ClaimConflict`` remonte : il est mené ailleurs.
     """
@@ -728,14 +828,14 @@ async def _driven(
         session_turns = tuple(turns(earlier))
         previous = [message for turn in session_turns for message in turn]
         if ctx.keep_images == "last_run":
-            # Les images des tours précédents deviennent des mentions (F4).
+            # Les images des tours précédents deviennent des mentions (fonction F4).
             previous = earlier_images(previous)
         # Un tour précédent en pause n'est pas dans l'historique : la note le dit (18/10).
         if (note := pending_note(awaiting_in_session(earlier))) is not None:
             previous.append(note)
         if (asked := question_note(asking_in_session(earlier))) is not None:
             previous.append(asked)
-        # Consommation des runs précédents de la session : budget de session (J4).
+        # Consommation des runs précédents de la session : budget de session (fonction J4).
         session_spent = spent(earlier)
         # Seul un agent qui déclare un state le lit : les autres n'ont pas à relire la session.
         prior_state = session_state(earlier) if ctx.tools.state_rules else {}
@@ -920,7 +1020,7 @@ async def _handed_back(
     scope: RunScope,
     claim: RunClaim | None,
 ) -> None:
-    """Rend la concession d'un run laissé en plan volontairement (#27, #17).
+    """Rend la concession d'un run laissé en plan volontairement (points 27 et 17).
 
     Une concession expirée à l'écriture : le premier pilote venu peut
     reprendre le run dès qu'une décision arrive, sans attendre la fin d'un
@@ -944,7 +1044,7 @@ async def _handed_back(
 
 
 async def _claim(state: RunState, ctx: RunContext, journal: SessionWriter, scope: RunScope) -> RunClaim | None:
-    """Prend la concession du run, ou lève si un autre pilote la tient (#27).
+    """Prend la concession du run, ou lève si un autre pilote la tient (point 27).
 
     Sans ``worker_id`` — un ``drive`` appelé directement, un sous-run que son
     parent pilote déjà —, il n'y a pas de concession à prendre.
@@ -1003,7 +1103,7 @@ async def _renewed(claim: RunClaim | None, journal: SessionWriter, scope: RunSco
     journalisé et retenté au tour suivant : le bail couvre trois tours, donc
     deux échecs de suite. Au-delà, un autre worker peut prendre le run ; la vue
     du pilote (``SessionWriter.held``) refuse alors ses écritures, et le pilote
-    s'arrête à la suivante (#27). Le minuteur ne s'arrête que si le run est
+    s'arrête à la suivante (point 27). Le minuteur ne s'arrête que si le run est
     clos ailleurs, ou si un autre worker a pris la concession.
 
     Il rend de quoi l'arrêter avant la fin du bloc : le pilote le fait avant de
@@ -1057,11 +1157,23 @@ def cancellation(
     by: str | None = None,
     via: str | None = None,
 ) -> list[EventDraft]:
-    """Transition et clôture d'un run arrêté à la demande (A5).
+    """Transition et clôture d'un run arrêté à la demande (fonction A5).
 
     L'annulation est terminale : un run annulé ne se reprend pas. C'est ce qui
     la distingue d'un run simplement interrompu — plantage, flux abandonné —,
     qui ne laisse rien au journal et repart où il s'était arrêté.
+
+    Args:
+        state: L'état du run.
+        reason: ``requested`` (arrêt demandé) ou ``parent`` (parent clos).
+        by: Auteur de la demande : ``user_id`` de l'appelant, worker, run
+            parent.
+        via: Passerelle qui a porté la demande (``as_user``), s'il y en a
+            une.
+
+    Returns:
+        Le ``run.transitioned`` vers ``CANCELLED`` et le ``run.cancelled``
+        (consommation, demandes et questions retirées), à écrire ensemble.
     """
     scope = run_scope(state)
     return [
@@ -1084,7 +1196,7 @@ def cancellation(
 
 
 def subruns_cancellation(events: Sequence[Event], state: RunState) -> list[EventDraft]:
-    """Annulation des sous-runs encore ouverts d'un run que l'on clôt (C5, A5).
+    """Annulation des sous-runs encore ouverts d'un run que l'on clôt (fonctions C5 et A5).
 
     Un sous-run ne repart que par l'appel de son parent, qui le reprend en le
     rejouant : le parent clos — délai dépassé, arrêt demandé, échec —, plus rien ne le
@@ -1092,6 +1204,13 @@ def subruns_cancellation(events: Sequence[Event], state: RunState) -> list[Event
     Chaque descendant ouvert est donc annulé avec son parent (``reason: parent``,
     ``by`` : son run parent), le plus récent d'abord, donc un enfant avant son
     propre parent. ``events`` : le journal de la session, ou l'arbre du run.
+
+    Args:
+        events: Le journal de la session, ou l'arbre du run.
+        state: L'état du run que l'on clôt.
+
+    Returns:
+        Les événements d'annulation des descendants ouverts.
     """
     tree = RunTree(state.run_id).select(events)
     runs = dict.fromkeys(e.run_id for e in tree if e.run_id != state.run_id)
@@ -1135,7 +1254,7 @@ async def _expired(
     decided: float = 0.0,
     deciding: bool = False,
 ) -> None:
-    """Clôture d'un run qui a dépassé son délai maximal (A6).
+    """Clôture d'un run qui a dépassé son délai maximal (fonction A6).
 
     Un dépassement est subi, pas décidé : il s'écrit en ``run.failed``, pas en
     ``run.cancelled``. Comme toute clôture, il ferme le run.
@@ -1185,6 +1304,18 @@ async def step(
     ``previous`` est l'historique de la session avant ce run ; ``cause`` le
     dernier événement d'effet, référencé par les transitions ; ``session`` la
     consommation des runs précédents de la session (budget de session).
+
+    Args:
+        state: L'état du run.
+        ctx: L'agent.
+        previous: Historique de la session avant ce run.
+        cause: Dernier événement d'effet.
+        session: Consommation des runs précédents de la session.
+
+    Yields:
+        Les brouillons d'événements de l'étape : une décision (transition,
+        clôture), ou l'effet encadré par ``step.started`` et
+        ``step.completed``.
     """
     session = session or Spent()
     scope = run_scope(state)
@@ -1225,7 +1356,7 @@ async def _decide(state: RunState, ctx: RunContext, scope: RunScope, cause: Even
         return _repair(state, ctx, scope, state.pending_repair, cause)
     match state.status:
         case RunStatus.COMPLETED if not state.finished and last is not None and last.role == "tool":
-            # Un outil terminal, ou une réponse qui n'appelait que loom.state (M1),
+            # Un outil terminal, ou une réponse qui n'appelait que loom.state (règle M1),
             # mène à COMPLETED sur un résultat d'outil.
             answer = _answered_with_state(state, ctx)
             if answer is not None and _terminal(state, ctx)[0] is None:
@@ -1246,11 +1377,11 @@ async def _decide(state: RunState, ctx: RunContext, scope: RunScope, cause: Even
             return _resumed(state, ctx, scope, cause)
         case RunStatus.WAITING_CHILD:
             # Un enfant peut repartir : on rejoue l'appel qui l'a lancé, et
-            # c'est lui qui le reprendra là où il en était (C5, #26).
+            # c'est lui qui le reprendra là où il en était (fonction C5, point 26).
             return [_transition(state, scope, RunStatus.AWAITING_TOOLS, cause)]
         case RunStatus.AWAITING_TOOLS if state.on_hold:
             # Le reste du lot est passé ; ces appels-là attendent un humain : une
-            # décision (#17), ou une réponse de l'utilisateur (wait_answer).
+            # décision (point 17), ou une réponse de l'utilisateur (``docs/wait_answer.md``).
             return [_transition(state, scope, RunStatus.PAUSED, cause)]
         case RunStatus.AWAITING_TOOLS if not state.pending_calls:
             terminal, parallel = _terminal(state, ctx)
@@ -1259,7 +1390,7 @@ async def _decide(state: RunState, ctx: RunContext, scope: RunScope, cause: Even
             answer = _answered_with_state(state, ctx)
             if answer is not None:
                 # Le modèle a répondu et tenu son state dans la même réponse : son
-                # texte est la réponse finale, sans le rappeler (state v2, M1).
+                # texte est la réponse finale, sans le rappeler (state v2, règle M1, ``docs/state_analyse_moteur.md``).
                 return await _final(state, ctx, scope, cause, answer, None)
             drafts = [
                 scope.draft(
@@ -1279,7 +1410,7 @@ async def _decide(state: RunState, ctx: RunContext, scope: RunScope, cause: Even
 
 
 def _resumed(state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None) -> list[EventDraft] | None:
-    """Ce qu'un run en pause peut faire des décisions qui lui sont parvenues (#17).
+    """Ce qu'un run en pause peut faire des décisions qui lui sont parvenues (point 17).
 
     Une demande dont la date est passée expire **ici**, au moment où on la
     regarde : c'est l'``expire_at`` du journal qui fait foi, et non le travail
@@ -1294,7 +1425,7 @@ def _resumed(state: RunState, ctx: RunContext, scope: RunScope, cause: Event | N
     action = ctx.approval.on_expiry
     stale = [a for a in state.awaiting if a.stale(now) and a.expire_at is not None]
     # Une question périmée ne fait pas échouer le run : le modèle apprend qu'il
-    # n'a pas eu de réponse, et continue (wait_answer).
+    # n'a pas eu de réponse, et continue (``docs/wait_answer.md``).
     unanswered = [q for q in state.asking if q.stale(now) and q.expire_at is not None]
     expired_questions = [
         scope.draft(
@@ -1386,7 +1517,7 @@ async def _final(
 ) -> list[EventDraft]:
     """Réponse finale : politiques ``on_output``, puis clôture, réparation ou échec.
 
-    ``terminal`` : l'appel de l'outil terminal dont ``output`` est la sortie (#13).
+    ``terminal`` : l'appel de l'outil terminal dont ``output`` est la sortie (point 13).
     """
     subject = OnOutput(
         state=state,
@@ -1452,7 +1583,7 @@ def _schema(contract: OutputContract | None) -> dict[str, JsonValue] | None:
 
 
 def _structured(contract: OutputContract | None, output: Message) -> JsonValue:
-    """Objet JSON de la réponse finale quand l'agent déclare un schéma de sortie (A7)."""
+    """Objet JSON de la réponse finale quand l'agent déclare un schéma de sortie (fonction A7)."""
     if contract is None or contract.json_schema is None:
         return None
     try:
@@ -1485,7 +1616,7 @@ def _repair(
     repair: PendingRepair,
     cause: Event | EventDraft | None,
 ) -> list[EventDraft]:
-    """Demande de réparation au modèle orchestrateur (#20).
+    """Demande de réparation au modèle orchestrateur (point 20).
 
     Les appels d'outils de la réponse refusée sont fermés sans être exécutés,
     puis le diagnostic est écrit. Après une sortie terminale refusée, le run
@@ -1538,6 +1669,7 @@ def _transition(
     target: RunStatus,
     cause: Event | EventDraft | str | None,
 ) -> EventDraft:
+    """``run.transitioned`` vers ``target`` ; ``cause`` est l'événement qui l'a provoquée, ou son type."""
     if isinstance(cause, Event | EventDraft):
         cause_type, cause_id = cause.type, cause.event_id
     else:
@@ -1554,7 +1686,7 @@ def _transition(
 
 
 def _terminal(state: RunState, ctx: RunContext) -> tuple[ToolCallBlock | None, tuple[ToolCallBlock, ...]]:
-    """Appel terminal dont la sortie devient la réponse finale (#13), ou None.
+    """Appel terminal dont la sortie devient la réponse finale (point 13), ou None.
 
     Le second élément : les outils terminaux appelés avec d'autres, pour qui
     la règle ne s'applique pas.
@@ -1577,7 +1709,7 @@ def _terminal(state: RunState, ctx: RunContext) -> tuple[ToolCallBlock | None, t
 
 
 def _answered_with_state(state: RunState, ctx: RunContext) -> Message | None:
-    """La réponse finale d'un tour qui n'appelait que ``loom.state``, ou None (state v2, M1).
+    """La réponse finale d'un tour qui n'appelait que ``loom.state``, ou None (state v2, règle M1, ``docs/state_analyse_moteur.md``).
 
     Le modèle a écrit sa réponse et, dans la même réponse, tenu le state : le
     rappeler lui ferait réécrire une réponse, qui remplacerait la bonne. Il
@@ -1703,7 +1835,7 @@ def _policy_drafts(
 
 
 def judge_role(judge: str) -> str:
-    """Rôle d'un juge dans l'enveloppe des événements : son coût lui est attribué (#21)."""
+    """Rôle d'un juge dans l'enveloppe des événements : son coût lui est attribué (point 21)."""
     return f"judge:{judge}"
 
 
@@ -1711,7 +1843,12 @@ def judge_role(judge: str) -> str:
 
 
 class _Step:
-    """Encadrement d'une étape : numéro, span et chronométrage."""
+    """Encadrement d'une étape : numéro, span et chronométrage.
+
+    Attributes:
+        no: Numéro de l'étape.
+        span: Span de l'étape.
+    """
 
     def __init__(self, state: RunState, scope: RunScope, effect: Effect) -> None:
         self.no = state.step + 1
@@ -1722,16 +1859,19 @@ class _Step:
         self._started = time.perf_counter()
 
     def draft(self, payload: StepStarted | StepCompleted | PolicyEvent) -> EventDraft:
+        """Brouillon dans le span de l'étape ; un appel de modèle est attribué à ``main`` ou à son juge."""
         role: str | None = None
         if isinstance(payload, _CALL_EVENTS):
-            # Les appels de modèle de l'orchestrateur sont ceux du rôle ``main`` (C6).
+            # Les appels de modèle de l'orchestrateur sont ceux du rôle ``main`` (fonction C6).
             role = judge_role(payload.judge) if payload.judge is not None else MAIN_ROLE
         return self._scope.draft(payload, span_id=self.span, role=role)
 
     def started(self) -> EventDraft:
+        """Le ``step.started`` de l'étape."""
         return self.draft(StepStarted(step_no=self.no, state=self._status, effect=self._effect))
 
     def completed(self, emitted: int, *, ok: bool = True) -> EventDraft:
+        """Le ``step.completed`` de l'étape : durée, événements émis, issue."""
         return self.draft(
             StepCompleted(
                 step_no=self.no,
@@ -1751,6 +1891,13 @@ async def _model_step(
     forced: bool,
     session: Spent,
 ) -> AsyncGenerator[EventDraft]:
+    """Étape d'appel du modèle orchestrateur (``model_call``, ou ``finalize`` pour la réponse forcée).
+
+    Construit la requête (historique, résultats dans l'ordre des appels et
+    marqués, notes d'amendement, state, consigne de réponse forcée), passe
+    les politiques ``before_model``, appelle la chaîne ``main`` et écrit ses
+    événements dans le span de l'étape, puis la réponse.
+    """
     current = _Step(state, scope, "finalize" if forced else "model_call")
     yield current.started()
     # État vu par les transitions écrites pendant l'étape : son numéro est celui-ci.
@@ -1758,7 +1905,7 @@ async def _model_step(
     # En after_guards, rien ne part pendant l'appel : la réponse est d'abord contrôlée.
     live = ctx.on_chunk if ctx.stream_output == "live" else None
     chain = ctx.chain(on_chunk=live)
-    # Adhérence (#10) : après une bascule, le run reste sur le secours.
+    # Adhérence (point 10) : après une bascule, le run reste sur le secours.
     adhered = state.models.get(MAIN_ROLE)
     spec = chain.link(adhered).spec
     started = time.perf_counter()
@@ -1772,7 +1919,7 @@ async def _model_step(
         messages = mark_results(messages, ResultIndex(messages))
         system = f"{system}\n\n{REFS_HINT}" if system else REFS_HINT
     rules, keys = ctx.tools.state_rules, ctx.state_keys
-    # State de la session (D4) : consigne fixe dans le système, valeurs en fin de
+    # State de la session (décision D4 du state de session) : consigne fixe dans le système, valeurs en fin de
     # requête, dans la requête seulement (jamais journalisées comme message).
     shown: tuple[Message, ...] = ()
     if keys is not None and rules and keeps_state(state):
@@ -1792,7 +1939,7 @@ async def _model_step(
         tool_choice="none" if forced or state.repair_without_tools else "auto",
         max_tokens=ctx.max_tokens or spec.max_tokens,
         params={**spec.params, **ctx.params},
-        # Schéma natif (B9) : seulement pour un appel qui ne peut pas appeler d'outil.
+        # Schéma natif (fonction B9) : seulement pour un appel qui ne peut pas appeler d'outil.
         output_schema=_schema(ctx.output) if without_tools else None,
     )
     verdict = await ctx.policies.run(
@@ -1828,7 +1975,7 @@ async def _model_step(
             extra={"run_id": state.run_id, "span_id": current.span},
         )
         request = request.model_copy(update={"tool_choice": "none"})
-    # Tentatives ratées mais facturées de cette étape (J1) : ``stepped`` ne les
+    # Tentatives ratées mais facturées de cette étape (fonction J1) : ``stepped`` ne les
     # a pas vues, et un échec de l'étape doit les compter.
     billed, billed_cost = Usage(), 0.0
     try:
@@ -1850,7 +1997,7 @@ async def _model_step(
         # exception est inattendue, et garde sa pile d'appels.
         expected = isinstance(exc, ModelError)
         # Un arrêt voulu par le client (le rejeu à sa divergence) n'est pas une
-        # panne : c'est le rejeu qui le dit, une fois (J6.2b).
+        # panne : c'est le rejeu qui le dit, une fois (jalon J6.2b).
         logger.log(
             logging.DEBUG if stopped_by_client(exc) else logging.ERROR,
             "Échec de l'appel au modèle %s : %s — %s",
@@ -1879,7 +2026,7 @@ async def _model_step(
     if ctx.on_chunk is not None and live is None and early:
         # after_guards : le texte d'une réponse qui appelle des outils n'est pas la
         # réponse finale ; il part dès que la réponse est complète. Sauf si elle
-        # n'appelle que loom.state : ce texte peut être la réponse finale (M1), et
+        # n'appelle que loom.state : ce texte peut être la réponse finale (règle M1), et
         # partira alors une fois contrôlé, à la clôture (``_release``).
         await ctx.on_chunk(TextDelta(text=message.text))
     yield current.draft(
@@ -1896,6 +2043,12 @@ async def _model_step(
 
 
 async def _tool_step(state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None = None) -> AsyncGenerator[EventDraft]:
+    """Étape ``tool_batch`` : le lot d'outils en attente, par ``ToolExecutor.run_batch``.
+
+    Chaque appel a son span, choisi d'avance ; les événements des rôles, des
+    juges et des sous-agents s'y rangent. Une décision ``Fail`` d'une politique
+    d'outil fait échouer le run à la fin du lot.
+    """
     current = _Step(state, scope, "tool_batch")
     yield current.started()
     # Un span par appel d'outil, choisi d'avance : un sous-agent y rattache
@@ -1975,7 +2128,7 @@ async def _tool_step(state: RunState, ctx: RunContext, scope: RunScope, cause: E
     yield current.completed(emitted)
     if paused_children:
         # Le parent s'arrête là : il reprendra en rejouant l'appel, qui
-        # reprendra l'enfant (C5, H4). Son délai ne court pas pendant ce
+        # reprendra l'enfant (fonctions C5 et H4). Son délai ne court pas pendant ce
         # temps — l'étape est terminée, et l'attente n'en fait pas partie.
         yield _transition(
             state.model_copy(update={"step": current.no}),
@@ -1989,7 +2142,11 @@ async def _tool_step(state: RunState, ctx: RunContext, scope: RunScope, cause: E
 
 
 def run_scope(state: RunState) -> RunScope:
-    """Portée où écrire les événements d'un run : son span, son arbre, son agent."""
+    """Portée où écrire les événements d'un run : son span, son arbre, son agent.
+
+    Args:
+        state: L'état du run.
+    """
     return RunScope(
         tenant_id=state.context.tenant_id,
         session_id=state.session_id,
@@ -2002,7 +2159,7 @@ def run_scope(state: RunState) -> RunScope:
 
 
 def _log_call(event: Event, payload: ModelResponded | ToolCompleted) -> None:
-    """Une ligne par appel de modèle ou d'outil (K7, 6.1b) : son coût, jamais son contenu.
+    """Une ligne par appel de modèle ou d'outil (fonction K7, jalon J6.1b) : son coût, jamais son contenu.
 
     Écrite par le process qui écrit l'événement, une fois : les logs d'un
     service suivent ses appels sans collecteur. Un outil en erreur reste en

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Connexions partagées entre les runs : une par clé de pool (#19, #34).
+"""Connexions partagées entre les runs : une par clé de pool (points 19 et 34).
 
 La clé vaut le nom du serveur en portée ``shared`` — une connexion pour tout
 le process — et le nom du serveur **et du client** en portée ``tenant`` : le
@@ -37,6 +37,7 @@ class McpPool:
         return server
 
     async def aclose(self) -> None:
+        """Ferme toutes les connexions du pool ; la première erreur remonte une fois toutes tentées."""
         closing = Closing()
         for server in self._servers.values():
             with closing:

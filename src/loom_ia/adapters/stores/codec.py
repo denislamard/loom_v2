@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Forme d'une ligne de journal, en clair ou scellée (#30, §11.5).
+"""Forme d'une ligne de journal, en clair ou scellée (point 30, conception §11.5).
 
 Un store range un événement en texte JSON et le relit. Entre les deux, il
 passe par un **codec** : en clair, c'est le JSON de l'événement, tel qu'il a
@@ -22,7 +22,7 @@ colonnes et les facettes ``jsonb`` des stores SQL sont remplies avec ces
 champs : un journal scellé se filtre exactement comme un journal en clair —
 par client, session, run, type, agent, outil, modèle —, et une page de
 ``GET /events`` ne coûte pas plus cher. Le contenu, lui, est dans la charge,
-et une facette est par règle un champ qui n'en porte pas (5.4c).
+et une facette est par règle un champ qui n'en porte pas (jalon J5.4c).
 
 **Ce que l'AAD couvre :** le journal (client, session), la position (``seq``),
 l'identité (``event_id``) et l'**horodatage** (``ts``). Pas le type ni les
@@ -54,17 +54,24 @@ from loom_ia.core.events import Event
 from loom_ia.core.model import DomainModel, EventId, SessionId, TenantId
 from loom_ia.core.ports import Cipher, JournalCorrupted, Keyring, MissingKey
 
-# Champ qui distingue une charge fermée d'une charge en clair. Aucune charge
-# durable ne porte un champ de ce nom, et un essai le vérifie : le jour où
-# l'une en porterait un, une ligne en clair passerait pour un sceau.
 SEALED: Final = "sealed"
-# Préfixe de l'AAD : il dit de quelle version du sceau il s'agit, et sépare
-# ces octets de tout autre usage de la même clé.
+"""Champ qui distingue une charge fermée d'une charge en clair. Aucune charge
+durable ne porte un champ de ce nom, et un essai le vérifie : le jour où
+l'une en porterait un, une ligne en clair passerait pour un sceau.
+"""
 AAD_PREFIX: Final = b"loom.seal.v1"
+"""Préfixe de l'AAD : il dit de quelle version du sceau il s'agit, et sépare
+ces octets de tout autre usage de la même clé.
+"""
 
 
 class Seal(DomainModel):
-    """Charge fermée, telle qu'elle est rangée à la place de la charge."""
+    """Charge fermée, telle qu'elle est rangée à la place de la charge.
+
+    Attributes:
+        sealed: La charge fermée, en base64.
+        key_id: Identifiant de la clé qui l'a fermée.
+    """
 
     sealed: str
     key_id: str
@@ -78,6 +85,13 @@ class EventMark(DomainModel):
     un journal dont la clé est effacée se laisse encore **voir et
     supprimer**, ce qu'exige la suppression RGPD, sans rien livrer de son
     contenu.
+
+    Attributes:
+        tenant_id: Client du journal.
+        session_id: Session du journal.
+        seq: Place de l'événement dans le journal.
+        event_id: Identifiant de l'événement.
+        ts: Horodatage de l'événement.
     """
 
     # Une marque lit une partie d'une ligne : le reste n'est pas un champ
@@ -94,7 +108,9 @@ class EventMark(DomainModel):
 class JournalCodec(Protocol):
     """Passage entre un événement et la ligne qui le range."""
 
-    def dumps(self, event: Event) -> str: ...
+    def dumps(self, event: Event) -> str:
+        """Ligne qui range cet événement, sans saut de ligne."""
+        ...
 
     def loads(self, line: str | bytes) -> Event:
         """Événement de cette ligne ; ``MissingKey`` si son sceau reste fermé."""
@@ -109,13 +125,16 @@ class PlainCodec:
     """Le JSON de l'événement, tel quel : le journal de toujours."""
 
     def dumps(self, event: Event) -> str:
+        """La ligne d'un événement : son JSON, en clair."""
         return event.model_dump_json()
 
     def loads(self, line: str | bytes) -> Event:
+        """L'événement d'une ligne ; un champ ajouté par un code plus récent est ignoré."""
         # Un champ ajouté par un code plus récent est ignoré à la lecture (DEC-1).
         return Event.model_validate_json(line, extra="ignore")
 
     def mark(self, line: str | bytes) -> EventMark:
+        """Les repères d'une ligne (``EventMark``)."""
         return EventMark.model_validate_json(line)
 
     def __repr__(self) -> str:
@@ -123,6 +142,7 @@ class PlainCodec:
 
 
 PLAIN: Final = PlainCodec()
+"""Le codec en clair, celui d'un journal sans sceau."""
 
 
 class SealingCodec:
@@ -132,6 +152,12 @@ class SealingCodec:
         self._keyring = keyring
 
     def dumps(self, event: Event) -> str:
+        """La ligne d'un événement, sa charge fermée avec la clé courante du client.
+
+        L'enveloppe reste en clair, exactement comme Pydantic l'écrit ; la charge
+        devient ``{"sealed": …, "key_id": …}``, authentifiée avec le journal, la
+        place et l'heure de l'événement (``aad_of``).
+        """
         cipher = self._sealer(event.tenant_id)
         aad = aad_of(event.tenant_id, event.session_id, event.seq, event.event_id, event.ts)
         closed = cipher.seal(event.payload.model_dump_json().encode(), aad)
@@ -142,6 +168,15 @@ class SealingCodec:
         return json.dumps(shell, ensure_ascii=False, separators=(",", ":"))
 
     def loads(self, line: str | bytes) -> Event:
+        """L'événement d'une ligne, sa charge ouverte avec la clé qui l'a fermée.
+
+        Une ligne écrite avant que le sceau soit déclaré se lit telle quelle.
+
+        Raises:
+            MissingKey: La clé qui a fermé la charge n'est plus, ou pas encore,
+                dans le trousseau du client.
+            JournalCorrupted: La ligne, le sceau ou la charge ouverte est illisible.
+        """
         shell = _shell(line)
         payload: object = shell.get("payload")
         if not isinstance(payload, dict) or SEALED not in cast("dict[str, Any]", payload):
@@ -155,12 +190,14 @@ class SealingCodec:
         return Event.model_validate(shell, extra="ignore")
 
     def mark(self, line: str | bytes) -> EventMark:
+        """Les repères d'une ligne, sans ouvrir sa charge."""
         return _mark(_shell(line))
 
     def _sealer(self, tenant_id: TenantId) -> Cipher:
         return self._keyring.ciphers(tenant_id)[0]
 
     def _opener(self, tenant_id: TenantId, key_id: str) -> Cipher:
+        """La clé du client qui a fermé cette charge ; ``MissingKey`` si son trousseau ne l'a pas, en nommant la clé à remettre."""
         try:
             ring = self._keyring.ciphers(tenant_id)
         except MissingKey as exc:

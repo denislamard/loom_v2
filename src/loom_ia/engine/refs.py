@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Références aux résultats d'outils : ``{"$ref": "result:3"}`` (#12).
+r"""Références aux résultats d'outils : ``{"$ref": "result:3"}`` (point 12).
 
 L'orchestrateur transmet un résultat précédent à un outil sans le recopier.
 L'exécuteur remplace la référence par le résultat avant de valider les
@@ -11,7 +11,7 @@ seulement ceux obtenus avant le tour en cours : un appel du même tour n'a pas
 encore de résultat, et le rejeu reste déterministe.
 
 Certains modèles écrivent la référence sérialisée, en chaîne :
-``"{\\"$ref\\": \\"result:3\\"}"``. Une chaîne dont tout le contenu est cet
+``"{\"$ref\": \"result:3\"}"``. Une chaîne dont tout le contenu est cet
 objet est traitée comme la référence elle-même ; sinon, la valeur transmise
 serait le texte de la référence, sans aucune erreur. Si la valeur transmise
 ne convient pas au champ, le refus le dit (``ref_origin``) : la référence,
@@ -23,7 +23,7 @@ système, dès qu'un rôle est proposé dans le run. Ce marquage n'existe que da
 la requête : le journal garde les résultats tels quels, dans leur ordre
 d'arrivée, et la requête les remet dans l'ordre des appels.
 
-Un résultat déporté (#16) n'a dans le journal qu'un aperçu : sa référence
+Un résultat déporté (point 16) n'a dans le journal qu'un aperçu : sa référence
 transmet le contenu complet, relu dans le stockage d'artefacts. L'orchestrateur
 peut ainsi passer un gros résultat à un rôle sans l'avoir lu.
 """
@@ -47,16 +47,28 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import ArtifactNotFound, ArtifactStore
 
 REF_KEY: Final = "$ref"
+"""Clé de l'objet référence."""
 REF_PREFIX: Final = "result:"
+"""Début d'une référence ; suit le numéro de l'appel, à partir de 1."""
 REFS_HINT: Final = (
     "Chaque résultat d'outil commence par sa référence, par exemple [result:3]. "
     "Pour passer un résultat à un argument prévu par un outil sans le recopier, "
     'donne à cet argument la valeur {"$ref": "result:3"} : un objet JSON, pas une chaîne.'
 )
+"""Consigne ajoutée au prompt système dès qu'un rôle est proposé dans le run."""
 
 
 class RefError(Exception):
-    """Référence impossible à résoudre ; le message est destiné au modèle."""
+    """Référence impossible à résoudre ; le message est destiné au modèle.
+
+    L'exécuteur en fait un résultat d'erreur de l'appel, sans l'exécuter.
+
+    Args:
+        message: Ce qui ne va pas, avec les références disponibles.
+
+    Attributes:
+        message: Le message.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
@@ -65,7 +77,15 @@ class RefError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class CallRecord:
-    """Un appel d'outil du run, et son résultat s'il est arrivé."""
+    """Un appel d'outil du run, et son résultat s'il est arrivé.
+
+    Attributes:
+        number: Rang de l'appel dans le run, à partir de 1, dans l'ordre des
+            demandes du modèle.
+        call_id: Identifiant de l'appel.
+        name: Nom de l'outil.
+        output: Résultat ; ``None`` tant qu'il n'est pas arrivé.
+    """
 
     number: int
     call_id: str
@@ -74,10 +94,12 @@ class CallRecord:
 
     @property
     def ref(self) -> str:
+        """Référence de l'appel : ``result:<number>``."""
         return f"{REF_PREFIX}{self.number}"
 
     @property
     def usable(self) -> bool:
+        """Vrai si l'appel a un résultat qui n'est pas une erreur : il peut être transmis."""
         return self.output is not None and not self.output.is_error
 
 
@@ -96,6 +118,14 @@ class ResultIndex:
     """Appels d'outils d'un run, numérotés dans l'ordre des demandes du modèle.
 
     ``artifacts`` sert à relire le contenu complet d'un résultat déporté.
+
+    Args:
+        messages: Messages du run : les appels viennent des messages
+            ``assistant``, les résultats des messages ``tool``.
+        artifacts: Magasin de fichiers.
+
+    Attributes:
+        records: Les appels, dans l'ordre.
     """
 
     def __init__(self, messages: Iterable[Message], artifacts: ArtifactStore | None = None) -> None:
@@ -111,11 +141,19 @@ class ResultIndex:
         self._by_call = {record.call_id: record for record in self.records}
 
     def ref_of(self, call_id: str) -> str | None:
+        """Référence ``result:N`` d'un appel ; ``None`` s'il n'est pas dans le run."""
         record = self._by_call.get(call_id)
         return record.ref if record is not None else None
 
     def record(self, ref: str) -> CallRecord | None:
-        """L'appel que désigne une référence ``result:N``, s'il existe."""
+        """L'appel que désigne une référence ``result:N``, s'il existe.
+
+        Args:
+            ref: La référence, avec ou sans ``result:``.
+
+        Returns:
+            L'appel ; ``None`` pour un numéro invalide ou hors du run.
+        """
         number = _number(ref.removeprefix(REF_PREFIX))
         if number is None:
             return None
@@ -129,7 +167,19 @@ class ResultIndex:
     async def resolve(self, arguments: dict[str, JsonValue]) -> tuple[dict[str, JsonValue], tuple[str, ...]]:
         """Arguments aux références remplacées, et les références résolues.
 
-        Lève ``RefError`` si une référence ne peut pas être résolue.
+        Une référence est remplacée à toute profondeur, en objet ou écrite en
+        chaîne.
+
+        Args:
+            arguments: Arguments écrits par le modèle.
+
+        Returns:
+            Les arguments résolus, et les références remplacées, dans l'ordre
+            où elles ont été trouvées.
+
+        Raises:
+            RefError: Référence invalide, inconnue, sans résultat (appel du
+                même tour), en erreur, vide, ou contenu déporté illisible.
         """
         found: list[str] = []
         resolved = cast(dict[str, JsonValue], await self._walk(arguments, found))
@@ -138,7 +188,15 @@ class ResultIndex:
     async def content(self, record: CallRecord) -> JsonValue:
         """Ce que transmet un résultat : ``data`` ou texte, relu s'il a été déporté.
 
-        Lève ``RefError`` si le contenu déporté ne peut pas être relu.
+        Args:
+            record: L'appel.
+
+        Returns:
+            Le ``data`` du résultat, sinon son texte ; pour un résultat
+            déporté, le contenu complet (JSON si l'URI finit par ``.json``).
+
+        Raises:
+            RefError: Pas de résultat, ou contenu déporté impossible à relire.
         """
         if record.output is None:
             raise RefError(f"{record.ref} ({record.name}) n'a pas encore de résultat.")
@@ -170,6 +228,12 @@ class ResultIndex:
         return value
 
     async def _value(self, ref: str, found: list[str]) -> JsonValue:
+        """Valeur transmise par une référence, ajoutée à ``found``.
+
+        Raises:
+            RefError: Référence invalide, inconnue, sans résultat, en erreur
+                ou vide ; le message liste les références disponibles.
+        """
         number = _number(ref.removeprefix(REF_PREFIX))
         if number is None:
             raise RefError(f"Référence invalide : {ref!r}, attendu result:<numéro>. {self._known()}")
@@ -196,12 +260,17 @@ class ResultIndex:
 
 @dataclass(frozen=True, slots=True)
 class RefOrigin:
-    """La référence qui a fourni une valeur des arguments résolus."""
+    r"""La référence qui a fourni une valeur des arguments résolus.
+
+    Attributes:
+        ref: La référence (``result:N``).
+        path: Où elle était dans les arguments écrits par le modèle.
+        serialized: Écrite en chaîne (``"{\"$ref\": …}"``) plutôt qu'en
+            objet.
+    """
 
     ref: str
-    # Où elle était dans les arguments écrits par le modèle.
     path: tuple[str | int, ...]
-    # Écrite en chaîne (``"{\\"$ref\\": …}"``) plutôt qu'en objet.
     serialized: bool
 
 
@@ -212,6 +281,13 @@ def ref_origin(written: JsonValue, path: Sequence[str | int]) -> RefOrigin | Non
     un chemin dans les arguments résolus — celui d'une erreur de schéma. La
     référence peut être sur le chemin même, ou plus haut : une erreur dans un
     objet transmis par référence vient de cette référence.
+
+    Args:
+        written: Arguments tels que le modèle les a écrits.
+        path: Chemin dans les arguments résolus.
+
+    Returns:
+        La référence trouvée sur le chemin ; ``None`` s'il n'y en a pas.
     """
     node = written
     for depth in range(len(path) + 1):
@@ -269,6 +345,13 @@ def in_call_order(messages: Sequence[Message]) -> tuple[Message, ...]:
     durées des outils. La requête, elle, ne doit dépendre que de ce que le
     modèle a demandé : reproductible d'un run à l'autre, et stable pour le
     cache des fournisseurs.
+
+    Args:
+        messages: Messages de la requête, résultats dans l'ordre d'arrivée.
+
+    Returns:
+        Les mêmes messages, les messages ``tool`` de chaque tour triés selon
+        l'ordre des appels du message ``assistant`` qui les précède.
     """
     ordered: list[Message] = []
     results: list[Message] = []
@@ -294,7 +377,16 @@ def in_call_order(messages: Sequence[Message]) -> tuple[Message, ...]:
 
 
 def mark_results(messages: Sequence[Message], index: ResultIndex) -> tuple[Message, ...]:
-    """Messages d'une requête, chaque résultat réussi précédé de sa référence."""
+    """Messages d'une requête, chaque résultat réussi précédé de sa référence.
+
+    Args:
+        messages: Messages de la requête.
+        index: Index des appels du run.
+
+    Returns:
+        Les messages ; chaque résultat réussi commence par un bloc texte
+        ``[result:N]``. Les erreurs ne sont pas marquées.
+    """
     return tuple(_marked(message, index) if message.role == "tool" else message for message in messages)
 
 

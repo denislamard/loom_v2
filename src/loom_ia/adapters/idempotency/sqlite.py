@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Magasin d'idempotence en SQLite : partagé, durable, entre process (#18, #49).
+"""Magasin d'idempotence en SQLite : partagé, durable, entre process (points 18 et 49).
 
 C'est le magasin que réclame une clé **métier** : elle doit être vue depuis un
 autre run, une autre session, un autre worker, et survivre à un redémarrage.
@@ -62,11 +62,8 @@ CREATE TABLE IF NOT EXISTS idempotency (
 CREATE INDEX IF NOT EXISTS idempotency_owner ON idempotency (tenant_id, session_id);
 CREATE INDEX IF NOT EXISTS idempotency_expiry ON idempotency (status, expires_at);
 """
+"""Table ``idempotency`` et ses index, créés s'ils manquent."""
 
-# Prend la clé, ou reprend une ligne périmée. Ce qui protège, c'est la date :
-# une réservation encore tenue ou un résultat encore mémorisé ne bougent pas.
-# Passée leur échéance, la clé est libre — une réservation périmée parce que
-# son effet est d'état inconnu, un résultat parce qu'il n'a plus cours.
 _RESERVE: Final = """
 INSERT INTO idempotency (key, tenant_id, session_id, status, result, expires_at, holder)
 VALUES (?, ?, ?, 'in_progress', NULL, ?, ?)
@@ -79,10 +76,15 @@ ON CONFLICT(key) DO UPDATE SET
     holder     = excluded.holder
 WHERE idempotency.expires_at < ?
 """
+"""Prend la clé, ou reprend une ligne périmée. Ce qui protège, c'est la date :
+une réservation encore tenue ou un résultat encore mémorisé ne bougent pas.
+Passée leur échéance, la clé est libre — une réservation périmée parce que
+son effet est d'état inconnu, un résultat parce qu'il n'a plus cours.
+"""
 
 _COMPLETE: Final = "UPDATE idempotency SET status = 'completed', result = ?, expires_at = ? WHERE key = ?"
-# Avec un jeton de détenteur : la même instruction, bornée à la ligne encore à lui.
 _COMPLETE_HELD: Final = _COMPLETE + " AND holder = ?"
+"""Avec un jeton de détenteur : la même instruction, bornée à la ligne encore à lui."""
 
 _RELEASE: Final = "DELETE FROM idempotency WHERE key = ? AND status = 'in_progress'"
 _RELEASE_HELD: Final = _RELEASE + " AND holder = ?"
@@ -106,6 +108,11 @@ class SqliteIdempotency:
         return f"SqliteIdempotency({str(self.path)!r})"
 
     async def _connect(self) -> aiosqlite.Connection:
+        """La connexion, ouverte au premier usage.
+
+        WAL, commits synchrones, attente de verrou de 5 s, suppression par
+        écrasement, schéma créé ou complété (colonne ``holder``).
+        """
         if self._connection is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             connection = await aiosqlite.connect(self.path, isolation_level=None)
@@ -148,6 +155,20 @@ class SqliteIdempotency:
         )
 
     async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
+        """Prend la clé pour ``ttl`` secondes ; faux si quelqu'un la tient déjà (``IdempotencyStore.reserve``).
+
+        Ce qui protège, c'est la date : une réservation tenue ou un résultat
+        encore mémorisé gardent la clé ; une clé périmée peut être reprise.
+
+        Args:
+            key: La clé.
+            ttl: Durée de la réservation, en secondes.
+            scope: De qui est la clé (client, session), pour l'oublier avec eux.
+            holder: Jeton propre à cette prise de clé.
+
+        Returns:
+            Vrai si la clé est prise.
+        """
         now = datetime.now(UTC)
         values: tuple[Any, ...] = (
             key,
@@ -163,6 +184,21 @@ class SqliteIdempotency:
                 return cursor.rowcount == 1
 
     async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
+        """Enregistre ce que l'effet a rendu : la clé cesse d'être une réservation (``IdempotencyStore.complete``).
+
+        Les résultats périmés sont d'abord effacés ; les réservations, jamais.
+
+        Args:
+            key: La clé réservée.
+            result: Ce que l'outil a rendu.
+            ttl: Durée de consultation du résultat, en secondes ; ``None`` : la
+                rétention du magasin.
+            holder: Avec un jeton, l'enregistrement n'a lieu que s'il est celui de
+                la clé ; sinon, il est sans effet.
+
+        Raises:
+            KeyError: Le magasin ne connaît plus la clé.
+        """
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=self.retention if ttl is None else ttl)
         payload = json.dumps(recordable(result), ensure_ascii=False)
@@ -188,6 +224,15 @@ class SqliteIdempotency:
             raise KeyError(f"Clé {key!r} non réservée : rien à enregistrer")
 
     async def release(self, key: str, *, holder: str | None = None) -> None:
+        """Rend une clé réservée dont l'effet ne s'est pas produit (``IdempotencyStore.release``).
+
+        Un résultat enregistré n'est jamais rendu ; avec un jeton, seule une
+        réservation encore à ce détenteur l'est.
+
+        Args:
+            key: La clé réservée.
+            holder: Le jeton de la prise de clé.
+        """
         async with self._lock:
             connection = await self._connect()
             if holder is None:
@@ -210,6 +255,7 @@ class SqliteIdempotency:
         return removed
 
     async def aclose(self) -> None:
+        """Ferme la connexion, si elle est ouverte."""
         async with self._lock:
             if self._connection is not None:
                 await self._connection.close()

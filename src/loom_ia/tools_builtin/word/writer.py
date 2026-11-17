@@ -69,7 +69,9 @@ from loom_ia.tools_builtin.word import chart, image
 from loom_ia.tools_builtin.word import style as look
 
 ZIP_DATE: Final = (2000, 1, 1, 0, 0, 0)
+"""Date des parties de l'archive : fixe, pour qu'un même document donne les mêmes octets."""
 FIXED_DATE: Final = "2000-01-01T00:00:00Z"
+"""Date des propriétés du document, fixe pour la même raison."""
 
 _W: Final = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _R: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -78,16 +80,18 @@ _TYPE: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationsh
 _CT: Final = "application/vnd.openxmlformats-officedocument.wordprocessingml"
 _HEAD: Final = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 
-# Un centimètre en vingtièmes de point (twips) ; un twip en EMU.
 CM: Final = 567
+"""Un centimètre en vingtièmes de point (twips) ; un twip en EMU."""
 EMU_PER_TWIP: Final = 635
-# L'espace sous « Date : », dans une signature, en twips (3 pt) : resté dans le code (la
-# place pour signer, en dessous, est ``signature.sign_height``).
+"""EMU par twip."""
 _DATE_SPACE: Final = 60
-# Les signets des sections : leurs identifiants commencent ici, loin de ceux du sommaire.
+"""L'espace sous « Date : », dans une signature, en twips (3 pt) : resté dans
+le code (la place pour signer, en dessous, est ``signature.sign_height``).
+"""
 SECTION_MARKS: Final = 1000
-# Les identifiants des signets des titres que vise un renvoi (``REF_MARK`` et leur rang).
+"""Les signets des sections : leurs identifiants commencent ici, loin de ceux du sommaire."""
 REF_MARKS: Final = 2000
+"""Les identifiants des signets des titres que vise un renvoi (``REF_MARK`` et leur rang)."""
 
 CONTENT_TYPES: Final = (
     _HEAD + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -105,6 +109,7 @@ CONTENT_TYPES: Final = (
     'ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
     "</Types>"
 )
+"""La partie ``[Content_Types].xml``."""
 _CHART_TYPE: Final = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
 PACKAGE_RELS: Final = (
     _HEAD + f'<Relationships xmlns="{_REL}">'
@@ -115,6 +120,7 @@ PACKAGE_RELS: Final = (
     f'<Relationship Id="rId3" Type="{_TYPE}/extended-properties" Target="docProps/app.xml"/>'
     "</Relationships>"
 )
+"""Les relations du paquet (``_rels/.rels``)."""
 DOCUMENT_RELS: Final = (
     _HEAD + f'<Relationships xmlns="{_REL}">'
     f'<Relationship Id="rId1" Type="{_TYPE}/styles" Target="styles.xml"/>'
@@ -123,18 +129,24 @@ DOCUMENT_RELS: Final = (
     f'<Relationship Id="rId4" Type="{_TYPE}/footer" Target="footer1.xml"/>'
     "</Relationships>"
 )
-# Les parties d'en-tête : l'en-tête des pages, et l'en-tête et le pied vides d'une
-# première page sans en-tête (page de garde, ``first_page: false``).
+"""Le début des relations du document (``word/_rels/document.xml.rels``)."""
 HEADER_PART: Final = "header1.xml"
+"""Les parties d'en-tête : l'en-tête des pages, et l'en-tête et le pied vides
+d'une première page sans en-tête (page de garde, ``first_page: false``).
+"""
 FIRST_HEADER_PART: Final = "header2.xml"
+"""Partie de l'en-tête de la première page."""
 FIRST_FOOTER_PART: Final = "footer2.xml"
+"""Partie du pied de la première page."""
 
 
 def _parts_listed(charts: int, media: list[Picture], body_media: int, bands: Sequence[tuple[str, str, str]]) -> tuple[str, str]:
-    """Types de contenu et relations du corps : ceux d'un document sans graphique, image
-    ni en-tête, à l'octet près, plus une partie et une relation par graphique, par image
-    du corps (``body_media`` premières), et par en-tête ou pied ajouté
-    (``bands`` : identifiant, type, partie)."""
+    """Types de contenu et relations du corps.
+
+    Ceux d'un document sans graphique, image ni en-tête, à l'octet près, plus une partie
+    et une relation par graphique, par image du corps (``body_media`` premières), et par
+    en-tête ou pied ajouté (``bands`` : identifiant, type, partie).
+    """
     if not charts and not media and not bands:
         return CONTENT_TYPES, DOCUMENT_RELS
     formats = sorted({picture.format for picture in media})
@@ -160,6 +172,7 @@ def _parts_listed(charts: int, media: list[Picture], body_media: int, bands: Seq
 APP: Final = (
     _HEAD + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>loom-ia</Application></Properties>'
 )
+"""La partie des propriétés étendues (``docProps/app.xml``)."""
 SETTINGS: Final = (
     _HEAD + f'<w:settings xmlns:w="{_W}">'
     '<w:defaultTabStop w:val="708"/><w:characterSpacingControl w:val="doNotCompress"/>'
@@ -167,16 +180,18 @@ SETTINGS: Final = (
     'w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>'
     "</w:settings>"
 )
-# Avec des notes de bas de page : les deux séparateurs, que Word veut nommés ici.
+"""La partie des réglages du document (``word/settings.xml``)."""
 SETTINGS_NOTES: Final = SETTINGS.replace(
     "<w:compat>",
     '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr><w:compat>',
 )
-# Le style maison, tel qu'écrit dans un document sans style.
+"""Avec des notes de bas de page : les deux séparateurs, que Word veut nommés ici."""
 STYLES: Final = look.styles_xml(house())
+"""Le style maison, tel qu'écrit dans un document sans style."""
 
 
 def _core(title: str | None, template: str | None = None, language: str = "fr-FR") -> str:
+    """Les propriétés du document (``docProps/core.xml``) : titre, catégorie (le modèle suivi), auteur, langue, dates fixes."""
     named = f"<dc:title>{escape(title)}</dc:title>" if title else ""
     # Le modèle suivi : la catégorie du document (Fichier > Propriétés dans Word) ;
     # absente sans modèle, pour qu'un document sans modèle ne change pas.
@@ -231,8 +246,11 @@ def _runs(
     size: int | None = None,
     part: str = "document",
 ) -> str:
-    """Les segments d'un paragraphe, d'un élément de liste, d'une cellule : l'emphase, les
-    liens (une relation externe de ``part``), les appels de note, les renvois."""
+    """Les segments d'un paragraphe, d'un élément de liste, d'une cellule.
+
+    L'emphase, les liens (une relation externe de ``part``), les appels de note, les
+    renvois.
+    """
     said = ""
     index = 0
     while index < len(runs):
@@ -272,10 +290,13 @@ def _footnote(body: _Body, note: Inline) -> str:
 
 
 def _reference(body: _Body, run: Run, *, bold: bool, size: int | None) -> str:
-    """Un renvoi : le numéro du titre visé (ses chiffres seuls), dans un champ ``REF`` que
-    Word recalcule ; un titre sans numéro, entre guillemets, en lien vers lui. Un article
-    (« Article 2 » et son tiret) : son numéro en lien, LibreOffice recalculant le champ
-    avec le libellé et le tiret."""
+    """Un renvoi.
+
+    Le numéro du titre visé (ses chiffres seuls), dans un champ ``REF`` que Word
+    recalcule ; un titre sans numéro, entre guillemets, en lien vers lui. Un article («
+    Article 2 » et son tiret) : son numéro en lien, LibreOffice recalculant le champ
+    avec le libellé et le tiret.
+    """
     rank = run.ref or 0
     mark = f"{REF_MARK}{rank}"
     number = body.ref_numbers.get(rank)
@@ -290,7 +311,7 @@ def _reference(body: _Body, run: Run, *, bold: bool, size: int | None) -> str:
 
 
 def _run(text: str, props: str = "") -> str:
-    """Un segment : ``\\n`` devient un saut de ligne, ``\\t`` une tabulation."""
+    r"""Un segment : ``\n`` devient un saut de ligne, ``\t`` une tabulation."""
     parts: list[str] = []
     for number, line in enumerate(text.split("\n")):
         if number:
@@ -313,9 +334,11 @@ def _spacer(twips: int) -> str:
 
 
 def _after(points: float) -> str:
-    """Le paragraphe vide qui suit un tableau, une image, un graphique, des sections côte à
-    côte (deux tableaux voisins ne fusionnent pas) : une ligne de Normal, et ``points``
-    après elle (le ``space_after`` de leur style, de ``image``, ``chart``, ``page``)."""
+    """Le paragraphe vide qui suit un tableau, une image, un graphique, des sections côte à côte (deux tableaux voisins ne fusionnent pas).
+
+    Une ligne de Normal, et ``points`` après elle (le ``space_after`` de leur style, de
+    ``image``, ``chart``, ``page``).
+    """
     return _paragraph("Normal", "", f'<w:spacing w:after="{look.twips(points)}"/>')
 
 
@@ -339,35 +362,54 @@ _JC: Final = {"left": "left", "center": "center", "right": "right"}
 
 @dataclass(slots=True)
 class _Body:
-    """Ce que le corps demande à l'archive : numérotations, graphiques, images, styles."""
+    """Ce que le corps demande à l'archive : numérotations, graphiques, images, styles.
+
+    Attributes:
+        style: Le style du document.
+        title: Son titre.
+        template: Le modèle suivi, s'il y en a un.
+        lists: Les listes : numérotée ?, à trois niveaux ?
+        charts: Les graphiques, en parties de l'archive.
+        media: Les images distinctes, dans l'ordre où elles paraissent la
+            première fois.
+        stored: Le nom de chaque image dans l'archive, par empreinte.
+        drawings: Les dessins (graphiques et images) : chacun son identifiant,
+            unique dans le document.
+        used: Les styles que seule une disposition demande, et que le corps
+            emploie.
+        custom: Les styles à toi que le corps emploie (``styles`` d'une
+            section, ``style`` d'un bloc).
+        numbers: Les légendes numérotées : le dernier numéro, par sorte («
+            Tableau », « Figure »).
+        toc: Le sommaire : ses entrées (niveau, texte, signet).
+        marks: Le signet de chaque titre repris au sommaire.
+        ranks: Les renvois : le rang de chaque titre, par bloc.
+        targeted: Les titres qu'un renvoi vise.
+        ref_numbers: Le numéro de chaque titre visé, si les titres sont
+            numérotés.
+        articles: Le numéro de chaque article, dans un document numéroté par
+            articles.
+        footnotes: Les notes de bas de page, en XML.
+        links: Les liens de chaque partie : leurs adresses.
+    """
 
     style: Style
     title: str
     template: Template | None = None
-    # Les listes : numérotée ?, à trois niveaux ?
     lists: list[tuple[bool, bool]] = field(default_factory=list[tuple[bool, bool]])
     charts: list[ChartOut] = field(default_factory=list[ChartOut])
-    # Les images distinctes, dans l'ordre où elles paraissent la première fois.
     media: list[Picture] = field(default_factory=list[Picture])
     stored: dict[str, int] = field(default_factory=dict[str, int])
-    # Les dessins (graphiques et images) : chacun son identifiant, unique dans le document.
     drawings: int = 0
-    # Les styles que seule une disposition demande, et que le corps emploie.
     used: set[str] = field(default_factory=set[str])
-    # Les styles à toi que le corps emploie (``styles`` d'une section, ``style`` d'un bloc).
     custom: set[str] = field(default_factory=set[str])
-    # Les légendes numérotées : le dernier numéro, par sorte (« Tableau », « Figure »).
     numbers: dict[str, int] = field(default_factory=dict[str, int])
-    # Le sommaire : ses entrées (niveau, texte, signet), et le signet de chaque titre repris.
     toc: list[tuple[int, str, str]] = field(default_factory=list[tuple[int, str, str]])
     marks: dict[int, tuple[int, str]] = field(default_factory=dict[int, tuple[int, str]])
-    # Les renvois : le rang de chaque titre (par bloc), ceux qu'un renvoi vise, et le numéro
-    # de chacun si les titres sont numérotés.
     ranks: dict[int, int] = field(default_factory=dict[int, int])
     targeted: set[int] = field(default_factory=set[int])
     ref_numbers: dict[int, str] = field(default_factory=dict[int, str])
     articles: set[int] = field(default_factory=set[int])
-    # Les notes de bas de page (leur XML), et les liens de chaque partie (leurs adresses).
     footnotes: list[str] = field(default_factory=list[str])
     links: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
 
@@ -393,9 +435,12 @@ class _Body:
 
 
 def _caption(body: _Body, kind: str, runs: Inline, style_id: str = "Caption") -> str:
-    """La légende ; numérotée (« Figure 2 — ») si le style ``caption`` le veut, par un champ
-    ``SEQ`` que Word et LibreOffice recalculent, et que la relecture retire. ``kind`` : le
-    libellé (``labels.table``, ``labels.figure``)."""
+    """La légende.
+
+    Numérotée (« Figure 2 — ») si le style ``caption`` le veut, par un champ ``SEQ`` que
+    Word et LibreOffice recalculent, et que la relecture retire. ``kind`` : le libellé
+    (``labels.table``, ``labels.figure``).
+    """
     prefix = ""
     if body.style.look("caption").numbered:
         number = body.numbers[kind] = body.numbers.get(kind, 0) + 1
@@ -404,8 +449,7 @@ def _caption(body: _Body, kind: str, runs: Inline, style_id: str = "Caption") ->
 
 
 def _border(value: str | None) -> str:
-    """Un filet de tableau ou de cellule (« épaisseur couleur ») : ses attributs ; ``nil``
-    sans filet."""
+    """Un filet de tableau ou de cellule (« épaisseur couleur ») : ses attributs ; ``nil`` sans filet."""
     rule = parse_rule(value)
     if rule is None:
         return 'w:val="nil"'
@@ -419,8 +463,11 @@ def _valign(look: Look) -> str:
 
 
 def _table_borders(tables: Look) -> list[tuple[str, str]]:
-    """Les filets d'un tableau : ``borders`` (grille, horizontales, verticales, aucun) au
-    trait ``line``, puis ``border_top`` et ``border_bottom`` s'ils sont dits."""
+    """Les filets d'un tableau.
+
+    ``borders`` (grille, horizontales, verticales, aucun) au trait ``line``, puis
+    ``border_top`` et ``border_bottom`` s'ils sont dits.
+    """
     every: tuple[str, ...] = ("top", "left", "bottom", "right", "insideH", "insideV")
     sides: tuple[str, ...] = {
         "grid": every,
@@ -451,6 +498,7 @@ def _table(
     cell_style: str = "TableText",
     caption: str = "Caption",
 ) -> str:
+    """Un tableau en XML : en-têtes, lignes, groupes, total, légende, avec les styles et les largeurs de colonnes."""
     style = body.style
     header = style.look("table_header")
     total = style.look("table_total")
@@ -583,8 +631,7 @@ def _layout(
     after: float,
     boxed: Mapping[int, Look] | None = None,
 ) -> str:
-    """Un tableau de disposition : des contenus côte à côte (ou un seul, encadré), suivi
-    d'un paragraphe vide et de ``after`` points.
+    """Un tableau de disposition : des contenus côte à côte (ou un seul, encadré), suivi d'un paragraphe vide et de ``after`` points.
 
     Sans bordure, au style « loom layout », que la relecture reconnaît : elle rend les
     blocs de chaque cellule, dans l'ordre, et jamais le tableau. ``boxed`` : les cellules
@@ -622,8 +669,11 @@ def _layout(
 
 
 def _cell_margins(box: Look | None, gap: int) -> str:
-    """Les marges d'une cellule de disposition : celles d'un cadre (le ``padding`` de son
-    style), ou l'écart à la cellule suivante (``gap``, ``page.beside_gap``)."""
+    """Les marges d'une cellule de disposition.
+
+    Celles d'un cadre (le ``padding`` de son style), ou l'écart à la cellule suivante
+    (``gap``, ``page.beside_gap``).
+    """
     if box is not None:
         top, right, bottom, left = _sides(box.padding)
         return (
@@ -637,8 +687,7 @@ def _cell_margins(box: Look | None, gap: int) -> str:
 
 
 def _room(width: int, box: Look | None, gap: int) -> int:
-    """La largeur utile d'une cellule de disposition : sans le ``padding`` de son cadre, ou
-    sans l'écart à la suivante."""
+    """La largeur utile d'une cellule de disposition : sans le ``padding`` de son cadre, ou sans l'écart à la suivante."""
     if box is not None:
         _, right, _, left = _sides(box.padding)
         return width - left - right
@@ -647,8 +696,20 @@ def _room(width: int, box: Look | None, gap: int) -> int:
 
 @dataclass(frozen=True, slots=True)
 class _Layout:
-    """Ce qu'une section du modèle dit de sa mise en page et de ses styles ; un document
-    libre est une seule section, sans rien de tout cela."""
+    """Ce qu'une section du modèle dit de sa mise en page et de ses styles ; un document libre est une seule section, sans rien de tout cela.
+
+    Attributes:
+        styles: Les styles de ses éléments.
+        box: Section encadrée.
+        beside: À côté de la précédente.
+        width: Sa largeur, en part du texte.
+        page_break: Commencée sur une nouvelle page.
+        columns: Colonnes de texte.
+        landscape: En paysage.
+        cover: Page de garde.
+        margin_top: Espace avant la section, en twips.
+        align: Une page de garde : son texte centré.
+    """
 
     styles: Mapping[str, str] = field(default_factory=dict[str, str])
     box: bool = False
@@ -658,13 +719,12 @@ class _Layout:
     columns: int = 1
     landscape: bool = False
     cover: bool = False
-    # Espace avant la section, en twips.
     margin_top: int = 0
-    # Une page de garde : son texte centré.
     align: str | None = None
 
 
 PLAIN: Final = _Layout()
+"""La mise en page d'un document libre."""
 
 
 def _layout_of(spec: SectionSpec) -> _Layout:
@@ -682,8 +742,11 @@ def _layout_of(spec: SectionSpec) -> _Layout:
 
 
 def _style_id(body: _Body, element: str, chosen: str | None, layout: _Layout) -> str:
-    """Le style Word d'un élément : celui que le bloc choisit (``style``), sinon celui que
-    la section choisit (``styles``), sinon le style prévu de l'élément."""
+    """Le style Word d'un élément.
+
+    Celui que le bloc choisit (``style``), sinon celui que la section choisit
+    (``styles``), sinon le style prévu de l'élément.
+    """
     return body.word(chosen or layout.styles.get(element) or element)
 
 
@@ -831,11 +894,14 @@ def _signature(body: _Body, block: SignatureOut, width: int) -> str:
 
 
 def _contents(body: _Body, width: int) -> str:
-    """Le sommaire : un champ ``TOC`` que Word met à jour à l'ouverture (``dirty``), avec
-    ses entrées déjà écrites — les titres, et leurs numéros s'ils sont numérotés — pour
-    qu'il se lise avant toute mise à jour. Les numéros de page (``toc.pages``) sont des
-    champs ``PAGEREF`` vers le signet de chaque titre : seul le traitement de texte connaît
-    les pages, et LibreOffice les écrit à « Mettre à jour l'index »."""
+    """Le sommaire.
+
+    Un champ ``TOC`` que Word met à jour à l'ouverture (``dirty``), avec ses entrées
+    déjà écrites — les titres, et leurs numéros s'ils sont numérotés — pour qu'il se
+    lise avant toute mise à jour. Les numéros de page (``toc.pages``) sont des champs
+    ``PAGEREF`` vers le signet de chaque titre : seul le traitement de texte connaît les
+    pages, et LibreOffice les écrit à « Mettre à jour l'index ».
+    """
     style = body.style
     toc = style.look("toc")
     levels = toc.levels or 2
@@ -871,8 +937,7 @@ def _contents(body: _Body, width: int) -> str:
 
 
 def _toc_entries(body: _Body, blocks: Sequence[BlockOut]) -> None:
-    """Les entrées du sommaire, s'il y en a un : les titres repris (jusqu'à ``toc.levels``),
-    leur numéro tel que Word l'écrira, et un signet."""
+    """Les entrées du sommaire, s'il y en a un : les titres repris (jusqu'à ``toc.levels``), leur numéro tel que Word l'écrira, et un signet."""
     if not any(isinstance(block, ContentsOut) for block in blocks):
         return
     style = body.style
@@ -898,9 +963,12 @@ def _toc_entries(body: _Body, blocks: Sequence[BlockOut]) -> None:
 
 
 def _ref_targets(body: _Body, blocks: Sequence[BlockOut]) -> None:
-    """Les titres qu'un renvoi vise : leur rang (l'ordre des titres, celui de la
-    validation), et leur numéro, tel que le champ ``REF`` l'écrit, si les titres sont
-    numérotés (les chiffres seuls : « 2 », « 2.1 »)."""
+    """Les titres qu'un renvoi vise.
+
+    Leur rang (l'ordre des titres, celui de la validation), et leur numéro, tel que le
+    champ ``REF`` l'écrit, si les titres sont numérotés (les chiffres seuls : « 2 », «
+    2.1 »).
+    """
     targeted = referenced(blocks)
     if not targeted:
         return
@@ -934,8 +1002,7 @@ def _footnotes(notes: Sequence[str]) -> str:
 
 
 def _link_relations(body: _Body, part: str, *, bare: bool = False) -> str:
-    """Les relations des liens d'une partie : vers leur adresse, hors du document ;
-    ``bare`` : sans l'enveloppe (ajoutées aux relations du corps)."""
+    """Les relations des liens d'une partie : vers leur adresse, hors du document ; ``bare`` : sans l'enveloppe (ajoutées aux relations du corps)."""
     said = "".join(
         f'<Relationship Id="rIdLink{n}" Type="{_TYPE}/hyperlink" Target={quoteattr(address)} TargetMode="External"/>'
         for n, address in enumerate(body.links.get(part, []), start=1)
@@ -958,9 +1025,11 @@ def _list_items(body: _Body, number: int, level: int, entry: Entry, align: str, 
 
 
 def _fields(body: _Body, block: FieldsOut, width: int) -> str:
-    """Des libellés et leurs valeurs : un tableau sans bordure, au style « loom fields » que
-    la relecture reconnaît ; une valeur vide est une ligne à remplir (le trait des
-    tableaux, en bas de sa cellule)."""
+    """Des libellés et leurs valeurs.
+
+    Un tableau sans bordure, au style « loom fields » que la relecture reconnaît ; une
+    valeur vide est une ligne à remplir (le trait des tableaux, en bas de sa cellule).
+    """
     style = body.style
     body.used.update((look.FIELDS, look.FIELD_VALUE))
     label = min(round((style.look("fields").label_width or 4) * CM), width // 2)
@@ -995,8 +1064,11 @@ def _fields(body: _Body, block: FieldsOut, width: int) -> str:
 
 @dataclass(slots=True)
 class _Group:
-    """Une section du document : sa place dans le modèle (``None`` pour un document libre,
-    ou le titre du document avant les sections), sa ligne, sa mise en page, ses blocs."""
+    """Une section du document.
+
+    Sa place dans le modèle (``None`` pour un document libre, ou le titre du document
+    avant les sections), sa ligne, sa mise en page, ses blocs.
+    """
 
     position: int | None
     row: int | None
@@ -1016,8 +1088,7 @@ class _Unit:
 
 
 def _groups(prepared: Prepared, template: Template | None) -> list[_Group]:
-    """Un document libre : un seul groupe. Un document qui suit un modèle : le titre du
-    document, puis une section par groupe, dans l'ordre du modèle."""
+    """Un document libre : un seul groupe. Un document qui suit un modèle : le titre du document, puis une section par groupe, dans l'ordre du modèle."""
     if prepared.sections is None or template is None:
         return [_Group(None, None, PLAIN, list(prepared.blocks))]
     rows = template.rows()
@@ -1044,8 +1115,11 @@ def _width(style: Style, landscape: bool, columns: int = 1) -> int:
 
 
 def _units(body: _Body, groups: Sequence[_Group]) -> list[_Unit]:
-    """Les groupes, posés : seuls, ou côte à côte quand ils sont sur la même ligne du
-    modèle (une section ``beside`` absente laisse l'autre seule, en pleine largeur)."""
+    """Les groupes, posés.
+
+    Seuls, ou côte à côte quand ils sont sur la même ligne du modèle (une section
+    ``beside`` absente laisse l'autre seule, en pleine largeur).
+    """
     style = body.style
     units: list[_Unit] = []
     index = 0
@@ -1063,13 +1137,15 @@ def _units(body: _Body, groups: Sequence[_Group]) -> list[_Unit]:
     return units
 
 
-# Le début du premier paragraphe : après ses propriétés, s'il en a.
 _FIRST_PARAGRAPH: Final = re.compile(r"<w:p>(?:<w:pPr>.*?</w:pPr>)?", re.DOTALL)
+"""Le début du premier paragraphe : après ses propriétés, s'il en a."""
 
 
 def _marked(group: _Group, content: str) -> str:
-    """Le contenu d'une section, son début marqué d'un signet dans son premier paragraphe
-    (celui de la première cellule d'un tableau) : la relecture retrouve la section."""
+    """Le contenu d'une section, son début marqué d'un signet dans son premier paragraphe (celui de la première cellule d'un tableau).
+
+    La relecture retrouve la section.
+    """
     if group.position is None:
         return content
     number = SECTION_MARKS + group.position
@@ -1085,6 +1161,7 @@ def _box(body: _Body, layout: _Layout) -> Look:
 
 
 def _alone(body: _Body, group: _Group, landscape: bool) -> _Unit:
+    """Une section seule : sa mise en page (colonnes, cadre, page de garde, espace avant) et ses blocs."""
     layout = group.layout
     columns = layout.columns
     width = _width(body.style, landscape, columns)
@@ -1103,8 +1180,7 @@ def _alone(body: _Body, group: _Group, landscape: bool) -> _Unit:
 
 
 def _beside(body: _Body, together: Sequence[_Group], landscape: bool) -> _Unit:
-    """Des sections côte à côte : une cellule chacune, à la part que dit ``width`` (des
-    parts égales sans elle)."""
+    """Des sections côte à côte : une cellule chacune, à la part que dit ``width`` (des parts égales sans elle)."""
     width = _width(body.style, landscape)
     given = [group.layout.width for group in together]
     shares = [float(share or 0) for share in given] if all(given) else [1.0] * len(together)
@@ -1136,10 +1212,12 @@ class _Section:
 
 
 def _sections(units: Sequence[_Unit], style: Style) -> list[_Section]:
-    """Les sections Word : une nouvelle à chaque changement d'orientation ou de colonnes,
-    et après une page de garde. Des colonnes ne s'équilibrent que suivies d'une section
-    continue : une section en colonnes que suit une nouvelle page est donc fermée par une
-    section continue vide, d'une colonne."""
+    """Les sections Word : une nouvelle à chaque changement d'orientation ou de colonnes, et après une page de garde.
+
+    Des colonnes ne s'équilibrent que suivies d'une section continue : une section en
+    colonnes que suit une nouvelle page est donc fermée par une section continue vide,
+    d'une colonne.
+    """
     sections: list[_Section] = []
     previous: _Unit | None = None
     for unit in units:
@@ -1174,6 +1252,7 @@ class _Bands:
 
 
 def _section_properties(style: Style, section: _Section, bands: _Bands, first: bool) -> str:
+    """Les propriétés d'une section Word : en-têtes et pieds, première page, format, marges et colonnes."""
     refs = ""
     if bands.header:
         refs += '<w:headerReference w:type="default" r:id="rIdHeader1"/>'
@@ -1214,6 +1293,7 @@ def _blank_first_page(style: Style, sections: Sequence[_Section]) -> bool:
 
 
 def _document(prepared: Prepared, body: _Body) -> tuple[str, _Bands]:
+    """Le corps du document (``word/document.xml``) : ses sections, leurs blocs et leurs propriétés ; avec ce que l'en-tête et le pied demandent."""
     style = body.style
     units = _units(body, _groups(prepared, body.template))
     sections = _sections(units, style)
@@ -1236,8 +1316,7 @@ def _document(prepared: Prepared, body: _Body) -> tuple[str, _Bands]:
 
 
 def _band_parts(body: _Body, bands: _Bands) -> tuple[list[tuple[str, str | bytes]], list[tuple[str, str, str]]]:
-    """Les parties d'en-tête et de pied de page, leurs relations propres (un logo), et
-    leurs relations dans le corps (identifiant, type, partie)."""
+    """Les parties d'en-tête et de pied de page, leurs relations propres (un logo), et leurs relations dans le corps (identifiant, type, partie)."""
     style = body.style
     width = _width(style, style.landscape)
     parts: list[tuple[str, str | bytes]] = []
@@ -1307,8 +1386,10 @@ def _band_parts(body: _Body, bands: _Bands) -> tuple[list[tuple[str, str | bytes
 
 
 def render(prepared: Prepared, style: Style | None = None, template: Template | None = None) -> bytes:
-    """Le fichier .docx, le même octet pour octet pour un même document et un même style
-    (le style maison, sans style) ; ``template`` : le modèle que le document suit."""
+    """Le fichier .docx, le même octet pour octet pour un même document et un même style (le style maison, sans style).
+
+    ``template`` : le modèle que le document suit.
+    """
     style = style or house()
     body = _Body(style, plain(_title_runs(prepared)), template=template)
     _toc_entries(body, prepared.blocks)

@@ -26,6 +26,7 @@ from loom_ia.tools_builtin.memory.store import IndexedChunk
 from loom_ia.tools_builtin.memory_params import RetrievalSpec
 
 RRF_K: Final = 2
+"""Le ``k`` de la fusion par rangs : chaque liste apporte 1 / (k + rang)."""
 
 
 def selected(index: Sequence[IndexedChunk], project: str | None, tags: Collection[str]) -> list[IndexedChunk]:

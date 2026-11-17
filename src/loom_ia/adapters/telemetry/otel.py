@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Les spans de loom, envoyés à un collecteur OpenTelemetry en OTLP (K4, #29).
+"""Les spans de loom, envoyés à un collecteur OpenTelemetry en OTLP (fonction K4, point 29).
 
 Une traduction, rien de plus : ``telemetry.spans`` a déjà tout décidé — les
 noms, les parents, les durées, ce qui part et ce qui est masqué. Ce module
@@ -56,17 +56,21 @@ from loom_ia.telemetry.spans import AttributeValue, SpanRecord
 logger = logging.getLogger(__name__)
 
 SCOPE: Final = InstrumentationScope("loom_ia")
+"""Portée d'instrumentation des spans de loom : ``loom_ia``."""
 TRACES_PATH: Final = "/v1/traces"
-# Spans que la file du processeur garde avant d'en jeter.
+"""Chemin OTLP des traces, ajouté à l'adresse du collecteur s'il n'y est pas."""
 MAX_QUEUE: Final = 32_768
+"""Spans que la file du processeur garde avant d'en jeter."""
 QUEUE_ENV: Final = "OTEL_BSP_MAX_QUEUE_SIZE"
-# Longueur d'une valeur d'attribut au-delà de laquelle elle est coupée.
+"""Variable du SDK qui fixe la taille de la file ; donnée, elle l'emporte sur ``MAX_QUEUE``."""
 MAX_VALUE_LENGTH: Final = 16_384
+"""Longueur d'une valeur d'attribut au-delà de laquelle elle est coupée."""
 LENGTH_ENV: Final = "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT"
+"""Variable d'OpenTelemetry qui fixe la longueur maximale d'une valeur ; donnée, elle l'emporte sur ``MAX_VALUE_LENGTH``."""
 _SPAN_MASK: Final = (1 << 64) - 1
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
-# Ce que garde la fermeture pour ``shutdown`` quand le vidage a pris tout le délai.
 _LAST_WORD: Final = 0.1
+"""Ce que garde la fermeture pour ``shutdown`` quand le vidage a pris tout le délai."""
 
 
 def trace_id(value: str, tenant_id: str = "") -> int:
@@ -140,9 +144,10 @@ def traces_url(endpoint: str) -> str:
     return trimmed if trimmed.endswith(TRACES_PATH) else f"{trimmed}{TRACES_PATH}"
 
 
-# Ce que le SDK logue pendant un envoi, retenu pour être dit une fois (fil par fil :
-# le processeur exporte dans le sien).
 _HELD = threading.local()
+"""Ce que le SDK logue pendant un envoi, retenu pour être dit une fois (fil par
+fil : le processeur exporte dans le sien).
+"""
 _SDK_EXPORTERS: Final = "opentelemetry.exporter"
 
 
@@ -169,7 +174,7 @@ def _hold_sdk_logs() -> None:
 class Reported(SpanExporter):
     """Un exporteur du SDK, dont l'échec se dit une fois, en français, avec ses runs.
 
-    Au test K4 du 21/10, un collecteur arrêté donnait quatre lignes anglaises du
+    À l'essai de la fonction K4 du 21/10, un collecteur arrêté donnait quatre lignes anglaises du
     SDK (trois « Transient error … retrying », un « Failed to export … ») et
     rien ne disait quel run n'était pas parti. Les lignes du SDK écrites pendant
     l'envoi sont retenues ; si le lot part, elles ne sortent qu'en DEBUG,
@@ -183,6 +188,7 @@ class Reported(SpanExporter):
         _hold_sdk_logs()
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        """Envoie un lot ; un échec se dit en une ligne WARNING (collecteur, nombre de spans, runs, dernière erreur)."""
         box: list[logging.LogRecord] = []
         _HELD.box = box
         try:
@@ -204,9 +210,11 @@ class Reported(SpanExporter):
         return result
 
     def shutdown(self) -> None:
+        """Ferme l'exporteur enrobé."""
         self._inner.shutdown()
 
     def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """Vide l'exporteur enrobé, en ``timeout_millis`` millisecondes au plus."""
         return self._inner.force_flush(timeout_millis)
 
 
@@ -233,6 +241,14 @@ class OtelSpanSink:
         name: str = "otel",
         schedule_delay: float = 1.0,
     ) -> None:
+        """Branche l'exporteur sur le processeur par lots du SDK.
+
+        Args:
+            exporter: L'exporteur du SDK (OTLP HTTP ou gRPC).
+            service_name: Valeur de ``service.name``.
+            name: Nom du collecteur dans les logs.
+            schedule_delay: Intervalle des envois par lots, en secondes.
+        """
         self._name = name
         self._resource = Resource.create({"service.name": service_name})
         self._max_length = _length_limit()
@@ -277,9 +293,11 @@ class OtelSpanSink:
 
     @property
     def name(self) -> str:
+        """Nom du collecteur dans les logs."""
         return self._name
 
     def export(self, spans: Sequence[SpanRecord]) -> None:
+        """Met les spans dans la file du processeur ; ils partent par lots, sans attendre."""
         for record in spans:
             self._processor.on_end(readable(record, self._resource, max_length=self._max_length))
 

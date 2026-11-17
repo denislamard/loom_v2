@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Masquage du contenu d'un événement (J5.2a, §14.2).
+"""Masquage du contenu d'un événement (phase 5.2a, conception §14.2).
 
 Le journal garde tout, toujours : c'est lui qui fait foi, et un run ne se
 rejoue pas sans ce que le modèle a lu et répondu. Ce qui se règle, c'est **ce
@@ -12,8 +12,13 @@ retiré ne repasserait pas la validation, et c'est voulu — un journal masqué
 n'est pas un journal qu'on peut rejouer. Ce qui a été retiré est nommé à côté
 (`redacted`), pour qu'un lecteur ne prenne pas une absence pour un vide.
 
-Ce que chaque charge déclare `content_fields` (payloads.py) ; ici, on ne fait
-que suivre ces chemins.
+Chaque charge déclare ses champs de contenu (``content_fields``, dans
+``payloads.py``) ; ici, on ne fait que suivre ces chemins. Le masquage
+s'applique dans les lectures du journal (REST, MCP, CLI) quand l'appelant n'a
+pas la permission ``read_content``.
+
+Contenu : ``redacted`` et ``redacted_all`` (masquer), ``contents`` (extraire
+le seul contenu, pour les exports).
 """
 
 from collections.abc import Sequence
@@ -23,12 +28,24 @@ from pydantic import JsonValue
 
 from loom_ia.core.events.envelope import Event
 
-# Clé ajoutée à la charge masquée : ce qui a été retiré, dans l'ordre déclaré.
 MARK: Final = "redacted"
+"""Clé ajoutée à la charge masquée : la liste des chemins retirés, dans l'ordre déclaré."""
 
 
 def redacted(event: Event) -> dict[str, JsonValue]:
-    """Événement en JSON, privé de ce que sa charge déclare comme contenu."""
+    """Événement en JSON, privé de ce que sa charge déclare comme contenu.
+
+    Un champ absent ou vide n'est pas retiré, et n'est pas nommé : le masquage
+    ne dit avoir caché que ce qui portait quelque chose.
+
+    Args:
+        event: L'événement écrit.
+
+    Returns:
+        L'événement sérialisé en JSON. Si quelque chose a été retiré, la
+        charge porte ``redacted`` : la liste des chemins retirés. Le résultat
+        ne repasse pas la validation : un journal masqué ne se rejoue pas.
+    """
     dumped: dict[str, Any] = event.model_dump(mode="json")
     payload: object = dumped.get("payload")
     if not isinstance(payload, dict):
@@ -41,16 +58,24 @@ def redacted(event: Event) -> dict[str, JsonValue]:
 
 
 def redacted_all(events: Sequence[Event]) -> list[dict[str, JsonValue]]:
+    """Masque une suite d'événements, chacun par ``redacted``, dans le même ordre."""
     return [redacted(event) for event in events]
 
 
 def contents(event: Event) -> dict[str, JsonValue]:
-    """Le contenu d'un événement, et lui seul : ``{chemin déclaré: valeur}`` (J6.1a).
+    """Le contenu d'un événement, et lui seul : ``{chemin déclaré: valeur}`` (phase 6.1a).
 
     C'est l'inverse de ``redacted`` — ce que le masquage retire, ici rendu.
     Les exports en ``content`` s'en servent pour joindre le contenu à part,
     sous son chemin, au lieu de recopier toute la charge. Un chemin dans une
     liste (``criteria[].reason``) rend la liste de ses valeurs.
+
+    Args:
+        event: L'événement écrit.
+
+    Returns:
+        Chemin déclaré → valeur, pour chaque champ de contenu qui porte
+        quelque chose ; un champ absent ou vide n'y figure pas.
     """
     charge: object = event.payload.model_dump(mode="json")
     found: dict[str, JsonValue] = {}
@@ -83,7 +108,8 @@ def _remove(where: object, path: str) -> bool:
 
     Un seul cran de descente suffit à ce que portent les charges :
     ``arguments`` (ici même), ``context.metadata`` (un cran), et
-    ``criteria[].reason`` (un cran, dans chaque élément d'une liste).
+    ``criteria[].reason`` (un cran, dans chaque élément d'une liste). Un champ
+    absent ou vide n'est pas retiré.
     """
     if not isinstance(where, dict):
         return False

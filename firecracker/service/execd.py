@@ -49,6 +49,20 @@ ACCEPT_RETRY = 0.1
 
 @dataclass(frozen=True)
 class Config:
+    """Les réglages d'execd, lus dans l'environnement (``EXECD_*``).
+
+    Attributes:
+        port: Le port vsock d'écoute.
+        uds: Un socket Unix à la place du vsock (essais hors VM).
+        jobs_dir: Le dossier des sessions.
+        pydeps: Le dossier des dépendances Python offertes au code.
+        uid: Le compte qui exécute le code ; ``None`` : celui d'execd.
+        gid: Son groupe.
+        max_sessions: Sessions admises à la fois.
+        max_concurrent_exec: Jobs exécutés à la fois.
+        version: La version d'execd, annoncée au client.
+    """
+
     port: int
     uds: str | None
     jobs_dir: str
@@ -72,6 +86,7 @@ def _int_env(name: str, default: int) -> int:
 
 
 def load_config() -> Config:
+    """Les réglages, lus dans les variables ``EXECD_*`` ; une valeur absente ou invalide prend son défaut."""
     uid = _int_env("EXECD_UID", -1)
     gid = _int_env("EXECD_GID", -1)
     return Config(
@@ -147,6 +162,7 @@ async def refuse(conn: Conn, cfg: Config) -> None:
 
 
 async def handle(sock: socket.socket, cfg: Config, exec_sem: asyncio.Semaphore, admitted: bool) -> None:
+    """Sert une connexion : refusée si elle n'est pas admise, sinon une session de bout en bout, puis nettoyée."""
     conn = Conn(sock)
     session: Session | None = None
     try:
@@ -178,6 +194,7 @@ async def handle(sock: socket.socket, cfg: Config, exec_sem: asyncio.Semaphore, 
 
 
 async def serve(cfg: Config) -> None:
+    """Écoute et sert les connexions jusqu'à SIGTERM ou SIGINT, au plus ``max_sessions`` admises à la fois."""
     loop = asyncio.get_running_loop()
     listener = make_listener(cfg)
     exec_sem = asyncio.Semaphore(cfg.max_concurrent_exec)
@@ -261,6 +278,7 @@ async def serve(cfg: Config) -> None:
 
 
 def main() -> int:
+    """Point d'entrée d'execd : journal, réglages, dossier des sessions, puis le service ; rend le code de sortie."""
     logging.basicConfig(
         level=os.environ.get("EXECD_LOG_LEVEL", "INFO").upper(),
         format="%(levelname)s %(name)s: %(message)s",

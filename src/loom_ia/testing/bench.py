@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Un agent au banc d'essai : sa config, des faux modèles, des faux outils (O2, J6.3c).
+"""Un agent au banc d'essai : sa config, des faux modèles, des faux outils (fonction O2, jalon J6.3c).
 
     async with Bench("loom.yaml", models={"M3_MAIN": ScriptedModel(...)},
                      tools={"envoyer_email": faux_envoi}) as banc:
@@ -64,8 +64,8 @@ from loom_ia.replay import (
     isolated,
 )
 
-# Le modèle d'un adaptateur sans réseau ni clé : il sert tel quel au banc.
 SIMULATED = "fake"
+"""Le modèle d'un adaptateur sans réseau ni clé : il sert tel quel au banc."""
 
 
 class BenchError(Exception):
@@ -85,9 +85,16 @@ class RefusedModel:
 
     @property
     def provider(self) -> str:
+        """``sdk`` du modèle refusé."""
         return self.spec.sdk
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        """Refuse l'appel.
+
+        Raises:
+            ModelError: ``auth``, marquée ``by_client``, qui dit comment remplacer
+                le modèle ou l'autoriser.
+        """
         raise ModelError(
             "auth",
             f"Banc : le modèle {self.spec.id} ({self.spec.sdk}, {self.spec.model}) est réel et "
@@ -98,6 +105,7 @@ class RefusedModel:
         yield  # pragma: no cover — un générateur, pour respecter le protocole
 
     async def aclose(self) -> None:
+        """Ne ferme rien."""
         pass
 
 
@@ -115,6 +123,24 @@ class Bench:
         real_models: bool = False,
         profile: str | None = None,
     ) -> None:
+        """Charge la config et retient les faux.
+
+        Args:
+            config: La config chargée, ou le chemin de ``loom.yaml``.
+            models: Faux modèles, par identifiant de modèle de la config.
+            tools: Faux outils, par nom d'outil : fonctions ``(arguments) ->
+                résultat``.
+            register: Objets Python référençables par leur nom
+                (``Loom.register``).
+            environ: Environnement où lire les secrets.
+            real_models: Vrai pour autoriser les appels aux modèles réels non
+                remplacés.
+            profile: Profil de la config.
+
+        Raises:
+            ConfigError: Un faux modèle vise un identifiant que la config ne
+                déclare pas.
+        """
         self.config = config if isinstance(config, LoomConfig) else load_config(config, profile=profile)
         declared = {spec.id: spec for spec in self.config.models}
         unknown = sorted(set(models or {}) - set(declared))
@@ -196,6 +222,19 @@ class Bench:
         celui que l'application pose à l'ouverture du run (``Loom.run``). Un
         faux rend un résultat neuf : les sources ``from`` du state s'y
         appliquent comme au résultat de l'outil.
+
+        Args:
+            agent: L'agent.
+            message: La demande.
+            tenant: Le client.
+            session_id: Session à poursuivre.
+            state: State posé par l'application.
+
+        Returns:
+            Le résultat du run.
+
+        Raises:
+            BenchError: Un faux vise un rôle, ou aucun outil de l'agent.
         """
         loom = self.loom
         self._check(loom, agent, tenant)
@@ -234,6 +273,10 @@ class Bench:
         Chacun dit ce que l'outil a reçu (références résolues, arguments d'une
         politique), ce qu'il a écrit si c'est autre chose, son sort — faussé,
         refusé, exécuté — et son résultat.
+
+        Args:
+            name: Nom de l'outil ; ``None`` : tous.
+            result: Un run du banc ; ``None`` : tous.
         """
         outcomes = [self.outcome(result)] if result is not None else self._outcomes.values()
         return [use for o in outcomes for use in o.tools if name is None or use.name == name]
@@ -246,6 +289,18 @@ class Bench:
         ``not_called``. Le message dit chaque contrôle tombé et ce qu'il a
         trouvé à la place, et le texte du run quand un contrôle de texte tombe.
         Sans ``status``, le run doit finir ``completed``, comme pour un cas.
+
+        Args:
+            result: Un run du banc.
+            **expect: Les attendus.
+
+        Returns:
+            Le résultat de chaque contrôle.
+
+        Raises:
+            AssertionError: Un contrôle tombe.
+            ValueError: Aucun attendu.
+            BenchError: Run lancé hors de ce banc.
         """
         wanted = Expect.model_validate(expect)
         if wanted.count == 0:
@@ -262,8 +317,15 @@ class Bench:
         return await self.loom.events(result.run_id, session_id=result.session_id, tenant_id=self._tenant_of(result))
 
     async def export(self, result: RunResult, path: Path | str) -> Path:
-        """Écrit le journal de la session du run en JSONL — de quoi le rejouer
-        (``assert_replays``)."""
+        """Écrit le journal de la session du run en JSONL — de quoi le rejouer (``assert_replays``).
+
+        Args:
+            result: Un run du banc.
+            path: Le fichier à écrire.
+
+        Returns:
+            Le chemin du fichier.
+        """
         events = await self.loom.store.read(self._tenant_of(result), result.session_id)
         target = Path(path)
         lines = "".join(f"{event.model_dump_json()}\n" for event in events)

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Adaptateur ``sdk: fake`` : modèle scripté, sans réseau ni clé (O2).
+"""Adaptateur ``sdk: fake`` : modèle scripté, sans réseau ni clé (fonction O2).
 
 Le script est lu dans ``params.script`` : une liste de réponses, chacune avec
 un texte, des appels d'outils et éventuellement un raisonnement.
@@ -36,10 +36,10 @@ Une réponse peut être une panne : ``error`` (``transient``, ``overloaded``,
 ``quota_exhausted``…) fait lever l'erreur de ce type à la place de la réponse,
 à chaque tentative. Un modèle dont le script ne contient que ``- error:
 overloaded`` est en panne pour tous les appels : de quoi montrer un secours
-(#10).
+(point 10).
 
 Sans HTTP, pas d'échange brut à garder : quand le moteur ouvre un registre
-(``telemetry.capture.raw_exchanges``, J6.1b), le modèle y dépose un échange
+(``telemetry.capture.raw_exchanges``, jalon J6.1b), le modèle y dépose un échange
 **synthétique** — la requête reçue et la réponse rendue, en JSON, marquées
 ``synthetic`` — pour que le chemin des échanges s'éprouve sans réseau.
 
@@ -47,7 +47,7 @@ Comme un fournisseur, le modèle respecte ``tool_choice`` : avec ``required``,
 une réponse sans appel d'outil est une erreur du script ; avec ``none``, une
 réponse qui appelle des outils donne à la place son texte ``forced`` (la
 réponse forcée d'un run arrêté), ou à défaut son texte. Un diagnostic de
-réparation (#20) n'est pas une nouvelle demande, ni la consigne de la réponse
+réparation (point 20) n'est pas une nouvelle demande, ni la consigne de la réponse
 forcée : le script continue.
 """
 
@@ -80,29 +80,59 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import ModelError, RawExchange, exchange_log
 
 PROVIDER: Final = "fake"
+"""Nom du fournisseur, tel que le journal et la télémétrie l'écrivent."""
 
 
 class FakeToolCall(DomainModel):
+    """Un appel d'outil du script.
+
+    Attributes:
+        name: Nom de l'outil.
+        arguments: Ses arguments.
+    """
+
     name: str
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class FakeReply(DomainModel):
+    """Une réponse du script : texte, appels d'outils, raisonnement, conditions et panne.
+
+    Attributes:
+        text: Texte de la réponse.
+        tool_calls: Appels d'outils de la réponse.
+        reasoning: Raisonnement rendu avant le texte.
+        with_tool: Réponse gardée seulement si cet outil est proposé au modèle.
+        without_tool: Réponse gardée seulement si cet outil n'est pas proposé.
+        with_text: Réponse gardée seulement si la dernière demande contient ce
+            texte.
+        without_text: Réponse gardée seulement si elle ne le contient pas.
+        forced: Texte rendu à la place des appels d'outils quand la requête les
+            interdit (``tool_choice: none``).
+        error: Panne simulée : erreur de ce type levée à la place de la
+            réponse.
+    """
+
     text: str = ""
     tool_calls: tuple[FakeToolCall, ...] = ()
     reasoning: str | None = None
-    # Réponse gardée seulement si cet outil est proposé au modèle, ou s'il ne l'est pas.
     with_tool: str | None = None
     without_tool: str | None = None
-    # Réponse gardée seulement si la dernière demande contient ce texte, ou ne le contient pas.
     with_text: str | None = None
     without_text: str | None = None
-    # Texte rendu à la place des appels d'outils quand la requête les interdit.
     forced: str | None = None
-    # Panne simulée : erreur de ce type levée à la place de la réponse.
     error: ModelErrorKind | None = None
 
     def fits(self, tools: set[str], asked: str) -> bool:
+        """Vrai si les outils proposés et la dernière demande remplissent les conditions de la réponse.
+
+        Conditions : ``with_tool``, ``without_tool``, ``with_text``,
+        ``without_text``.
+
+        Args:
+            tools: Noms des outils proposés au modèle.
+            asked: Texte de la dernière demande de l'utilisateur.
+        """
         if self.with_tool is not None and self.with_tool not in tools:
             return False
         if self.without_tool is not None and self.without_tool in tools:
@@ -125,9 +155,11 @@ class FakeModel:
 
     @property
     def provider(self) -> str:
+        """Nom du fournisseur : ``fake``."""
         return PROVIDER
 
     async def aclose(self) -> None:
+        """Rien à fermer."""
         pass
 
     def __repr__(self) -> str:
@@ -153,6 +185,23 @@ class FakeModel:
         )
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        """Rend la réponse du script qui suit, en morceaux neutres.
+
+        La réponse est choisie parmi celles qui conviennent, selon le nombre de
+        réponses déjà données depuis la dernière demande ; sans script, l'écho de
+        la demande. ``tool_choice: none`` remplace les appels d'outils par le
+        texte ``forced`` ; la consommation est estimée sur la taille des messages.
+
+        Args:
+            request: La requête neutre.
+
+        Yields:
+            Les morceaux de la réponse.
+
+        Raises:
+            ModelError: Script épuisé, réponse sans appel d'outil quand la requête
+                en impose un (``invalid_request``), ou panne simulée (``error``).
+        """
         turn = _turn(request)
         offered = {tool.name for tool in request.tools}
         asked = _last_user_text(request)

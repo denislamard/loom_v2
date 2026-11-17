@@ -54,6 +54,7 @@ def _csv_records(data: bytes, where: str) -> list[dict[str, Scalar]]:
 
 
 def _json_records(data: bytes, where: str) -> list[dict[str, Scalar]]:
+    """Les lignes d'un fichier JSON : une liste d'objets aux valeurs simples ; ``ToolError`` sinon."""
     try:
         loaded: object = json.loads(data)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

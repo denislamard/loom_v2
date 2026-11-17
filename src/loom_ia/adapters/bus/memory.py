@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Bus en mémoire : le défaut, et de quoi éprouver le branchement (#5).
+"""Bus en mémoire : le défaut, et de quoi éprouver le branchement (point 5).
 
 Il ne franchit aucune frontière de process — dans un seul process, le journal
 notifiant remet déjà ses écritures à ses abonnés, donc ce bus ne sert à rien
@@ -29,13 +29,16 @@ class InMemoryBus:
 
     @property
     def subscribers(self) -> int:
+        """Abonnés en cours."""
         return len(self._queues)
 
     async def publish(self, notice: Notice) -> None:
+        """Remet la nouvelle à chaque abonné de cette instance."""
         for queue in tuple(self._queues):
             queue.put_nowait(notice)
 
     async def notices(self) -> AsyncIterator[Notice]:
+        """Les nouvelles publiées sur cette instance, jusqu'à la fermeture du bus."""
         queue: asyncio.Queue[Notice | None] = asyncio.Queue()
         self._queues.append(queue)
         try:
@@ -49,6 +52,7 @@ class InMemoryBus:
                 self._queues.remove(queue)
 
     async def aclose(self) -> None:
+        """Ferme le bus : l'écoute de chaque abonné s'arrête."""
         self._closed = True
         for queue in tuple(self._queues):
             queue.put_nowait(None)

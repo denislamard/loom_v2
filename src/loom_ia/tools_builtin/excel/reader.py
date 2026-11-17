@@ -47,56 +47,85 @@ from loom_ia.tools_builtin.excel.arguments import (
     MAX_SOURCE_BYTES,
 )
 
-# Un .xlsx courant se compresse 4 à 10 fois (mesuré : 3,9 à 9,8). La borne porte sur la
-# taille décompressée, pas sur le taux : une colonne de textes identiques se compresse
-# 163 fois sans être une bombe, alors qu'une bombe dépasse toujours la taille.
 MAX_UNCOMPRESSED: Final = 10 * MAX_SOURCE_BYTES
-# Ce que load_workbook lit en entier avant de rendre la main, hors de toute échéance :
-# textes partagés, styles, classeur, et toute feuille qui n'annonce pas sa dimension.
-# Mesuré : 119 Mo de textes partagés, 5,7 s et 269 Mo par ouverture ; 46 Mo de styles,
-# 14,1 s et 782 Mo. Au-delà, un membre n'est admis que s'il est une feuille qui annonce
-# sa dimension : openpyxl la lit alors au fil de l'eau, sous l'échéance.
+"""Un .xlsx courant se compresse 4 à 10 fois (mesuré : 3,9 à 9,8). La borne
+porte sur la taille décompressée, pas sur le taux : une colonne de textes
+identiques se compresse 163 fois sans être une bombe, alors qu'une bombe
+dépasse toujours la taille.
+"""
 MAX_WHOLE_MEMBER: Final = 20_000_000
-# Où chercher <dimension> : il suit l'en-tête de la feuille, bien avant les données.
+"""Ce que load_workbook lit en entier avant de rendre la main, hors de toute
+échéance : textes partagés, styles, classeur, et toute feuille qui n'annonce
+pas sa dimension. Mesuré : 119 Mo de textes partagés, 5,7 s et 269 Mo par
+ouverture ; 46 Mo de styles, 14,1 s et 782 Mo. Au-delà, un membre n'est
+admis que s'il est une feuille qui annonce sa dimension : openpyxl la lit
+alors au fil de l'eau, sous l'échéance.
+"""
 DIMENSION_WINDOW: Final = 65_536
+"""Où chercher <dimension> : il suit l'en-tête de la feuille, bien avant les données."""
 MAIN_NS: Final = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
-# Versions sûres face aux entités XML : expat refuse l'amplification depuis 2.4.0 ;
-# libxml2 depuis 2.11 ; lxml ne résout plus que les entités internes depuis 5.0.
+"""Espace de noms principal de SpreadsheetML."""
 SAFE_EXPAT: Final = (2, 4, 0)
+"""Versions sûres face aux entités XML : expat refuse l'amplification depuis
+2.4.0 ; libxml2 depuis 2.11 ; lxml ne résout plus que les entités internes
+depuis 5.0.
+"""
 SAFE_LXML: Final = (5, 0, 0)
+"""Version de lxml au moins, sûre contre l'expansion d'entités."""
 SAFE_LIBXML2: Final = (2, 11, 0)
+"""Version de libxml2 au moins, pour la même raison."""
 MAX_MEMBERS: Final = 10_000
+"""Parties au plus dans l'archive."""
 MAX_CELL_CHARS: Final = 1_000
+"""Caractères rendus au plus par cellule."""
 PREVIEW_ROWS: Final = 5
+"""Lignes de l'aperçu d'un onglet."""
 PREVIEW_COLUMNS: Final = 20
+"""Colonnes de l'aperçu d'un onglet."""
 PREVIEW_CHARS: Final = 100
-# Ce que rend une lecture, en caractères JSON : sous le seuil de déport par défaut
-# (50 000). Sans lui, 1 000 lignes de 200 textes de 1 000 caractères faisaient
-# 200 millions de caractères pour un fichier de 423 Ko.
+"""Caractères par cellule dans l'aperçu."""
 READ_CHARS: Final = 40_000
-# Sous le délai par défaut d'un outil (30 s) : au-delà, la lecture s'arrête d'elle-même.
+"""Ce que rend une lecture, en caractères JSON : sous le seuil de déport par
+défaut (50 000). Sans lui, 1 000 lignes de 200 textes de 1 000 caractères
+faisaient 200 millions de caractères pour un fichier de 423 Ko.
+"""
 READ_DEADLINE: Final = 20.0
+"""Sous le délai par défaut d'un outil (30 s) : au-delà, la lecture s'arrête d'elle-même."""
 READABLE: Final = (".xlsx", ".xlsm")
-# Formats qu'openpyxl ne lit pas : le dire plutôt que « pas un zip ».
+"""Extensions lues."""
 OTHER_FORMATS: Final = {
     ".xls": "Excel 97-2003 (.xls)",
     ".xlsb": "Excel binaire (.xlsb)",
     ".ods": "OpenDocument (.ods)",
 }
+"""Formats qu'openpyxl ne lit pas : le dire plutôt que « pas un zip »."""
 
 
 @dataclass(frozen=True, slots=True)
 class Read:
-    """Les cellules lues d'une plage : valeurs, formules, et ce qu'il faut en dire."""
+    """Les cellules lues d'une plage : valeurs, formules, et ce qu'il faut en dire.
+
+    Attributes:
+        first_row: Première ligne de la plage.
+        first_column: Première colonne de la plage.
+        rows: Les valeurs, ligne par ligne.
+        formulas: Les formules, par adresse de cellule.
+        without_value: Formules sans valeur enregistrée (classeur jamais
+            recalculé).
+        next_row: Première ligne non rendue, s'il en reste une non vide plus
+            bas.
+        columns_cut_after: Dernière colonne rendue, si des colonnes plus à
+            droite ont été laissées.
+        cut_cells: Cellules dont le texte a été coupé.
+        budget_hit: Vrai si la taille du résultat a arrêté la lecture.
+    """
 
     first_row: int
     first_column: int
     rows: list[list[JsonValue]]
     formulas: dict[str, str]
     without_value: int
-    # Première ligne non rendue, s'il en reste une non vide plus bas.
     next_row: int | None
-    # Dernière colonne rendue, si des colonnes plus à droite ont été laissées.
     columns_cut_after: str | None
     cut_cells: int
     budget_hit: bool
@@ -121,6 +150,7 @@ def _guarded(where: str) -> Generator[None]:
 
 
 def check_suffix(path: str) -> None:
+    """Refuse un fichier qui n'est pas un classeur lisible (.xlsx, .xlsm), en disant comment le convertir s'il en a un autre format."""
     lowered = path.lower()
     for suffix, name in OTHER_FORMATS.items():
         if lowered.endswith(suffix):
@@ -140,6 +170,7 @@ def check_archive(data: bytes, where: str) -> None:
 
 
 def _check_archive(data: bytes, where: str) -> None:
+    """Vérifie l'archive d'un classeur avant de l'ouvrir : un zip, pas trop de parties, pas trop gros une fois décompressé ; ``ToolError`` sinon."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
@@ -236,8 +267,7 @@ def _sheet(book: Any, sheet: str | None, where: str) -> Any:
 
 
 def _reset(ws: Any) -> None:
-    """La dimension déclarée peut mentir : sans ce reset, une feuille annoncée « A1 »
-    ne rendait que A1 (test « dimension »)."""
+    """La dimension déclarée peut mentir : sans ce reset, une feuille annoncée « A1 » ne rendait que A1 (test « dimension »)."""
     ws.reset_dimensions()
 
 
@@ -424,6 +454,15 @@ def _in_time(deadline: float, where: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class _Found:
+    """Ce que la lecture d'une plage a trouvé.
+
+    Attributes:
+        rows: Les valeurs, ligne par ligne.
+        formulas: Les formules, par adresse de cellule.
+        without_value: Formules sans valeur enregistrée.
+        cut_cells: Cellules dont le texte a été coupé.
+    """
+
     rows: list[list[JsonValue]]
     formulas: dict[str, str]
     without_value: int
@@ -431,6 +470,7 @@ class _Found:
 
 
 def _read(raw: list[tuple[Any, ...]], cached: list[list[Any]], first_row: int, first_column: int) -> _Found:
+    """Les valeurs et les formules d'une plage, lues dans le classeur tel qu'écrit et dans ses valeurs enregistrées."""
     rows: list[list[JsonValue]] = []
     written: list[list[bool]] = []
     formulas: dict[str, str] = {}

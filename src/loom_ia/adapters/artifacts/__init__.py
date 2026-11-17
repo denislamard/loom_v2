@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Adaptateurs du stockage d'artefacts : dossier local et mémoire (G2)."""
+"""Adaptateurs du stockage d'artefacts : dossier local et mémoire (fonction G2)."""
 
 from loom_ia.adapters.artifacts.local import LocalArtifactStore
 from loom_ia.adapters.artifacts.memory import InMemoryArtifactStore

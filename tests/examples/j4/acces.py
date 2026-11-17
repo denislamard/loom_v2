@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 4.5 : le même scénario par les trois accès.
+r"""Phase 4.5 : le même scénario par les trois accès.
 
     uv run --extra http --extra mcp python tests/examples/j4/acces.py
     uv run --extra http --extra mcp python tests/examples/j4/acces.py --cas rest
-    uv run --env-file .env --extra http --extra mcp --extra anthropic \\
+    uv run --env-file .env --extra http --extra mcp --extra anthropic \
         --extra openai python tests/examples/j4/acces.py --reel
 
 Config : ``tests/examples/j4/relance/``, à laquelle l'exemple ajoute en code

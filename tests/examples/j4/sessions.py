@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 4.1a : une conversation sur deux runs, un historique matérialisé, une session supprimée.
+r"""Phase 4.1a : une conversation sur deux runs, un historique matérialisé, une session supprimée.
 
     uv run python tests/examples/j4/sessions.py                  # conversation sur deux runs
     uv run python tests/examples/j4/sessions.py --paralleles     # deux runs lancés en même temps
     uv run python tests/examples/j4/sessions.py --purger         # puis suppression RGPD
     uv run --extra sqlite python tests/examples/j4/sessions.py --sqlite
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j4/sessions.py --reel
 
 Config : ``tests/examples/j4/relance/``, reprise de celle du jalon J3 (politiques,

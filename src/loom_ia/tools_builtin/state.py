@@ -20,9 +20,9 @@ efface aussi celles de son ``clears:``.
 
 Seules les clés qui ont ``model`` dans leurs ``writers`` sont proposées. Un
 refus — clé inconnue, résultat introuvable, extraction ou schéma — est un
-résultat en erreur qui dit quoi corriger (S4) : l'outil n'a pas d'autre effet
+résultat en erreur qui dit quoi corriger (décision S4 du state v2) : l'outil n'a pas d'autre effet
 que l'écriture. L'écriture passe ensuite par les contrôles du moteur, comme
-celle de tout outil (D6 à D9) : seule la taille totale du state, qui dépend des
+celle de tout outil (décisions D6 à D9 du state de session) : seule la taille totale du state, qui dépend des
 voisins du lot, peut encore la refuser, en le disant à la suite du résultat.
 """
 
@@ -43,7 +43,9 @@ from loom_ia.tools_builtin import BuiltinContext, Settings
 from loom_ia.tools_builtin.state_params import StateParams
 
 NAME: Final = "state"
+"""Nom de l'outil."""
 MAX_LABEL: Final = 200
+"""Longueur au plus d'un libellé de clé montré au modèle."""
 
 _ACTIONS: Final = ("set", "clear")
 _REF: Final = re.compile(r"(?:result:)?\s*([1-9][0-9]*)")
@@ -53,6 +55,15 @@ class StateTool:
     """Pose ou efface une clé du state que le modèle tient à jour."""
 
     def __init__(self, keys: tuple[ModelKey, ...], max_value_bytes: int) -> None:
+        """Prépare l'outil pour les clés que le modèle tient à jour.
+
+        Args:
+            keys: Les clés qui ont ``model`` dans leurs ``writers``.
+            max_value_bytes: Taille permise d'une valeur.
+
+        Raises:
+            ValueError: Aucune clé.
+        """
         if not keys:
             raise ValueError("aucune clé du state n'a 'model' dans ses writers : loom.state n'aurait rien à écrire (state.<clé>.writers: [model] et extract:)")
         self.keys: dict[str, ModelKey] = {key.name: key for key in keys}
@@ -102,6 +113,7 @@ class StateTool:
 
     @property
     def spec(self) -> ToolSpec:
+        """La définition de l'outil."""
         return self._spec
 
     def settings(self) -> Settings:
@@ -109,6 +121,12 @@ class StateTool:
         return Settings(rows=tuple((key.name, _rule(key.extraction)) for key in self.keys.values()))
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Pose une clé depuis un résultat (``set``) ou l'efface (``clear``).
+
+        Raises:
+            ToolError: Run qui ne tient pas le state, action manquante ou double,
+                clé inconnue, clé obligatoire effacée, ou argument refusé.
+        """
         if not context.keeps_state:
             raise ToolError("Ce run ne tient pas le state de la session (sous-agent, ou hors d'une session) : rien n'est posé.")
         actions = [action for action in _ACTIONS if action in arguments]
@@ -128,6 +146,7 @@ class StateTool:
         return await self._set(key, arguments, context)
 
     async def _set(self, key: ModelKey, arguments: Mapping[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Pose une clé : la valeur tirée du résultat désigné (``result``, et au besoin ``row`` ou ``match``), contrôlée par son schéma et sa taille."""
         if "result" not in arguments:
             raise ToolError(f"{key.name} : donner 'result', la référence d'un résultat (result:3).")
         ref = _ref(arguments["result"])
@@ -232,6 +251,7 @@ def _rule(extraction: Extraction) -> str:
 
 
 def _description(keys: tuple[ModelKey, ...]) -> str:
+    """La description de l'outil : ce que font ``set`` et ``clear``, quand les appeler, et les clés."""
     lines = [
         "Tient à jour le state de la session (le bloc <session_state>), pour qu'il dise toujours de quoi parle la conversation.",
         "- set : pose une clé depuis un résultat d'outil que tu as déjà reçu dans ce run, "

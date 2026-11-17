@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Requête, réponse et morceaux de flux d'un appel de modèle (#11).
+"""Requête, réponse et morceaux de flux d'un appel de modèle (point 11, fonction B8).
 
 Le streaming est la seule primitive des adaptateurs : ils émettent des
 ``ModelChunk`` neutres, que ``ResponseAccumulator`` rassemble en
 ``ModelResponse``. ``message_to_chunks`` fait le chemin inverse, pour les
 fournisseurs sans streaming et les faux modèles.
+
+Morceaux, par ``type`` : ``text_delta``, ``reasoning_delta``,
+``tool_call_started``, ``tool_args_delta``, ``tool_call_ended``, ``usage``,
+``stopped`` (fin propre) et ``reset`` (émis par le moteur avant de relancer un
+appel déjà commencé). Ce sont eux que reçoit ``on_chunk`` et que diffusent
+``stream()`` et le SSE.
 """
 
 import hashlib
@@ -26,9 +32,9 @@ from loom_ia.core.model.tooling import ToolDefinition
 from loom_ia.core.model.usage import Usage
 
 type StopReason = Literal["end", "tool_use", "max_tokens", "refusal"]
-# ``required`` impose un appel d'outil (backlog #012) ; jamais en ``FINALIZING``.
+"""Pourquoi le modèle s'est arrêté : fin, appel d'outils, limite de tokens, refus."""
 type ToolChoice = Literal["auto", "none", "required"]
-# Classement neutre des erreurs d'appel (#10).
+"""Choix d'outil imposé au modèle ; ``required`` impose un appel (backlog #012), jamais en ``FINALIZING``."""
 type ModelErrorKind = Literal[
     "transient",
     "overloaded",
@@ -39,19 +45,38 @@ type ModelErrorKind = Literal[
     "content_filtered",
     # Sortie coupée par la limite de tokens (``max_tokens``) : jamais une réponse.
     "truncated",
-    # Tous les modèles de la chaîne sont écartés par leur disjoncteur (#10).
+    # Tous les modèles de la chaîne sont écartés par leur disjoncteur (point 10).
     "unavailable",
 ]
+"""Genre d'une erreur d'appel de modèle, classée de façon neutre (point 10) ; voir ``ModelError``."""
 
-# Clé posée dans les arguments quand le modèle a produit un JSON illisible :
-# l'exécuteur renvoie alors une erreur que le modèle peut corriger.
 INVALID_JSON_KEY: Final = "_loom_invalid_json"
+"""Clé posée dans les arguments quand le modèle a produit un JSON illisible : l'exécuteur rend alors une erreur que le modèle peut corriger."""
 
 
 # --- Requête -----------------------------------------------------------------
 
 
 class ModelRequest(DomainModel):
+    """Requête neutre à un modèle, que l'adaptateur traduit pour son fournisseur.
+
+    C'est ce que voit une politique ``before_model`` et ce qu'elle peut
+    remplacer. Son empreinte (``request_hash``) est écrite dans
+    ``model.responded`` pour le rejeu.
+
+    Attributes:
+        model_id: Nom du modèle chez le fournisseur.
+        system: Prompt système.
+        messages: Conversation, dans l'ordre.
+        tools: Outils exposés au modèle (nom, description, schéma).
+        tool_choice: ``auto`` (défaut), ``none`` ou ``required``.
+        max_tokens: Plafond de tokens de sortie.
+        params: Réglages transmis tels quels au fournisseur.
+        output_schema: Schéma JSON de la réponse attendue (contrat de
+            sortie) : l'adaptateur le transmet au fournisseur si le modèle a
+            la capacité ``native_json`` (fonction B9).
+    """
+
     model_id: str
     system: str = ""
     messages: tuple[Message, ...]
@@ -59,12 +84,10 @@ class ModelRequest(DomainModel):
     tool_choice: ToolChoice = "auto"
     max_tokens: PositiveInt | None = None
     params: dict[str, JsonValue] = Field(default_factory=dict)
-    # Schéma JSON de la réponse attendue (contrat de sortie) : l'adaptateur le
-    # transmet au fournisseur si le modèle a la capacité ``native_json`` (B9).
     output_schema: dict[str, JsonValue] | None = None
 
     def request_hash(self) -> str:
-        """Empreinte SHA-256 du JSON canonique de la requête (#31).
+        """Empreinte SHA-256 du JSON canonique de la requête (point 31) : le rejeu détecte ainsi une divergence.
 
         Sans schéma de sortie, le champ est omis : les empreintes des
         journaux antérieurs restent les mêmes.
@@ -79,12 +102,17 @@ class ModelRequest(DomainModel):
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     def request_parts(self) -> dict[str, str]:
-        """Empreinte de chaque partie de la requête : ce qui a changé, au rejeu (J6.2a).
+        """Empreinte de chaque partie de la requête : ce qui a changé, au rejeu (phase 6.2a).
 
         ``request_hash`` dit qu'une requête diffère ; ces empreintes disent
         **où** : le modèle, le prompt système, les outils, les messages ou les
         réglages (choix d'outil, plafond de tokens, paramètres, schéma de
         sortie). Seize caractères suffisent à comparer, pas à retrouver.
+
+        Returns:
+            ``model``, ``system``, ``tools``, ``messages``, ``settings`` →
+            empreinte de 16 caractères, et ``messages_count`` → le nombre de
+            messages, en clair.
         """
         dumped = self.model_dump(mode="json")
         groups: dict[str, JsonValue] = {
@@ -102,6 +130,7 @@ class ModelRequest(DomainModel):
 
 
 def _short_hash(value: JsonValue) -> str:
+    """Les 16 premiers caractères du SHA-256 du JSON canonique d'une valeur."""
     canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
@@ -110,21 +139,46 @@ def _short_hash(value: JsonValue) -> str:
 
 
 class TextDelta(DomainModel):
+    """Morceau de texte de la réponse.
+
+    Attributes:
+        type: ``text_delta``.
+        text: Le texte à ajouter.
+    """
+
     type: Literal["text_delta"] = "text_delta"
     text: str
 
 
 class ReasoningDelta(DomainModel):
+    """Morceau du raisonnement du modèle.
+
+    Attributes:
+        type: ``reasoning_delta``.
+        text: Le texte à ajouter.
+        start: Vrai au premier morceau d'un bloc : deux blocs qui se suivent
+            restent distincts (chacun a sa signature).
+        provider_meta: Données du fournisseur (signature…), qui peuvent
+            arriver en cours de flux.
+    """
+
     type: Literal["reasoning_delta"] = "reasoning_delta"
     text: str = ""
-    # Vrai au premier morceau d'un bloc : deux blocs qui se suivent restent
-    # distincts (chacun a sa signature).
     start: bool = False
-    # Les données du fournisseur (signature…) peuvent arriver en cours de flux.
     provider_meta: dict[str, ProviderMeta] = Field(default_factory=dict)
 
 
 class ToolCallStarted(DomainModel):
+    """Début d'un appel d'outil dans la réponse.
+
+    Attributes:
+        type: ``tool_call_started``.
+        index: Rang de l'appel dans la réponse, qui relie les morceaux
+            d'arguments.
+        call_id: Identifiant de l'appel.
+        name: Nom de l'outil.
+    """
+
     type: Literal["tool_call_started"] = "tool_call_started"
     index: NonNegativeInt
     call_id: str
@@ -132,38 +186,70 @@ class ToolCallStarted(DomainModel):
 
 
 class ToolArgsDelta(DomainModel):
+    """Morceau des arguments JSON d'un appel d'outil.
+
+    Attributes:
+        type: ``tool_args_delta``.
+        index: Rang de l'appel.
+        json_fragment: Fragment du JSON des arguments.
+    """
+
     type: Literal["tool_args_delta"] = "tool_args_delta"
     index: NonNegativeInt
     json_fragment: str
 
 
 class ToolCallEnded(DomainModel):
+    """Fin d'un appel d'outil dans la réponse.
+
+    Attributes:
+        type: ``tool_call_ended``.
+        index: Rang de l'appel.
+    """
+
     type: Literal["tool_call_ended"] = "tool_call_ended"
     index: NonNegativeInt
 
 
 class UsageDelta(DomainModel):
-    """Consommation à ajouter au total (certains fournisseurs la donnent en fin de flux)."""
+    """Consommation à ajouter au total (certains fournisseurs la donnent en fin de flux).
+
+    Attributes:
+        type: ``usage``.
+        usage: Les tokens à ajouter.
+    """
 
     type: Literal["usage"] = "usage"
     usage: Usage
 
 
 class Stopped(DomainModel):
+    """Fin propre du flux ; sans lui, le flux s'est interrompu et l'appel est une erreur ``transient``.
+
+    Attributes:
+        type: ``stopped``.
+        reason: Pourquoi le modèle s'est arrêté.
+        model_id: Modèle effectivement utilisé, s'il diffère de celui
+            demandé.
+    """
+
     type: Literal["stopped"] = "stopped"
     reason: StopReason
-    # Modèle effectivement utilisé, s'il diffère de celui demandé.
     model_id: str | None = None
 
 
 class StreamReset(DomainModel):
     """Émis par le moteur seulement, avant de relancer un appel déjà commencé.
 
-    Le texte partiel reçu jusque-là doit être effacé.
+    Le texte partiel reçu jusque-là doit être effacé (nouvelle tentative, ou
+    bascule vers le secours).
+
+    Attributes:
+        type: ``reset``.
+        attempt: Tentative qui va commencer.
     """
 
     type: Literal["reset"] = "reset"
-    # Tentative qui va commencer.
     attempt: PositiveInt
 
 
@@ -171,12 +257,24 @@ type ModelChunk = Annotated[
     TextDelta | ReasoningDelta | ToolCallStarted | ToolArgsDelta | ToolCallEnded | UsageDelta | Stopped | StreamReset,
     Field(discriminator="type"),
 ]
+"""Morceau du flux d'un appel de modèle, discriminé par ``type``."""
 
 
 # --- Réponse -----------------------------------------------------------------
 
 
 class ModelResponse(DomainModel):
+    """Réponse complète d'un modèle, assemblée depuis le flux.
+
+    Attributes:
+        model_id: Nom du modèle qui a répondu.
+        provider: Fournisseur.
+        message: Le message ``assistant`` : texte, raisonnement, appels
+            d'outils.
+        usage: Tokens consommés.
+        stop_reason: Pourquoi le modèle s'est arrêté. Défaut : ``end``.
+    """
+
     model_id: str
     provider: str
     message: Message
@@ -185,12 +283,15 @@ class ModelResponse(DomainModel):
 
 
 class _PendingCall:
+    """Appel d'outil en cours d'assemblage : ses fragments d'arguments."""
+
     def __init__(self, call_id: str, name: str) -> None:
         self.call_id = call_id
         self.name = name
         self.fragments: list[str] = []
 
     def block(self) -> ToolCallBlock:
+        """Le bloc d'appel ; un JSON illisible ou qui n'est pas un objet est rangé sous ``INVALID_JSON_KEY``."""
         raw = "".join(self.fragments).strip()
         arguments: dict[str, JsonValue]
         try:
@@ -205,12 +306,23 @@ class _PendingCall:
 
 
 class ResponseAccumulator:
-    """Rassemble les morceaux d'un flux en message, dans l'ordre d'arrivée."""
+    """Rassemble les morceaux d'un flux en message, dans l'ordre d'arrivée.
+
+    Un ``StreamReset`` efface tout ce qui a été reçu. Les deux appels d'une
+    même réponse ne peuvent pas porter le même ``call_id`` : le second est
+    renommé (``_2``, ``_3``…).
+
+    Attributes:
+        usage: Tokens cumulés jusqu'ici.
+        stop_reason: Raison d'arrêt, une fois ``Stopped`` reçu.
+        model_id: Modèle annoncé par ``Stopped``, s'il y en a un.
+    """
 
     def __init__(self) -> None:
         self._reset()
 
     def _reset(self) -> None:
+        """Remet l'accumulateur à vide."""
         # Blocs terminés, ou en cours de construction pour texte et raisonnement.
         self._parts: list[ContentBlock | _PendingCall] = []
         self._calls: dict[int, _PendingCall] = {}
@@ -227,6 +339,7 @@ class ResponseAccumulator:
         return self.stop_reason is not None
 
     def add(self, chunk: ModelChunk) -> None:
+        """Ajoute un morceau : texte et raisonnement se concatènent par bloc, les arguments par appel."""
         match chunk:
             case TextDelta(text=text):
                 self._flush_reasoning()
@@ -260,6 +373,18 @@ class ResponseAccumulator:
                 self._reset()
 
     def result(self, *, model_id: str, provider: str) -> ModelResponse:
+        """La réponse assemblée.
+
+        Args:
+            model_id: Modèle demandé ; remplacé par celui de ``Stopped`` s'il
+                en annonce un.
+            provider: Fournisseur.
+
+        Returns:
+            La réponse ; un texte vide si le flux n'a rien livré. Sans
+            ``Stopped``, la raison est ``tool_use`` s'il y a des appels,
+            ``end`` sinon.
+        """
         self._flush_text()
         self._flush_reasoning()
         blocks = _distinct_call_ids(tuple(p.block() if isinstance(p, _PendingCall) else self._stamped(p, model_id) for p in self._parts))
@@ -288,7 +413,7 @@ class ResponseAccumulator:
 
     @staticmethod
     def _stamped(block: ContentBlock, model_id: str) -> ContentBlock:
-        """Raisonnement marqué du modèle demandé : après une bascule, il sera écarté (#7)."""
+        """Raisonnement marqué du modèle demandé : après une bascule, il sera écarté (point 7)."""
         if isinstance(block, ReasoningBlock) and block.model_id is None:
             return block.model_copy(update={"model_id": model_id})
         return block
@@ -327,7 +452,27 @@ def message_to_chunks(
     model_id: str | None = None,
     fragment_size: int = 8,
 ) -> list[ModelChunk]:
-    """Morceaux de flux qu'un fournisseur enverrait pour ce message."""
+    """Morceaux de flux qu'un fournisseur enverrait pour ce message.
+
+    Sert aux fournisseurs sans streaming (``capabilities.streaming: false``) et
+    aux faux modèles.
+
+    Args:
+        message: Message ``assistant`` : texte, raisonnement, appels d'outils.
+        usage: Consommation à annoncer en fin de flux.
+        stop_reason: Raison d'arrêt ; par défaut ``tool_use`` s'il y a des
+            appels, ``end`` sinon.
+        model_id: Modèle annoncé par ``Stopped``.
+        fragment_size: Taille des morceaux de texte, en caractères. Défaut :
+            8.
+
+    Returns:
+        Les morceaux, ``Stopped`` en dernier.
+
+    Raises:
+        ValueError: Le message porte un bloc qu'une réponse de modèle ne
+            peut pas contenir.
+    """
     chunks: list[ModelChunk] = []
     index = 0
     for block in message.blocks:

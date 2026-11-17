@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 4.1b : une conversation qui s'allonge, résumée en tâche de fond.
+r"""Phase 4.1b : une conversation qui s'allonge, résumée en tâche de fond.
 
     uv run python tests/examples/j4/compaction.py                # 4 tours, puis résumé
     uv run python tests/examples/j4/compaction.py --tours 6
     uv run python tests/examples/j4/compaction.py --filet        # le résumé échoue : coupe
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j4/compaction.py --reel
 
 Config : ``tests/examples/j4/relance/``, complétée par un bloc ``sessions.compaction``.

@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.4c : un agent qui forge ses outils et les exécute dans une microVM Firecracker.
+r"""Phase 6.4c : un agent qui forge ses outils et les exécute dans une microVM Firecracker.
 
     uv run python tests/examples/j6/forge.py --vm ~/temp                 # tous les cas
     uv run python tests/examples/j6/forge.py --vm ~/temp --cas forger
     uv run python tests/examples/j6/forge.py --vm ~/temp --cas corriger
     uv run python tests/examples/j6/forge.py --vm ~/temp --cas rejeu
     uv run python tests/examples/j6/forge.py --vm ~/temp --cas bornes
-    uv run --env-file .env --extra anthropic \\
+    uv run --env-file .env --extra anthropic \
         python tests/examples/j6/forge.py --vm ~/temp --reel
-    uv run --env-file .env --extra anthropic \\
+    uv run --env-file .env --extra anthropic \
         python tests/examples/j6/forge.py --vm ~/temp --reel --modele haiku
     uv run python tests/examples/j6/forge.py --vm ~/temp --garder        # dossier gardé
 
@@ -372,8 +372,7 @@ class Controle:
         return "oui" if vrai else "NON"
 
     def saute(self, quoi: str, *, partie: bool = False) -> None:
-        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire,
-        sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
+        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire, sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
         (self.parties if partie else self.sautes).append(quoi)
 
     def bilan(self, joues: int) -> bool | None:
@@ -614,8 +613,10 @@ async def suite_forger(atelier: Atelier, loom: Loom, controle: Controle) -> None
 
 
 def vm_arretee(atelier: Atelier, controle: Controle, cas: str, *, avant: bool | None = None) -> None:
-    """Instance fermée : la VM, arrêtée avant le cas, l'est encore — c'est la source qui
-    l'arrête si elle l'a démarrée. Rien à voir si elle tournait déjà avant."""
+    """Instance fermée : la VM, arrêtée avant le cas, l'est encore.
+
+    C'est la source qui l'arrête si elle l'a démarrée. Rien à voir si elle tournait déjà avant.
+    """
     tournait = atelier.vm_avant if avant is None else avant
     if tournait:
         return

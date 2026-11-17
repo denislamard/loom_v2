@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Les refus d'accès, journalisés (D-9, docs/loom_role_user.md § 7).
+"""Les refus d'accès, journalisés (décision D-9 des utilisateurs et rôles, docs/loom_role_user.md § 7).
 
 Un refus ne change rien au run — il n'y en a parfois même pas : un lancement
 refusé, une clé inconnue. Il n'a donc pas sa place dans le journal de session,
@@ -58,32 +58,39 @@ from loom_ia.access.authz import AccessDenied
 from loom_ia.config import LoomConfig
 from loom_ia.core import AUDIT, TOLD
 
-# Logger des refus : à router à part (fichier, collecteur) pour en garder la trace.
 AUDIT_LOGGER: Final = "loom_ia.access.audit"
+"""Logger des refus : à router à part (fichier, collecteur) pour en garder la trace."""
 
 type Access = Literal["sdk", "rest", "mcp", "cli"]
+"""Accès par lequel une requête est arrivée : ``sdk``, ``rest``, ``mcp`` ou ``cli``."""
 
 logger = logging.getLogger(AUDIT_LOGGER)
 
-# L'accès par lequel la requête en cours est arrivée : posé à l'entrée de chaque
-# accès (``through``), lu par le refus qui sort de ``Loom``. Le SDK appelé
-# directement n'en pose aucun.
 _ACCESS: ContextVar[Access] = ContextVar("loom_access", default="sdk")
-# Le fichier où la requête en cours écrit ses refus (``security.audit.path``).
+"""L'accès par lequel la requête en cours est arrivée : posé à l'entrée de
+chaque accès (``through``), lu par le refus qui sort de ``Loom``. Le SDK
+appelé directement n'en pose aucun.
+"""
 _FILE: ContextVar[Path | None] = ContextVar("loom_audit_file", default=None)
+"""Le fichier où la requête en cours écrit ses refus (``security.audit.path``)."""
 
 
 class Aim(NamedTuple):
-    """Ce que la requête en cours vise, tel que l'accès le sait à son entrée."""
+    """Ce que la requête en cours vise, tel que l'accès le sait à son entrée.
 
-    # La route (``POST /v1/runs/…/approve``) ou l'outil MCP.
+    Attributes:
+        action: La route (``POST /v1/runs/…/approve``) ou l'outil MCP.
+        agent: Agent visé.
+        run_id: Run visé.
+    """
+
     action: str | None = None
     agent: str | None = None
     run_id: str | None = None
 
 
-# Un tuple nommé ne se modifie pas : un seul défaut partagé ne risque rien.
 _NOWHERE: Final = Aim()
+"""Un tuple nommé ne se modifie pas : un seul défaut partagé ne risque rien."""
 _AIM: ContextVar[Aim] = ContextVar("loom_audit_aim", default=_NOWHERE)
 
 
@@ -134,8 +141,9 @@ def denied(
     run_id: str | None = None,
     call_id: str | None = None,
 ) -> None:
-    """Écrit un refus : une ligne WARNING, son détail à part, et une ligne au fichier
-    d'audit ; les champs absents sont omis.
+    """Écrit un refus : une ligne WARNING, son détail à part, et une ligne au fichier d'audit.
+
+    Les champs absents sont omis.
 
     Sans ``access``, celui de la requête en cours (``through``), ``sdk`` à défaut ;
     sans ``action``, ``agent`` ou ``run_id``, ce que la requête vise (``Aim``).
@@ -246,6 +254,7 @@ class _Where(NamedTuple):
     call_id: str | None = None
 
     def refused(self, error: AccessDenied, action: str) -> None:
+        """Écrit le refus au journal d'audit, avec ce que l'appel visait."""
         refused(
             error,
             action=action,
@@ -279,7 +288,12 @@ def _where(signature: inspect.Signature, args: tuple[object, ...], kwargs: dict[
 
 
 class Swept(NamedTuple):
-    """Ce qu'un balayage du fichier d'audit a lu, et retiré ou retirerait."""
+    """Ce qu'un balayage du fichier d'audit a lu, et retiré ou retirerait.
+
+    Attributes:
+        scanned: Lignes lues.
+        removed: Lignes retirées, ou qui le seraient.
+    """
 
     scanned: int = 0
     removed: int = 0

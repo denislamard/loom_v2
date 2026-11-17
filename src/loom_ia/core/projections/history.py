@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Historique d'une session envoyé au modèle (#7, #22).
+"""Historique d'une session envoyé au modèle (points 7 et 22, fonction F2).
 
 Seuls les runs racine terminés avec succès y figurent : un run échoué peut
 contenir un appel d'outil sans résultat, que les API refusent. Un run en
@@ -10,23 +10,24 @@ l'action en attente. Les sous-runs,
 textes vides sont retirés ; un message qui ne contient plus rien est omis
 (certaines API refusent un bloc de texte vide).
 
-Sortie d'un outil terminal (#13) : le résultat est remplacé par un marqueur,
+Sortie d'un outil terminal (point 13) : le résultat est remplacé par un marqueur,
 et la sortie suit en message ``assistant``. Elle n'est pas dupliquée, et la
 séquence reste valide pour les API (résultat d'outil, puis assistant).
 
-Réponse écrite avec ``loom.state`` (M1) : le texte quitte le tour qui appelait
+Réponse écrite avec ``loom.state`` (règle M1, ``docs/state_analyse_moteur.md``) :
+le texte quitte le tour qui appelait
 ``state``, et la réponse retenue le suit en message ``assistant``, comme une
 sortie terminale ; une réponse remplacée par une politique y figure sous sa
 forme retenue.
 
-Réparations (#20) : une réponse refusée par une politique et le diagnostic
+Réparations (point 20) : une réponse refusée par une politique et le diagnostic
 qui la suit (``message.user`` de ``kind: repair``) restent dans le journal,
 mais pas dans l'historique : seule la réponse acceptée y figure. Une réponse
 finale remplacée par une politique y figure sous sa forme retenue.
 
-Marqueurs de session (J4.1) : un ``session.snapshot`` porte l'historique déjà
+Marqueurs de session (phase 4.1) : un ``session.snapshot`` porte l'historique déjà
 calculé jusqu'à une position du journal, un ``session.compacted`` le résumé
-qui le remplace (#23), un ``session.trimmed`` la coupe faite sans résumé.
+qui le remplace (point 23), un ``session.trimmed`` la coupe faite sans résumé.
 L'historique repart du dernier marqueur écrit, puis rejoue la suite. Sans
 marqueur, tout le journal est relu : le résultat est le même, la relecture
 plus longue.
@@ -62,11 +63,22 @@ from loom_ia.core.model import (
 from loom_ia.core.projections.run_state import fold_all
 
 TERMINAL_MARKER: Final = "[Sortie transmise telle quelle comme réponse finale.]"
+"""Texte qui remplace, dans l'historique, le résultat d'un outil terminal : la sortie suit en message ``assistant``."""
+
 SUMMARY_MARKER: Final = "[Résumé des échanges précédents de cette conversation.]"
+"""Ligne qui précède le résumé de compaction, entré dans l'historique comme un message de l'utilisateur."""
 
 
 def history(events: Iterable[Event]) -> list[Message]:
-    """Messages des runs racine terminés, dans l'ordre du journal."""
+    """Historique de la session tel qu'il part au modèle : les messages des runs racine terminés.
+
+    Args:
+        events: Le journal de la session, dans l'ordre.
+
+    Returns:
+        Les messages, dans l'ordre, à partir du dernier marqueur de session
+        (snapshot, résumé, coupe) ; raisonnement et textes vides retirés.
+    """
     return [message for turn in turns(events) for message in turn]
 
 
@@ -78,6 +90,12 @@ def turns(events: Iterable[Event]) -> list[tuple[Message, ...]]:
     couper l'historique sur une frontière de run (``keep_last``,
     ``last_turns``), là où une coupe au message séparerait un appel d'outil
     de son résultat.
+
+    Args:
+        events: Le journal de la session, dans l'ordre.
+
+    Returns:
+        Un tuple de messages par tour, dans l'ordre.
     """
     base, after = _from_marker(list(events))
     grouped: list[tuple[Message, ...]] = [base] if base else []
@@ -99,7 +117,10 @@ def turns(events: Iterable[Event]) -> list[tuple[Message, ...]]:
 
 
 def last_summary(events: Iterable[Event]) -> str | None:
-    """Dernier résumé de compaction de la session, s'il y en a un (#23)."""
+    """Dernier résumé de compaction de la session, ou ``None`` (point 23).
+
+    Un juge le reçoit s'il le déclare dans son contexte (point 12).
+    """
     summary: str | None = None
     for event in events:
         payload = event.payload
@@ -129,6 +150,13 @@ def last_marker(events: Iterable[Event]) -> tuple[int, tuple[Message, ...]] | No
     journal : une compaction écrite après un snapshot le périme, puisqu'elle
     réécrit la région qu'il portait. Le snapshot rafraîchi qui suit une
     compaction contient déjà le résumé, et reprend la main.
+
+    Args:
+        events: Le journal de la session, dans l'ordre.
+
+    Returns:
+        Le dernier ``seq`` couvert et l'historique repris (vide pour une
+        coupe), ou ``None`` sans marqueur.
     """
     found: tuple[int, tuple[Message, ...]] | None = None
     for event in events:
@@ -166,7 +194,7 @@ def _conversation(state: RunState) -> tuple[Message, ...]:
             # Réponse finale, éventuellement remplacée par une politique.
             return (*messages[:-1], state.output)
         if state.output is not None and messages and messages[-1].role == "tool":
-            # Réponse écrite avec des appels de loom.state (M1) : le texte quitte le
+            # Réponse écrite avec des appels de loom.state (règle M1) : le texte quitte le
             # tour qui appelait, et la réponse retenue le suit, comme une sortie terminale.
             return (*_without_text_of_last_turn(messages), state.output)
         return messages
@@ -209,6 +237,13 @@ def repaired(state: RunState) -> set[int]:
     Chaque réparation retire la dernière réponse de l'assistant qui la
     précède, les résultats d'outils qui suivent cette réponse, et le
     diagnostic : la séquence reste valide pour les API.
+
+    Args:
+        state: L'état du run, dont ``repairs`` donne la position de chaque
+            diagnostic.
+
+    Returns:
+        Les positions retirées, dans ``state.messages``.
     """
     dropped: set[int] = set()
     for repair in state.repairs:
@@ -221,6 +256,7 @@ def repaired(state: RunState) -> set[int]:
 
 
 def _without_empty_text(message: Message) -> Message | None:
+    """Le message sans ses blocs de texte vides ; ``None`` s'il ne reste rien (certaines API refusent un texte vide)."""
     kept = tuple(b for b in message.blocks if not (isinstance(b, TextBlock) and not b.text))
     if len(kept) == len(message.blocks):
         return message

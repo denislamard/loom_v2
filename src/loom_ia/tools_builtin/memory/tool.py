@@ -72,13 +72,17 @@ from loom_ia.tools_builtin.memory_params import (
     server_url_problem,
 )
 
-# Délai d'un appel, en secondes, quand l'agent n'en donne pas (``timeout``). Indexer une
-# page sur CPU prend de l'ordre de 1,5 s par passage, et le premier appel peut charger les
-# modèles : le délai commun des outils (30 s) n'y suffit pas.
 TIMEOUT: Final = 300.0
-# Calcul d'un passage, en secondes, mesuré le 03/11/2026 (BGE-M3, lots de 16) : de 1,5 à
-# 2 s sur CPU, environ 14 ms sur GPU. Sert seulement à prévenir l'humain qui approuve.
+"""Délai d'un appel, en secondes, quand l'agent n'en donne pas (``timeout``).
+Indexer une page sur CPU prend de l'ordre de 1,5 s par passage, et le
+premier appel peut charger les modèles : le délai commun des outils (30 s)
+n'y suffit pas.
+"""
 SECONDS_PER_PASSAGE: Final[Mapping[str, float]] = {"cpu": 2.0, "cuda": 0.015}
+"""Calcul d'un passage, en secondes, mesuré le 03/11/2026 (BGE-M3, lots de 16)
+: de 1,5 à 2 s sur CPU, environ 14 ms sur GPU. Sert seulement à prévenir
+l'humain qui approuve.
+"""
 
 _EFFECTS: Final[Mapping[MemoryAction, tuple[SideEffects, bool]]] = {
     "search": ("none", True),
@@ -116,6 +120,15 @@ class MemoryTool:
         unreadable: Mapping[str, str] | None = None,
         target: Target | None = None,
     ) -> None:
+        """Prépare l'outil : service de mémoire, modèles partagés, formats lus, et la définition qui découle des actions permises.
+
+        Args:
+            params: Les réglages de l'outil.
+            store: La base.
+            folders: Les dossiers que ``add_file`` peut lire ; ``None`` : aucun.
+            unreadable: Les formats que ce process ne sait pas lire, et pourquoi (un extra manque).
+            target: Où joindre loom-mem-gpu (``models.server``), une fois ses variables lues.
+        """
         self.params = params
         self.folders = folders
         # Où joindre loom-mem-gpu (``models.server``), une fois ses variables lues.
@@ -146,10 +159,12 @@ class MemoryTool:
 
     @property
     def spec(self) -> ToolSpec:
+        """La définition de l'outil."""
         return self._spec
 
     @property
     def store(self) -> MemoryStore:
+        """La base de la mémoire."""
         return self.service.store
 
     # --- Évaluation --------------------------------------------------------------------
@@ -221,6 +236,7 @@ class MemoryTool:
         return seen is not None and seen.same is not None
 
     def _what(self, request: MemoryArguments) -> str:
+        """Ce que vise l'appel, pour la demande d'approbation : titre, adresse, fichier (et son coût de calcul), document ou projet."""
         project = self._project(request)
         where = f" dans le projet {project}" if project else ""
         match request.action:
@@ -289,6 +305,11 @@ class MemoryTool:
     # --- Exécution ---------------------------------------------------------------------
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Fait l'action demandée : chercher, lire, lister, mémoriser, mettre à jour ou supprimer.
+
+        Raises:
+            ToolError: Arguments, document, fichier ou page refusés.
+        """
         request = parse(arguments, self.params)
         project = self._project(request)
         tags = request.tags or []
@@ -351,6 +372,11 @@ class MemoryTool:
     # --- Description et réglages -------------------------------------------------------
 
     def _description(self) -> str:
+        """La description de l'outil.
+
+        Le projet, les actions permises (et celles qui attendent une approbation), les
+        fichiers lisibles, la règle des écritures.
+        """
         params = self.params
         if params.project is None:
             scope = "Chaque document appartient à un projet."
@@ -488,6 +514,11 @@ def _server_target(server: ServerSpec | None, context: BuiltinContext) -> Target
 
 
 def _store_path(params: MemoryParams, context: BuiltinContext) -> Path:
+    """Le chemin absolu de la base, lu dans ``store.path`` ou sa variable.
+
+    Raises:
+        ValueError: Variable absente, chemin relatif, dossier absent, ou fichier de loom.
+    """
     spec = params.store
     if spec.path_env is not None:
         secrets: Mapping[str, str] = context.secrets if context.secrets is not None else os.environ

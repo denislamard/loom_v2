@@ -1,0 +1,156 @@
+# loom_ia.engine.questions
+
+Module `loom_ia.engine.questions` de loom_v2 (fichier `src/loom_ia/engine/questions.py`).
+
+Questions à l'utilisateur : lues dans l'appel, rendues au modèle.
+
+L'outil `ask` (`ToolSpec.asks_user`) n'est pas exécuté : l'exécuteur lit
+ses questions ici, les écrit au journal, et le run attend la réponse en
+`PAUSED`. La réponse revient au modèle comme résultat de l'appel, sous la
+forme que ce module lui donne.
+
+## Constantes de `loom_ia.engine.questions`
+
+- `OFF_TOPIC = 'Si ce message ne répond pas à ta question (autre sujet, ou ta demande de départ répétée), traite-le si besoin, puis re…` : Consigne ajoutée à une réponse en message libre.  Un message libre est routé vers la question même s'il parle d'autre chose (décision D-3 de l'attente d'une réponse, `docs/wait_answer.md`) : sans cette consigne, le modèle y répond et repose sa question en texte, et le run se termine sans question ouverte (essai Haiku, ask-06). La demande de départ répétée est nommée : Haiku la prenait pour une nouvelle demande et finissait sur la question écrite en texte (ask-12).
+
+## Fonction `loom_ia.engine.questions.asked`
+
+```python
+def asked(arguments: Mapping[str, JsonValue]) -> tuple[Question, ...] | str
+```
+
+Les questions de l'appel `ask`, ou ce qui ne va pas.
+
+**Arguments :**
+
+- `arguments` : Arguments de l'appel ; `questions` doit être une liste non vide d'objets `Question`.
+
+**Renvoie :**
+
+Les questions validées ; sinon le message d'erreur destiné au modèle
+(« Donner 'questions' : … » ou « Question invalide (<champ>) : … »).
+
+## Fonction `loom_ia.engine.questions.expiry`
+
+```python
+def expiry(expires_in: float | None) -> datetime | None
+```
+
+Échéance d'une question : maintenant plus `expires_in` secondes, ou `None` sans délai.
+
+## Fonction `loom_ia.engine.questions.reply_problem`
+
+```python
+def reply_problem(pending: PendingQuestion, reply: QuestionReply) -> str | None
+```
+
+Pourquoi cette réponse ne convient pas à ces questions ; `None` si elle convient.
+
+Un texte libre convient toujours. Des réponses par question : une par
+question, au moins une valeur chacune, une seule sauf `multiple`. Un
+choix proposé n'est pas exigé : l'utilisateur peut répondre autre chose.
+
+Le message nomme les questions par leur intitulé et dit la règle : il est
+rendu tel quel par chaque accès (`InvalidAnswer` du SDK, `detail` d'un
+422 REST, refus de la CLI). Avant, « 1 réponse(s) pour 2 question(s) » ne
+disait ni lesquelles ni comment répondre (essai réel t-2000 du 02/11).
+Il ne part ni au modèle ni au journal.
+
+**Arguments :**
+
+- `pending` : La question en attente.
+- `reply` : La réponse reçue : `text` libre ou `answers` par question.
+
+**Renvoie :**
+
+Le message qui dit ce qui ne va pas ; `None` si la réponse convient.
+
+## Fonction `loom_ia.engine.questions._count`
+
+```python
+def _count(n: int, word: str) -> str
+```
+
+« 1 réponse », « 2 réponses » : le pluriel français dès 2.
+
+## Fonction `loom_ia.engine.questions.named_question`
+
+```python
+def named_question(number: int, question: Question) -> str
+```
+
+« question 2 (Acompte) », ou « question 2 » sans intitulé.
+
+**Arguments :**
+
+- `number` : Rang de la question, à partir de 1.
+- `question` : La question.
+
+**Renvoie :**
+
+Le nom à afficher.
+
+## Fonction `loom_ia.engine.questions._names`
+
+```python
+def _names(questions: Sequence[Question]) -> str
+```
+
+Les questions attendues : leurs intitulés, sinon leurs rangs.
+
+« Relances, Acompte » ; sans aucun intitulé, « questions 1 et 2 » (ou
+« question 1 ») ; un intitulé absent est remplacé par « question i ».
+
+## Fonction `loom_ia.engine.questions.answered_output`
+
+```python
+def answered_output(pending: PendingQuestion) -> ToolOutput
+```
+
+Ce que le modèle reçoit : chaque question avec sa réponse, ou le message libre.
+
+**Arguments :**
+
+- `pending` : La question en attente, réponse comprise (`reply` non vide).
+
+**Renvoie :**
+
+Le résultat de l'appel `ask`. Texte « Réponse de l'utilisateur :
+- <question> → <valeurs> » et `data` ``{"answers": [{"question",
+"answer"}]}`` ; pour un message libre, le texte suivi de
+`OFF_TOPIC` et `data` `{"reply": <texte>}`.
+
+## Fonction `loom_ia.engine.questions.expired_output`
+
+```python
+def expired_output(pending: PendingQuestion) -> ToolOutput
+```
+
+Résultat en erreur rendu au modèle quand la question a expiré sans réponse.
+
+Il lui dit de ne pas reposer la question de lui-même et de continuer sans
+l'information, ou de dire ce qui manque.
+
+**Arguments :**
+
+- `pending` : La question expirée.
+
+**Renvoie :**
+
+Le résultat de l'appel `ask`, en erreur.
+
+## Fonction `loom_ia.engine.questions.summary`
+
+```python
+def summary(questions: Sequence[Question]) -> str
+```
+
+Les questions en une ligne, pour une note ou un affichage.
+
+## Fonction `loom_ia.engine.questions.as_json`
+
+```python
+def as_json(questions: Sequence[Question]) -> str
+```
+
+Les questions en JSON (champs vides omis), pour l'affichage d'un accès.

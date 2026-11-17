@@ -572,8 +572,10 @@ def _with_bars(table: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.mark.parametrize("table", [TOP10, _with_bars(TOP10)], ids=["six", "avec-barres"])
 async def test_header_words_and_short_values_are_never_cut(tool: PdfTool, disk: Path, table: dict[str, Any]) -> None:
-    """Essais réels du 29/10 : « Ran / g », puis, à côté d'une large colonne, « Cod / e »
-    et « C-42 / 9 ». Un mot d'en-tête, ou une valeur courte, tient dans sa colonne."""
+    """Essais réels du 29/10 : « Ran / g », puis, à côté d'une large colonne, « Cod / e » et « C-42 / 9 ».
+
+    Un mot d'en-tête, ou une valeur courte, tient dans sa colonne.
+    """
     from reportlab.pdfbase.pdfmetrics import stringWidth
 
     from loom_ia.tools_builtin._document.arguments import WriteArguments
@@ -765,8 +767,10 @@ def xs(page: Any) -> list[tuple[float, str]]:
 
 
 def heights(page: Any) -> list[tuple[str, float]]:
-    """Le texte d'une page, morceau par morceau, avec sa hauteur depuis le bas de la page
-    (la matrice du texte dans celle du dessin : un paragraphe se dessine à sa place)."""
+    """Le texte d'une page, morceau par morceau, avec sa hauteur depuis le bas de la page (la matrice du texte dans celle du dessin.
+
+    Un paragraphe se dessine à sa place).
+    """
     found: list[tuple[str, float]] = []
 
     def seen(text: str, cm: Any, tm: Any, font: Any, size: Any) -> None:
@@ -779,8 +783,7 @@ def heights(page: Any) -> list[tuple[str, float]]:
 
 
 def spots_of(page: Any) -> dict[str, tuple[float, float]]:
-    """Le texte d'une page, morceau par morceau, à sa place depuis le bord gauche et le bas
-    (la matrice du texte dans celle du dessin)."""
+    """Le texte d'une page, morceau par morceau, à sa place depuis le bord gauche et le bas (la matrice du texte dans celle du dessin)."""
     found: dict[str, tuple[float, float]] = {}
 
     def seen(text: str, matrix: Any, tm: Any, font: Any, size: Any) -> None:
@@ -799,9 +802,10 @@ def drawn(page: Any) -> bytes:
 
 
 def test_no_visual_value_in_the_pdf_code() -> None:
-    """Ni couleur ni police dans l'écriture PDF : elles viennent de ``default.yaml``, et les
-    familles standard du PDF de ``PDF_FONTS``. Reste le blanc du papier (le trait entre deux
-    secteurs d'un graphique)."""
+    """Ni couleur ni police dans l'écriture PDF : elles viennent de ``default.yaml``, et les familles standard du PDF de ``PDF_FONTS``.
+
+    Reste le blanc du papier (le trait entre deux secteurs d'un graphique).
+    """
     folder = Path(writer_module.__file__).parent
     fonts = re.compile("|".join(sorted({*SAFE_FONTS, "helvetica", "times", "courier"})), re.IGNORECASE)
     for source in sorted(folder.glob("*.py")):
@@ -835,16 +839,14 @@ PDF_NUMBERS: Final[dict[str, str]] = {
 
 
 def test_no_visual_length_in_the_pdf_code() -> None:
-    """Ni distance ni espace dans l'écriture PDF : ils viennent de default.yaml. Restent
-    des unités et des mécaniques, nommées ici (``PDF_NUMBERS``)."""
+    """Ni distance ni espace dans l'écriture PDF : ils viennent de default.yaml. Restent des unités et des mécaniques, nommées ici (``PDF_NUMBERS``)."""
     folder = Path(writer_module.__file__).parent
     writers = [folder / "writer.py", folder / "chart.py"]
     assert set().union(*(numeric_constants(source) for source in writers)) == set(PDF_NUMBERS)
 
 
 async def test_a_pdf_without_style_is_in_default_yaml(tool: PdfTool, disk: Path) -> None:
-    """Sans style, le style de base de Word : le corps en 12 points (Aptos, rendu en
-    Helvetica), les titres 0F4761, « Page n / N » en pied."""
+    """Sans style, le style de base de Word : le corps en 12 points (Aptos, rendu en Helvetica), les titres 0F4761, « Page n / N » en pied."""
     await call(tool, path="sortie/devis.pdf", **DEVIS)
     page = PdfReader(disk / "sortie" / "devis.pdf").pages[0]
     assert b" 12 Tf" in drawn(page)
@@ -853,8 +855,11 @@ async def test_a_pdf_without_style_is_in_default_yaml(tool: PdfTool, disk: Path)
 
 
 async def test_a_facture_in_the_style_of_its_template(disk: Path) -> None:
-    """La facture de Word, en PDF : la charte (logo, couleurs, filets, mentions, filigrane)
-    et le modèle (émetteur et client côte à côte, récapitulatif à droite, titres discrets)."""
+    """La facture de Word, en PDF.
+
+    La charte (logo, couleurs, filets, mentions, filigrane) et le modèle (émetteur et
+    client côte à côte, récapitulatif à droite, titres discrets).
+    """
     tool = styled_pdf(disk)
     written = await call(tool, path="sortie/f.pdf", template="facture", title="Facture", sections=FACTURE_SECTIONS)
     assert (written["pages"], written["warnings"]) == (1, [])
@@ -878,9 +883,12 @@ async def test_a_facture_in_the_style_of_its_template(disk: Path) -> None:
 
 
 async def test_the_header_and_the_footer_in_the_frame_of_their_style(disk: Path) -> None:
-    """L'en-tête et le pied dans le cadre de leur style, comme Word : un filet sous l'en-tête,
-    au-dessus du pied, un fond ; les capitales et le soulignement ; les lignes du pied à
-    gauche quand son style l'est ; le texte du corps descendu d'autant."""
+    """L'en-tête et le pied dans le cadre de leur style, comme Word.
+
+    Un filet sous l'en-tête, au-dessus du pied, un fond ; les capitales et le
+    soulignement ; les lignes du pied à gauche quand son style l'est ; le texte du corps
+    descendu d'autant.
+    """
     plain = make(disk, SORTIE)
     framed = make(
         disk,
@@ -921,9 +929,12 @@ async def test_the_header_and_the_footer_in_the_frame_of_their_style(disk: Path)
 
 
 async def test_a_footer_table_in_pdf(disk: Path) -> None:
-    """Le pied en table, comme dans Word : la mention sur toute la largeur, puis les deux
-    lignes à gauche et le numéro de page calé à droite, centré sur elles ; le filet du
-    haut et le filet entre les colonnes ; le corps remonté d'autant que le pied prend."""
+    """Le pied en table, comme dans Word.
+
+    La mention sur toute la largeur, puis les deux lignes à gauche et le numéro de page
+    calé à droite, centré sur elles ; le filet du haut et le filet entre les colonnes ;
+    le corps remonté d'autant que le pied prend.
+    """
     tool = make(disk, SORTIE, style={"spec": BAND_TABLE})
     long = {"title": "Long", "blocks": [{"type": "paragraph", "text": "Texte. " * 900}]}
     written = await call(tool, path="sortie/t.pdf", **long)
@@ -947,8 +958,7 @@ async def test_a_footer_table_in_pdf(disk: Path) -> None:
 
 
 def test_vertical_borders_and_the_vertical_alignment_in_pdf() -> None:
-    """``borders: vertical`` : un filet avant chaque cellule et après la dernière colonne ;
-    ``valign`` : la commande de reportlab, centré par default.yaml."""
+    """``borders: vertical`` : un filet avant chaque cellule et après la dernière colonne ; ``valign`` : la commande de reportlab, centré par default.yaml."""
     vertical = writer_module._table_lines(Look(borders="vertical", line="0.5pt 000000"))  # pyright: ignore[reportPrivateUsage]
     assert [command[0] for command in vertical] == ["LINEBEFORE", "LINEAFTER"]
     assert writer_module._VALIGN[house().look("table").valign or "top"] == "MIDDLE"  # pyright: ignore[reportPrivateUsage]
@@ -981,8 +991,7 @@ async def test_each_line_of_a_footer_has_its_alignment(disk: Path) -> None:
 
 
 async def test_a_zone_of_a_footer_takes_its_style(disk: Path) -> None:
-    """Une zone au style qu'elle nomme : sa police, sa taille, sa couleur ; sans style,
-    celui du pied."""
+    """Une zone au style qu'elle nomme : sa police, sa taille, sa couleur ; sans style, celui du pied."""
     spec = {
         "footer": {"size": 8},
         "footer_page": {"base": "footer", "bold": True, "size": 12, "color": "1F3A5F"},
@@ -1005,8 +1014,11 @@ async def test_a_zone_of_a_footer_takes_its_style(disk: Path) -> None:
 
 
 async def test_the_distances_and_spaces_of_the_page_in_pdf(disk: Path) -> None:
-    """Les mêmes distances que dans Word, du style : l'en-tête et le pied au bord, l'espace
-    après un tableau, le retrait d'une liste, l'écart d'un filet au texte."""
+    """Les mêmes distances que dans Word, du style.
+
+    L'en-tête et le pied au bord, l'espace après un tableau, le retrait d'une liste,
+    l'écart d'un filet au texte.
+    """
     blocks = [
         {"type": "note", "text": "Note."},
         {"type": "table", "columns": [{"header": "A"}], "rows": [["x"]]},
@@ -1042,8 +1054,7 @@ async def test_the_distances_and_spaces_of_the_page_in_pdf(disk: Path) -> None:
 
 
 async def test_the_spacing_of_a_band_table_is_around_it_in_pdf(disk: Path) -> None:
-    """Le style d'une table de pied : son espace après la met plus haut, ses cellules n'ont
-    pas son espacement."""
+    """Le style d'une table de pied : son espace après la met plus haut, ses cellules n'ont pas son espacement."""
     heights_of: dict[str, float] = {}
     for name, footer in (("sans", {}), ("avec", {"space_after": 12, "space_before": 4})):
         spec = {"footer": footer, "page": {"footer": {"table": {"widths": ["auto"], "rows": [[["Un", "Deux"]]]}}}}
@@ -1162,8 +1173,7 @@ async def test_proposed_styles_and_language_in_a_pdf(disk: Path) -> None:
 
 @pytest.mark.skipif(not (FONTS / "Caladea-Regular.ttf").is_file(), reason="police Caladea absente")
 async def test_an_embedded_font(disk: Path) -> None:
-    """Une police dont le style donne les fichiers : embarquée en sous-ensemble ; le même
-    fichier à chaque fois ; un caractère qu'elle n'a pas, dit."""
+    """Une police dont le style donne les fichiers : embarquée en sous-ensemble ; le même fichier à chaque fois ; un caractère qu'elle n'a pas, dit."""
     regular = (FONTS / "Caladea-Regular.ttf").read_bytes()
     bold = (FONTS / "Caladea-Bold.ttf").read_bytes()
     style = {"fonts": {"Caladea": {"regular": regular, "bold": bold}}, "body": {"font": "Caladea"}}

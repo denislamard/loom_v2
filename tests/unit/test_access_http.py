@@ -838,8 +838,10 @@ async def test_a_key_limited_to_agents_cannot_list_sessions(demo: ConfigFactory)
     ids=["défaut", "fermées", "prod", "prod ouvertes"],
 )
 async def test_the_docs_are_served_unless_closed(demo: ConfigFactory, root: dict[str, Any], served: bool) -> None:
-    """Test N2 du 23/10 : `/docs` et `/openapi.json` répondaient 200 sans clé à côté d'une
-    API protégée ; ils se ferment en prod, et `server.http.docs` tranche."""
+    """Test N2 du 23/10 : `/docs` et `/openapi.json` répondaient 200 sans clé à côté d'une API protégée.
+
+    Ils se ferment en prod, et `server.http.docs` tranche.
+    """
     async with serving(demo(**root)) as (_, http):
         codes = {path: (await http.get(path)).status_code for path in ("/docs", "/redoc", "/openapi.json")}
 

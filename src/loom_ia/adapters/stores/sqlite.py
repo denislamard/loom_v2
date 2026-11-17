@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Journal d'événements en SQLite : mode service sur une machine (#22).
+"""Journal d'événements en SQLite : mode service sur une machine (point 22).
 
 Une table ``events`` par base : colonnes pour l'enveloppe et index composés,
 dont ``(tenant_id, session_id, seq)`` qui est la clé primaire. L'événement
@@ -67,6 +67,7 @@ CREATE INDEX IF NOT EXISTS events_event_id ON events (tenant_id, event_id);
 CREATE INDEX IF NOT EXISTS events_ingestion ON events (tenant_id);
 CREATE INDEX IF NOT EXISTS events_type ON events (tenant_id, type, ts);
 """
+"""Table ``events`` et ses index, créés à la première connexion s'ils manquent."""
 
 _INSERT: Final = (
     "INSERT INTO events (tenant_id, session_id, seq, event_id, ts, run_id, root_run_id,"
@@ -76,6 +77,7 @@ _INSERT: Final = (
 
 
 def _row(event: Event, codec: JournalCodec) -> tuple[Any, ...]:
+    """Les colonnes d'une ligne : l'enveloppe (``ts`` en UTC, en texte), les facettes en JSON, et l'événement rangé par le codec."""
     return (
         event.tenant_id,
         event.session_id,
@@ -144,6 +146,7 @@ class SqliteEventStore:
         self._lock = asyncio.Lock()
 
     async def _connect(self) -> aiosqlite.Connection:
+        """La connexion, ouverte au premier usage : WAL, commits synchrones, attente de verrou de 5 s, suppression par écrasement, schéma créé s'il manque."""
         if self._connection is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             # ``isolation_level=None`` : les transactions sont ouvertes à la main.
@@ -166,6 +169,24 @@ class SqliteEventStore:
     # --- Écriture ---------------------------------------------------------
 
     async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
+        """Écrit un lot à la suite du journal d'une session (``EventStore.append``).
+
+        Dans une transaction ``BEGIN IMMEDIATE`` : deux process ne peuvent pas se
+        croiser. Un échec ou une annulation défait la transaction, et ne laisse
+        jamais la connexion en transaction.
+
+        Args:
+            drafts: Le lot, dans un seul journal (même client, même session).
+            expected_seq: Dernier ``seq`` connu de l'appelant ; ``None`` désactive
+                ce contrôle.
+
+        Returns:
+            Les événements écrits, numérotés à la suite.
+
+        Raises:
+            SequenceConflict: Le journal a avancé depuis ``expected_seq`` ; rien
+                n'est écrit.
+        """
         if not drafts:
             return []
         tenant_id, session_id = journal_key(drafts)
@@ -213,6 +234,14 @@ class SqliteEventStore:
         after_seq: int = 0,
         run_id: RunId | None = None,
     ) -> list[Event]:
+        """Lit le journal d'une session, dans l'ordre des ``seq`` (``EventStore.read``).
+
+        Args:
+            tenant_id: Le client.
+            session_id: La session.
+            after_seq: Ne rend que les événements après ce ``seq`` ; 0 : tout.
+            run_id: Ne rend que les événements de ce run.
+        """
         sql = f"SELECT event FROM events WHERE tenant_id = ? AND session_id = ? AND seq > ?{' AND run_id = ?' if run_id is not None else ''} ORDER BY seq"
         values: list[Any] = [tenant_id, session_id, after_seq]
         if run_id is not None:
@@ -220,6 +249,14 @@ class SqliteEventStore:
         return await self._events(sql, values)
 
     async def query(self, query: EventQuery) -> list[Event]:
+        """Cherche des événements dans les journaux d'un client (``EventStore.query``).
+
+        Clauses SQL sur les colonnes indexées et les facettes (``json_extract``),
+        dans l'ordre d'écriture (``rowid``), puis ``EventQuery.refine``.
+
+        Args:
+            query: Les critères, l'ordre et la pagination (``EventQuery``).
+        """
         where, values = _conditions(query)
         sql = f"SELECT event FROM events WHERE {where} ORDER BY events.rowid LIMIT ?"
         return query.refine(await self._events(sql, [*values, query.limit]))
@@ -235,6 +272,7 @@ class SqliteEventStore:
         return [self._codec.loads(str(row[0])) for row in rows]
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Dernier ``seq`` du journal d'une session ; 0 s'il est vide ou inconnu."""
         async with self._lock:
             connection = await self._connect()
             return await self._last_seq(connection, tenant_id, session_id)
@@ -250,9 +288,14 @@ class SqliteEventStore:
             await cursor.close()
         return int(row[0]) if row is not None else 0
 
-    # --- Sessions (F7) ----------------------------------------------------
+    # --- Sessions (fonction F7) ----------------------------------------------------
 
     async def sessions(self, tenant_id: TenantId) -> list[SessionRecord]:
+        """Sessions d'un client, de la plus récemment écrite à la plus ancienne (fonction F7).
+
+        Args:
+            tenant_id: Le client.
+        """
         async with self._lock:
             connection = await self._connect()
             cursor = await connection.execute(
@@ -273,6 +316,10 @@ class SqliteEventStore:
         ]
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Supprime le journal d'une session (RGPD) ; rend le nombre d'événements supprimés.
+
+        Les lignes sont écrasées (``secure_delete``), puis le WAL est vidé.
+        """
         async with self._lock:
             connection = await self._connect()
             cursor = await connection.execute(
@@ -285,6 +332,7 @@ class SqliteEventStore:
         return max(removed, 0)
 
     async def aclose(self) -> None:
+        """Ferme la connexion, si elle est ouverte."""
         async with self._lock:
             if self._connection is not None:
                 await self._connection.close()

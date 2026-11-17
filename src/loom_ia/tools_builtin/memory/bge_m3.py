@@ -42,26 +42,34 @@ from loom_ia.tools_builtin.memory.models import (
 )
 from loom_ia.tools_builtin.memory_params import ModelsSpec
 
-# Version du calcul : dense, lexical, troncature, normalisation, sigmoïde du reranker.
-# À incrémenter dès que l'un d'eux change : loom-mem-gpu l'annonce, et un client d'une
-# autre version refuse ses vecteurs plutôt que d'en mêler deux sortes dans une base.
 ALGO: Final = "bge-m3/2"
-# Dimension du dense des modèles de la famille BGE-M3 : la base l'inscrit avant tout calcul.
+"""Version du calcul : dense, lexical, troncature, normalisation, sigmoïde du
+reranker. À incrémenter dès que l'un d'eux change : loom-mem-gpu l'annonce,
+et un client d'une autre version refuse ses vecteurs plutôt que d'en mêler
+deux sortes dans une base.
+"""
 DENSE_DIM: Final = 1024
+"""Dimension du dense des modèles de la famille BGE-M3 : la base l'inscrit avant tout calcul."""
 BATCH: Final = 16
-# Caractères lus au plus par texte (question, passage), ici comme par loom-mem-gpu : bien
-# au-delà de ce que lit le tokenizer (1024 tokens, environ 4 caractères chacun en
-# français), la coupe ne change le calcul que pour un texte dont les tokens feraient en
-# moyenne plus de 19 caractères. Elle donne aux deux chemins la même borne : sans elle,
-# un texte plus long passait ici et était refusé par l'application (413).
+"""Textes par lot de calcul, en local comme dans les requêtes à l'application."""
 MAX_CHARS: Final = 20_000
+"""Caractères lus au plus par texte (question, passage), ici comme par
+loom-mem-gpu : bien au-delà de ce que lit le tokenizer (1024 tokens, environ
+4 caractères chacun en français), la coupe ne change le calcul que pour un
+texte dont les tokens feraient en moyenne plus de 19 caractères. Elle donne
+aux deux chemins la même borne : sans elle, un texte plus long passait ici
+et était refusé par l'application (413).
+"""
 MAX_TOKENS: Final = 1024
+"""Tokens lus au plus par texte, pour le dense et le lexical."""
 MAX_PAIR_TOKENS: Final = 512
+"""Tokens lus au plus par paire question-passage, pour le reranker."""
 SPARSE_HEAD: Final = "sparse_linear.pt"
+"""Le fichier des poids de la tête lexicale de BGE-M3."""
 
 
 def _modules() -> tuple[Any, Any]:
-    """torch et transformers ; ``ImportError`` (nommant le paquet) sans l'extra ``memory``."""
+    """Importe torch et transformers ; ``ImportError`` (nommant le paquet) sans l'extra ``memory``."""
     torch: Any = importlib.import_module("torch")
     transformers: Any = importlib.import_module("transformers")
     transformers.utils.logging.disable_progress_bar()
@@ -106,6 +114,17 @@ def _placed(module: Any, device: str, half: bool) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class _Encoder:
+    """BGE-M3 chargé : calcule le dense et le lexical des textes.
+
+    Attributes:
+        torch: Le module torch, importé au chargement.
+        tokenizer: Le tokenizer du modèle.
+        model: Le modèle.
+        head: La tête lexicale (``sparse_linear``).
+        device: Le périphérique de calcul.
+        special: Les tokens spéciaux, exclus du lexical.
+    """
+
     torch: Any
     tokenizer: Any
     model: Any
@@ -114,6 +133,11 @@ class _Encoder:
     special: frozenset[int]
 
     def encode(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
+        """Le dense et le lexical de chaque texte, par lots de ``BATCH``, chaque texte coupé à ``MAX_TOKENS`` tokens.
+
+        Le dense est le token CLS normalisé ; le lexical, le poids de chaque token (le
+        plus fort s'il revient), hors tokens spéciaux.
+        """
         found: list[Embedding] = []
         torch = self.torch
         with torch.inference_mode():
@@ -152,12 +176,25 @@ class _Encoder:
 
 @dataclass(frozen=True, slots=True)
 class _PairScorer:
+    """Le reranker chargé : note des paires question-passage.
+
+    Attributes:
+        torch: Le module torch, importé au chargement.
+        tokenizer: Le tokenizer du reranker.
+        model: Le reranker.
+        device: Le périphérique de calcul.
+    """
+
     torch: Any
     tokenizer: Any
     model: Any
     device: str
 
     def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
+        """Le score de chaque passage pour la question, entre 0 et 1 (sigmoïde du reranker), par lots de ``BATCH``.
+
+        Seul le passage est coupé pour tenir dans ``MAX_PAIR_TOKENS``.
+        """
         found: list[float] = []
         torch = self.torch
         with torch.inference_mode():
@@ -190,20 +227,25 @@ class BgeM3Embedder:
 
     @property
     def model_name(self) -> str:
+        """Le nom du modèle, tel que réglé."""
         return self._spec.embedder
 
     @property
     def dim(self) -> int:
+        """La dimension du dense."""
         return DENSE_DIM
 
     @property
     def device(self) -> str | None:
+        """Le device des poids chargés ; ``None`` tant qu'ils ne le sont pas."""
         return self._model.device
 
     def load(self) -> None:
+        """Charge les poids s'ils ne le sont pas."""
         self._model.load()
 
     def _build(self, device: str) -> _Encoder:
+        """Charge BGE-M3 sur ``device`` : tokenizer, modèle, tête lexicale, demi-précision au besoin."""
         torch, transformers = _modules()
         name = self._spec.embedder
         offline = self._spec.offline
@@ -230,12 +272,14 @@ class BgeM3Embedder:
         )
 
     def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
+        """Les vecteurs des textes, dans l'ordre."""
         if not texts:
             return []
         batch = list(texts)
         return self._model.run(lambda encoder: encoder.encode(batch, cancel), cancel)
 
     def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding:
+        """Les vecteurs d'une question."""
         return self._model.run(lambda encoder: encoder.encode([text], cancel), cancel)[0]
 
 
@@ -253,13 +297,16 @@ class BgeReranker:
 
     @property
     def model_name(self) -> str:
+        """Le nom du reranker, tel que réglé."""
         return self._spec.reranker
 
     @property
     def device(self) -> str | None:
+        """Le device des poids chargés ; ``None`` tant qu'ils ne le sont pas."""
         return self._model.device
 
     def load(self) -> None:
+        """Charge les poids s'ils ne le sont pas."""
         self._model.load()
 
     def _build(self, device: str) -> _PairScorer:
@@ -278,6 +325,7 @@ class BgeReranker:
         )
 
     def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
+        """Un score par passage, entre 0 et 1."""
         if not passages:
             return []
         batch = list(passages)

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 4.3a : faire valider un outil sensible avant qu'il agisse.
+r"""Phase 4.3a : faire valider un outil sensible avant qu'il agisse.
 
     uv run python tests/examples/j4/approbation.py                 # les quatre cas
     uv run python tests/examples/j4/approbation.py --cas refus
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j4/approbation.py --reel
 
 Config : ``tests/examples/j4/relance/``, à laquelle l'exemple ajoute en code un

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Snapshot de l'historique d'une session (#22, §11.2).
+"""Snapshot de l'historique d'une session (point 22, conception §11.2).
 
 Rejouer tout le journal à chaque run coûte de plus en plus cher à mesure que
 la conversation s'allonge. À la fin d'un run, l'historique déjà calculé est
@@ -9,14 +9,15 @@ en repart et ne rejoue que la suite.
 Le snapshot n'est qu'une vue : un lecteur qui l'ignore reconstruit le même
 historique en relisant tout. Il n'est donc jamais nécessaire, et on ne
 l'écrit que lorsqu'il fait gagner quelque chose — au moins
-``snapshot_every`` événements depuis le dernier marqueur — pour ne pas
+``snapshot_every`` événements depuis le dernier marqueur (``sessions.snapshot_every``,
+50 par défaut) — pour ne pas
 recopier l'historique dans le journal à chaque run.
 
 Sa position s'arrête avant le premier événement d'un run encore en cours :
 un run repris au milieu ne se projette pas. Un run de compaction, qui ne se
 reprend pas, n'y compte pas (``Cuts``).
 
-À ne pas confondre avec la compaction (#23) : le snapshot est une vue
+À ne pas confondre avec la compaction (point 23) : le snapshot est une vue
 matérialisée sans LLM, pour lire vite ; la compaction est un résumé par LLM,
 pour réduire le contexte.
 """
@@ -42,12 +43,26 @@ def estimate_tokens(messages: Sequence[Message]) -> int:
 
     Sans tokenizer : la sérialisation JSON de chaque message, divisée par
     ``CHARS_PER_TOKEN``. Elle sert aux seuils, pas à une facturation.
+
+    Args:
+        messages: L'historique.
+
+    Returns:
+        Le nombre estimé de tokens.
     """
     return sum(len(message.model_dump_json()) for message in messages) // CHARS_PER_TOKEN
 
 
 def snapshot(events: Sequence[Event]) -> SessionSnapshot:
-    """Snapshot de l'historique porté par ces événements, sans condition."""
+    """Snapshot de l'historique porté par ces événements, sans condition.
+
+    Args:
+        events: Le journal de la session.
+
+    Returns:
+        Le ``session.snapshot`` : position couverte (``boundary``), messages de
+        l'historique jusque-là, taille estimée en tokens.
+    """
     up_to_seq = boundary(events)
     covered = [event for event in events if event.seq <= up_to_seq]
     messages = tuple(history(covered))
@@ -55,7 +70,13 @@ def snapshot(events: Sequence[Event]) -> SessionSnapshot:
 
 
 def due(events: Sequence[Event], *, every: int) -> bool:
-    """Vrai si un snapshot ferait gagner assez de relecture pour être écrit."""
+    """Vrai si un snapshot ferait gagner assez de relecture pour être écrit.
+
+    Args:
+        events: Le journal de la session.
+        every: Événements au moins entre le dernier marqueur et la coupe
+            possible.
+    """
     return boundary(events) - marked(events) >= every
 
 
@@ -103,6 +124,11 @@ class Cuts:
     """
 
     def __init__(self, events: Sequence[Event]) -> None:
+        """Lit le journal une fois : début et fin de chaque run, sous-runs, runs de compaction.
+
+        Args:
+            events: Le journal de la session.
+        """
         first: dict[RunId, int] = {}
         last: dict[RunId, int] = {}
         parents: dict[RunId, RunId] = {}
@@ -138,6 +164,13 @@ class Cuts:
 
         Elle ne fait que reculer, et un run ne la recoupe plus une fois qu'elle
         est passée avant lui : un seul passage, du dernier run au premier.
+
+        Args:
+            position: Position à ne pas dépasser ; ``None`` : la fin du
+                journal.
+
+        Returns:
+            La position de la coupe ; 0 si aucune n'est possible.
         """
         limit = self._newest if position is None else min(position, self._newest)
         for start, end in self._runs:
@@ -153,7 +186,19 @@ async def write_snapshot(
     *,
     every: int,
 ) -> SessionSnapshot | None:
-    """Écrit un snapshot si l'un est dû ; rend celui qui a été écrit."""
+    """Écrit un snapshot si l'un est dû ; rend celui qui a été écrit.
+
+    Appelé à la fin d'un run.
+
+    Args:
+        writer: Écrivain de la session.
+        events: Le journal de la session.
+        run: Le run qui vient de finir ; le snapshot est écrit sous lui.
+        every: ``sessions.snapshot_every``.
+
+    Returns:
+        Le snapshot écrit ; ``None`` s'il n'était pas dû ou serait vide.
+    """
     if not due(events, every=every):
         return None
     payload = snapshot(events)

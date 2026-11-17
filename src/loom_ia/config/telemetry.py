@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Ce que les exports emportent, ce qu'ils masquent, où ils vont (K3, K4, #29, #30, §17.7).
+"""Ce que les exports emportent, ce qu'ils masquent, où ils vont (fonctions K3 et K4, points 29 et 30, conception §17.7).
 
-Le journal garde tout, toujours (#30) : rien ici ne change ce qui y est écrit.
+Le journal garde tout, toujours (point 30) : rien ici ne change ce qui y est écrit.
 Ces réglages disent ce qui **sort** du journal vers un collecteur.
 
 - ``capture.exports`` : ``metadata`` (le défaut) n'emporte que l'enveloppe et
@@ -15,7 +15,7 @@ Ces réglages disent ce qui **sort** du journal vers un collecteur.
   ajoutent. Le masquage ne touche que les exports : le journal et l'API
   (portée ``read_content``) ne le voient pas.
 - ``exporters`` : les collecteurs. Un seul type à ce jalon, ``otel`` (OTLP).
-- ``capture.raw_exchanges`` (6.1b) : en opt-in, chaque échange HTTP avec un
+- ``capture.raw_exchanges`` (jalon J6.1b) : en opt-in, chaque échange HTTP avec un
   fournisseur entre **au journal** (``model.exchanged``), sous le sceau et la
   rétention comme le reste ; il ne part jamais vers un collecteur que par ses
   métadonnées.
@@ -30,23 +30,36 @@ from loom_ia.core.model import DomainModel
 from loom_ia.telemetry.redaction import BUILTIN_PATTERNS, Redactor
 
 type CaptureLevel = Literal["metadata", "content"]
+"""Ce qu'emportent les exports : métadonnées seules, ou contenu aussi."""
 type OtlpProtocol = Literal["http/protobuf", "grpc"]
+"""Protocole OTLP vers le collecteur."""
 
 EXPORTER_TYPES: Final = ("otel",)
-# Variable lue par défaut : celle que nomme la spécification OTLP.
+"""Types de collecteur connus."""
 OTLP_ENDPOINT_ENV: Final = "OTEL_EXPORTER_OTLP_ENDPOINT"
+"""Variable lue par défaut : celle que nomme la spécification OTLP."""
 
-# Borne d'un corps brut par défaut : de quoi lire une requête de belle taille
-# sans que chaque appel d'une longue session ne pèse des mégaoctets.
 RAW_MAX_BYTES: Final = 256 * 1024
+"""Borne d'un corps brut par défaut : de quoi lire une requête de belle taille
+sans que chaque appel d'une longue session ne pèse des mégaoctets.
+"""
 
 
 class CaptureConfig(DomainModel):
-    """Ce qui sort du journal vers un collecteur, et ce qui s'y ajoute en opt-in (§14.2).
+    """Ce qui sort du journal vers un collecteur, et ce qui s'y ajoute en opt-in (``telemetry.capture`` ; conception §14.2).
 
     ``raw_exchanges`` ajoute au journal — et non aux exports — chaque requête
-    HTTP au fournisseur et sa réponse (``model.exchanged``, 6.1b), corps bornés
+    HTTP au fournisseur et sa réponse (``model.exchanged``, jalon J6.1b), corps bornés
     à ``raw_max_bytes`` chacun.
+
+    Attributes:
+        exports: ``metadata`` (défaut) : l'enveloppe et ce qui n'est pas du
+            contenu ; ``content`` : aussi le contenu des charges, après
+            masquage.
+        raw_exchanges: Ajoute au journal chaque échange HTTP brut avec un
+            fournisseur (``model.exchanged``). Faux par défaut.
+        raw_max_bytes: Taille maximale de chaque corps gardé, en octets (256
+            Kio par défaut).
     """
 
     exports: CaptureLevel = "metadata"
@@ -55,13 +68,26 @@ class CaptureConfig(DomainModel):
 
 
 class CaptureOverride(DomainModel):
-    """Capture propre à un client : chaque clé absente reste celle de la racine."""
+    """Capture propre à un client : chaque clé absente reste celle de la racine.
+
+    Attributes:
+        exports: ``metadata`` ou ``content`` ; absent : celui de la racine.
+        raw_exchanges: Échanges bruts au journal ; absent : réglage de la
+            racine.
+        raw_max_bytes: Taille maximale d'un corps gardé ; absent : celle de la
+            racine.
+    """
 
     exports: CaptureLevel | None = None
     raw_exchanges: bool | None = None
     raw_max_bytes: PositiveInt | None = None
 
     def over(self, root: CaptureConfig) -> CaptureConfig:
+        """La capture du client, clé par clé, sur celle de la racine.
+
+        Args:
+            root: La capture de la racine.
+        """
         return CaptureConfig(
             exports=self.exports if self.exports is not None else root.exports,
             raw_exchanges=(self.raw_exchanges if self.raw_exchanges is not None else root.raw_exchanges),
@@ -74,13 +100,22 @@ class TenantTelemetry(DomainModel):
 
     Les motifs de masquage et les collecteurs sont ceux du déploiement : un
     client choisit si son contenu part, pas où il va.
+
+    Attributes:
+        capture: Capture propre au client.
     """
 
     capture: CaptureOverride = CaptureOverride()
 
 
 class RedactionPattern(DomainModel):
-    """Motif de masquage déclaré par la config : un nom, une expression régulière."""
+    """Motif de masquage déclaré par la config : un nom, une expression régulière.
+
+    Attributes:
+        name: Nom du motif ; pas celui d'un motif fourni.
+        regex: Expression régulière (bornée en temps) ; elle ne doit pas
+            accepter la chaîne vide.
+    """
 
     name: str = Field(min_length=1)
     regex: str = Field(min_length=1)
@@ -103,20 +138,23 @@ def _pattern_kind(value: object) -> str:
     return "builtin" if isinstance(value, str) else "own"
 
 
-# Un nom de motif fourni, ou un motif à soi : la forme décide de la branche,
-# pour que l'erreur porte sur celle-là seule.
 type DeclaredPattern = Annotated[
     Annotated[str, Tag("builtin")] | Annotated[RedactionPattern, Tag("own")],
     Discriminator(_pattern_kind),
 ]
+"""Un nom de motif fourni, ou un motif à soi : la forme décide de la branche, pour que l'erreur porte sur celle-là seule."""
 
 
 class RedactionConfig(DomainModel):
-    """Motifs masqués dans le contenu exporté.
+    """Motifs masqués dans le contenu exporté (``telemetry.redaction``).
 
     Les motifs fournis s'appliquent toujours : la liste ajoute les siens, et y
     place ceux des fournis qu'elle cite. Les fournis qu'elle ne cite pas passent
     avant elle, dans l'ordre par défaut — les secrets en premier.
+
+    Attributes:
+        patterns: Motifs : noms des motifs fournis (``secret``, ``email``,
+            ``phone``, ``iban``) et motifs à soi (``{name, regex}``).
     """
 
     patterns: tuple[DeclaredPattern, ...] = BUILTIN_PATTERNS
@@ -137,6 +175,7 @@ class RedactionConfig(DomainModel):
         return self
 
     def redactor(self) -> Redactor:
+        """Le masqueur : les motifs fournis non cités d'abord, puis la liste dans son ordre."""
         cited = {pattern for pattern in self.patterns if isinstance(pattern, str)}
         first = [name for name in BUILTIN_PATTERNS if name not in cited]
         declared = (p if isinstance(p, str) else (p.name, p.regex) for p in self.patterns)
@@ -144,12 +183,23 @@ class RedactionConfig(DomainModel):
 
 
 class ExporterConfig(DomainModel):
-    """Un collecteur OpenTelemetry, joint en OTLP (#29).
+    """Un collecteur OpenTelemetry, joint en OTLP (``telemetry.exporters`` ; point 29).
 
     La config nomme les **variables** qui portent l'adresse et les en-têtes,
     jamais leurs valeurs : un en-tête d'authentification est un secret. Les
     en-têtes s'écrivent comme ``OTEL_EXPORTER_OTLP_HEADERS``
     (``clé=valeur,clé=valeur``).
+
+    Attributes:
+        type: Type du collecteur : ``otel``.
+        endpoint_env: Variable qui porte l'adresse du collecteur
+            (``OTEL_EXPORTER_OTLP_ENDPOINT`` par défaut) ; vide, le collecteur
+            n'est pas monté.
+        protocol: ``http/protobuf`` (défaut) ou ``grpc``.
+        headers_env: Variable qui porte les en-têtes
+            (``clé=valeur,clé=valeur``).
+        service_name: Nom du service dans les traces (``loom-ia`` par défaut).
+        timeout: Délai d'un envoi au collecteur, en secondes (10 par défaut).
     """
 
     type: str
@@ -157,7 +207,6 @@ class ExporterConfig(DomainModel):
     protocol: OtlpProtocol = "http/protobuf"
     headers_env: str | None = None
     service_name: str = Field(default="loom-ia", min_length=1)
-    # Délai d'un envoi au collecteur, en secondes.
     timeout: PositiveFloat = 10.0
 
     @model_validator(mode="after")

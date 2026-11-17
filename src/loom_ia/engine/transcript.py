@@ -7,8 +7,12 @@ texte suivi — qui a dit quoi, quel outil a été appelé, ce qu'il a répondu.
 
 Les résultats d'outils sont tronqués : ce qui compte ici est le fil de la
 conversation, pas le détail d'un gros JSON. Le texte rendu est celui que le
-contrôle de fidélité compare au résumé (#23), donc la troncature fait partie
+contrôle de fidélité compare au résumé (point 23), donc la troncature fait partie
 de ce qui est vérifié.
+
+Utilisé par la compaction (``sessions/compaction.py``), les rôles qui
+reçoivent l'historique (``engine/roles.py``) et les juges
+(``guards/judge.py``).
 """
 
 import json
@@ -25,12 +29,27 @@ from loom_ia.core.model import (
 )
 
 MAX_RESULT_CHARS: Final = 800
+"""Longueur maximale d'un résultat d'outil dans le texte rendu, en caractères."""
 CUT_MARK: Final = "… (résultat tronqué)"
+"""Marque ajoutée à un résultat coupé."""
 TURN_SEPARATOR: Final = "\n\n---\n\n"
+"""Séparateur entre deux tours."""
 
 
 def rendered(messages: Sequence[Message]) -> str:
-    """Suite de messages rendue en texte."""
+    """Suite de messages rendue en texte suivi.
+
+    Chaque message devient une ou plusieurs lignes : « Utilisateur : … »,
+    « Agent : … », « Agent appelle <outil> : <arguments JSON> », « Résultat :
+    … » (coupé à 800 caractères). Le raisonnement n'y figure pas ; un fichier
+    se dit « [fichier <nom>] ».
+
+    Args:
+        messages: Les messages, dans l'ordre.
+
+    Returns:
+        Le texte, paragraphes séparés par une ligne vide.
+    """
     parts: list[str] = []
     for message in messages:
         match message.role:
@@ -51,12 +70,20 @@ def rendered(messages: Sequence[Message]) -> str:
 
 
 def transcript(turns: Sequence[Sequence[Message]]) -> str:
-    """Tours rendus en texte, séparés les uns des autres."""
+    """Tours rendus en texte, séparés par une ligne ``---``.
+
+    Args:
+        turns: Les tours, chacun une suite de messages.
+
+    Returns:
+        Le texte ; un tour vide n'y laisse pas de trace.
+    """
     texts = [rendered(turn) for turn in turns]
     return TURN_SEPARATOR.join(text for text in texts if text)
 
 
 def _body(message: Message) -> str:
+    """Le texte d'un message : textes, JSON et fichiers, sans raisonnement ni appels."""
     pieces: list[str] = []
     for block in message.blocks:
         match block:
@@ -72,6 +99,7 @@ def _body(message: Message) -> str:
 
 
 def _output(output: ToolOutput) -> str:
+    """Le texte d'un résultat d'outil ; « erreur — <message> » pour un résultat en erreur."""
     if output.is_error:
         return f"erreur — {output.as_text}"
     pieces: list[str] = []
@@ -89,4 +117,5 @@ def _output(output: ToolOutput) -> str:
 
 
 def _short(text: str) -> str:
+    """Le texte coupé à ``MAX_RESULT_CHARS``, marqué s'il l'est."""
     return text if len(text) <= MAX_RESULT_CHARS else text[:MAX_RESULT_CHARS] + CUT_MARK

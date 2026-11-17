@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 4.2 : un run survit à ce qui l'arrête — décision, délai, ou panne.
+r"""Phase 4.2 : un run survit à ce qui l'arrête — décision, délai, ou panne.
 
     uv run python tests/examples/j4/durable.py                    # les cinq cas
     uv run python tests/examples/j4/durable.py --cas delai
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j4/durable.py --reel
 
 Config : ``tests/examples/j4/relance/``, à laquelle l'exemple ajoute en code un

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Ce qu'un run a reçu du monde, relu dans son journal pour le lui resservir (K6, #31).
+"""Ce qu'un run a reçu du monde, relu dans son journal pour le lui resservir (fonction K6, point 31).
 
 Le rejeu identique refait tourner la logique de loom — boucle, politiques,
 contrats, juges, budgets — et lui sert, au lieu du monde, ce que le journal a
@@ -9,14 +9,14 @@ première divergence :
 
 - un appel de modèle est servi par son **empreinte** (``request_hash``) : une
   requête qui n'en a aucune au journal diverge, et le livre dit quelle partie
-  diffère quand le journal porte ``request_parts`` (6.2a) ;
+  diffère quand le journal porte ``request_parts`` (jalon J6.2a) ;
 - un appel d'outil est servi par son ``call_id`` — au rejeu identique, les
   réponses du modèle sont celles du journal, donc ses appels aussi —, et son
   nom et ses arguments doivent être les mêmes ;
 - une demande d'approbation reçoit la décision du journal ;
 - un run fini sur une **panne de modèle** (``run.failed``, ``model.*``) se
   la voit resservir : une fois ses réponses toutes rejouées, l'appel suivant
-  lève la même erreur, sans diverger (test O3 du 23/10 — l'appel en panne
+  lève la même erreur, sans diverger (essai de la fonction O3, 23/10 — l'appel en panne
   passait pour un appel en trop, et un tel run ne se rejouait jamais).
 
 Au rejeu identique, après la première divergence, plus rien n'est servi :
@@ -70,9 +70,10 @@ from loom_ia.core.ports import AnsweringClient, ModelError
 from loom_ia.engine import AnyTool, Consumption
 
 type DivergenceKind = Literal["model", "tool", "approval", "question", "end"]
+"""Ce qui peut diverger : un appel de modèle ou d'outil, une approbation, une question, ou la fin du run."""
 
-# Noms des parties d'une requête, dans l'ordre où le diagnostic les cite.
 PARTS: Final = ("model", "system", "tools", "messages", "settings")
+"""Noms des parties d'une requête, dans l'ordre où le diagnostic les cite."""
 _PART_LABELS: Final[Mapping[str, str]] = {
     "model": "le modèle",
     "system": "le prompt système",
@@ -81,8 +82,9 @@ _PART_LABELS: Final[Mapping[str, str]] = {
     "settings": "les réglages (choix d'outil, plafond de tokens, paramètres, schéma de sortie)",
 }
 STOPPED: Final = "rejeu arrêté : une divergence a été trouvée plus haut"
-# Préfixe du type d'erreur d'un run arrêté par une panne de modèle (``model.overloaded``).
+"""Erreur servie à tout appel qui suit la première divergence d'un rejeu identique."""
 MODEL_FAILURE: Final = "model."
+"""Préfixe du type d'erreur d'un run arrêté par une panne de modèle (``model.overloaded``)."""
 
 
 class ReplayError(ValueError):
@@ -91,18 +93,30 @@ class ReplayError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Divergence:
-    """Le premier endroit où le rejeu ne retrouve pas le journal."""
+    """Le premier endroit où le rejeu ne retrouve pas le journal.
+
+    Attributes:
+        kind: Ce qui diverge : ``model``, ``tool``, ``approval``, ``question``
+            ou ``end`` (la fin du run : appels non refaits, autre issue, autre
+            réponse).
+        where: Ce qui diverge, en une phrase : l'appel et sa place.
+        detail: Ce qui diffère, quand on peut le dire.
+        parts: Parties de la requête qui diffèrent (``model``, ``system``,
+            ``tools``, ``messages``, ``settings``) : appel de modèle, journal
+            qui porte les empreintes par partie.
+        expected_hash: Empreinte de la requête attendue, celle du journal
+            (appel de modèle).
+        actual_hash: Empreinte de la requête du rejeu (appel de modèle).
+        rank: Rang de l'appel de modèle qui diverge, à partir de 1 (appel de
+            modèle).
+    """
 
     kind: DivergenceKind
-    # Ce qui diverge, en une phrase : l'appel et sa place.
     where: str
-    # Ce qui diffère, quand on peut le dire.
     detail: str = ""
-    # Parties de la requête qui diffèrent (appel de modèle, journal récent).
     parts: tuple[str, ...] = ()
     expected_hash: str | None = None
     actual_hash: str | None = None
-    # Rang de l'appel de modèle qui diverge, à partir de 1 (appel de modèle).
     rank: int | None = None
 
 
@@ -119,22 +133,55 @@ class _Response:
 
 @dataclass
 class ToolCallRecord:
-    """Un appel d'outil du journal, et ce que le rejeu en a fait."""
+    """Un appel d'outil du journal, et ce que le rejeu en a fait.
+
+    Attributes:
+        run_id: Run qui a fait l'appel.
+        called: L'événement ``tool.called`` du journal.
+        completed: L'événement ``tool.completed`` ; ``None`` si l'appel n'a pas
+            de résultat au journal.
+        served: Le rejeu en a resservi le résultat.
+        reserved: Variante : promis à un appel du rejeu, qui le servira
+            (``match_tool``).
+    """
 
     run_id: str
     called: ToolCalled
     completed: ToolCompleted | None = None
     served: bool = False
-    # Variante : promis à un appel du rejeu, qui le servira (``match_tool``).
     reserved: bool = False
 
 
 @dataclass
 class ReplayBook:
-    """Les réponses du monde à un run, et ce qu'on en a resservi."""
+    """Les réponses du monde à un run, et ce qu'on en a resservi.
+
+    Attributes:
+        responses: Réponses de modèle du journal, dans l'ordre.
+        tools: Appels d'outil du journal, par run et ``call_id`` : un
+            identifiant d'appel n'est unique que dans son run.
+        approvals: Première décision d'approbation du journal, par run et
+            ``call_id``.
+        answers: Réponse ou expiration d'une question (``wait_answer``), par
+            run et ``call_id``.
+        fallbacks: Bascules du run d'origine sur un modèle de secours, que le
+            rejeu identique ne reproduit pas.
+        divergence: La première divergence ; ``None`` tant que le rejeu suit le
+            journal.
+        failure: La panne de modèle sur laquelle le run racine s'est arrêté,
+            s'il s'est arrêté sur une panne : son type et son message,
+            resservis au rejeu identique.
+        read_runs: Variante : sous-runs lus au journal (leur appel servi tel
+            quel) ; leurs propres appels n'ont pas à être refaits.
+        real_calls: Variante : appels vraiment partis aux modèles.
+        real_usage: Variante : tokens de ces vrais appels.
+        spent_usd: Variante : ce qu'ont coûté ces vrais appels, en dollars.
+        _by_hash: Réponses du journal pas encore servies, par empreinte de
+            requête.
+        _children: Sous-runs de chaque run, d'après les ``run.started``.
+    """
 
     responses: list[_Response] = field(default_factory=list[_Response])
-    # Par run et ``call_id`` : un identifiant d'appel n'est unique que dans son run.
     tools: dict[tuple[str, str], ToolCallRecord] = field(default_factory=dict[tuple[str, str], ToolCallRecord])
     approvals: dict[tuple[str, str], ApprovalGranted | ApprovalRejected | ApprovalExpired] = field(
         default_factory=dict[tuple[str, str], ApprovalGranted | ApprovalRejected | ApprovalExpired]
@@ -142,13 +189,8 @@ class ReplayBook:
     answers: dict[tuple[str, str], QuestionAnswered | QuestionExpired] = field(default_factory=dict[tuple[str, str], QuestionAnswered | QuestionExpired])
     fallbacks: list[ModelFellBack] = field(default_factory=list[ModelFellBack])
     divergence: Divergence | None = None
-    # La panne de modèle sur laquelle le run racine s'est arrêté, s'il s'est
-    # arrêté sur une panne : son type et son message, resservis au rejeu identique.
     failure: tuple[ModelErrorKind, str] | None = None
-    # Variante : sous-runs lus au journal (leur appel servi tel quel) ; leurs
-    # propres appels n'ont pas à être refaits.
     read_runs: set[str] = field(default_factory=set[str])
-    # Variante : ce qui est vraiment parti aux modèles.
     real_calls: int = 0
     real_usage: Usage = field(default_factory=Usage)
     spent_usd: float = 0.0
@@ -192,6 +234,7 @@ class ReplayBook:
 
     @property
     def diverged(self) -> bool:
+        """Vrai dès qu'une divergence est notée."""
         return self.divergence is not None
 
     def _is_child(self, run_id: str) -> bool:
@@ -199,6 +242,7 @@ class ReplayBook:
 
     @property
     def served_responses(self) -> int:
+        """Réponses du journal resservies au rejeu."""
         return sum(1 for r in self.responses if r.served)
 
     @property
@@ -208,10 +252,12 @@ class ReplayBook:
 
     @property
     def served_tools(self) -> int:
+        """Appels d'outil du journal resservis au rejeu."""
         return sum(1 for t in self.tools.values() if t.served)
 
     @property
     def unserved_responses(self) -> list[_Response]:
+        """Réponses du journal pas encore resservies, sauf celles des sous-runs lus tels quels (variante)."""
         return [r for r in self.responses if not r.served and r.run_id not in self.read_runs]
 
     @property
@@ -261,8 +307,13 @@ class ReplayBook:
         raise ModelError("invalid_request", f"rejeu : {self.divergence.where}", by_client=True)
 
     def known(self, request: ModelRequest) -> ModelResponded | None:
-        """Variante : la réponse du journal à une requête identique, avant comme après
-        la divergence ; ``None`` si le journal ne la connaît pas — elle partira pour de vrai.
+        """Variante : la réponse du journal à une requête identique, avant comme après la divergence.
+
+        ``None`` si le journal ne la connaît pas : elle partira pour de vrai, et
+        la première requête inconnue est notée comme divergence.
+
+        Args:
+            request: La requête de la variante.
         """
         digest = request.request_hash()
         found = self._take(digest)
@@ -287,6 +338,19 @@ class ReplayBook:
         return entry.payload
 
     def _model_divergence(self, request: ModelRequest, digest: str, *, exact: bool) -> Divergence:
+        """La divergence d'un appel de modèle que le journal ne connaît pas.
+
+        Si toutes les réponses du journal sont déjà servies, le run d'origine n'a
+        pas fait cet appel. Sinon, l'attendu est la première réponse pas encore
+        servie : la divergence dit quelles parties de la requête diffèrent quand le
+        journal en porte les empreintes, et signale au rejeu identique une bascule
+        du run d'origine sur un secours, qu'il ne reproduit pas.
+
+        Args:
+            request: La requête du rejeu.
+            digest: Son empreinte.
+            exact: Rejeu identique (et non variante).
+        """
         pending = self.unserved_responses
         rank = len(self.responses) - len(pending) + 1
         if not pending:
@@ -330,8 +394,15 @@ class ReplayBook:
     # --- Outils -------------------------------------------------------------
 
     def match_tool(self, name: str, arguments: Mapping[str, JsonValue]) -> ToolCallRecord | None:
-        """Variante : le premier appel du journal de même nom et mêmes arguments, pas encore
-        promis ni servi, dans l'ordre du journal ; il est promis à l'appelant.
+        """Variante : le premier appel du journal de même nom et mêmes arguments.
+
+        Seul un appel pas encore promis ni servi compte, dans l'ordre du
+        journal ; il est promis à l'appelant (``reserved``). Un rôle, ou un
+        appel sans résultat, n'est jamais retrouvé.
+
+        Args:
+            name: Nom de l'outil.
+            arguments: Arguments de l'appel.
         """
         wanted = dict(arguments)
         for record in self.tools.values():
@@ -349,6 +420,22 @@ class ReplayBook:
         return completed.output, consumption
 
     def tool_output(self, run_id: str, call_id: str, name: str, arguments: Mapping[str, JsonValue]) -> tuple[ToolOutput, Consumption | None]:
+        """Le résultat du journal pour cet appel d'outil (rejeu identique), et sa consommation.
+
+        L'appel est retrouvé par run et ``call_id`` ; son nom et ses arguments
+        doivent être ceux du journal. Absent, sans résultat ou différent, il diverge
+        et le modèle reçoit une erreur ; après une divergence, plus rien n'est servi.
+
+        Args:
+            run_id: Run qui appelle.
+            call_id: Identifiant de l'appel.
+            name: Nom de l'outil.
+            arguments: Arguments tels que le modèle les a écrits.
+
+        Returns:
+            Le résultat enregistré, ou une erreur, et la consommation que portait
+            l'appel.
+        """
         if self.diverged:
             return ToolOutput.error(STOPPED), None
         recorded = self.tools.get((run_id, call_id))
@@ -472,9 +559,19 @@ class ReplayModelClient(AnsweringClient):
 
     @property
     def provider(self) -> str:
+        """Fournisseur du modèle, tel que son adaptateur l'écrirait."""
         return provider_of(self.spec)
 
     async def answer(self, request: ModelRequest) -> ModelResponse:
+        """La réponse du journal à cette requête.
+
+        Args:
+            request: La requête du rejeu.
+
+        Raises:
+            ModelError: Requête inconnue du journal, rejeu déjà arrêté, ou panne du
+                run d'origine resservie.
+        """
         return recorded_response(self.book.answer(request))
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
@@ -484,6 +581,7 @@ class ReplayModelClient(AnsweringClient):
             yield chunk
 
     async def aclose(self) -> None:
+        """Rien à fermer : aucun vrai client."""
         pass
 
 
@@ -494,10 +592,12 @@ class JournalTools:
         self.book = book
 
     def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool:
+        """Le journal sert tout appel, sauf celui d'un rôle, qui tourne et dont le modèle rejoue."""
         # Un rôle est de la logique : il tourne, et son modèle rejoue.
         return tool.spec.kind != "role"
 
     def from_journal(self, run_id: RunId, call_id: str) -> bool:
+        """Toujours vrai : au rejeu identique, tout résultat servi vient du journal."""
         # Au rejeu identique, tout résultat servi vient du journal.
         return True
 
@@ -517,6 +617,7 @@ class JournalTools:
         arguments: Mapping[str, JsonValue],
         resolved: Mapping[str, JsonValue],
     ) -> tuple[ToolOutput, Consumption | None]:
+        """Le résultat du journal pour cet appel (``ReplayBook.tool_output``), comparé aux arguments écrits : c'est eux que le journal garde."""
         # Comparé aux arguments écrits : c'est eux que le journal garde.
         return self.book.tool_output(run_id, call_id, name, arguments)
 

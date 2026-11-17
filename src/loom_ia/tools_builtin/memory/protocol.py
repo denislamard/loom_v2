@@ -29,51 +29,97 @@ from loom_ia.tools_builtin.memory import bge_m3
 from loom_ia.tools_builtin.memory.models import Embedding, SparseVec
 
 PROTOCOL: Final = 1
-# Le nom de l'application, dans ses messages comme dans ceux du client.
+"""Version du protocole entre loom et ``loom-mem-gpu``."""
 APP: Final = "loom-mem-gpu"
-# Textes (ou passages) au plus par requête ; caractères au plus par texte, la borne que
-# les modèles appliquent eux-mêmes (le client coupe avant d'envoyer, rien n'est donc
-# refusé) ; octets au plus par corps de requête, lu seulement après ce contrôle. Le corps
-# le plus lourd — une question et MAX_TEXTS passages, tout en caractères échappés en
-# JSON (6 octets) — tient sous MAX_BODY_BYTES.
+"""Le nom de l'application, dans ses messages comme dans ceux du client."""
 MAX_TEXTS: Final = 32
+"""Textes (ou passages) au plus par requête ; caractères au plus par texte, la
+borne que les modèles appliquent eux-mêmes (le client coupe avant d'envoyer,
+rien n'est donc refusé) ; octets au plus par corps de requête, lu seulement
+après ce contrôle. Le corps le plus lourd — une question et MAX_TEXTS
+passages, tout en caractères échappés en JSON (6 octets) — tient sous
+MAX_BODY_BYTES.
+"""
 MAX_CHARS: Final = bge_m3.MAX_CHARS
+"""Caractères au plus par texte : la borne de ``bge_m3``."""
 MAX_BODY_BYTES: Final = 4_000_000
-# Textes par requête du client : les lots de BGE-M3. Un appel annulé s'arrête au suivant.
+"""Octets au plus par corps de requête."""
 BATCH: Final = bge_m3.BATCH
+"""Textes par requête du client : les lots de BGE-M3. Un appel annulé s'arrête au suivant."""
 
 type State = Literal["loading", "ready", "failed"]
+"""L'état de l'application : modèles en chargement, prêts, ou chargement raté."""
 
 
 class _Wire(BaseModel):
+    """La base des messages du fil : figés, sans champ inconnu."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class EmbedRequest(_Wire):
+    """Le corps de ``POST /v1/embed``.
+
+    Attributes:
+        texts: Les textes à vectoriser.
+    """
+
     texts: list[str]
 
 
 class SparseWire(_Wire):
+    """Le lexical tel qu'il voyage.
+
+    Attributes:
+        indices: Identifiants de tokens triés.
+        values: Leurs poids.
+    """
+
     indices: list[int]
     values: list[float]
 
 
 class EmbedItem(_Wire):
-    # base64 de float32 petit-boutiste.
+    """Les vecteurs d'un texte, tels qu'ils voyagent.
+
+    Attributes:
+        dense: Le dense, en base64 de float32 petit-boutiste.
+        sparse: Le lexical.
+    """
+
     dense: str
     sparse: SparseWire
 
 
 class EmbedResponse(_Wire):
+    """La réponse de ``POST /v1/embed``.
+
+    Attributes:
+        items: Les vecteurs, un par texte, dans l'ordre.
+    """
+
     items: list[EmbedItem]
 
 
 class ScoreRequest(_Wire):
+    """Le corps de ``POST /v1/score``.
+
+    Attributes:
+        query: La question.
+        passages: Les passages à noter.
+    """
+
     query: str
     passages: list[str]
 
 
 class ScoreResponse(_Wire):
+    """La réponse de ``POST /v1/score``.
+
+    Attributes:
+        scores: Les scores, un par passage, dans l'ordre.
+    """
+
     scores: list[float]
 
 
@@ -96,9 +142,15 @@ class Health(_Wire):
 
 
 class ErrorBody(_Wire):
+    """Le corps d'une réponse d'erreur.
+
+    Attributes:
+        error: Le message.
+        state: Sur un 503 : ``loading`` ou ``failed`` quand les modèles ne sont
+            pas prêts ; absent quand la file est pleine.
+    """
+
     error: str
-    # Sur un 503 : ``loading`` ou ``failed`` quand les modèles ne sont pas prêts ; absent
-    # quand la file est pleine.
     state: State | None = None
 
 
@@ -139,6 +191,7 @@ def decode_dense(text: str) -> list[float]:
 
 
 def to_item(embedding: Embedding) -> EmbedItem:
+    """Les vecteurs d'un texte, prêts à voyager."""
     sparse = embedding.sparse
     return EmbedItem(
         dense=encode_dense(embedding.dense),
@@ -147,6 +200,11 @@ def to_item(embedding: Embedding) -> EmbedItem:
 
 
 def from_item(item: EmbedItem) -> Embedding:
+    """Les vecteurs reçus, décodés.
+
+    Raises:
+        ValueError: Indices et poids du lexical de longueurs différentes.
+    """
     if len(item.sparse.indices) != len(item.sparse.values):
         raise ValueError("lexical : indices et poids de longueurs différentes")
     return Embedding(

@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Cycle de vie des runs : assemblage de la config, lancement, reprise."""
+"""Cycle de vie des runs : assemblage de la config, lancement, reprise.
+
+- ``wiring`` : de la config aux objets qui tournent — ``build_agent`` (un agent
+  prêt à tourner), fabriques des stockages (journal, artefacts, idempotence,
+  file, bus, trousseau), politiques, juges, avertissements de chargement ;
+- ``sources`` : sources d'outils fournies par des paquets installés (groupe
+  ``loom_ia.tools``).
+
+La façade ``Loom`` (``access/api.py``) assemble une instance à partir d'ici.
+"""
 
 from loom_ia.runtime.wiring import (
     Agent,

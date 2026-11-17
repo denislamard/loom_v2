@@ -923,7 +923,7 @@ def test_proposed_styles_are_a_field_of_their_blocks() -> None:
 
 
 def test_windows_line_endings_are_line_breaks() -> None:
-    """B-3 : ``prepare`` ramène \\r\\n et \\r à \\n, pour ``word`` comme pour ``pdf``."""
+    r"""B-3 : ``prepare`` ramène \r\n et \r à \n, pour ``word`` comme pour ``pdf``."""
     found = prepared(
         {"type": "paragraph", "text": "un\r\ndeux\rtrois"},
         {"type": "note", "title": "A\r\nB", "text": "c\r\nd"},
@@ -943,8 +943,7 @@ def test_windows_line_endings_are_line_breaks() -> None:
 
 
 def rich_prepared(*blocks: dict[str, Any], template: Any = None, **arguments: Any) -> Prepared:
-    """Le document préparé, champs, code et listes à cocher compris ; avec ``template``,
-    par sections."""
+    """Le document préparé, champs, code et listes à cocher compris ; avec ``template``, par sections."""
     names = (template.name,) if template is not None else ()
     model = variant(DocumentCall, blocks=("fields", "code", "checkboxes"), templates=names)
     if template is not None:
@@ -1269,8 +1268,7 @@ def test_group_faults() -> None:
 
 
 def test_the_invoice_totals_of_the_analysis() -> None:
-    """Le § 11.2 : 1 430,50 € à 10 % et 179,98 € à 20 % donnent 143,05 € et 36,00 € de
-    TVA, et 1 789,53 € TTC ; l'acompte, puis le net à payer."""
+    """Le § 11.2 : 1 430,50 € à 10 % et 179,98 € à 20 % donnent 143,05 € et 36,00 € de TVA, et 1 789,53 € TTC ; l'acompte, puis le net à payer."""
     found = calculated(
         {"type": "table", "columns": PRICES, "rows": LOTS, "totals": {"Montant HT": "sum"}},
         {

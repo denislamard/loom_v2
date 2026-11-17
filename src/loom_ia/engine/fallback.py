@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Chaîne de secours d'un appel de modèle (B4, #7, #10).
+"""Chaîne de secours d'un appel de modèle (fonction B4, points 7 et 10).
 
 Un emplacement (``main``, un rôle, un juge) déclare son modèle et ses
 secours, dans l'ordre : ``model: M3_MAIN, fallbacks: [SONNET]``.
@@ -24,7 +24,7 @@ chaîne repart de ce modèle.
 Requête d'un secours : celle du modèle précédent, avec l'identifiant, le
 ``max_tokens`` et les ``params`` du secours (ceux de l'emplacement
 par-dessus). Le raisonnement produit par un autre modèle est retiré des
-messages (#7) : un fournisseur ne relit que le sien. Le cache de prompt est
+messages (point 7) : un fournisseur ne relit que le sien. Le cache de prompt est
 perdu, et le coût suit le tarif du secours.
 
 Outil imposé : un modèle déclaré ``capabilities.forced_tool_choice: false``
@@ -68,17 +68,26 @@ from loom_ia.core.ports import ArtifactStore, ChunkCallback, ModelClient, ModelE
 from loom_ia.engine.circuit import CIRCUIT_ERRORS, CircuitBreakers, Tripped, model_key
 from loom_ia.engine.model_call import ModelCall, Sleep
 
-# Erreurs qui font passer au modèle suivant, tentatives épuisées : celles qui
-# comptent pour le disjoncteur. Un modèle qu'on quitte pour elles est un modèle
-# en difficulté ; les écrire deux fois les laissait diverger.
 FALLBACK_ERRORS: Final[frozenset[ModelErrorKind]] = CIRCUIT_ERRORS
+"""Erreurs qui font passer au modèle suivant, tentatives épuisées.
+
+Ce sont celles qui comptent pour le disjoncteur (``transient``,
+``overloaded``, ``quota_exhausted``) : un modèle qu'on quitte pour elles est un
+modèle en difficulté ; les écrire deux fois les laissait diverger.
+"""
 
 type ChainEvent = ModelExchanged | ModelRetried | ModelFellBack | CircuitOpened
+"""Événement produit pendant l'appel d'une chaîne, avant la réponse."""
 
 
 @dataclass(frozen=True, slots=True)
 class ModelLink:
-    """Un modèle d'une chaîne : sa définition et son client."""
+    """Un modèle d'une chaîne : sa définition et son client.
+
+    Attributes:
+        spec: Définition du modèle dans la config.
+        client: Client de son fournisseur.
+    """
 
     spec: ModelSpec
     client: ModelClient
@@ -86,13 +95,19 @@ class ModelLink:
 
 @dataclass(frozen=True, slots=True)
 class Answered:
-    """Réponse obtenue, et le modèle de la chaîne qui l'a donnée."""
+    """Réponse obtenue, et le modèle de la chaîne qui l'a donnée.
+
+    Attributes:
+        response: La réponse.
+        spec: Le modèle qui l'a donnée.
+        request: Requête envoyée à ce modèle, avant la résolution des
+            fichiers.
+        attempts: Tentatives sur ce modèle, la dernière comprise.
+    """
 
     response: ModelResponse
     spec: ModelSpec
-    # Requête envoyée à ce modèle, avant la résolution des fichiers.
     request: ModelRequest
-    # Tentatives sur ce modèle, la dernière comprise.
     attempts: int
 
 
@@ -110,13 +125,30 @@ class _Tracked:
 
 @dataclass(frozen=True, kw_only=True)
 class ModelChain:
-    """Modèle d'un emplacement et ses secours, dans l'ordre."""
+    """Modèle d'un emplacement et ses secours, dans l'ordre.
+
+    Attributes:
+        links: Le modèle de l'emplacement puis ses secours (``fallbacks``).
+        slot: ``main``, le nom d'un rôle ou ``judge:<nom>`` : recopié dans
+            ``model.fell_back``.
+        breakers: Disjoncteurs partagés de l'instance ; ``None`` : aucun.
+        max_tokens: Réglage de l'emplacement (fonction B6) : remplace celui
+            de chaque modèle.
+        params: Paramètres de l'emplacement, par-dessus ceux de chaque
+            modèle.
+        on_chunk: Diffusion en direct de la réponse.
+        artifacts: Magasin de fichiers, pour résoudre les références.
+        sleep: Attente entre deux tentatives ; remplaçable pour les tests.
+        jitter: Tirage de la part aléatoire du délai ; remplaçable pour les
+            tests.
+
+    Raises:
+        ValueError: À la construction, si ``links`` est vide.
+    """
 
     links: Sequence[ModelLink]
-    # ``main``, le nom d'un rôle ou ``judge:<nom>`` : recopié dans ``model.fell_back``.
     slot: str
     breakers: CircuitBreakers | None = None
-    # Réglages de l'emplacement (B6) : remplacent ceux de chaque modèle.
     max_tokens: int | None = None
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     on_chunk: ChunkCallback | None = None
@@ -129,7 +161,12 @@ class ModelChain:
             raise ValueError(f"Chaîne de modèles vide pour {self.slot!r}")
 
     def position(self, current: str | None) -> int:
-        """Rang du modèle courant de l'emplacement ; 0 s'il n'a pas basculé."""
+        """Rang du modèle courant de l'emplacement ; 0 s'il n'a pas basculé.
+
+        Args:
+            current: Identifiant du modèle courant (``RunState.models``) ;
+                un modèle retiré de la config depuis compte comme 0.
+        """
         for index, link in enumerate(self.links):
             if link.spec.id == current:
                 return index
@@ -137,11 +174,26 @@ class ModelChain:
         return 0
 
     def link(self, current: str | None) -> ModelLink:
-        """Modèle à appeler en premier : le courant de l'emplacement (adhérence)."""
+        """Modèle à appeler en premier : le courant de l'emplacement (adhérence).
+
+        Args:
+            current: Identifiant du modèle courant, ou ``None``.
+        """
         return self.links[self.position(current)]
 
     def request_for(self, spec: ModelSpec, request: ModelRequest) -> ModelRequest:
-        """Requête adaptée à un modèle de la chaîne : ses réglages, son raisonnement seul."""
+        """Requête adaptée à un modèle de la chaîne : ses réglages, son raisonnement seul.
+
+        Args:
+            spec: Le modèle.
+            request: La requête du modèle précédent.
+
+        Returns:
+            La requête avec le nom du modèle, son ``max_tokens`` (ou celui de
+            l'emplacement), ses ``params`` sous ceux de l'emplacement, sans le
+            raisonnement d'un autre modèle, et sans outil imposé s'il le
+            refuse.
+        """
         return sendable(
             spec,
             request.model_copy(
@@ -158,7 +210,20 @@ class ModelChain:
         """Événements de l'appel (tentatives, bascules, disjoncteurs), puis la réponse.
 
         ``request`` est construite pour le modèle ``current`` (celui de
-        ``link(current)``). Lève ``ModelError`` si aucun modèle n'a répondu.
+        ``link(current)``).
+
+        Args:
+            request: La requête.
+            current: Modèle courant de l'emplacement (adhérence).
+
+        Yields:
+            ``model.exchanged``, ``model.retried``, ``model.fell_back`` et
+            ``circuit.opened`` à mesure, puis ``Answered`` en dernier.
+
+        Raises:
+            ModelError: Aucun modèle n'a répondu : erreur définitive, fin de
+                chaîne atteinte, ou ``unavailable`` si les derniers modèles
+                sont écartés par leur disjoncteur.
         """
         index = start = self.position(current)
         tries = 0
@@ -252,7 +317,11 @@ class ModelChain:
         return self.breakers.failed(model_key(link.spec.id), setting)
 
     def _following(self, index: int, error: ModelError) -> int | None:
-        """Rang du modèle qui prend la suite après cette erreur, ou None : l'appel échoue."""
+        """Rang du modèle qui prend la suite après cette erreur, ou ``None`` : l'appel échoue.
+
+        ``FALLBACK_ERRORS`` : le suivant ; ``context_overflow`` : le premier
+        dont la fenêtre déclarée est plus grande ; toute autre erreur : aucun.
+        """
         if error.kind in FALLBACK_ERRORS:
             return index + 1 if index + 1 < len(self.links) else None
         if error.kind != "context_overflow":
@@ -272,6 +341,13 @@ def sendable(spec: ModelSpec, request: ModelRequest) -> ModelRequest:
 
     ``tool_choice: required`` devient ``auto`` pour un modèle déclaré
     ``capabilities.forced_tool_choice: false`` ; le reste est inchangé.
+
+    Args:
+        spec: Le modèle.
+        request: La requête.
+
+    Returns:
+        La requête à envoyer.
     """
     if request.tool_choice == "required" and not spec.capabilities.forced_tool_choice:
         return request.model_copy(update={"tool_choice": "auto"})
@@ -279,9 +355,16 @@ def sendable(spec: ModelSpec, request: ModelRequest) -> ModelRequest:
 
 
 def own_reasoning(messages: Sequence[Message], model: str) -> tuple[Message, ...]:
-    """Messages sans le raisonnement produit par un autre modèle (#7).
+    """Messages sans le raisonnement produit par un autre modèle (point 7).
 
     Un raisonnement sans modèle (journal antérieur au marquage) est gardé.
+
+    Args:
+        messages: Les messages.
+        model: Nom du modèle chez le fournisseur.
+
+    Returns:
+        Les messages, sans les blocs de raisonnement d'un autre modèle.
     """
     kept: list[Message] = []
     for message in messages:

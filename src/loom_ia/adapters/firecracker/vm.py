@@ -35,16 +35,18 @@ from typing import Literal, cast
 
 __all__ = ["Stopped", "Vm", "VmError", "VsockRefused"]
 
-# La manière dont la VM s'est arrêtée. « console » et « acpi » laissent
-# systemd démonter /data et vider ses caches ; les deux autres coupent net.
 type Stopped = Literal["console", "acpi", "sigterm", "sigkill"]
+"""La manière dont la VM s'est arrêtée. « console » et « acpi » laissent
+systemd démonter /data et vider ses caches ; les deux autres coupent net.
+"""
 
-# Lancements faits par ce processus, par dossier de VM : leur tube stdin est
-# la console série, et les garder ici permet de récolter les zombies (une VM
-# est un fils qu'on n'attend jamais). Indexés par dossier et non par le PID du
-# verrou : un run.sh qui perd la course rouvre ce fichier avec « > » et
-# l'efface, le PID qu'il portait est alors perdu.
 _SPAWNED: dict[Path, list[subprocess.Popen[bytes]]] = {}
+"""Lancements faits par ce processus, par dossier de VM : leur tube stdin est
+la console série, et les garder ici permet de récolter les zombies (une VM
+est un fils qu'on n'attend jamais). Indexés par dossier et non par le PID du
+verrou : un run.sh qui perd la course rouvre ce fichier avec « > » et
+l'efface, le PID qu'il portait est alors perdu.
+"""
 
 
 class VmError(RuntimeError):
@@ -69,16 +71,26 @@ def _parse_env(path: Path) -> dict[str, str]:
 
 @dataclass(frozen=True, slots=True)
 class Vm:
-    """Poignée sur un dossier de VM : ``vm.env``, ``run.sh``, ``runtime/``."""
+    """Poignée sur un dossier de VM : ``vm.env``, ``run.sh``, ``runtime/``.
+
+    Attributes:
+        name: Nom de la VM (``VM_NAME``).
+        cid: CID vsock de l'invité (``GUEST_CID``).
+        api_sock: Socket de l'API de Firecracker (``API_SOCK``).
+        vsock_uds: Socket Unix du vsock, côté hôte (``VSOCK_UDS``).
+        directory: Dossier de la VM.
+        execd_port: Port vsock d'execd dans l'invité, tel que vm.env le donne ;
+            ``None`` s'il n'y est pas.
+        execd_src: Dossier source d'execd retenu à la construction ; vide :
+            image sans execd.
+    """
 
     name: str
     cid: int
     api_sock: Path
     vsock_uds: Path
     directory: Path
-    # Port vsock d'execd dans l'invité, tel que vm.env le donne ; None s'il n'y est pas.
     execd_port: int | None
-    # Dossier source d'execd retenu à la construction ; vide = image sans execd.
     execd_src: str
 
     # ------------------------------------------------------------------ #
@@ -87,6 +99,11 @@ class Vm:
 
     @classmethod
     def load(cls, vm_dir: str | os.PathLike[str]) -> Vm:
+        """La VM d'un dossier, lue dans son ``vm.env``.
+
+        Raises:
+            VmError: ``vm.env`` absent, clé manquante ou valeur illisible.
+        """
         directory = Path(vm_dir).expanduser().resolve()
         env_file = directory / "vm.env"
         if not env_file.is_file():
@@ -114,10 +131,12 @@ class Vm:
 
     @property
     def lock_path(self) -> Path:
+        """Verrou que tient ``run.sh`` ; il porte le PID du VMM."""
         return self.directory / "runtime" / "vm.lock"
 
     @property
     def console_log(self) -> Path:
+        """Journal de la console série de l'invité."""
         return self.directory / "runtime" / "console.log"
 
     def is_running(self) -> bool:
@@ -181,6 +200,7 @@ class Vm:
         await self._wait_ready(proc, wait=wait)
 
     def _spawn(self, console: bool) -> subprocess.Popen[bytes]:
+        """Lance ``run.sh`` dans une session à part : son stdin reste un tube (la console série), sa sortie va au journal de la console."""
         # stdin reste un tube : c'est la console série de l'invité, par où
         # passe l'arrêt « console ». /dev/null y mettrait un EOF immédiat, et
         # le getty de l'autologin bouclerait.
@@ -218,6 +238,7 @@ class Vm:
         return launched[-1] if launched else None
 
     async def _wait_ready(self, proc: subprocess.Popen[bytes], *, wait: float) -> None:
+        """Attend que l'API du VMM lancé réponde, verrou tenu, ``wait`` secondes au plus ; ``VmError`` si le lancement échoue ou reste muet."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + wait
         while True:

@@ -211,8 +211,11 @@ async def test_follow_ends_when_the_run_is_cancelled(atelier: ConfigFactory) -> 
 
 
 async def test_a_cancellation_closes_the_approvals_left_open(atelier: ConfigFactory) -> None:
-    """Test N2 du 23/10 : l'annulation d'un run en pause laissait sa demande d'approbation
-    sans clôture dans le journal ; ``run.cancelled`` nomme désormais celles qu'il clôt."""
+    """Test N2 du 23/10.
+
+    L'annulation d'un run en pause laissait sa demande d'approbation sans clôture dans
+    le journal ; ``run.cancelled`` nomme désormais celles qu'il clôt.
+    """
     async with Loom.from_config(atelier()) as loom:
         paused = await loom.run("demo", "Relance.", user=DEV)
         asked = [a.call_id for a in paused.pending_approvals]

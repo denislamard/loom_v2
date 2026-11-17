@@ -4,6 +4,23 @@
 Le modèle décrit ce que **sont** les données — types de colonne, rôles des
 lignes et des cellules, formules —, jamais leur apparence. Pydantic
 seulement : ni openpyxl, ni disque.
+
+Les modèles d'un onglet n'ont pas de docstring : elle partirait dans le
+schéma, envoyé au modèle à chaque appel. Ils sont décrits ici :
+
+- ``ColumnSpec`` : une colonne, son en-tête (``header``) et son type de
+  valeur (``type``, ``text`` par défaut).
+- ``RowSpec`` : une ligne donnée dans l'appel. ``cells`` : ses valeurs dans
+  l'ordre des colonnes, « =… » pour une formule, ou une ``CellSpec`` qui porte
+  son propre rôle ou un commentaire ; ``role`` : le rôle de la ligne
+  (``Role``), qui donne sa couleur ; ``note`` : son commentaire.
+- ``DataSource`` : un fichier de données qui remplit l'onglet à la place de
+  ``rows`` (.csv, .json ou .xlsx) ; ``sheet`` : l'onglet lu dans un .xlsx.
+- ``SheetSpec`` : un onglet. ``name``, ``columns``, puis ses lignes, données
+  (``rows``) ou lues (``data``), l'un ou l'autre ; ``totals`` : en-tête →
+  agrégat, calculé par une formule sous la colonne.
+- ``ChartedSheetSpec`` : le même onglet avec ``charts``, ses graphiques
+  (``ChartSpec``) ; c'est celui que voit un outil monté avec ``charts``.
 """
 
 from collections.abc import Mapping, Sequence
@@ -17,32 +34,49 @@ from loom_ia.tools_builtin._document.arguments import MAX_SERIES, ChartKind
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Scalar
 
 NAME: Final = "excel"
+"""Nom de l'outil."""
 MAX_SHEETS: Final = 50
+"""Onglets au plus dans un classeur écrit."""
 MAX_COLUMNS: Final = 200
+"""Colonnes au plus dans un onglet écrit."""
 MAX_INLINE_ROWS: Final = 200
+"""Lignes au plus données dans l'appel (``rows``)."""
 MAX_DATA_ROWS: Final = 100_000
+"""Lignes au plus chargées d'un fichier de données."""
 MAX_SOURCE_BYTES: Final = 20_000_000
+"""Taille au plus d'un fichier lu, en octets."""
 MAX_OUTPUT_BYTES: Final = 50_000_000
+"""Taille au plus d'un classeur écrit, en octets."""
 MAX_WARNINGS: Final = 20
+"""Avertissements rendus au plus."""
 MAX_ERRORS_SAID: Final = 10
-# Lecture : lignes rendues par appel, par défaut et au plus.
+"""Erreurs citées au plus dans un refus."""
 READ_ROWS: Final = 200
+"""Lecture : lignes rendues par appel, par défaut et au plus."""
 MAX_READ_ROWS: Final = 1_000
-# Excel : 1 048 576 lignes, 16 384 colonnes (XFD).
+"""Lignes rendues au plus par une lecture."""
 MAX_SHEET_ROWS: Final = 1_048_576
+"""Excel : 1 048 576 lignes, 16 384 colonnes (XFD)."""
 MAX_SHEET_COLUMNS: Final = 16_384
+"""Colonnes d'une feuille Excel (XFD)."""
 
 type Role = Literal["input", "formula", "assumption", "total", "note"]
+"""Rôle d'une colonne : saisie, formule, hypothèse, total ou note ; il donne sa couleur."""
 
 # Les descriptions des champs restent courtes : la description de l'outil
 # explique déjà le vocabulaire, et le schéma est envoyé au modèle à chaque appel.
 
 
 class _Model(BaseModel):
+    """La base des modèles d'arguments : figés, sans champ inconnu.
+
+    Sa docstring ne part pas dans le schéma : Pydantic ne la transmet pas aux sous-classes.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ColumnSpec(_Model):
+class ColumnSpec(_Model):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     header: Annotated[
         str,
         Field(
@@ -61,13 +95,13 @@ class CellSpec(_Model):
     note: str | None = None
 
 
-class RowSpec(_Model):
+class RowSpec(_Model):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     cells: Annotated[list[Scalar | CellSpec], Field(description="Dans l'ordre des colonnes ; « =… » : formule.")]
     role: Role | None = None
     note: Annotated[str | None, Field(description="Commentaire de la ligne (source…).")] = None
 
 
-class DataSource(_Model):
+class DataSource(_Model):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     path: Annotated[
         str,
         Field(
@@ -85,7 +119,7 @@ class DataSource(_Model):
         return self
 
 
-class SheetSpec(_Model):
+class SheetSpec(_Model):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     name: str
     columns: Annotated[list[ColumnSpec], Field(min_length=1)]
     rows: list[RowSpec] | None = None
@@ -122,10 +156,11 @@ class ChartSpec(_Model):
 
 # Le même onglet, avec ses graphiques : ce que voit un outil monté avec ``charts``.
 # Pas de docstring : elle partirait dans le schéma, envoyé au modèle à chaque appel.
-class ChartedSheetSpec(SheetSpec):
+class ChartedSheetSpec(SheetSpec):  # noqa: D101  # Docstring vue par le modèle (schéma des arguments) : à ne pas ajouter.
     charts: list[ChartSpec] | None = None
 
     def chart_specs(self) -> Sequence[ChartSpec]:
+        """Les graphiques de l'onglet ; aucun s'il n'en déclare pas."""
         return self.charts or ()
 
 
@@ -147,6 +182,7 @@ class ReadArguments(_Model):
 
 
 type Action = Literal["write", "read"]
+"""Action de l'outil : écrire ou lire."""
 _FOR: Final[dict[str, Action]] = {
     "sheets": "write",
     "overwrite": "write",
@@ -203,6 +239,7 @@ class ExcelCall(_Model):
         return self
 
     def request(self) -> ExcelArguments | ReadArguments:
+        """La demande que l'appel porte : écrire un classeur (``ExcelArguments``) ou en lire un (``ReadArguments``)."""
         if self.action == "read":
             return ReadArguments(
                 path=self.path,
@@ -263,13 +300,16 @@ class Problems:
     warnings: list[str] = field(default_factory=list[str])
 
     def error(self, said: str) -> None:
+        """Note une erreur : le classeur sera refusé."""
         self.errors.append(said)
 
     def warn(self, said: str) -> None:
+        """Note un avertissement, une fois, ``MAX_WARNINGS`` au plus."""
         if said not in self.warnings and len(self.warnings) < MAX_WARNINGS:
             self.warnings.append(said)
 
     def raise_if_any(self) -> None:
+        """Lève ``ToolError`` s'il y a des erreurs : « Classeur refusé », puis les ``MAX_ERRORS_SAID`` premières."""
         if not self.errors:
             return
         shown = self.errors[:MAX_ERRORS_SAID]

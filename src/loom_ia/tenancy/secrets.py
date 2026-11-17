@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Secrets par client, lus dans l'environnement (L2, M3, §16.3).
+"""Secrets par client, lus dans l'environnement (fonctions L2 et M3, conception §16.3).
 
 La configuration ne nomme que des variables : ``api_key_env`` d'un modèle,
 ``env_from`` et ``headers_env`` d'un serveur MCP. Un client redirige ces
@@ -37,7 +37,13 @@ from loom_ia.tools_builtin import NamesSecrets, builtin_params, is_builtin
 
 
 class EnvironmentSecrets:
-    """``SecretProvider`` adossé à l'environnement du process."""
+    """``SecretProvider`` adossé à l'environnement du process.
+
+    Args:
+        config: La configuration : clients déclarés et variables qu'elle
+            nomme.
+        environ: Environnement à lire ; ``os.environ`` par défaut.
+    """
 
     def __init__(self, config: LoomConfig, environ: Mapping[str, str] | None = None) -> None:
         self._environ = os.environ if environ is None else environ
@@ -47,6 +53,16 @@ class EnvironmentSecrets:
         self._tables: dict[TenantId, Mapping[str, str]] = {}
 
     def secrets(self, tenant_id: TenantId) -> Mapping[str, str]:
+        """Table des secrets du client, calculée une fois puis gardée.
+
+        Args:
+            tenant_id: Le client.
+
+        Returns:
+            Une table en lecture seule : nom de variable vers valeur, noms
+            redirigés compris (vides si la variable cible est absente) ;
+            l'environnement entier sans clients déclarés.
+        """
         table = self._tables.get(tenant_id)
         if table is None:
             table = self._resolve(tenant_id)

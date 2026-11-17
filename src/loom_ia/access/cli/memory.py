@@ -32,9 +32,13 @@ if TYPE_CHECKING:
     from loom_ia.tools_builtin.memory.maintenance import EvalReport
 
 TOOL: Final = "memory"
+"""Nom sous lequel l'agent monte l'outil ``loom.memory``."""
 OK: Final = 0
+"""Code de sortie : la commande a abouti."""
 FAILED: Final = 1
+"""Code de sortie : la commande a échoué."""
 REFUSED: Final = 2
+"""Code de sortie : la demande est refusée."""
 
 
 def add_actions(
@@ -66,10 +70,24 @@ def add_actions(
 
 
 def run(config: LoomConfig, args: argparse.Namespace) -> int:
+    """Mène l'action ``loom memory`` demandée.
+
+    Args:
+        config: La config de la commande.
+        args: Arguments de la commande.
+
+    Returns:
+        0 ; 2 si l'agent n'active pas ``loom.memory``, si l'outil refuse, si le
+        fichier d'export existe déjà ou si le jeu doré est vide.
+    """
     return asyncio.run(_run(config, args))
 
 
 async def _run(config: LoomConfig, args: argparse.Namespace) -> int:
+    """Monte l'agent sans clients de modèle de langage, et mène l'action avec son outil ``loom.memory``.
+
+    Actions : ``export``, ``import``, ``reindex`` ou ``eval``.
+    """
     from loom_ia.tools_builtin.memory import MemoryTool, maintenance
 
     # Les modèles de langage ne servent pas : aucune clé d'API n'est lue.
@@ -112,6 +130,11 @@ async def _run(config: LoomConfig, args: argparse.Namespace) -> int:
 
 
 def _print_report(report: EvalReport, *, as_json: bool) -> None:
+    """Le rapport de ``loom memory eval``, ou en JSON avec ``--json``.
+
+    Une ligne par cas (rang et score), recall@1, recall@5 et MRR, puis le
+    ``min_score`` suggéré.
+    """
     if as_json:
         print(report.model_dump_json(indent=2))
         return

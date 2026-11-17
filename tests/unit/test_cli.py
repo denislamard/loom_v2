@@ -993,8 +993,7 @@ def test_the_journal_of_the_named_client_is_the_one_looked_at(demo: ConfigFactor
 
 
 def test_validate_shows_what_each_contract_requires(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
-    """Test E1 du 19/10 : `validate` disait que `loom.contract` était posé, pas ce qu'il
-    exigeait."""
+    """Test E1 du 19/10 : `validate` disait que `loom.contract` était posé, pas ce qu'il exigeait."""
     agent = demo_agent(
         output={
             "must_match": r"\d{2}/\d{2}/\d{4}",
@@ -1023,8 +1022,11 @@ def test_validate_shows_what_each_contract_requires(demo: ConfigFactory, capsys:
 
 
 def test_validate_writes_a_client_model_mapping_apart_from_the_fallbacks(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
-    """Test E6 du 19/10 : sous « client dupont », le juge affichait « modèle OPUS » sans dire
-    que ce client le fait tourner sur HAIKU ; et « → » est déjà le signe des secours."""
+    """Test E6 du 19/10.
+
+    Sous « client dupont », le juge affichait « modèle OPUS » sans dire que ce client le
+    fait tourner sur HAIKU ; et « → » est déjà le signe des secours.
+    """
     models = [
         MODEL,
         {**MODEL, "id": "OPUS", "model": "fake-opus"},
@@ -1050,8 +1052,7 @@ def test_validate_writes_a_client_model_mapping_apart_from_the_fallbacks(demo: C
 
 
 def test_the_run_summary_names_the_cache_when_there_is_some() -> None:
-    """Test J1 du 21/10 : « tokens : 50/543 » ne disait pas que 4 449 tokens d'entrée
-    étaient passés par le cache, que le rapport comptait, lui."""
+    """Test J1 du 21/10 : « tokens : 50/543 » ne disait pas que 4 449 tokens d'entrée étaient passés par le cache, que le rapport comptait, lui."""
     from loom_ia.access.cli.main import _cache_said  # pyright: ignore[reportPrivateUsage]
     from loom_ia.core.model import Usage
 

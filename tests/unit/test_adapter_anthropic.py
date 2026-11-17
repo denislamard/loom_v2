@@ -839,8 +839,11 @@ async def test_a_session_state_with_nothing_cacheable_before_it_gets_no_cache_po
 
 
 async def test_a_role_message_that_opens_with_its_state_keeps_its_cache_point() -> None:
-    """Le state du moteur n'est jamais le premier message : celui d'un rôle qui commence par
-    sa section ``<session_state>`` est sa demande, et porte le point de cache."""
+    """Le state du moteur n'est jamais le premier message.
+
+    Celui d'un rôle qui commence par sa section ``<session_state>`` est sa demande, et
+    porte le point de cache.
+    """
     server = Server(answered())
     asked = Message.user(f"{shown(a=1).text}\n\n<arguments>\n{{}}\n</arguments>")
     await complete(server.model(cached_spec(messages=True)), request(asked))

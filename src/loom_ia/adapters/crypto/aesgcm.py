@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Sceau AES-256-GCM, et trousseau lu dans les secrets des clients (#30, §11.5).
+"""Sceau AES-256-GCM, et trousseau lu dans les secrets des clients (point 30, conception §11.5).
 
 Un seul algorithme : AES-256-GCM, chiffrement authentifié. Le sceau porte son
 nonce (12 octets tirés au hasard à chaque fermeture) suivi des octets fermés ;
@@ -40,13 +40,14 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from loom_ia.core.model import TenantId
 from loom_ia.core.ports import Cipher, MissingKey, SealBroken, SealError, SecretProvider
 
-# AES-256 : la clé fait 32 octets, et rien d'autre ne passe.
 KEY_BYTES: Final = 32
-# Nonce de GCM : 96 bits, la taille pour laquelle il est spécifié.
+"""AES-256 : la clé fait 32 octets, et rien d'autre ne passe."""
 NONCE_BYTES: Final = 12
-# Ce que l'empreinte garde du condensé : assez pour distinguer des clés,
-# trop peu pour servir à autre chose.
+"""Nonce de GCM : 96 bits, la taille pour laquelle il est spécifié."""
 FINGERPRINT_CHARS: Final = 12
+"""Ce que l'empreinte garde du condensé : assez pour distinguer des clés, trop
+peu pour servir à autre chose.
+"""
 _FINGERPRINT_SALT: Final = b"loom.key.v1"
 
 
@@ -88,13 +89,29 @@ class AesGcmCipher:
 
     @property
     def key_id(self) -> str:
+        """Empreinte de la clé : elle dit laquelle, sans la dire."""
         return self._key_id
 
     def seal(self, clear: bytes, aad: bytes) -> bytes:
+        """Ferme des octets : un nonce aléatoire de 96 bits, puis le chiffré authentifié.
+
+        Args:
+            clear: Les octets à fermer.
+            aad: Ce que le sceau authentifie sans le chiffrer (journal, place, URI…).
+        """
         nonce = os.urandom(NONCE_BYTES)
         return nonce + self._aead.encrypt(nonce, clear, aad)
 
     def unseal(self, sealed: bytes, aad: bytes) -> bytes:
+        """Ouvre un sceau fermé par cette clé.
+
+        Args:
+            sealed: Le nonce suivi du chiffré.
+            aad: Ce qui a été authentifié à la fermeture.
+
+        Raises:
+            SealBroken: Sceau trop court, octets ou ``aad`` altérés, ou autre clé.
+        """
         if len(sealed) <= NONCE_BYTES:
             raise SealBroken(f"Sceau de {len(sealed)} octets : trop court pour en être un")
         try:
@@ -127,6 +144,12 @@ class SecretKeyring:
         return self._names
 
     def ciphers(self, tenant_id: TenantId) -> Sequence[Cipher]:
+        """Clés d'un client, résolues au premier besoin puis gardées : la première ferme, toutes ouvrent.
+
+        Raises:
+            MissingKey: Aucun secret de clé, ou le secret de tête absent ou vide.
+            SealError: Une clé n'est pas du base64 de 32 octets.
+        """
         ring = self._rings.get(tenant_id)
         if ring is None:
             ring = self._resolve(tenant_id)
@@ -134,6 +157,7 @@ class SecretKeyring:
         return ring
 
     def _resolve(self, tenant_id: TenantId) -> tuple[Cipher, ...]:
+        """Les clés d'un client, lues dans ses secrets dans l'ordre déclaré ; le secret de tête, qui scelle, doit être là."""
         table: Mapping[str, str] = self._secrets.secrets(tenant_id)
         found = [(name, table[name]) for name in self._names if table.get(name, "").strip()]
         if not found:

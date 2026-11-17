@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Magasin d'idempotence en mémoire : tests et déploiement mono-process (#18, #49).
+"""Magasin d'idempotence en mémoire : tests et déploiement mono-process (points 18 et 49).
 
 Il voit toutes les clés d'un process — contrairement au magasin ``journal``,
 qui ne voit que son run — mais seulement de ce process : deux workers ne
@@ -38,7 +38,7 @@ class InMemoryIdempotency:
 
     Une réservation périmée n'est **jamais** effacée d'elle-même : c'est la
     trace d'un effet d'état inconnu, et l'effacer la ferait passer pour un
-    appel jamais lancé (#18). Seuls les résultats hors rétention s'oublient.
+    appel jamais lancé (point 18). Seuls les résultats hors rétention s'oublient.
     """
 
     def __init__(self, *, retention: float = DEFAULT_RETENTION) -> None:
@@ -49,6 +49,11 @@ class InMemoryIdempotency:
         return f"InMemoryIdempotency({len(self._held)} clés)"
 
     async def get(self, key: str) -> IdempotencyRecord | None:
+        """Ce que le magasin sait de cette clé, ou ``None`` (``IdempotencyStore.get``).
+
+        Un résultat hors de sa rétention n'est pas rendu ; une réservation
+        périmée, si.
+        """
         held = self._held.get(key)
         if held is None:
             return None
@@ -60,6 +65,20 @@ class InMemoryIdempotency:
         return record
 
     async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
+        """Prend la clé pour ``ttl`` secondes ; faux si quelqu'un la tient déjà (``IdempotencyStore.reserve``).
+
+        Ce qui protège, c'est la date : une réservation tenue ou un résultat
+        encore mémorisé gardent la clé ; une clé périmée peut être reprise. Sans ``await`` : atomique pour la boucle asyncio.
+
+        Args:
+            key: La clé.
+            ttl: Durée de la réservation, en secondes.
+            scope: De qui est la clé (client, session), pour l'oublier avec eux.
+            holder: Jeton propre à cette prise de clé.
+
+        Returns:
+            Vrai si la clé est prise.
+        """
         now = datetime.now(UTC)
         held = self._held.get(key)
         # C'est la date qui protège : une réservation tenue ou un résultat
@@ -74,6 +93,21 @@ class InMemoryIdempotency:
         return True
 
     async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
+        """Enregistre ce que l'effet a rendu : la clé cesse d'être une réservation (``IdempotencyStore.complete``).
+
+        Les résultats périmés sont d'abord effacés ; les réservations, jamais.
+
+        Args:
+            key: La clé réservée.
+            result: Ce que l'outil a rendu.
+            ttl: Durée de consultation du résultat, en secondes ; ``None`` : la
+                rétention du magasin.
+            holder: Avec un jeton, l'enregistrement n'a lieu que s'il est celui de
+                la clé ; sinon, il est sans effet.
+
+        Raises:
+            KeyError: Le magasin ne connaît plus la clé.
+        """
         now = datetime.now(UTC)
         self._forget(now)
         held = self._held.get(key)
@@ -94,6 +128,15 @@ class InMemoryIdempotency:
         )
 
     async def release(self, key: str, *, holder: str | None = None) -> None:
+        """Rend une clé réservée dont l'effet ne s'est pas produit (``IdempotencyStore.release``).
+
+        Un résultat enregistré n'est jamais rendu ; avec un jeton, seule une
+        réservation encore à ce détenteur l'est.
+
+        Args:
+            key: La clé réservée.
+            holder: Le jeton de la prise de clé.
+        """
         held = self._held.get(key)
         if held is not None and held.record.status == "in_progress" and (holder is None or held.holder == holder):
             del self._held[key]

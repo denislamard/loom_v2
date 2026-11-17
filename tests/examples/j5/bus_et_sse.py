@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.3c : le bus des nouvelles, et un run suivi depuis un autre process.
+r"""Phase 5.3c : le bus des nouvelles, et un run suivi depuis un autre process.
 
     uv run --extra postgres --extra http python tests/examples/j5/bus_et_sse.py
     uv run --extra postgres --extra http python tests/examples/j5/bus_et_sse.py --cas sse
     uv run --extra redis --extra http python tests/examples/j5/bus_et_sse.py --bus redis
-    uv run --env-file .env --extra postgres --extra redis --extra http \\
+    uv run --env-file .env --extra postgres --extra redis --extra http \
         --extra anthropic --extra openai python tests/examples/j5/bus_et_sse.py --reel
 
 Il faut un vrai bus — Postgres par défaut, Redis avec ``--bus redis`` — et, pour

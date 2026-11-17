@@ -19,24 +19,32 @@ from typing import Any
 
 
 class Client:
+    """Un client du protocole execd, sur une connexion ouverte."""
+
     def __init__(self, sock: socket.socket) -> None:
         self.sock = sock
 
     @classmethod
     def connect_uds(cls, path: str) -> Client:
+        """Un client sur le socket Unix d'un execd lancé hors VM."""
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(path)
         return cls(sock)
 
     @classmethod
     def connect_vsock(cls, cid: int, port: int) -> Client:
-        """Handshake Firecracker cote hote : CONNECT <port>\\n -> OK <port>\\n."""
+        r"""Handshake Firecracker cote hote : CONNECT <port>\n -> OK <port>\n."""
         sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
         sock.connect((cid, port))
         return cls(sock)
 
     @classmethod
     def connect_firecracker(cls, uds: str, port: int) -> Client:
+        """Un client sur le vsock d'une VM, par le socket Unix de Firecracker côté hôte (poignée de main ``CONNECT``).
+
+        Raises:
+            ConnectionError: Poignée de main interrompue ou refusée.
+        """
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(uds)
         sock.sendall(f"CONNECT {port}\n".encode())
@@ -60,6 +68,7 @@ class Client:
         return bytes(buf)
 
     def call(self, method: str, body: bytes = b"", **header: Any) -> tuple[dict, bytes]:
+        """Envoie une trame (en-tête JSON et corps) et rend la réponse : son en-tête et son corps."""
         head = {"method": method, **header}
         raw = json.dumps(head).encode()
         self.sock.sendall(len(raw).to_bytes(4, "big") + raw + len(body).to_bytes(4, "big") + body)
@@ -70,6 +79,7 @@ class Client:
 
     # -- confort ----------------------------------------------------------- #
     def put_code_tree(self, root: str | Path, chunk: int = 1 << 20) -> None:
+        """Pousse un dossier de code dans ``code/``, fichier par fichier, sans ``__pycache__``."""
         root = Path(root)
         for path in sorted(root.rglob("*")):
             if not path.is_file() or "__pycache__" in path.parts:
@@ -77,9 +87,15 @@ class Client:
             self.put_stream("code.put", str(path.relative_to(root)), path.read_bytes(), chunk)
 
     def put_file(self, rel: str, data: bytes, chunk: int = 1 << 20) -> None:
+        """Pousse un fichier d'entrée dans ``in/``."""
         self.put_stream("file.put", rel, data, chunk)
 
     def put_stream(self, method: str, rel: str, data: bytes, chunk: int) -> None:
+        """Pousse des données par morceaux de ``chunk`` octets, le dernier marqué ``eof``.
+
+        Raises:
+            RuntimeError: Le service a refusé un morceau.
+        """
         if not data:
             reply, _ = self.call(method, b"", path=rel, eof=True)
             if not reply.get("ok"):
@@ -93,6 +109,11 @@ class Client:
                 raise RuntimeError(reply)
 
     def get_file(self, rel: str) -> bytes:
+        """Lit un fichier de ``out/`` en entier, par morceaux de 1 Mo.
+
+        Raises:
+            RuntimeError: Le service a refusé la lecture.
+        """
         out = bytearray()
         while True:
             reply, body = self.call("file.get", path=rel, offset=len(out), len=1 << 20)
@@ -103,4 +124,5 @@ class Client:
                 return bytes(out)
 
     def close(self) -> None:
+        """Ferme la connexion."""
         self.sock.close()

@@ -103,48 +103,59 @@ from loom_ia.tools_builtin._style_params import (
 from loom_ia.tools_builtin._templates import SectionSpec, Template
 from loom_ia.tools_builtin.pdf import chart
 
-# Le texte coupé à une largeur, ligne par ligne, dans une police et une taille.
 _split = cast(Callable[[str, str, float, float], list[str]], reportlab_utils.simpleSplit)  # pyright: ignore[reportUnknownMemberType]
+"""Le texte coupé à une largeur, ligne par ligne, dans une police et une taille."""
 
 MAX_MISSING_SAID: Final = 10
-# Un twip (vingtième de point) en points : les mesures du style résolu.
+"""Caractères absents d'une police cités au plus dans l'avertissement."""
 TWIP: Final = 1 / 20
-# L'interligne simple, en part de la taille du texte.
+"""Un twip (vingtième de point) en points : les mesures du style résolu."""
 LEADING: Final = 1.2
-# L'écart entre l'en-tête (le pied) et le corps : une mécanique du PDF, que Word n'a pas
-# (son corps commence à la marge) ; sans clé, pour que les deux rendus restent les mêmes.
+"""L'interligne simple, en part de la taille du texte."""
 BAND_GAP: Final = 6.0
-# Le soulignement d'un texte d'en-tête ou de pied, en fraction de sa taille : comme
-# ``Paragraph`` (sous la ligne de base, d'un vingtième de la taille).
+"""L'écart entre l'en-tête (le pied) et le corps : une mécanique du PDF, que
+Word n'a pas (son corps commence à la marge) ; sans clé, pour que les deux
+rendus restent les mêmes.
+"""
 UNDERLINE_OFFSET: Final = -0.125
+"""Le soulignement d'un texte d'en-tête ou de pied, en fraction de sa taille :
+comme ``Paragraph`` (sous la ligne de base, d'un vingtième de la taille).
+"""
 UNDERLINE_WIDTH: Final = 0.05
-# Une liste à cocher : la largeur d'une colonne de case (la géométrie de la case, comme
-# son côté et son trait ; Word a la sienne, dans le style de la case).
+"""Épaisseur d'un soulignement, en part de la taille du texte."""
 CHECK_COLUMN: Final = 18.0
-# Le titre d'un graphique : l'espace avant et après, comme Word le dessine dans le sien.
+"""Une liste à cocher : la largeur d'une colonne de case (la géométrie de la
+case, comme son côté et son trait ; Word a la sienne, dans le style de la
+case).
+"""
 CHART_TITLE_SPACE: Final = (6.0, 4.0)
-# L'espace sous « Date : », dans une signature (``word.writer._DATE_SPACE``).
+"""Le titre d'un graphique : l'espace avant et après, comme Word le dessine dans le sien."""
 DATE_SPACE: Final = 3.0
-# Le filigrane : la place qu'il prend, en diagonale, et son opacité.
+"""L'espace sous « Date : », dans une signature (``word.writer._DATE_SPACE``)."""
 WATERMARK_WIDTH: Final = 440.0
+"""Le filigrane : la place qu'il prend, en diagonale, et son opacité."""
 WATERMARK_HEIGHT: Final = 110.0
+"""Hauteur de la place du filigrane, en points (voir ``WATERMARK_WIDTH``)."""
 WATERMARK_ALPHA: Final = 0.5
-# La part de la hauteur utile d'une page qu'une image peut prendre, avec sa légende dessous.
+"""Opacité du filigrane."""
 IMAGE_HEIGHT: Final = 0.85
-# La case d'une liste à cocher : son côté, son trait.
+"""La part de la hauteur utile d'une page qu'une image peut prendre, avec sa légende dessous."""
 CHECK_SIDE: Final = 0.62
+"""La case d'une liste à cocher : son côté, son trait."""
 CHECK_LINE: Final = 0.6
+"""Épaisseur du trait de la case, en points (voir ``CHECK_SIDE``)."""
 _ALIGN: Final = {"left": TA_LEFT, "center": TA_CENTER, "right": TA_RIGHT, "justify": TA_JUSTIFY}
 _PLACEHOLDER: Final = re.compile(r"\{(page|pages|title)\}")
-# Le rappel qui note la page d'un titre du sommaire, quand il se dessine.
 MARK: Final = "loom_mark"
-# L'ancre d'une note, en fin de document : ``NOTE_MARK`` et son numéro.
+"""Le rappel qui note la page d'un titre du sommaire, quand il se dessine."""
 NOTE_MARK: Final = "loom_note_"
-# Les puces des trois niveaux d'une liste, et la numérotation de chaque niveau (1., a), i.).
+"""L'ancre d'une note, en fin de document : ``NOTE_MARK`` et son numéro."""
 BULLETS: Final = ("\u2022", "\u2013", "\u25aa")
+"""Les puces des trois niveaux d'une liste, et la numérotation de chaque niveau (1., a), i.)."""
 NUMBERS: Final = (("1", "%s."), ("a", "%s)"), ("i", "%s."))
-# Une puce qu'une police n'a pas (le carré du troisième niveau) : la première, plus petite.
+"""Numérotation de chaque niveau d'une liste : son type, et le motif de son numéro (1., a), i.)."""
 SMALL_BULLET: Final = 0.7
+"""Une puce qu'une police n'a pas (le carré du troisième niveau) : la première, plus petite."""
 _LOOK_FIELDS: Final = frozenset(f.name for f in fields(Look))
 
 
@@ -154,8 +165,10 @@ def _twips(value: float) -> float:
 
 
 def _pads(value: Sides | None, unit: str) -> Sides:
-    """Un écart de chaque côté (en haut, à droite, en bas, à gauche), en points : un
-    ``padding`` en cm, au twip près comme dans Word ; un ``border_space`` en points."""
+    """Un écart de chaque côté (en haut, à droite, en bas, à gauche), en points.
+
+    Un ``padding`` en cm, au twip près comme dans Word ; un ``border_space`` en points.
+    """
     top, right, bottom, left = value or (0.0, 0.0, 0.0, 0.0)
     if unit == "cm":
         return _twips(top), _twips(right), _twips(bottom), _twips(left)
@@ -168,8 +181,7 @@ _REGISTERING: Final = threading.Lock()
 
 
 def _registered(family: str, files: Mapping[str, bytes]) -> str:
-    """Les fichiers TrueType d'une police, enregistrés une fois dans reportlab : le nom de
-    sa graisse normale, qui nomme aussi sa famille (``<b>``, ``<i>``)."""
+    """Les fichiers TrueType d'une police, enregistrés une fois dans reportlab : le nom de sa graisse normale, qui nomme aussi sa famille (``<b>``, ``<i>``)."""
     digest = hashlib.sha256(b"".join(files.get(v, b"") for v in sorted(files))).hexdigest()
     names = {variant: f"loom-{digest[:16]}-{variant}" for variant in files}
     metrics: Any = pdfmetrics
@@ -191,8 +203,7 @@ def _registered(family: str, files: Mapping[str, bytes]) -> str:
 
 
 def register_fonts(styles: Iterable[Style]) -> None:
-    """Les polices embarquées des styles, enregistrées au montage : un fichier que reportlab
-    ne sait pas lire se voit dès ``loom validate`` (``ValueError``)."""
+    """Les polices embarquées des styles, enregistrées au montage : un fichier que reportlab ne sait pas lire se voit dès ``loom validate`` (``ValueError``)."""
     for style in styles:
         for family, files in style.fonts.items():
             try:
@@ -202,8 +213,7 @@ def register_fonts(styles: Iterable[Style]) -> None:
 
 
 class _Fonts:
-    """Les polices PDF d'un style : une police dont le style donne les fichiers est
-    embarquée ; une autre se rend par son équivalent standard."""
+    """Les polices PDF d'un style : une police dont le style donne les fichiers est embarquée ; une autre se rend par son équivalent standard."""
 
     def __init__(self, style: Style) -> None:
         self._embedded = {family: _registered(family, files) for family, files in style.fonts.items()}
@@ -219,8 +229,7 @@ class _Fonts:
 
 
 def substitutions(style: Style) -> dict[str, str]:
-    """Les polices du style qui ne s'écrivent pas telles quelles : la famille standard qui
-    les remplace, ou « embarquée »."""
+    """Les polices du style qui ne s'écrivent pas telles quelles : la famille standard qui les remplace, ou « embarquée »."""
     said: dict[str, str] = {}
     for name, look in style.looks.items():
         family = look.font
@@ -237,8 +246,7 @@ def substitutions(style: Style) -> dict[str, str]:
 
 
 def _on_draw(canvas: Canvas, name: str, callback: Callable[[Canvas, str, str], None]) -> None:
-    """Le rappel d'un ``<onDraw name=…>`` : reportlab 5 le cherche par ``getNamedCB`` ;
-    avant (4.4, la borne basse), par un attribut du canevas."""
+    """Le rappel d'un ``<onDraw name=…>`` : reportlab 5 le cherche par ``getNamedCB`` ; avant (4.4, la borne basse), par un attribut du canevas."""
     named = getattr(canvas, "setNamedCB", None)
     if named is not None:
         named(name, callback)
@@ -293,8 +301,19 @@ def _framed(look: Look) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class _Layout:
-    """Ce qu'une section du modèle dit de sa mise en page et de ses styles ; un document
-    libre est une seule section, sans rien de tout cela."""
+    """Ce qu'une section du modèle dit de sa mise en page et de ses styles ; un document libre est une seule section, sans rien de tout cela.
+
+    Attributes:
+        styles: Les styles de ses éléments.
+        box: Section encadrée.
+        width: Sa largeur, en part du texte.
+        page_break: Commencée sur une nouvelle page.
+        columns: Colonnes de texte.
+        landscape: En paysage.
+        cover: Page de garde.
+        margin_top: Espace avant la section, en points.
+        align: Une page de garde : son texte centré.
+    """
 
     styles: Mapping[str, str] = field(default_factory=dict[str, str])
     box: bool = False
@@ -303,13 +322,12 @@ class _Layout:
     columns: int = 1
     landscape: bool = False
     cover: bool = False
-    # Espace avant la section, en points.
     margin_top: float = 0.0
-    # Une page de garde : son texte centré.
     align: str | None = None
 
 
 PLAIN: Final = _Layout()
+"""La mise en page d'un document libre."""
 
 
 def _layout_of(spec: SectionSpec) -> _Layout:
@@ -327,8 +345,11 @@ def _layout_of(spec: SectionSpec) -> _Layout:
 
 @dataclass(slots=True)
 class _Group:
-    """Une section du document : sa ligne dans le modèle (``None`` pour un document libre,
-    ou le titre du document avant les sections), sa mise en page, ses blocs."""
+    """Une section du document.
+
+    Sa ligne dans le modèle (``None`` pour un document libre, ou le titre du document
+    avant les sections), sa mise en page, ses blocs.
+    """
 
     row: int | None
     layout: _Layout
@@ -336,8 +357,7 @@ class _Group:
 
 
 def _groups(prepared: Prepared, template: Template | None) -> list[_Group]:
-    """Un document libre : un seul groupe. Un document qui suit un modèle : le titre du
-    document, puis une section par groupe, dans l'ordre du modèle."""
+    """Un document libre : un seul groupe. Un document qui suit un modèle : le titre du document, puis une section par groupe, dans l'ordre du modèle."""
     if prepared.sections is None or template is None:
         return [_Group(None, PLAIN, list(prepared.blocks))]
     rows = template.rows()
@@ -381,10 +401,12 @@ class _Check(Flowable):
         self.width = self.height = self.side
 
     def wrap(self, aW: float, aH: float) -> tuple[float, float]:
+        """La place d'une case : un carré de côté ``side``."""
         del aW, aH
         return self.side, self.side
 
     def draw(self) -> None:
+        """Dessine la case, cochée d'une croix si l'élément l'est."""
         canvas: Any = self.canv
         canvas.saveState()
         canvas.setStrokeColor(self.color or colors.black)
@@ -398,8 +420,11 @@ class _Check(Flowable):
 
 
 class _Contents(Flowable):
-    """Le sommaire : ses entrées (le titre, et son numéro s'il est numéroté), un lien vers
-    chacune, et sa page, connue d'un rendu précédent, après une ligne de points."""
+    """Le sommaire.
+
+    Ses entrées (le titre, et son numéro s'il est numéroté), un lien vers chacune, et sa
+    page, connue d'un rendu précédent, après une ligne de points.
+    """
 
     def __init__(
         self,
@@ -416,6 +441,7 @@ class _Contents(Flowable):
         self._table: Any = None
 
     def wrap(self, aW: float, aH: float) -> tuple[float, float]:
+        """Construit le tableau du sommaire, avec le numéro de page de chaque entrée, et rend sa place."""
         canvas: Any = self.canv
 
         def end(canv: Canvas, kind: str, label: str) -> None:
@@ -447,10 +473,12 @@ class _Contents(Flowable):
         return width, height
 
     def split(self, aW: float, aH: float) -> list[Flowable]:
+        """Coupe le sommaire sur plusieurs pages."""
         self.wrap(aW, aH)
         return cast(list[Flowable], self._table.splitOn(self.canv, aW, aH))
 
     def drawOn(self, canvas: Canvas, x: float, y: float, _sW: float = 0) -> None:
+        """Dessine le sommaire."""
         self._table.drawOn(canvas, x, y, _sW)
 
 
@@ -459,16 +487,14 @@ class _Contents(Flowable):
 
 @dataclass(slots=True)
 class _Pass:
-    """Ce qu'un rendu apprend pour le suivant : le nombre de pages, la page de chaque titre
-    du sommaire."""
+    """Ce qu'un rendu apprend pour le suivant : le nombre de pages, la page de chaque titre du sommaire."""
 
     total: int | None = None
     pages: dict[str, int] = field(default_factory=dict[str, int])
 
 
 class _Body:
-    """Les blocs du document en flowables, selon le style ; les caractères de chaque police,
-    pour dire ceux qu'elle n'a pas."""
+    """Les blocs du document en flowables, selon le style ; les caractères de chaque police, pour dire ceux qu'elle n'a pas."""
 
     def __init__(
         self,
@@ -477,6 +503,14 @@ class _Body:
         template: Template | None,
         pages: Mapping[str, int],
     ) -> None:
+        """Prépare la mise en flowables du document.
+
+        Args:
+            prepared: Le document validé.
+            style: Le style résolu.
+            template: Le modèle suivi, s'il y en a un.
+            pages: La page de chaque titre, connue d'un rendu précédent.
+        """
         self.prepared = prepared
         self.style = style
         self.template = template
@@ -505,8 +539,7 @@ class _Body:
     # --- styles
 
     def look(self, element: str, chosen: str | None, layout: _Layout) -> tuple[str, Look]:
-        """Le style d'un élément : celui que le bloc choisit (``style``), sinon celui que la
-        section choisit (``styles``), sinon le style prévu de l'élément."""
+        """Le style d'un élément : celui que le bloc choisit (``style``), sinon celui que la section choisit (``styles``), sinon le style prévu de l'élément."""
         name = chosen or layout.styles.get(element) or element
         return name, self.style.look(name)
 
@@ -519,8 +552,7 @@ class _Body:
         keep: bool = False,
         bare: bool = False,
     ) -> ParagraphStyle:
-        """Le style reportlab d'un style nommé. ``bare`` : sans retrait ni espacement, que
-        porte le cadre qui l'entoure (un filet, un fond)."""
+        """Le style reportlab d'un style nommé. ``bare`` : sans retrait ni espacement, que porte le cadre qui l'entoure (un filet, un fond)."""
         key = (name, align, keep, bare)
         found = self._styles.get(key)
         if found is not None:
@@ -545,10 +577,13 @@ class _Body:
         return found
 
     def text(self, runs: Inline, pstyle: ParagraphStyle, look: Look, *, prefix: str = "") -> str:
-        """Le balisage de ``Paragraph`` : le texte échappé, l'emphase en ``<b>``, ``<i>``,
-        ``<u>`` ; un lien dans le style ``link`` ; l'appel d'une note, en exposant, vers
-        la note ; un renvoi : le numéro du titre visé (ou son titre entre guillemets), vers
-        lui. Ses caractères comptés pour la police."""
+        """Le balisage de ``Paragraph``.
+
+        Le texte échappé, l'emphase en ``<b>``, ``<i>``, ``<u>`` ; un lien dans le style
+        ``link`` ; l'appel d'une note, en exposant, vers la note ; un renvoi : le numéro
+        du titre visé (ou son titre entre guillemets), vers lui. Ses caractères comptés
+        pour la police.
+        """
         said = escape(prefix)
         seen = self.fonts.setdefault(pstyle.fontName, set())
         seen.update(prefix)
@@ -586,6 +621,7 @@ class _Body:
         return f"<u>{said}</u>" if look.underline else said
 
     def plain(self, value: str, pstyle: ParagraphStyle) -> str:
+        """Un texte sans balisage, échappé ; ses caractères comptés pour la police."""
         self.fonts.setdefault(pstyle.fontName, set()).update(value)
         return escape(value).replace("\n", "<br/>")
 
@@ -612,8 +648,7 @@ class _Body:
         return found
 
     def frame(self, content: list[Flowable], look: Look, width: float) -> Flowable:
-        """Des paragraphes dans le cadre d'un style : ses filets, son fond, son retrait et ses
-        espacements, comme Word les pose autour d'un paragraphe."""
+        """Des paragraphes dans le cadre d'un style : ses filets, son fond, son retrait et ses espacements, comme Word les pose autour d'un paragraphe."""
         indent = (look.indent or 0) * cm
         every = _rule(look.border)
         top = _rule(look.border_top) or every
@@ -649,8 +684,7 @@ class _Body:
     # --- titres et sommaire
 
     def _headings(self, blocks: Sequence[BlockOut]) -> None:
-        """Le numéro de chaque titre (si le style numérote), et les entrées du sommaire
-        (s'il y en a un), avec l'ancre de chaque titre repris."""
+        """Le numéro de chaque titre (si le style numérote), et les entrées du sommaire (s'il y en a un), avec l'ancre de chaque titre repris."""
         style = self.style
         toc = any(isinstance(block, ContentsOut) for block in blocks)
         levels = style.look("toc").levels or 2
@@ -676,6 +710,7 @@ class _Body:
                 self.toc.append((block.level, f"{number} {label}" if number else label, key))
 
     def heading(self, block: HeadingOut, width: float, layout: _Layout) -> Flowable:
+        """Un titre : son style, son numéro, son ancre pour le sommaire et les renvois."""
         name, look = self.look(f"heading{block.level}", block.style, layout)
         number = self.heading_numbers.get(id(block))
         key = self.marks.get(id(block))
@@ -696,8 +731,11 @@ class _Body:
         return found
 
     def endnotes(self, width: float) -> list[Flowable]:
-        """Les notes, en fin de document : sous un titre (``labels.notes``) au style des
-        titres de premier niveau, chacune dans le style ``footnote``, après son numéro."""
+        """Les notes, en fin de document.
+
+        Sous un titre (``labels.notes``) au style des titres de premier niveau, chacune
+        dans le style ``footnote``, après son numéro.
+        """
         if not self.notes:
             return []
         style = self.style
@@ -710,6 +748,7 @@ class _Body:
         return found
 
     def contents(self, width: float, pages: Mapping[str, int]) -> list[Flowable]:
+        """Le sommaire : son titre, puis ses entrées dans les styles ``toc1`` à ``toc3``."""
         style = self.style
         toc = style.look("toc")
         heading = self.paragraph("toc", toc, (_run(style.labels.contents),), width, keep=True)
@@ -745,14 +784,17 @@ class _Body:
         return self.paragraph(name, look, runs, width, prefix=prefix)
 
     def after(self, points: float) -> Flowable:
-        """L'espace sous un tableau, une image ou un graphique sans légende, des sections
-        côte à côte : le paragraphe vide qui les suit dans Word, une ligne de ``body``, et
-        ``points`` après elle (le ``space_after`` de leur style, de ``image``, ``chart``)."""
+        """L'espace sous un tableau, une image ou un graphique sans légende, des sections côte à côte.
+
+        Le paragraphe vide qui les suit dans Word, une ligne de ``body``, et ``points``
+        après elle (le ``space_after`` de leur style, de ``image``, ``chart``).
+        """
         look = self.style.look("body")
         size = look.size or 11.0
         return Spacer(1, size * LEADING * (look.line_spacing or 1.0) + points)
 
     def blocks(self, blocks: Sequence[BlockOut], width: float, layout: _Layout = PLAIN) -> list[Flowable]:
+        """Les flowables d'une suite de blocs ; deux images ``half`` qui se suivent côte à côte si le style le veut."""
         style = self.style
         found: list[Flowable] = []
         index = 0
@@ -850,8 +892,7 @@ class _Body:
         return found
 
     def checklist(self, block: ListOut, width: float, layout: _Layout) -> Flowable:
-        """Une liste à cocher : une case dessinée devant chaque élément, à la place d'une
-        puce, et chaque sous-élément en retrait."""
+        """Une liste à cocher : une case dessinée devant chaque élément, à la place d'une puce, et chaque sous-élément en retrait."""
         name, look = self.look("list", block.style, layout)
         pstyle = self.paragraph_style(name, look, align=layout.align, bare=True)
         color = pstyle.textColor
@@ -906,6 +947,7 @@ class _Body:
         return box
 
     def table(self, block: TableOut, width: float, layout: _Layout) -> list[Flowable]:
+        """Un tableau : en-têtes, lignes, groupes, total, légende, largeurs et styles."""
         style = self.style
         name, tables = self.look("table", block.style, layout)
         header = _merged(tables, style.between("table_header", "table"))
@@ -1006,8 +1048,10 @@ class _Body:
         return said
 
     def fields(self, block: FieldsOut, width: float) -> list[Flowable]:
-        """Des libellés et leurs valeurs, en deux colonnes sans filet (le libellé large de
-        ``label_width``) ; une valeur vide est une ligne à remplir, au trait des tableaux."""
+        """Des libellés et leurs valeurs, en deux colonnes sans filet (le libellé large de ``label_width``).
+
+        Une valeur vide est une ligne à remplir, au trait des tableaux.
+        """
         style = self.style
         look = style.look("fields")
         label_look = style.look("fields_label")
@@ -1034,8 +1078,11 @@ class _Body:
         return [table, self.after(style.look("table").space_after or 0)]
 
     def code(self, block: CodeOut, width: float) -> Flowable:
-        """Du code : ses lignes telles quelles (les espaces gardées, une ligne trop longue
-        reprise à la suivante), dans le style ``code`` et son cadre (un fond)."""
+        """Du code.
+
+        Ses lignes telles quelles (les espaces gardées, une ligne trop longue reprise à
+        la suivante), dans le style ``code`` et son cadre (un fond).
+        """
         look = self.style.look("code")
         framed = _framed(look)
         pstyle = self.paragraph_style("code", look, bare=framed)
@@ -1064,6 +1111,7 @@ class _Body:
         return picture
 
     def image(self, block: ImageOut, width: float, layout: _Layout) -> Flowable:
+        """Une image, et sa légende ou l'espace qui la suit, gardées ensemble."""
         parts: list[Flowable] = [self.image_flowable(block, width)]
         if block.caption:
             parts.append(self.caption(self.style.labels.figure, block.caption, width, layout))
@@ -1158,8 +1206,7 @@ class _Body:
     # --- sections
 
     def box(self, layout: _Layout) -> tuple[Any, Any, Sides]:
-        """Le cadre d'une section encadrée : son filet, son fond et son écart au texte
-        (``box``, ou celui que la section choisit)."""
+        """Le cadre d'une section encadrée : son filet, son fond et son écart au texte (``box``, ou celui que la section choisit)."""
         look = self.style.look(layout.styles.get("box", "box"))
         return _rule(look.border), _color(look.fill), _pads(look.padding, "cm")
 
@@ -1200,8 +1247,11 @@ class _Body:
         return table
 
     def units(self, groups: Sequence[_Group], widths: Callable[[bool], float]) -> list[_Unit]:
-        """Les groupes, posés : seuls, ou côte à côte quand ils sont sur la même ligne du
-        modèle (une section ``beside`` absente laisse l'autre seule, en pleine largeur)."""
+        """Les groupes, posés.
+
+        Seuls, ou côte à côte quand ils sont sur la même ligne du modèle (une section
+        ``beside`` absente laisse l'autre seule, en pleine largeur).
+        """
         units: list[_Unit] = []
         index = 0
         while index < len(groups):
@@ -1218,6 +1268,7 @@ class _Body:
         return units
 
     def alone(self, group: _Group, width: float, landscape: bool) -> _Unit:
+        """Une section seule : sa mise en page (colonnes, cadre, page de garde, espace avant) et ses blocs."""
         layout = group.layout
         distances = self.style.distances
         cover = distances.cover_margin_top * TWIP
@@ -1245,8 +1296,7 @@ class _Body:
         return _Unit(said, landscape, layout.cover, layout.page_break)
 
     def beside(self, together: Sequence[_Group], width: float, landscape: bool) -> _Unit:
-        """Des sections côte à côte : une cellule chacune, à la part que dit ``width`` (des
-        parts égales sans elle)."""
+        """Des sections côte à côte : une cellule chacune, à la part que dit ``width`` (des parts égales sans elle)."""
         given = [group.layout.width for group in together]
         shares = [float(share or 0) for share in given] if all(given) else [1.0] * len(together)
         widths = [width * share / sum(shares) for share in shares]
@@ -1269,13 +1319,16 @@ class _Body:
         return _Unit(said, landscape, page_break=first.page_break)
 
 
-# Le texte dans la hauteur d'une cellule de tableau (``valign``), pour reportlab.
 _VALIGN: Final[Mapping[str, str]] = {"top": "TOP", "center": "MIDDLE", "bottom": "BOTTOM"}
+"""Le texte dans la hauteur d'une cellule de tableau (``valign``), pour reportlab."""
 
 
 def _table_lines(tables: Look) -> list[tuple[Any, ...]]:
-    """Les filets d'un tableau : ``borders`` (grille, horizontales, verticales, aucun) au
-    trait ``line``, puis ``border_top`` et ``border_bottom`` s'ils sont dits."""
+    """Les filets d'un tableau.
+
+    ``borders`` (grille, horizontales, verticales, aucun) au trait ``line``, puis
+    ``border_top`` et ``border_bottom`` s'ils sont dits.
+    """
     commands: list[tuple[Any, ...]] = []
     line = _rule(tables.line) if tables.borders != "none" else None
     borders = tables.borders or "grid"
@@ -1299,8 +1352,11 @@ def _table_lines(tables: Look) -> list[tuple[Any, ...]]:
 
 
 def _spaced(line: str) -> str:
-    """Une ligne de code, ses espaces gardées : celles du début, et celles d'une série (la
-    dernière reste une espace, où la ligne peut se couper) ; une tabulation, quatre."""
+    """Une ligne de code, ses espaces gardées.
+
+    Celles du début, et celles d'une série (la dernière reste une espace, où la ligne
+    peut se couper) ; une tabulation, quatre.
+    """
     said = escape(line.replace("\t", "    "))
     return _SPACES.sub(lambda found: "&nbsp;" * len(found.group()), said)
 
@@ -1309,8 +1365,7 @@ _SPACES: Final = re.compile(r"^ +| (?= )")
 
 
 def _heading_number(numbering: str, counters: Sequence[int], article: str) -> str:
-    """Le numéro d'un titre, comme Word l'écrit : « 2. », « 2.1 », « Article 2 » et un
-    tiret."""
+    """Le numéro d'un titre, comme Word l'écrit : « 2. », « 2.1 », « Article 2 » et un tiret."""
     if len(counters) == 1:
         return f"{article} {counters[0]} \u2013" if numbering == "article" else f"{counters[0]}."
     return ".".join(str(number) for number in counters)
@@ -1332,8 +1387,7 @@ def _title_runs(prepared: Prepared) -> Inline:
 
 @dataclass(frozen=True, slots=True)
 class _Zone:
-    """Une ligne d'en-tête ou de pied de page déjà mesurée : sa hauteur, et de quoi la
-    dessiner."""
+    """Une ligne d'en-tête ou de pied de page déjà mesurée : sa hauteur, et de quoi la dessiner."""
 
     height: float
     draw: Callable[[Canvas, float, float, float, int, int | None], None]
@@ -1341,15 +1395,21 @@ class _Zone:
 
 @dataclass(frozen=True, slots=True)
 class _Box:
-    """Les lignes d'un en-tête ou d'un pied dans le cadre de son style, comme Word groupe
-    les paragraphes qui se suivent dans un même style : l'espace avant le premier, puis
-    les filets et le fond autour du groupe (à l'écart du texte de ``border_space``), entre
-    deux lignes l'espace après l'une et avant l'autre, l'espace après la dernière ; le
-    retrait à gauche et à droite."""
+    """Les lignes d'un en-tête ou d'un pied dans le cadre de son style, comme Word groupe les paragraphes qui se suivent dans un même style.
+
+    L'espace avant le premier, puis les filets et le fond autour du groupe (à l'écart du
+    texte de ``border_space``), entre deux lignes l'espace après l'une et avant l'autre,
+    l'espace après la dernière ; le retrait à gauche et à droite.
+
+    Attributes:
+        zones: Les lignes, chacune avec sa hauteur et de quoi la dessiner.
+        look: Le style du cadre.
+        padded: Sans écart au cadre : une table d'en-tête ou de pied le met
+            dans ses cellules du bord.
+    """
 
     zones: list[_Zone]
     look: Look
-    # Sans écart au cadre : une table d'en-tête ou de pied le met dans ses cellules du bord.
     padded: bool = True
 
     def _pads(self) -> tuple[float, float, float, float]:
@@ -1369,6 +1429,7 @@ class _Box:
 
     @property
     def height(self) -> float:
+        """La hauteur du cadre et de ses lignes, espacements compris."""
         if not self.zones:
             return 0.0
         look = self.look
@@ -1378,6 +1439,7 @@ class _Box:
         return before + top + sum(z.height for z in self.zones) + inner + bottom + after
 
     def draw(self, canvas: Canvas, top: float, left: float, right: float, page: int, total: int | None) -> None:
+        """Dessine le cadre et ses lignes sur la page."""
         if not self.zones:
             return
         look = self.look
@@ -1417,10 +1479,12 @@ def _leading(look: Look) -> float:
 
 @dataclass(frozen=True, slots=True)
 class _GridCell:
-    """Une cellule de table d'en-tête ou de pied, posée : sa colonne (x0, x1, depuis le bord
-    gauche de la table), ses marges (haut, gauche, bas, droite), ses paragraphes coupés
-    (et s'ils portent le logo), la hauteur de son contenu ; l'espace avant et après de ses
-    paragraphes (``Style.cell_spacing``)."""
+    """Une cellule de table d'en-tête ou de pied, posée.
+
+    Sa colonne (x0, x1, depuis le bord gauche de la table), ses marges (haut, gauche,
+    bas, droite), ses paragraphes coupés (et s'ils portent le logo), la hauteur de son
+    contenu ; l'espace avant et après de ses paragraphes (``Style.cell_spacing``).
+    """
 
     cell: BandElement
     look: Look
@@ -1437,15 +1501,25 @@ class _GridCell:
 
 @dataclass(frozen=True, slots=True)
 class _GridRow:
+    """Une ligne d'une table d'en-tête ou de pied.
+
+    Attributes:
+        line: Un filet sous la ligne.
+        cells: Ses cellules.
+        height: Sa hauteur, en points.
+    """
+
     line: bool
     cells: list[_GridCell]
     height: float
 
 
 class _Bands:
-    """L'en-tête, le pied de page et le filigrane, dessinés à chaque page : à 1 cm du bord,
-    comme Word ; trois zones (gauche, centre, droite) et des lignes centrées — sous les
-    zones dans un en-tête, au-dessus dans un pied de page."""
+    """L'en-tête, le pied de page et le filigrane, dessinés à chaque page.
+
+    À 1 cm du bord, comme Word ; trois zones (gauche, centre, droite) et des lignes
+    centrées — sous les zones dans un en-tête, au-dessus dans un pied de page.
+    """
 
     def __init__(self, style: Style, title: str, fonts: _Fonts, total: int | None = None) -> None:
         self.style = style
@@ -1473,8 +1547,7 @@ class _Bands:
         return said.upper() if look.uppercase else said
 
     def _logo(self, band: Band) -> tuple[Any, float, float, float]:
-        """Le logo d'un en-tête ou d'un pied : son image, sa largeur, sa hauteur, l'écart à
-        son texte ; pas d'image sans logo."""
+        """Le logo d'un en-tête ou d'un pied : son image, sa largeur, sa hauteur, l'écart à son texte ; pas d'image sans logo."""
         if band.logo is None:
             return None, 0.0, 0.0, 0.0
         picture = ImageReader(io.BytesIO(band.logo.data))
@@ -1483,10 +1556,12 @@ class _Bands:
         return picture, width, width * pixels[1] / pixels[0], band.logo.gap
 
     def lines(self, band: Band | None, look: Look, *, header: bool) -> list[_Zone]:
-        """Les lignes d'un en-tête ou d'un pied, du haut vers le bas : la ligne des zones,
-        chacune à sa place et au style de son élément (``center`` toujours centré) ; les
-        ``lines``, chacune un paragraphe au style de son élément, centrée dans un en-tête si
-        ce style ne dit pas d'alignement."""
+        """Les lignes d'un en-tête ou d'un pied, du haut vers le bas.
+
+        La ligne des zones, chacune à sa place et au style de son élément (``center``
+        toujours centré) ; les ``lines``, chacune un paragraphe au style de son élément,
+        centrée dans un en-tête si ce style ne dit pas d'alignement.
+        """
         del look
         if band is None:
             return []
@@ -1560,21 +1635,25 @@ class _Bands:
         return zones + rows if header else rows + zones
 
     def box(self, band: Band | None, look: Look, *, header: bool) -> _Box:
-        """Les lignes d'un en-tête ou d'un pied dans le cadre de son style. Avec une table,
-        comme dans Word, l'espacement de son style vaut autour d'elle, et l'écart au cadre
-        est dans ses cellules du bord."""
+        """Les lignes d'un en-tête ou d'un pied dans le cadre de son style.
+
+        Avec une table, comme dans Word, l'espacement de son style vaut autour d'elle,
+        et l'écart au cadre est dans ses cellules du bord.
+        """
         if band is not None and band.table is not None:
             frame = self.style.look(band.table.style or ("header" if header else "footer"))
             return _Box(self.lines(band, look, header=header), frame, padded=False)
         return _Box(self.lines(band, look, header=header), look)
 
     def _grid(self, band: Band, *, header: bool) -> _Zone:
-        """La table d'un en-tête ou d'un pied, comme dans Word (``word.style._band_table``) :
-        les colonnes de ``band_columns`` ; dans chaque cellule, ses paragraphes, chacun avec
-        l'espace avant et après de son style, coupés à la largeur de la cellule ; l'écart
-        entre colonnes en deux moitiés, de part et d'autre du filet intérieur ; l'écart au
-        cadre dans les cellules du bord. La hauteur se mesure une fois, à la largeur du
-        texte, avec des numéros de page du plus grand nombre de chiffres."""
+        """La table d'un en-tête ou d'un pied, comme dans Word (``word.style._band_table``).
+
+        Les colonnes de ``band_columns`` ; dans chaque cellule, ses paragraphes, chacun
+        avec l'espace avant et après de son style, coupés à la largeur de la cellule ;
+        l'écart entre colonnes en deux moitiés, de part et d'autre du filet intérieur ;
+        l'écart au cadre dans les cellules du bord. La hauteur se mesure une fois, à la
+        largeur du texte, avec des numéros de page du plus grand nombre de chiffres.
+        """
         table = band.table
         assert table is not None
         # Le style de la table : son cadre, ses filets, l'écart entre ses colonnes ; et celui
@@ -1732,6 +1811,7 @@ class _Bands:
         header: bool,
         footer: bool,
     ) -> None:
+        """Dessine l'en-tête, le pied et le filigrane d'une page."""
         style = self.style
         width, height = size
         top, bottom, left, right = (value * TWIP for value in style.margins)
@@ -1747,8 +1827,7 @@ class _Bands:
         canvas.restoreState()
 
     def _watermark(self, canvas: Canvas, size: tuple[float, float]) -> None:
-        """Le filigrane : un texte en diagonale, derrière le texte de la page, dans la police
-        et la couleur du style ``watermark``, à demi transparent."""
+        """Le filigrane : un texte en diagonale, derrière le texte de la page, dans la police et la couleur du style ``watermark``, à demi transparent."""
         look = self.style.look("watermark")
         text = self.style.watermark
         if not text:
@@ -1766,6 +1845,7 @@ class _Bands:
 
 
 def _build(prepared: Prepared, style: Style, template: Template | None, known: _Pass) -> tuple[bytes, _Pass, _Body]:
+    """Un rendu du document : les octets du PDF, ce qu'il apprend pour le rendu suivant (pages), et le corps."""
     body = _Body(prepared, style, template, known.pages)
     bands = _Bands(style, body.title, body.typefaces, known.total)
     portrait = style.page
@@ -1863,8 +1943,7 @@ def _build(prepared: Prepared, style: Style, template: Template | None, known: _
 
 
 def missing_glyphs(body: _Body) -> list[str]:
-    """Les caractères qu'une police du document n'a pas : ils s'imprimeraient en carré
-    noir."""
+    """Les caractères qu'une police du document n'a pas : ils s'imprimeraient en carré noir."""
     missing: set[str] = set()
     for font, chars in body.fonts.items():
         for char in chars - {"\n", "\t", " "}:
@@ -1874,8 +1953,11 @@ def missing_glyphs(body: _Body) -> list[str]:
 
 
 def render(prepared: Prepared, style: Style | None = None, template: Template | None = None) -> tuple[bytes, int, list[str]]:
-    """Le PDF, son nombre de pages, et les avertissements du rendu. ``style`` : le style du
-    document (le style maison sans lui) ; ``template`` : le modèle qu'il suit."""
+    """Le PDF, son nombre de pages, et les avertissements du rendu.
+
+    ``style`` : le style du document (le style maison sans lui) ; ``template`` : le
+    modèle qu'il suit.
+    """
     style = style or house()
     known = _Pass()
     try:

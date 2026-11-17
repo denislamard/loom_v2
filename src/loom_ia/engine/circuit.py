@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Disjoncteurs des modèles et des serveurs MCP (#10, #19, backlog #011).
+"""Disjoncteurs des modèles et des serveurs MCP (points 10 et 19, backlog #011).
 
 Un disjoncteur compte les échecs de suite d'une cible : un modèle dont
 l'appel a échoué après ses nouvelles tentatives (``transient``,
@@ -17,6 +17,9 @@ réussite remet toujours le compte à zéro.
 Les erreurs propres à une requête (``invalid_request``, ``context_overflow``,
 ``content_filtered``) et les erreurs de config (``auth``) ne comptent pas :
 elles ne disent rien de la disponibilité de la cible.
+
+Réglage : ``circuit_breaker`` d'un modèle ou d'un serveur MCP (5 échecs, 60 s
+par défaut ; ``null`` le retire). L'ouverture écrit un ``circuit.opened``.
 """
 
 import time
@@ -28,8 +31,8 @@ from loom_ia.core.model import CircuitBreaker, ModelErrorKind
 
 type Clock = Callable[[], float]
 
-# Erreurs d'un modèle qui comptent pour son disjoncteur.
 CIRCUIT_ERRORS: Final[frozenset[ModelErrorKind]] = frozenset({"transient", "overloaded", "quota_exhausted"})
+"""Genres d'erreur d'un modèle qui comptent pour son disjoncteur."""
 
 
 def model_key(model_id: str) -> str:
@@ -44,31 +47,54 @@ def mcp_key(server: str) -> str:
 
 @dataclass
 class _Circuit:
+    """État du disjoncteur d'une cible.
+
+    Attributes:
+        failures: Échecs de suite.
+        until: Fin de la pause, selon l'horloge ; ``None`` : disjoncteur
+            fermé.
+        trial: Vrai pour l'essai d'après la pause : raté, le disjoncteur se
+            rouvre aussitôt.
+    """
+
     failures: int = 0
-    # Fin de la pause, selon l'horloge ; None : disjoncteur fermé.
     until: float | None = None
-    # Essai d'après la pause : raté, le disjoncteur se rouvre aussitôt.
     trial: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class Tripped:
-    """Disjoncteur que le dernier échec vient d'ouvrir."""
+    """Disjoncteur que le dernier échec vient d'ouvrir ; de quoi écrire le ``circuit.opened``.
 
-    # Échecs de suite qui l'ont ouvert ; 1 pour un essai raté après une pause.
+    Attributes:
+        failures: Échecs de suite qui l'ont ouvert ; 1 pour un essai raté
+            après une pause.
+        cooldown: Durée de la pause, en secondes.
+    """
+
     failures: int
     cooldown: float
 
 
 class CircuitBreakers:
-    """Disjoncteurs partagés par des runs, un par cible (``model:<id>``, ``mcp:<nom>``)."""
+    """Disjoncteurs partagés par des runs, un par cible (``model:<id>``, ``mcp:<nom>``).
+
+    Une instance ``Loom`` en tient un jeu, partagé par tous ses runs.
+
+    Args:
+        clock: Horloge monotone, en secondes ; remplaçable pour les tests.
+    """
 
     def __init__(self, clock: Clock = time.monotonic) -> None:
         self._clock = clock
         self._circuits: dict[str, _Circuit] = {}
 
     def remaining(self, key: str) -> float | None:
-        """Secondes de pause restantes si la cible est écartée ; None si elle peut être appelée."""
+        """Secondes de pause restantes si la cible est écartée ; ``None`` si elle peut être appelée.
+
+        Args:
+            key: Clé de la cible (``model_key``, ``mcp_key``).
+        """
         circuit = self._circuits.get(key)
         if circuit is None or circuit.until is None:
             return None
@@ -79,7 +105,16 @@ class CircuitBreakers:
         return None
 
     def failed(self, key: str, setting: CircuitBreaker) -> Tripped | None:
-        """Compte un échec ; rend le disjoncteur s'il vient de s'ouvrir."""
+        """Compte un échec de la cible.
+
+        Args:
+            key: Clé de la cible.
+            setting: Réglage du disjoncteur (``failures``, ``cooldown``).
+
+        Returns:
+            Le disjoncteur s'il vient de s'ouvrir (au seuil, ou à l'essai raté
+            d'après une pause) ; ``None`` sinon.
+        """
         circuit = self._circuits.setdefault(key, _Circuit())
         now = self._clock()
         if circuit.until is not None:

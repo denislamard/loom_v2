@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Accès en ligne de commande : ``loom`` (N4)."""
+"""Accès en ligne de commande : ``loom`` (fonction N4)."""
 
 from loom_ia.access.cli.main import build_parser, main
 

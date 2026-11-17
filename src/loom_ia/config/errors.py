@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Erreurs de configuration, lisibles au démarrage (M1).
+"""Erreurs de configuration, lisibles au démarrage (fonction M1).
 
 Le message nomme le fichier et l'endroit dans le YAML :
 ``agents/demo.yaml: main.model — modèle 'X' non déclaré``. Quand la
@@ -15,7 +15,16 @@ from pydantic import ValidationError
 
 
 class ConfigError(Exception):
-    """Configuration inutilisable : le run ne démarre pas."""
+    """Configuration inutilisable : le run ne démarre pas.
+
+    Args:
+        message: Ce qui ne va pas, et où dans le YAML.
+        source: Fichier en cause ; il préfixe le message.
+
+    Attributes:
+        reason: Le message sans le fichier.
+        source: Le fichier, ou ``None``.
+    """
 
     def __init__(self, message: str, *, source: Path | None = None) -> None:
         super().__init__(f"{source}: {message}" if source else message)
@@ -36,6 +45,15 @@ def from_validation(
     l'objet) ; ``None`` la laisse sans préfixe — pour un agent rapporté à son
     fichier, dont le message nomme déjà l'agent. ``data`` : le YAML validé ; un
     élément de liste y est nommé par son ``id`` ou son ``name`` (``where``).
+
+    Args:
+        error: L'erreur Pydantic.
+        source: Fichier validé.
+        root: Nom d'une erreur sans chemin.
+        data: Le YAML validé.
+
+    Returns:
+        Une ``ConfigError``, une ligne « chemin — message » par erreur.
     """
     lines: list[str] = []
     for item in error.errors(include_url=False):
@@ -48,9 +66,16 @@ def from_validation(
 def where(loc: Sequence[int | str], data: object = None) -> str:
     """L'endroit d'une erreur, un élément de liste nommé par son ``id`` ou son ``name``.
 
-    Au test M1 du 21/10, « models.0.max_token » obligeait à compter les modèles :
+    À l'essai de la fonction M1 du 21/10, « models.0.max_token » obligeait à compter les modèles :
     « models[HAIKU].max_token » se retrouve dans le fichier. Sans nom (ou sans
     ``data``), l'indice reste.
+
+    Args:
+        loc: Le chemin de l'erreur Pydantic.
+        data: Le YAML validé.
+
+    Returns:
+        Le chemin écrit ``models[HAIKU].max_tokens``.
     """
     said = ""
     current = data

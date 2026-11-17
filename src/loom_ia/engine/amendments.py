@@ -9,7 +9,7 @@ dit donc qui a changé quoi.
 
 Elle suit les résultats du tour, dans un message à elle, et non dans le
 résultat de l'outil : placée dans le résultat, elle se lit comme une donnée de
-l'outil, dont le modèle se méfie. Au test H4 du 20/10, une correction qui
+l'outil, dont le modèle se méfie. À l'essai de la fonction H4 du 20/10, une correction qui
 contredisait la demande (95 € au lieu des 90 € demandés) a été prise pour une
 erreur du modèle (« une modification faite par « denis » que je ne peux pas
 vérifier »), qui proposait de la défaire.
@@ -33,7 +33,9 @@ from loom_ia.core.model import (
 )
 
 PREFIX = SYSTEM_NOTE
+"""Début de la note : « Note du système »."""
 EXECUTED = "c'est exactement ce qui a été exécuté. Tes arguments d'origine n'ont pas été utilisés."
+"""Phrase qui dit au modèle que l'appel affiché est celui qui est parti."""
 
 
 def amendment_note(amendment: Amendment, tool: str | None = None) -> str:
@@ -46,8 +48,16 @@ def amendment_note(amendment: Amendment, tool: str | None = None) -> str:
     invisible, était partie. La mention dit donc les trois choses : qui a
     remplacé quoi, que l'appel affiché porte déjà ces arguments, et que les
     siens n'ont pas servi. Pour un approbateur, elle ajoute que c'est sa
-    décision, à ne pas défaire (test H4 du 20/10 : sans cela, une correction
-    contraire à la demande était prise pour une erreur à réparer).
+    décision, à ne pas défaire (essai de la fonction H4 du 20/10 : sans cela,
+    une correction contraire à la demande était prise pour une erreur à
+    réparer).
+
+    Args:
+        amendment: Le changement : qui, quels champs, pourquoi.
+        tool: Nom de l'outil, s'il est connu.
+
+    Returns:
+        Le texte de la note, sans les crochets.
     """
     call = f"ton appel à {tool}" if tool else "ton appel"
     details = f"champs : {', '.join(amendment.fields)}"
@@ -70,7 +80,7 @@ def amendment_note(amendment: Amendment, tool: str | None = None) -> str:
                 f"ce que l'utilisateur avait demandé, dis-lui que {told}."
             )
         case "policy":
-            # Nommée, avec son motif (test E7 du 19/10) : sans lui, Haiku a cru
+            # Nommée, avec son motif (essai de la fonction E7, 19/10) : sans lui, Haiku a cru
             # à son erreur, refait l'appel identique, puis écarté le résultat.
             names = (amendment.by or "").split(", ") if amendment.by else []
             if len(names) > 1:
@@ -90,6 +100,13 @@ def note_amendments(messages: Sequence[Message], amendments: Sequence[Amendment]
     La note part dans un message ``user`` placé après le dernier message
     ``tool`` du tour (les adaptateurs le fusionnent derrière les résultats) :
     même place que les images renvoyées hors des résultats (``engine/media.py``).
+
+    Args:
+        messages: Les messages de la requête.
+        amendments: Les changements d'arguments du run.
+
+    Returns:
+        Les messages, avec les notes insérées ; les mêmes s'il n'y en a pas.
     """
     if not amendments:
         return tuple(messages)

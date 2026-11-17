@@ -421,7 +421,7 @@ async def _old_table(dsn: str, *, duplicate: bool = False) -> None:
 
 
 async def _state(dsn: str) -> tuple[int | None, bool]:
-    """(version du journal, l'index de ``event_id`` est-il unique ?)"""
+    """La version du journal, et si l'index de ``event_id`` est unique."""
     connection = await asyncpg.connect(dsn)
     try:
         present = await connection.fetchval("SELECT to_regclass('loom_schema')")
@@ -509,7 +509,7 @@ CREATE TABLE {IDEMPOTENCY_TABLE} (
 
 
 async def _idempotency_state(dsn: str) -> tuple[int | None, bool, object]:
-    """(version, la colonne ``holder`` existe-t-elle ?, date d'inscription de la version)"""
+    """La version, si la colonne ``holder`` existe, et la date d'inscription de la version."""
     connection = await asyncpg.connect(dsn)
     try:
         present = await connection.fetchval("SELECT to_regclass('loom_schema')")

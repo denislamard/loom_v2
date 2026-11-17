@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Pièces jointes d'un appel MCP (G1).
+"""Pièces jointes d'un appel MCP (fonction G1).
 
 L'outil d'un agent reçoit ses images dans l'argument ``attachments``, sous
 deux formes calquées sur les contenus MCP :
@@ -42,6 +42,7 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import ArtifactNotFound, ArtifactStore
 
 FILE_SCHEME: Final = "file://"
+"""Préfixe d'un lien vers un fichier local."""
 
 _ITEM_COMMON: Final[dict[str, Any]] = {
     "name": {"type": "string", "description": "Nom du fichier"},
@@ -79,6 +80,7 @@ ATTACHMENTS_INPUT: Final[dict[str, Any]] = {
         ]
     },
 }
+"""Schéma du champ ``attachments`` d'un outil d'agent : images en base64, ou liens ``artifact://`` et ``file:///``."""
 
 
 class AttachmentReader:
@@ -108,6 +110,11 @@ class AttachmentReader:
         return [await self._item(item, n) for n, item in enumerate(items, start=1)]
 
     async def _item(self, raw: object, n: int) -> Attachment:
+        """Une pièce jointe : image en base64 (``image``) ou lien vers un fichier (``resource_link``).
+
+        Raises:
+            AttachmentError: Objet attendu, type inconnu, ou lien refusé.
+        """
         if not isinstance(raw, dict):
             raise AttachmentError(f"pièce jointe {n} : un objet est attendu")
         item = cast(dict[str, object], raw)
@@ -134,6 +141,7 @@ class AttachmentReader:
         raise AttachmentError(f"{uri} : lien {scheme!r} non pris en charge (artifact://… ou file:///…)")
 
     async def _artifact(self, uri: str) -> tuple[bytes, str]:
+        """Octets et nom d'un fichier rangé par loom (``artifact://…``) ; un fichier d'un autre client est introuvable, comme un fichier absent."""
         try:
             location = ArtifactLocation.parse(uri)
         except ValueError as exc:

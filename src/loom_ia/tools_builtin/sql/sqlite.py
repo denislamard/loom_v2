@@ -50,8 +50,8 @@ from loom_ia.tools_builtin.sql.schema import Column, TableInfo
 from loom_ia.tools_builtin.sql.values import row
 from loom_ia.tools_builtin.sql_params import DatabaseSpec, SqlRight
 
-# Toutes les N instructions de la machine virtuelle de SQLite, le délai est regardé.
 _PROGRESS_STEPS: Final = 1000
+"""Toutes les N instructions de la machine virtuelle de SQLite, le délai est regardé."""
 
 _WRITES: Final[Mapping[int, SqlRight]] = {
     sqlite3.SQLITE_INSERT: "insert",
@@ -127,9 +127,12 @@ class SqliteDatabase:
         self.zone = zone
 
     def where(self) -> Place:
+        """Où est la base, pour ``loom validate`` : son fichier."""
         return Place(name="", kind="sqlite", path=self.path)
 
     async def query(self, unit: Statement, analysis: Analysis) -> dict[str, JsonValue]:
+        """Lance un SELECT dans une transaction annulée ensuite ; rend au plus ``max_rows`` lignes, et dit si le résultat est coupé."""
+
         def work(conn: sqlite3.Connection) -> dict[str, JsonValue]:
             conn.execute("BEGIN")
             try:
@@ -151,6 +154,11 @@ class SqliteDatabase:
         return await self._run(work, analysis.ctes, write=False)
 
     async def execute(self, units: list[tuple[Statement, Analysis]]) -> dict[str, JsonValue]:
+        """Exécute les écritures dans une même transaction.
+
+        Au-delà de ``max_affected_rows`` lignes modifiées, ou à la première erreur, rien
+        n'est enregistré.
+        """
         ctes = frozenset(name for _, analysis in units for name in analysis.ctes)
 
         def work(conn: sqlite3.Connection) -> dict[str, JsonValue]:
@@ -189,6 +197,8 @@ class SqliteDatabase:
         return await self._run(work, ctes, write=True)
 
     async def introspect(self) -> list[TableInfo]:
+        """Les tables et vues déclarées, lues dans ``sqlite_schema`` : colonnes et DDL d'origine."""
+
         def read() -> list[TableInfo]:
             # Sans authorizer : c'est l'outil qui lit le catalogue, pas le modèle.
             conn = sqlite3.connect(self._uri(write=False), uri=True, autocommit=True)
@@ -222,6 +232,7 @@ class SqliteDatabase:
             raise ToolError(f"Base {self.spec.name} : {exc}.") from exc
 
     async def aclose(self) -> None:
+        """Rien à fermer : chaque appel ouvre sa connexion."""
         return None
 
     # --- Connexion ------------------------------------------------------------------
@@ -230,6 +241,7 @@ class SqliteDatabase:
         return f"file:{quote(str(self.path))}?mode={'rw' if write else 'ro'}"
 
     def _connect(self, ctes: frozenset[str], *, write: bool) -> sqlite3.Connection:
+        """Une connexion bridée : schéma non fiable, pas d'ATTACH, délai d'instruction, authorizer qui n'ouvre que les tables et droits permis."""
         timeout = self.spec.statement_timeout
         conn = sqlite3.connect(self._uri(write=write), uri=True, autocommit=True, timeout=timeout)
         try:
@@ -249,6 +261,10 @@ class SqliteDatabase:
         return conn
 
     async def _run[T](self, work: Callable[[sqlite3.Connection], T], ctes: frozenset[str], *, write: bool) -> T:
+        """Fait ``work`` dans un thread, sur sa propre connexion ; une annulation interrompt l'instruction en cours.
+
+        Les erreurs deviennent des ``ToolError``.
+        """
         holder: list[sqlite3.Connection] = []
 
         def run() -> T:
@@ -277,6 +293,13 @@ class SqliteDatabase:
 
 
 class _Failed(Exception):
+    """Une instruction d'``execute`` refusée par la base.
+
+    Attributes:
+        position: Son rang, à partir de 1.
+        error: L'erreur de la base.
+    """
+
     def __init__(self, position: int, error: sqlite3.Error) -> None:
         super().__init__(str(error))
         self.position = position
@@ -284,6 +307,8 @@ class _Failed(Exception):
 
 
 class _TooMany(Exception):
+    """Trop de lignes modifiées : la transaction est annulée."""
+
     pass
 
 
@@ -306,7 +331,7 @@ def _said(exc: sqlite3.Error, timeout: float) -> str:
 
 
 def _bindings(params: tuple[ParamValue, ...]) -> dict[str, object]:
-    """``$1…$n`` sont des paramètres nommés pour SQLite : « 1 », « 2 »…"""
+    """``$1…$n`` sont des paramètres nommés pour SQLite : « 1 », « 2 », etc."""
     bound: dict[str, object] = {}
     for index, value in enumerate(params, start=1):
         match value:

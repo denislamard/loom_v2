@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Adaptateur ``sdk: openai``, ``api: chat`` : API Chat Completions (B1, B8).
+"""Adaptateur ``sdk: openai``, ``api: chat`` : API Chat Completions (fonctions B1 et B8).
 
 Vise les fournisseurs compatibles (Together, vLLM, Ollama…) ; sans
 ``base_url``, l'adresse officielle d'OpenAI, quelle que soit
@@ -14,14 +14,14 @@ Vise les fournisseurs compatibles (Together, vLLM, Ollama…) ; sans
 - le raisonnement est lu dans les champs ``reasoning_content`` ou
   ``reasoning`` que ces fournisseurs ajoutent ; il n'est renvoyé qu'à un
   modèle déclaré ``thinking: true``, pour la boucle d'outils en cours, dans le
-  champ où il est arrivé (#7, backlog #015 : gpt-oss l'attend) — certains
+  champ où il est arrivé (point 7, backlog #015 : gpt-oss l'attend) — certains
   fournisseurs refusent ce champ ;
 - la limite de sortie passe par ``max_tokens``, qu'ils reconnaissent tous ;
 - ``tool_choice`` passe tel quel (``auto``, ``none``, ``required``) ;
 - un identifiant d'appel d'outil manquant est généré ;
 - le schéma de sortie (``output_schema``) devient ``response_format``
   (``json_schema``) pour un modèle déclaré ``native_json: true`` ; ``strict``
-  seulement si le schéma en suit les règles (B9) ;
+  seulement si le schéma en suit les règles (fonction B9) ;
 - fin du flux : un flux est complet quand un choix porte son ``finish_reason``,
   ou, à défaut (certains serveurs compatibles l'omettent), quand la ligne
   ``data: [DONE]`` est reçue. Ni l'un ni l'autre : le flux a été coupé, et
@@ -100,20 +100,24 @@ from loom_ia.core.ports import ModelError
 logger = logging.getLogger(__name__)
 
 PROVIDER: Final = "openai"
-# Adresse sans ``base_url`` : passée au SDK pour qu'il ne lise pas OPENAI_BASE_URL.
+"""Nom du fournisseur, tel que le journal et la télémétrie l'écrivent."""
 DEFAULT_BASE_URL: Final = "https://api.openai.com/v1"
-# Variable que le SDK lit pour ajouter des en-têtes à chaque requête.
+"""Adresse sans ``base_url`` : passée au SDK pour qu'il ne lise pas OPENAI_BASE_URL."""
 CUSTOM_HEADERS_ENV: Final = "OPENAI_CUSTOM_HEADERS"
-# Champs de raisonnement ajoutés par les fournisseurs compatibles.
+"""Variable que le SDK lit pour ajouter des en-têtes à chaque requête."""
 REASONING_FIELDS: Final = ("reasoning_content", "reasoning")
-# Champ de renvoi d'un raisonnement dont l'origine est inconnue (convention d'OpenAI pour gpt-oss).
+"""Champs de raisonnement ajoutés par les fournisseurs compatibles."""
 DEFAULT_REASONING_FIELD: Final = "reasoning"
+"""Champ de renvoi d'un raisonnement dont l'origine est inconnue (convention
+d'OpenAI pour gpt-oss).
+"""
 
-# Ligne qui clôt un flux SSE de ce type d'API. Un saut de ligne la précède toujours :
-# le JSON d'un morceau n'en porte pas de brut (il est échappé).
 _DONE: Final = re.compile(rb"\ndata: ?\[DONE\]")
-# Octets gardés d'une lecture à l'autre, de quoi reconnaître cette ligne coupée en deux.
+"""Ligne qui clôt un flux SSE de ce type d'API. Un saut de ligne la précède
+toujours : le JSON d'un morceau n'en porte pas de brut (il est échappé).
+"""
 _DONE_TAIL: Final = 16
+"""Octets gardés d'une lecture à l'autre, de quoi reconnaître cette ligne coupée en deux."""
 
 _FINISH_REASONS: Final[dict[str, StopReason]] = {
     "stop": "end",
@@ -180,6 +184,19 @@ class OpenAIChatModel:
         api_key: str,
         http_client: httpx2.AsyncClient | None = None,
     ) -> None:
+        """Prépare le client du SDK, sans retries et sans rien lire de l'environnement.
+
+        L'adresse vient de ``base_url``, à défaut celle de l'API officielle : le SDK
+        ne lit pas ``OPENAI_BASE_URL``. Les en-têtes que l'environnement ajouterait sont
+        omis (``OPENAI_ORG_ID, OPENAI_PROJECT_ID, OPENAI_CUSTOM_HEADERS``), le délai total est ``timeouts.total``. Sans
+        ``api_key_env``, aucune clé n'est envoyée : un 401 le dira.
+
+        Args:
+            spec: Le modèle déclaré.
+            api_key: Clé de l'API (``NO_API_KEY`` : aucune).
+            http_client: Client HTTP à utiliser, par exemple celui qui garde les
+                échanges bruts (``RecordingClient``) ; à défaut, celui du SDK.
+        """
         self.spec = spec
         # Sans ``api_key_env``, aucune clé n'est envoyée : un 401 le dira.
         self._sent_key = api_key != NO_API_KEY
@@ -194,15 +211,36 @@ class OpenAIChatModel:
 
     @property
     def provider(self) -> str:
+        """Nom du fournisseur : ``openai``."""
         return PROVIDER
 
     async def aclose(self) -> None:
+        """Ferme le client du SDK."""
         await self._client.close()
 
     def __repr__(self) -> str:
         return f"OpenAIChatModel({self.spec.id!r}, model={self.spec.model!r})"
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        """Envoie la requête à l'API Chat Completions et rend la réponse en morceaux neutres.
+
+        Le prompt système devient un message ``system`` ; ``max_tokens`` est celui
+        de la requête, puis du modèle ; le schéma de sortie passe en
+        ``response_format`` (``native_json``) ; les ``params`` du modèle partent
+        dans le corps. Un flux est complet s'il porte un ``finish_reason`` ou la
+        ligne ``data: [DONE]``. Sans ``capabilities.streaming``, la réponse entière est lue puis
+        rendue en flux simulé.
+
+        Args:
+            request: La requête neutre.
+
+        Yields:
+            Les morceaux de la réponse.
+
+        Raises:
+            ModelError: Erreur de l'API ou du transport, classée ; flux coupé avant
+                sa fin (``transient``) ; JSON illisible (``transient``).
+        """
         capabilities = self.spec.capabilities
         messages = to_openai_messages(request.system, request.messages, reasoning=capabilities.thinking)
         tools = to_openai_tools(request)
@@ -287,7 +325,7 @@ def to_openai_messages(system: str, messages: Sequence[Message], *, reasoning: b
 
 
 def to_response_format(schema: dict[str, JsonValue]) -> ResponseFormat:
-    """Schéma de sortie du contrat → ``response_format`` (B9)."""
+    """Schéma de sortie du contrat → ``response_format`` (fonction B9)."""
     definition: dict[str, object] = {"name": OUTPUT_SCHEMA_NAME, "schema": {**schema}}
     if is_strict(schema):
         definition["strict"] = True
@@ -295,6 +333,11 @@ def to_response_format(schema: dict[str, JsonValue]) -> ResponseFormat:
 
 
 def to_openai_tools(request: ModelRequest) -> list[ChatCompletionFunctionToolParam]:
+    """Les outils proposés, au format de l'API : des fonctions avec nom, description et schéma des paramètres.
+
+    Args:
+        request: La requête neutre.
+    """
     tools: list[ChatCompletionFunctionToolParam] = []
     for tool in request.tools:
         parameters: dict[str, object] = {**tool.input_schema}
@@ -346,6 +389,13 @@ def _text(block: ContentBlock) -> str:
 
 
 def _assistant(message: Message, *, reasoning: bool = False) -> ChatCompletionAssistantMessageParam:
+    """Une réponse du modèle, au format de l'API : texte, appels d'outils, et son raisonnement s'il doit lui être renvoyé.
+
+    Args:
+        message: La réponse.
+        reasoning: Renvoyer son raisonnement, dans le champ où il est arrivé
+            (boucle d'outils en cours, modèle ``thinking: true``).
+    """
     param: ChatCompletionAssistantMessageParam = {"role": "assistant"}
     calls: list[ChatCompletionMessageFunctionToolCallParam] = [
         {
@@ -397,6 +447,15 @@ class StreamParser:
         self._content = False
 
     def feed(self, event: ChatCompletionChunk) -> list[ModelChunk]:
+        """Traduit un morceau du flux en morceaux neutres.
+
+        Seul le premier choix compte. Le raisonnement est lu dans
+        ``reasoning_content`` ou ``reasoning``, et le champ d'origine est gardé ;
+        un refus passe en texte ; un appel d'outil sans identifiant en reçoit un.
+
+        Args:
+            event: Morceau ``ChatCompletionChunk`` du SDK.
+        """
         self._model = event.model or self._model
         if event.usage is not None:
             self._usage = to_usage(event.usage)
@@ -533,6 +592,11 @@ def _origin(field: str) -> dict[str, ProviderMeta]:
 
 
 def to_model_error(exc: openai.APIError) -> ModelError:
+    """Une erreur du SDK, classée en ``ModelError`` : par son statut HTTP, son code, son type et son ``Retry-After``.
+
+    Args:
+        exc: L'erreur levée.
+    """
     hints = (exc.code, exc.type)
     if isinstance(exc, openai.APIStatusError):
         return classify_error(

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.4b : le journal en ressources MCP, et l'arrêt d'un run.
+r"""Phase 5.4b : le journal en ressources MCP, et l'arrêt d'un run.
 
     uv run --extra http --extra mcp python tests/examples/j5/ressources_mcp.py
     uv run --extra http --extra mcp python tests/examples/j5/ressources_mcp.py --cas index
     uv run --extra http --extra mcp python tests/examples/j5/ressources_mcp.py --cas fichiers
     uv run --extra http --extra mcp python tests/examples/j5/ressources_mcp.py --cas arret
-    uv run --env-file .env --extra http --extra mcp --extra anthropic \\
+    uv run --env-file .env --extra http --extra mcp --extra anthropic \
         --extra openai python tests/examples/j5/ressources_mcp.py --reel
 
 Config : ``tests/examples/j5/relance/``, celle de 5.1a, plus des clés posées **en

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 2.2 : un agent qui utilise deux serveurs MCP, « time » et « math ».
+r"""Phase 2.2 : un agent qui utilise deux serveurs MCP, « time » et « math ».
 
     uv run --extra mcp python tests/examples/j2/client_mcp.py                  # modèle simulé
-    uv run --env-file .env --extra mcp --extra anthropic \\
+    uv run --env-file .env --extra mcp --extra anthropic \
         python tests/examples/j2/client_mcp.py --reel
 
 La config est dans ``tests/examples/j2/assistant/``. Les deux serveurs sont des

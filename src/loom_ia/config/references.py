@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Références vers du code Python (#50).
+"""Références vers du code Python (point 50).
 
 Deux formes, le nom d'abord :
 
@@ -9,7 +9,8 @@ Deux formes, le nom d'abord :
 - un **chemin d'import** ``module:attr``, qui ne demande aucun ``imports``.
 
 Le préfixe ``loom.`` est réservé à ce que fournit loom-ia (outils et politiques) :
-aucun nom enregistré ne le porte (D5).
+aucun nom enregistré ne le porte (décision D5 de l'analyse des outils fournis,
+``docs/tools-builtin-analyse.md``).
 
 Les modules voisins du fichier de config sont importables : son dossier est
 ajouté à ``sys.path`` le temps du chargement. Un module voisin est importé
@@ -17,7 +18,7 @@ sous son seul nom ; deux configs d'un même process peuvent pourtant avoir
 chacune le sien sous le même nom (``outils.py``). Un module que loom a importé
 comme voisin d'une config est donc retiré de ``sys.modules`` quand une autre
 config, qui a le sien sous ce nom, est chargée, puis réimporté depuis le
-dossier de celle-ci (#50, décision du 06/10) : les objets que la première
+dossier de celle-ci (point 50, décision du 06/10) : les objets que la première
 config en a déjà pris restent les siens. Un module que loom n'a pas importé
 comme voisin — installé, de la bibliothèque standard, importé par
 l'application — n'est jamais touché.
@@ -35,7 +36,17 @@ from loom_ia.core.ports import Policy, Tool
 
 
 class Registry:
-    """Objets Python nommés, disponibles pour la config."""
+    """Objets Python nommés, disponibles pour la config.
+
+    Rempli par ``import_modules`` (outils ``@tool`` et politiques ``@policy``
+    des modules de ``imports``), ou par ``Loom.register()``.
+
+    Args:
+        objects: Objets à enregistrer d'emblée, par nom.
+
+    Raises:
+        ConfigError: Un nom en ``loom.``, ou deux objets du même nom.
+    """
 
     def __init__(self, objects: Mapping[str, object] | None = None) -> None:
         self._objects: dict[str, object] = {}
@@ -43,8 +54,20 @@ class Registry:
             self.add(name, obj)
 
     def add(self, name: str, obj: object, *, source: str = "") -> None:
-        # Une référence ``loom.…`` désigne ce que fournit loom-ia : un objet enregistré
-        # sous ce nom ne serait jamais atteint (D5).
+        """Enregistre un objet sous un nom ; le même objet deux fois ne change rien.
+
+        Une référence ``loom.…`` désigne ce que fournit loom-ia : un objet
+        enregistré sous ce nom ne serait jamais atteint (décision D5 de
+        l'analyse des outils fournis).
+
+        Args:
+            name: Le nom.
+            obj: L'objet (outil, politique).
+            source: D'où il vient, pour le message (« module outils »).
+
+        Raises:
+            ConfigError: Nom en ``loom.``, ou déjà pris par un autre objet.
+        """
         if name.startswith(RESERVED_PREFIX):
             raise ConfigError(
                 f"Nom {name!r} refusé ({source or 'registre'}) : le préfixe {RESERVED_PREFIX!r} est réservé aux outils et politiques fournis par loom-ia"
@@ -55,10 +78,12 @@ class Registry:
         self._objects[name] = obj
 
     def get(self, name: str) -> object | None:
+        """L'objet de ce nom, ou ``None``."""
         return self._objects.get(name)
 
     @property
     def names(self) -> tuple[str, ...]:
+        """Les noms enregistrés, triés."""
         return tuple(sorted(self._objects))
 
     def __len__(self) -> int:
@@ -66,7 +91,18 @@ class Registry:
 
 
 def import_modules(names: Iterable[str], *, base_dir: Path | None = None) -> Registry:
-    """Importe les modules de ``imports`` et enregistre les outils et politiques trouvés."""
+    """Importe les modules de ``imports`` et enregistre les outils et politiques trouvés.
+
+    Args:
+        names: Les modules.
+        base_dir: Dossier de la config : ses modules voisins sont importables.
+
+    Returns:
+        Le registre.
+
+    Raises:
+        ConfigError: Module introuvable, nom réservé ou en double.
+    """
     registry = Registry()
     with _importable(base_dir):
         for name in names:
@@ -80,7 +116,20 @@ def import_modules(names: Iterable[str], *, base_dir: Path | None = None) -> Reg
 
 
 def resolve(reference: str, registry: Registry, *, base_dir: Path | None = None) -> object:
-    """Objet désigné par un nom enregistré ou par ``module:attr``."""
+    """Objet désigné par un nom enregistré ou par ``module:attr``.
+
+    Args:
+        reference: Le nom, ou ``module:attr``.
+        registry: Les objets enregistrés.
+        base_dir: Dossier de la config.
+
+    Returns:
+        L'objet.
+
+    Raises:
+        ConfigError: Nom inconnu sans ``:``, module introuvable, ou attribut
+            absent.
+    """
     found = registry.get(reference)
     if found is not None:
         return found
@@ -99,9 +148,8 @@ def resolve(reference: str, registry: Registry, *, base_dir: Path | None = None)
         raise ConfigError(f"Référence {reference!r} : {attribute!r} absent du module {module_name!r}") from exc
 
 
-# Modules voisins importés par loom : nom de premier niveau → dossier de la
-# config pour laquelle ils l'ont été.
 _NEIGHBOURS: dict[str, Path] = {}
+"""Modules voisins importés par loom : nom de premier niveau → dossier de la config pour laquelle ils l'ont été."""
 
 
 class _importable:
@@ -135,7 +183,7 @@ def _neighbour(base_dir: Path, name: str) -> bool:
 
 
 def _forget_others(base_dir: Path) -> None:
-    """Retire les modules voisins d'une autre config que ce dossier a aussi (#50).
+    """Retire les modules voisins d'une autre config que ce dossier a aussi (point 50).
 
     Tous d'abord, avant d'importer quoi que ce soit : un module voisin qui en
     importe un autre (``from outils import …``) doit trouver celui de ce dossier.

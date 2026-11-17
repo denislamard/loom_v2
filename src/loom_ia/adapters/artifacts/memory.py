@@ -12,22 +12,26 @@ class InMemoryArtifactStore:
         self._files: dict[str, bytes] = {}
 
     async def put(self, uri: str, data: bytes) -> None:
+        """Range des octets à une URI (``ArtifactStore.put``). ``ValueError`` si l'URI est invalide."""
         ArtifactLocation.parse(uri)
         self._files[uri] = data
 
     async def get(self, uri: str) -> bytes:
+        """Rend les octets d'un artefact ; ``ArtifactNotFound`` s'il n'y est pas (``ArtifactStore.get``)."""
         try:
             return self._files[uri]
         except KeyError:
             raise ArtifactNotFound(uri) from None
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Supprime les fichiers d'une session (RGPD) ; rend le nombre de fichiers retirés."""
         doomed = [uri for uri in self._files if (location := ArtifactLocation.parse(uri)).tenant == tenant_id and location.session == session_id]
         for uri in doomed:
             del self._files[uri]
         return len(doomed)
 
     async def aclose(self) -> None:
+        """Rien à fermer."""
         pass
 
     def __len__(self) -> int:

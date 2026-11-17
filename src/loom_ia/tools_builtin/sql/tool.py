@@ -41,13 +41,21 @@ class Backend(Protocol):
         """Où est la base, pour ``loom validate`` : son type, son fichier ou sa variable."""
         ...
 
-    async def query(self, unit: Statement, analysis: Analysis) -> dict[str, JsonValue]: ...
+    async def query(self, unit: Statement, analysis: Analysis) -> dict[str, JsonValue]:
+        """Lance un SELECT ; rend ses colonnes et ses lignes."""
+        ...
 
-    async def execute(self, units: list[tuple[Statement, Analysis]]) -> dict[str, JsonValue]: ...
+    async def execute(self, units: list[tuple[Statement, Analysis]]) -> dict[str, JsonValue]:
+        """Exécute des écritures, ensemble ou pas du tout."""
+        ...
 
-    async def introspect(self) -> list[TableInfo]: ...
+    async def introspect(self) -> list[TableInfo]:
+        """Les tables et vues déclarées, lues dans la base."""
+        ...
 
-    async def aclose(self) -> None: ...
+    async def aclose(self) -> None:
+        """Libère les connexions."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,9 +69,11 @@ class Database:
 
     @property
     def name(self) -> str:
+        """Le nom de la base."""
         return self.spec.name
 
     def asking(self, table: str) -> list[SqlRight]:
+        """Les droits de la table qui demandent une approbation à chaque appel."""
         return [r for r in SQL_RIGHTS if self.spec.tables[table].rights.get(r) == "always"]
 
     def granted(self, table: str) -> str:
@@ -76,6 +86,15 @@ class SqlTool:
     """L'outil ``sql`` monté avec ses bases."""
 
     def __init__(self, databases: Sequence[Database], zone: ZoneInfo) -> None:
+        """Prépare l'outil : les bases, leurs droits, et la définition qui en découle (effets, approbation, conduite après un résultat inconnu).
+
+        Args:
+            databases: Les bases montées.
+            zone: Le fuseau des dates-heures sans fuseau.
+
+        Raises:
+            ValueError: Aucune base.
+        """
         if not databases:
             raise ValueError("au moins une base est attendue")
         self._databases = {database.name: database for database in databases}
@@ -99,6 +118,7 @@ class SqlTool:
 
     @property
     def spec(self) -> ToolSpec:
+        """La définition de l'outil."""
         return self._spec
 
     def settings(self) -> Settings:
@@ -163,6 +183,11 @@ class SqlTool:
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Lit le schéma, lance une requête ou exécute des écritures ; une erreur de la base reçoit, s'il y a lieu, une indication sur le schéma.
+
+        Raises:
+            ToolError: Arguments, instruction ou base refusés.
+        """
         request = parse(arguments)
         database = self._database(request.database)
         if request.action == "schema":
@@ -183,6 +208,7 @@ class SqlTool:
         return to_output(result)
 
     async def aclose(self) -> None:
+        """Ferme les connexions des bases."""
         for database in self._databases.values():
             await database.backend.aclose()
 
@@ -195,6 +221,7 @@ class SqlTool:
         return found
 
     def _analyses(self, request: SqlArguments, database: Database) -> list[Analysis]:
+        """L'analyse de chaque instruction de l'appel ; aucune pour ``schema``."""
         if request.action == "schema":
             return []
         units = request.units()
@@ -211,6 +238,7 @@ class SqlTool:
         ]
 
     async def _schema(self, database: Database, wanted: Sequence[str] | None) -> str:
+        """Le schéma des tables voulues (toutes si aucune), rendu pour le modèle."""
         tables = await database.schema.tables()
         named: list[str] | None = None
         if wanted is not None:
@@ -240,6 +268,7 @@ class SqlTool:
 
 
 def _description(databases: Sequence[Database], zone: ZoneInfo) -> str:
+    """La description de l'outil : les bases, leurs tables, droits, limites et descriptions, les actions et les règles du SQL."""
     lines = [
         "Interroge et modifie des bases SQL permises, avec le SQL que vous écrivez.",
         "Bases, tables et droits (« approbation » : un humain valide chaque appel qui exerce ce droit) :",
@@ -317,6 +346,11 @@ def _exposes(path: Path, protected: Sequence[Protected]) -> str | None:
 
 
 def _dsn(spec: DatabaseSpec, secrets: Mapping[str, str], context: BuiltinContext) -> str:
+    """Le DSN d'une base Postgres, lu dans les secrets.
+
+    Raises:
+        ValueError: Variable absente ou vide, ou DSN du stockage de loom (le modèle pourrait y réécrire son journal).
+    """
     assert spec.postgres is not None
     env = spec.postgres.dsn_env
     if env in context.protected_dsns:

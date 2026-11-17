@@ -17,11 +17,10 @@ from loom_ia.core.ports import ToolError
 from loom_ia.tools_builtin.memory_params import MemoryAction, MemoryParams
 
 NAME: Final = "memory"
+"""Le nom de l'outil."""
 WRITING: Final = frozenset({"add_text", "add_url", "add_file"})
+"""Les actions qui écrivent dans la mémoire."""
 
-# Arguments de chaque action : obligatoires, puis facultatifs. ``project`` est
-# ajouté (obligatoire pour une écriture, facultatif pour une lecture) quand la
-# config ne l'impose pas.
 _REQUIRED: Final[Mapping[MemoryAction, frozenset[str]]] = {
     "search": frozenset({"query"}),
     "get": frozenset({"doc_id"}),
@@ -33,6 +32,10 @@ _REQUIRED: Final[Mapping[MemoryAction, frozenset[str]]] = {
     "update": frozenset({"doc_id", "text"}),
     "delete": frozenset({"doc_id"}),
 }
+"""Arguments de chaque action : obligatoires, puis facultatifs. ``project`` est
+ajouté (obligatoire pour une écriture, facultatif pour une lecture) quand la
+config ne l'impose pas.
+"""
 _OPTIONAL: Final[Mapping[MemoryAction, frozenset[str]]] = {
     "search": frozenset({"k", "tags"}),
     "get": frozenset(),

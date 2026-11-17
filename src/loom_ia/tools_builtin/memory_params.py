@@ -65,9 +65,10 @@ from loom_ia.tools_builtin.local_files_params import FOLDER_NAME_PATTERN
 from loom_ia.tools_builtin.sql_params import ENV_NAME_PATTERN
 
 type MemoryAction = Literal["search", "get", "list_docs", "projects", "add_text", "add_url", "add_file", "update", "delete"]
+"""Action de ``loom.memory``."""
 type ActionApproval = Literal["never", "always"]
+"""Approbation d'une action : ``never`` ou ``always``."""
 
-# Dans l'ordre où on les dit.
 ACTIONS: Final[tuple[MemoryAction, ...]] = (
     "search",
     "get",
@@ -79,12 +80,15 @@ ACTIONS: Final[tuple[MemoryAction, ...]] = (
     "update",
     "delete",
 )
+"""Dans l'ordre où on les dit."""
 READS: Final[frozenset[MemoryAction]] = frozenset({"search", "get", "list_docs", "projects"})
+"""Les actions qui lisent."""
 DEFAULT_APPROVAL: Final[Mapping[MemoryAction, ActionApproval]] = {action: "never" if action in READS else "always" for action in ACTIONS}
-# Un projet s'écrit en minuscules : l'outil range et cherche les projets ainsi.
+"""Approbation par défaut : ``never`` pour une lecture, ``always`` pour une écriture."""
 PROJECT_PATTERN: Final = r"^[a-z0-9][a-z0-9_.-]{0,63}$"
-# L'extra de loom-ia qui apporte les vrais modèles.
+"""Un projet s'écrit en minuscules : l'outil range et cherche les projets ainsi."""
 MODELS_EXTRA: Final = "memory"
+"""L'extra de loom-ia qui apporte les vrais modèles."""
 
 
 def _no_expansion(path: Path, where: str) -> None:
@@ -97,13 +101,18 @@ def _no_expansion(path: Path, where: str) -> None:
 
 
 class StoreSpec(BaseModel):
-    """Le fichier SQLite de la mémoire : son chemin, ou la variable qui le porte."""
+    """Le fichier SQLite de la mémoire : son chemin, ou la variable qui le porte.
+
+    Attributes:
+        path: Chemin du fichier : absolu, ou relatif au dossier du fichier de
+            config. Ni « ~ » ni variable.
+        path_env: Variable d'environnement qui porte le chemin, lue dans les
+            secrets du client.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # Absolu, ou relatif au dossier du fichier de config. Ni « ~ » ni variable.
     path: Path | None = None
-    # Variable d'environnement qui porte le chemin, lue dans les secrets du client.
     path_env: str | None = Field(default=None, pattern=ENV_NAME_PATTERN)
 
     @model_validator(mode="after")
@@ -116,12 +125,17 @@ class StoreSpec(BaseModel):
 
 
 class MemoryFolder(BaseModel):
-    """Un dossier où ``add_file`` peut lire : son nom pour le modèle, son chemin."""
+    """Un dossier où ``add_file`` peut lire : son nom pour le modèle, son chemin.
+
+    Attributes:
+        name: Nom du dossier pour le modèle.
+        path: Absolu, ou relatif au dossier du fichier de config. Ni « ~ » ni
+            variable.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = Field(pattern=FOLDER_NAME_PATTERN)
-    # Absolu, ou relatif au dossier du fichier de config. Ni « ~ » ni variable.
     path: Path
 
     @model_validator(mode="after")
@@ -162,40 +176,59 @@ def server_url_problem(url: str) -> str | None:
     return None
 
 
-# Le device des modèles, et les défauts des réglages de calcul : une seule définition pour
-# ``models``, ``server.fallback`` et les réglages de loom-mem-gpu.
 DEVICE_PATTERN: Final = r"^(auto|cpu|mps|cuda(:[0-9]+)?)$"
+"""Le device des modèles, et les défauts des réglages de calcul : une seule
+définition pour ``models``, ``server.fallback`` et les réglages de
+loom-mem-gpu.
+"""
 DEFAULT_DEVICE: Final = "auto"
+"""Device des modèles sans réglage : choisi selon la machine."""
 DEFAULT_FP16: Final = True
+"""Calcul en demi-précision, sans réglage."""
 DEFAULT_OFFLINE: Final = False
+"""Modèles téléchargés au besoin, sans réglage."""
 
 
 class FallbackSpec(BaseModel):
-    """Le repli dans loom quand ``loom-mem-gpu`` ne répond pas : où calculer, et comment."""
+    """Le repli dans loom quand ``loom-mem-gpu`` ne répond pas : où calculer, et comment.
+
+    Attributes:
+        device: Où calculer : ``auto``, ``cpu``, ``mps`` ou ``cuda[:n]`` ; même
+            défaut que dans ``models``.
+        fp16: Demi-précision sur GPU ; même défaut que dans ``models``.
+        offline: Modèles lus dans le cache local seulement ; même défaut que
+            dans ``models``.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # Mêmes valeurs et mêmes défauts que dans ``models``.
     device: str = Field(default=DEFAULT_DEVICE, pattern=DEVICE_PATTERN)
     fp16: bool = DEFAULT_FP16
     offline: bool = DEFAULT_OFFLINE
 
 
 class ServerSpec(BaseModel):
-    """``loom-mem-gpu`` : l'application qui garde les modèles en VRAM et calcule pour loom."""
+    """``loom-mem-gpu`` : l'application qui garde les modèles en VRAM et calcule pour loom.
+
+    Attributes:
+        url: Adresse de l'application.
+        url_env: Variable qui porte l'adresse, lue dans les secrets du client.
+        token_env: La variable qui porte le jeton, s'il en faut un ; jamais le
+            jeton lui-même.
+        connect_timeout: Délai de connexion, en secondes : une application
+            arrêtée ne bloque pas chaque appel.
+        read_timeout: Délai de réponse, en secondes : un lot, au plus.
+        fallback: Calcul dans ce process quand l'application ne répond pas ;
+            absent : pas de repli, une erreur qui dit comment la démarrer.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # L'adresse, ou la variable qui la porte (lue dans les secrets du client).
     url: str | None = None
     url_env: str | None = Field(default=None, pattern=ENV_NAME_PATTERN)
-    # La variable qui porte le jeton, s'il en faut un ; jamais le jeton lui-même.
     token_env: str | None = Field(default=None, pattern=ENV_NAME_PATTERN)
-    # Secondes : une application arrêtée ne bloque pas chaque appel ; un lot, au plus.
     connect_timeout: PositiveFloat = 2.0
     read_timeout: PositiveFloat = 60.0
-    # Calcul dans ce process quand l'application ne répond pas ; absent : pas de repli, une
-    # erreur qui dit comment la démarrer.
     fallback: FallbackSpec | None = None
 
     @model_validator(mode="after")
@@ -209,34 +242,44 @@ class ServerSpec(BaseModel):
         return self
 
     def secret_names(self) -> tuple[str, ...]:
+        """Les variables que le serveur lit : ``url_env`` et ``token_env``."""
         return tuple(name for name in (self.url_env, self.token_env) if name is not None)
 
 
-# Ce que ``server`` règle sur l'application : refusé à côté de lui.
 _SET_BY_SERVER: Final = ("device", "fp16", "offline")
+"""Ce que ``server`` règle sur l'application : refusé à côté de lui."""
 
 
 class ModelsSpec(BaseModel):
-    """Les modèles d'embedding et de reranking, partagés par tout le process."""
+    """Les modèles d'embedding et de reranking, partagés par tout le process.
+
+    Attributes:
+        kind: ``bge-m3``, ou ``fake`` : modèles factices et déterministes, sans
+            torch (essais, démonstrations).
+        embedder: Modèle d'embedding : nom Hugging Face ou dossier local.
+        reranker: Modèle de reranking : nom Hugging Face ou dossier local.
+        device: ``auto`` : cuda si la carte est prise en charge, sinon mps,
+            sinon cpu.
+        fp16: Demi-précision sur GPU ; sans effet sur CPU, qui calcule en
+            float32.
+        preload: Charger les modèles en tâche de fond dès le montage de
+            l'agent, au lieu du premier appel.
+        offline: Lire les modèles dans le cache local de Hugging Face seulement
+            : aucune requête vers le Hub. Un modèle absent du cache fait
+            échouer le chargement (``hf download`` l'y met).
+        server: Calculs confiés à loom-mem-gpu ; ``embedder`` et ``reranker``
+            sont alors les modèles qu'elle doit annoncer.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # ``fake`` : modèles factices et déterministes, sans torch (essais, démonstrations).
     kind: Literal["bge-m3", "fake"] = "bge-m3"
-    # Nom Hugging Face ou dossier local.
     embedder: str = Field(default="BAAI/bge-m3", min_length=1)
     reranker: str = Field(default="BAAI/bge-reranker-v2-m3", min_length=1)
-    # ``auto`` : cuda si la carte est prise en charge, sinon mps, sinon cpu.
     device: str = Field(default=DEFAULT_DEVICE, pattern=DEVICE_PATTERN)
-    # Demi-précision sur GPU ; sans effet sur CPU, qui calcule en float32.
     fp16: bool = DEFAULT_FP16
-    # Charger les modèles en tâche de fond dès le montage de l'agent, au lieu du premier appel.
     preload: bool = False
-    # Lire les modèles dans le cache local de Hugging Face seulement : aucune requête vers le
-    # Hub. Un modèle absent du cache fait échouer le chargement (``hf download`` l'y met).
     offline: bool = DEFAULT_OFFLINE
-    # Calculs confiés à loom-mem-gpu ; ``embedder`` et ``reranker`` sont alors les modèles
-    # qu'elle doit annoncer.
     server: ServerSpec | None = None
 
     @model_validator(mode="after")
@@ -271,25 +314,41 @@ class ModelsSpec(BaseModel):
 
 
 class RetrievalSpec(BaseModel):
-    """Réglages de la recherche : candidats, reranking, extraits."""
+    """Réglages de la recherche : candidats, reranking, extraits.
+
+    Attributes:
+        prefetch_limit: Candidats retenus par chacune des deux recherches
+            (dense, lexicale) avant fusion.
+        rerank_candidates: Candidats passés au reranker, le poste de coût
+            dominant sur CPU.
+        max_chunks_per_doc: Passages rendus au plus par document.
+        snippet_chars: Longueur de l'extrait rendu quand le passage est trop
+            long pour être rendu entier.
+        full_chunk_chars: En dessous de cette longueur, search rend le passage
+            entier.
+        min_score: Score du reranker (0 à 1) sous lequel un passage n'est pas
+            rendu.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # Candidats retenus par chacune des deux recherches (dense, lexicale) avant fusion.
     prefetch_limit: PositiveInt = 15
-    # Candidats passés au reranker, le poste de coût dominant sur CPU.
     rerank_candidates: PositiveInt = 20
     max_chunks_per_doc: PositiveInt = 2
-    # Longueur de l'extrait rendu quand le passage est trop long pour être rendu entier.
     snippet_chars: PositiveInt = 300
-    # En dessous, search rend le passage entier.
     full_chunk_chars: PositiveInt = 1000
-    # Score du reranker (0 à 1) sous lequel un passage n'est pas rendu.
     min_score: float = Field(default=0.1, ge=0.0, le=1.0)
 
 
 class ChunkingSpec(BaseModel):
-    """Découpage des documents, en caractères (environ 4 par token en français)."""
+    """Découpage des documents, en caractères (environ 4 par token en français).
+
+    Attributes:
+        target_chars: Longueur visée d'un passage.
+        max_chars: Longueur au plus d'un passage.
+        overlap_chars: Recouvrement entre deux passages qui se suivent.
+        min_chars: Longueur au moins d'un passage.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -308,7 +367,12 @@ class ChunkingSpec(BaseModel):
 
 
 class ActionSpec(BaseModel):
-    """Une action permise, et son approbation si elle n'est pas celle par défaut."""
+    """Une action permise, et son approbation si elle n'est pas celle par défaut.
+
+    Attributes:
+        approval: Approbation de l'action ; absente : celle par défaut
+            (``never`` pour une lecture, ``always`` pour une écriture).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -361,7 +425,19 @@ def _unique_folders(folders: tuple[MemoryFolder, ...]) -> tuple[MemoryFolder, ..
 
 
 class MemoryParams(BaseModel):
-    """Paramètres de ``loom.memory``."""
+    """Paramètres de ``loom.memory``.
+
+    Attributes:
+        store: Le fichier SQLite de la mémoire.
+        project: Projet où l'outil range et cherche ; en minuscules.
+        folders: Dossiers où ``add_file`` peut lire, de noms distincts.
+        models: Modèles d'embedding et de reranking.
+        retrieval: Réglages de la recherche.
+        chunking: Découpage des documents.
+        actions: Actions permises (``search``, ``get``, ``list_docs``,
+            ``projects``, ``add_text``, ``add_url``, ``add_file``, ``update``,
+            ``delete``), et l'approbation de chacune.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

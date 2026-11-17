@@ -31,7 +31,6 @@ from loom_ia.tools_builtin import BuiltinContext, Settings
 from loom_ia.tools_builtin._folders import TEMP_PREFIX, Folder, Folders, Located, mount, write_bytes
 from loom_ia.tools_builtin.local_files_params import LocalFilesParams, Right
 
-# TEMP_PREFIX, préfixe des fichiers temporaires d'une écriture, reste importable d'ici.
 __all__ = [
     "MAX_COPY_BYTES",
     "MAX_READ_BYTES",
@@ -41,14 +40,20 @@ __all__ = [
     "LocalFilesTool",
     "build",
 ]
+"""TEMP_PREFIX, préfixe des fichiers temporaires d'une écriture, reste importable d'ici."""
 NAME: Final = "local_files"
+"""Nom de l'outil."""
 MAX_READ_BYTES: Final = 1_000_000
+"""Octets lus au plus par lecture."""
 MAX_WRITE_BYTES: Final = 1_000_000
+"""Octets écrits au plus par écriture."""
 MAX_ENTRIES: Final = 500
-# Copie d'un fichier de la conversation (write avec file) : binaire permis.
+"""Entrées rendues au plus par une liste."""
 MAX_COPY_BYTES: Final = 16 << 20
+"""Copie d'un fichier de la conversation (write avec file) : binaire permis."""
 
 type Action = Literal["list", "read", "write", "delete"]
+"""Action de l'outil : lister, lire, écrire ou supprimer."""
 
 _SAID: Final[Mapping[Action, str]] = {
     "list": "lister",
@@ -107,6 +112,14 @@ class LocalFilesTool:
     """L'outil ``local_files`` monté avec ses dossiers."""
 
     def __init__(self, folders: tuple[Folder, ...]) -> None:
+        """Prépare l'outil pour ces dossiers : sa description dit les dossiers et leurs droits.
+
+        Args:
+            folders: Les dossiers permis.
+
+        Raises:
+            ValueError: Aucun dossier.
+        """
         if not folders:
             raise ValueError("au moins un dossier est attendu")
         self.folders = folders
@@ -128,6 +141,7 @@ class LocalFilesTool:
 
     @property
     def spec(self) -> ToolSpec:
+        """La définition de l'outil."""
         return self._spec
 
     def settings(self) -> Settings:
@@ -161,6 +175,12 @@ class LocalFilesTool:
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """Mène l'action demandée (``list``, ``read``, ``write``, ``delete``) après le contrôle du chemin et des droits, hors de la boucle asyncio.
+
+        Raises:
+            ToolError: Chemin hors des dossiers, droit absent, fichier introuvable,
+                trop gros, ou erreur du système.
+        """
         request = _parse(arguments)
         located = self._locate(request)
         self._check_rights(request, located)
@@ -199,6 +219,7 @@ class LocalFilesTool:
             raise ToolError(f"{located.address} : {reason}.") from exc
 
     def _perform(self, request: _Arguments, located: Located) -> dict[str, JsonValue]:
+        """L'action sur le disque ; une erreur du système devient un ``ToolError``, sans le chemin réel."""
         try:
             if request.action == "delete" and located.lexical.is_symlink():
                 return self._unlinked(located)
@@ -220,6 +241,7 @@ class LocalFilesTool:
             raise ToolError(f"{located.address} : nom illisible en UTF-8.") from exc
 
     def _listed(self, target: Path, located: Located) -> dict[str, JsonValue]:
+        """Le contenu d'un dossier : fichiers et sous-dossiers, sans les cachés ni les liens qui en sortent, ``MAX_ENTRIES`` au plus."""
         if not target.is_dir():
             raise ToolError(f"{located.address} n'est pas un dossier.")
         entries: list[JsonValue] = []
@@ -248,6 +270,7 @@ class LocalFilesTool:
 
 
 def _read(target: Path, located: Located) -> dict[str, JsonValue]:
+    """Le texte d'un fichier : UTF-8, ``MAX_READ_BYTES`` octets au plus ; ``ToolError`` sinon."""
     if target.is_dir():
         raise ToolError(f"{located.address} est un dossier : list pour son contenu.")
     if not target.is_file():
@@ -314,6 +337,7 @@ def _parse(arguments: Mapping[str, JsonValue]) -> _Arguments:
 
 
 def _description(space: Folders) -> str:
+    """La description de l'outil : les dossiers et leurs droits, les actions, et les bornes."""
     lines = [
         "Lit, liste, écrit et supprime des fichiers dans des dossiers permis. Un fichier se désigne par « <dossier>/<chemin> », jamais par un chemin absolu.",
         "Dossiers et droits :",

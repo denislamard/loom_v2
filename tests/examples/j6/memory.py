@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.4d : la mémoire long terme — l'outil fourni ``loom.memory``.
+r"""Phase 6.4d : la mémoire long terme — l'outil fourni ``loom.memory``.
 
     uv run python tests/examples/j6/memory.py
     uv run python tests/examples/j6/memory.py --cas chercher
     uv run python tests/examples/j6/memory.py --cas memoriser
     uv run python tests/examples/j6/memory.py --cas rejeu
     uv run python tests/examples/j6/memory.py --cas clients
-    uv run --env-file .env --extra anthropic --extra memory \\
+    uv run --env-file .env --extra anthropic --extra memory \
         python tests/examples/j6/memory.py --reel
-    uv run --env-file .env --extra anthropic --extra memory \\
+    uv run --env-file .env --extra anthropic --extra memory \
         python tests/examples/j6/memory.py --reel --device cpu
 
 La mémoire est l'outil ``loom.memory``, monté dans le process de loom : une
@@ -233,8 +233,7 @@ class Controle:
         return "oui" if vrai else "NON"
 
     def saute(self, quoi: str, *, partie: bool = False) -> None:
-        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire,
-        sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
+        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire, sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
         (self.parties if partie else self.sautes).append(quoi)
 
     def bilan(self, joues: int) -> bool | None:

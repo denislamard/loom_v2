@@ -244,8 +244,7 @@ async def test_a_run_refused_for_its_state_is_an_error_result_and_writes_nothing
 async def test_mcp_runs_in_a_session_whose_state_the_application_posed(
     demo: ConfigFactory,
 ) -> None:
-    """Le state posé par l'application vaut pour les runs lancés en MCP ; le résultat ne le
-    montre pas (sa lecture demandera sa portée, D5)."""
+    """Le state posé par l'application vaut pour les runs lancés en MCP ; le résultat ne le montre pas (sa lecture demandera sa portée, D5)."""
     required = {"client_id": {"schema": {"type": "string"}, "required": True}}
     session = SessionId("atelier")
     async with serving(demo(agents=[demo_agent(state=required)])) as (loom, client):

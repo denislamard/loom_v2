@@ -35,12 +35,14 @@ _R: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationships
 _WP: Final = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 _HEAD: Final = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 
-# Le blanc du papier : le trait entre deux secteurs.
 PAPER: Final = "FFFFFF"
-# Mesures en EMU : 360 000 par centimètre.
+"""Le blanc du papier : le trait entre deux secteurs."""
 CM: Final = 360_000
+"""Mesures en EMU : 360 000 par centimètre."""
 WIDTH: Final = 17 * CM
+"""Largeur d'un graphique dans la page, en EMU (17 cm)."""
 HEIGHT: Final = 9 * CM
+"""Hauteur d'un graphique dans la page, en EMU (9 cm)."""
 
 
 def height(chart: ChartOut) -> int:
@@ -91,6 +93,7 @@ class Paint:
     language: str
 
     def series(self, index: int) -> str:
+        """La couleur de la série ``index``, la palette reprise en boucle."""
         colors = self.look.colors
         return colors[index % len(colors)]
 
@@ -114,7 +117,7 @@ def _line(color: str, width: int = 28575) -> str:
 
 
 def _column(index: int) -> str:
-    """La lettre de colonne d'une série dans la feuille de référence : B, C, D…"""
+    """La lettre de colonne d'une série dans la feuille de référence  (B, C, D…)."""
     return chr(ord("B") + index)
 
 
@@ -177,6 +180,7 @@ def _scale(chart: ChartOut) -> str:
 
 
 def _axes(chart: ChartOut, paint: Paint) -> str:
+    """Les deux axes d'un graphique à barres ou d'une courbe, en XML : libellés, valeurs et leur format, grille."""
     horizontal = chart.kind == "horizontal_bar"
     code = AXIS_FORMATS[chart.value_type]
     grid = f'<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="{paint.look.grid}"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>'
@@ -204,6 +208,7 @@ def _axes(chart: ChartOut, paint: Paint) -> str:
 
 
 def _plot(chart: ChartOut, paint: Paint) -> str:
+    """Le tracé d'un graphique en XML : camembert, barres (verticales ou horizontales) ou courbe, avec ses couleurs et ses étiquettes."""
     label = LABEL_FORMATS[chart.value_type]
     match chart.kind:
         case "pie":

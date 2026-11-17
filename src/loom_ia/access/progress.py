@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Déroulé d'un run en lignes courtes (N4, D4).
+"""Déroulé d'un run en lignes courtes (fonctions N4 et D4).
 
 Le direct de la CLI (``loom run --stream``) et les notifications de
 progression du serveur MCP décrivent un run de la même façon : un appel
@@ -49,16 +49,17 @@ from loom_ia.core.model import CriterionScore, RunId
 from loom_ia.usage import describe as describe_budget
 
 INDENT: Final = "  "
-# Longueur au-delà de laquelle un message d'erreur est coupé.
+"""Décalage d'une ligne par niveau de sous-run."""
 ERROR_CHARS: Final = 160
+"""Longueur au-delà de laquelle un message d'erreur est coupé."""
 STORED: Final = {
     "attachment": "pièce jointe rangée",
     "tool_output": "fichier rangé",
     "offload": "résultat déporté",
 }
+"""Comment le déroulé nomme un fichier rangé, selon son origine."""
 
 
-# Décisions de politique, telles qu'une ligne du déroulé les nomme.
 DECISIONS: Final = {
     "continue": "laissé passer",
     "replace": "remplacé",
@@ -68,15 +69,16 @@ DECISIONS: Final = {
     "stop": "arrêt",
     "fail": "échec",
 }
+"""Décisions de politique, telles qu'une ligne du déroulé les nomme."""
 
 
-# Issue d'un contrôle de sortie, telle qu'une ligne du déroulé la nomme.
 RESOLUTIONS: Final = {
     "retry": "réparation demandée",
     "fail": "refusée",
     "unverified": "gardée, non vérifiée",
     "fallback": "remplacée par le message de repli",
 }
+"""Issue d'un contrôle de sortie, telle qu'une ligne du déroulé la nomme."""
 
 
 class Progress:
@@ -159,7 +161,7 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             delai = (
                 ""
                 if payload.expire_at is None
-                # À l'heure de la machine, comme la console (test H3 du 20/10 : en UTC).
+                # À l'heure de la machine, comme la console (essai de la fonction H3, 20/10 : en UTC).
                 else f", jusqu'au {payload.expire_at.astimezone().strftime('%d/%m à %H:%M:%S')}"
             )
             return f"approbation demandée : {payload.tool_name} — {payload.reason}{delai}"
@@ -214,18 +216,18 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
 def signed(by: str, via: str | None = None, *, self_approved: bool = False) -> str:
     """Qui a agi, tel que le déroulé le dit : ``marie (via app-crm)`` (§ 7).
 
-    Une auto-approbation se dit : celui qui tranche a lancé le run (D-7).
+    Une auto-approbation se dit : celui qui tranche a lancé le run (décision D-7 des utilisateurs et rôles).
     """
     said = by if via is None else f"{by} (via {via})"
     return f"{said}, auto-approbation" if self_approved else said
 
 
-# Ce que dit le contrôle de fidélité d'un résumé.
 FIDELITY: Final = {
     "ok": "fidélité vérifiée",
     "warning": "fidélité douteuse",
     "skipped": "fidélité non vérifiée",
 }
+"""Ce que dit le contrôle de fidélité d'un résumé."""
 
 
 def describe_compaction(payload: SessionCompacted) -> str:
@@ -252,7 +254,6 @@ def _below(criterion: CriterionScore) -> str:
     return f" (seuil {_score(criterion.min_score)}{blocking})"
 
 
-# Motif d'un juge sauté (``guard.checked`` ``skipped``), en clair.
 SKIP_REASONS: Final[Mapping[str, str]] = {
     "caller_skip": "sauté à la demande de l'appelant (judges: skip)",
     "sampled_out": "hors échantillon (when.sample)",
@@ -260,6 +261,7 @@ SKIP_REASONS: Final[Mapping[str, str]] = {
     "condition_false": "condition fausse (when.condition)",
     "other_profile": "profil hors de when.profiles",
 }
+"""Motif d'un juge sauté (``guard.checked`` ``skipped``), en clair."""
 
 
 def _score(value: float) -> str:

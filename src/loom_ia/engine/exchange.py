@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""D'un échange brut à l'événement qui le garde (#31, J6.1b).
+"""D'un échange brut à l'événement qui le garde (point 31, jalon J6.1b).
 
 Ce qu'un adaptateur dépose dans le registre (``RawExchange``) est exactement
 ce qui a circulé, secrets compris. Avant d'en faire un ``model.exchanged``,
@@ -15,7 +15,7 @@ trois retouches, et seulement trois :
    forme des images chez OpenAI), un objet ``{"type": "base64", "data": …}``
    (chez Anthropic) et un bloc ``{"type": "inline_data", "data": …}`` (celui
    de loom, que montre l'échange simulé) sont remplacés par leur type, leur
-   taille et leur empreinte — le journal ne porte pas d'octets de fichier (#16) ;
+   taille et leur empreinte — le journal ne porte pas d'octets de fichier (point 16) ;
 3. **un corps trop long est coupé** à ``max_bytes``, sur une frontière de
    caractère, et l'événement le dit ; sa taille et son empreinte restent
    celles du corps entier.
@@ -38,16 +38,17 @@ from loom_ia.core.model import ModelChunk, ModelRequest
 from loom_ia.core.ports import ModelClient, RawExchange
 
 REMOVED: Final = "[retiré]"
-# Un nom d'en-tête ou de paramètre qui porte un secret.
+"""Valeur mise à la place d'un secret."""
 _SECRET_NAME: Final = re.compile(
     r"authorization|api[-_]?key|(?:^|[-_])key$|token|secret|password|passwd|cookie|signature"
     r"|credential",
     re.IGNORECASE,
 )
-# Un compteur de débit : « tokens » y compte des jetons de modèle, il n'en est pas un.
+"""Un nom d'en-tête ou de paramètre qui porte un secret."""
 _RATE_LIMIT: Final = re.compile(r"rate-?limit", re.IGNORECASE)
-# Une URI de données en base64, telle qu'elle s'écrit dans un corps JSON.
+"""Un compteur de débit : « tokens » y compte des jetons de modèle, il n'en est pas un."""
 _DATA_URI: Final = re.compile(r"data:(?P<mime>[\w.+-]+/[\w.+-]+);base64,(?P<data>[A-Za-z0-9+/=]+)")
+"""Une URI de données en base64, telle qu'elle s'écrit dans un corps JSON."""
 
 
 class Recorded:
@@ -57,6 +58,18 @@ class Recorded:
     qui, le reconnaissant, ouvre un registre autour de chaque tentative. Le
     client enrobé, lui, doit savoir y déposer — un ``RecordingClient`` HTTP
     pour un SDK, de lui-même pour le modèle simulé.
+
+    Réglage : ``raw_exchanges`` du modèle (``ModelSpec``) ; les échanges
+    deviennent des événements ``model.exchanged``.
+
+    Args:
+        inner: Le client enrobé.
+        raw_max_bytes: Taille maximale d'un corps gardé, en octets ; au-delà,
+            il est coupé.
+
+    Attributes:
+        inner: Le client enrobé.
+        raw_max_bytes: Taille maximale d'un corps gardé, en octets.
     """
 
     def __init__(self, inner: ModelClient, raw_max_bytes: int) -> None:
@@ -65,12 +78,15 @@ class Recorded:
 
     @property
     def provider(self) -> str:
+        """Fournisseur du client enrobé."""
         return self.inner.provider
 
     def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        """Flux de la réponse du client enrobé, sans changement."""
         return self.inner.stream(request)
 
     async def aclose(self) -> None:
+        """Ferme le client enrobé."""
         await self.inner.aclose()
 
     def __repr__(self) -> str:
@@ -86,7 +102,21 @@ def exchanged(
     max_bytes: int,
     model: str | None = None,
 ) -> ModelExchanged:
-    """L'événement d'un échange : secrets et fichiers retirés, corps bornés."""
+    """L'événement d'un échange : secrets et fichiers retirés, corps bornés.
+
+    Args:
+        raw: L'échange brut déposé par l'adaptateur.
+        attempt: Rang de la tentative, à partir de 1.
+        model_id: Identifiant du modèle dans la config.
+        provider: Fournisseur (``anthropic``, ``openai``…).
+        max_bytes: Taille maximale d'un corps, en octets.
+        model: Nom du modèle chez le fournisseur, s'il est connu.
+
+    Returns:
+        L'événement ``model.exchanged`` : méthode, adresse et en-têtes sans
+        secrets, corps sans octets de fichier et coupés à ``max_bytes``, taille
+        et empreinte SHA-256 des corps entiers, statut, durée, erreur.
+    """
     request, request_bytes, request_sha, request_cut = _body(raw.request_body, max_bytes)
     response, response_bytes, response_sha, response_cut = _body(raw.response_body, max_bytes)
     return ModelExchanged(
@@ -114,11 +144,21 @@ def exchanged(
 
 
 def scrubbed_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """Les en-têtes, noms en minuscules, la valeur d'un en-tête secret remplacée par ``[retiré]``."""
     return {name.lower(): REMOVED if _secret(name) else value for name, value in headers.items()}
 
 
 def scrubbed_url(url: str) -> str:
-    """L'adresse, sans ses identifiants ni la valeur des paramètres qui portent un secret."""
+    """L'adresse, sans ses identifiants ni la valeur des paramètres qui portent un secret.
+
+    Args:
+        url: L'adresse appelée.
+
+    Returns:
+        L'adresse, identifiants et valeurs secrètes remplacés par
+        ``[retiré]`` ; la même chaîne, au caractère près, s'il n'y a rien à
+        retirer.
+    """
     parts = original = urlsplit(url)
     if "@" in parts.netloc:
         # Ce qui précède le dernier « @ » : l'utilisateur, son mot de passe, ou une clé.
@@ -138,7 +178,16 @@ def _secret(name: str) -> bool:
 
 
 def without_files(text: str) -> str:
-    """Le corps, ses octets de fichier remplacés par une description."""
+    """Le corps, ses octets de fichier remplacés par une description.
+
+    La description est « [fichier <type>, <n> octets, sha256 <16 car.>…] ».
+
+    Args:
+        text: Le corps, JSON ou non.
+
+    Returns:
+        Le corps retouché ; le même texte s'il ne porte pas de fichier.
+    """
     try:
         parsed: object = json.loads(text)
     except ValueError:

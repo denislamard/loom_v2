@@ -38,13 +38,15 @@ from loom_ia.tools_builtin.fetch_page import decode, download, is_html
 from loom_ia.tools_builtin.memory.service import Extracted
 
 WEB_EXTRA: Final = "memory-web"
+"""L'extra de loom-ia qu'il faut pour ``add_url``."""
 WEB_MODULES: Final = ("bs4", "markdownify")
+"""Les modules que cet extra apporte."""
 
 _NOISE: Final = "nav, footer, script, style, noscript, iframe, svg, form, template, [aria-hidden='true'], [role='navigation']"
 _INLINE_TAGS: Final = ("span", "strong", "b", "em", "i", "code", "a", "small", "abbr", "time")
 _HEADINGS: Final = ("h1", "h2", "h3", "h4", "h5", "h6")
-# Ce qu'une définition (``<dd>``) peut contenir sans tenir sur une ligne.
 _BLOCKS: Final = ("p", "div", "ul", "ol", "table", "pre", "blockquote", "dl", *_HEADINGS)
+"""Ce qu'une définition (``<dd>``) peut contenir sans tenir sur une ligne."""
 
 
 async def fetch_markdown(url: str) -> Extracted:

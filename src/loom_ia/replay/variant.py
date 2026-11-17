@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Rejouer un run en variante : autre modèle ou autre config, et comparer (K6, #31, J6.2b).
+"""Rejouer un run en variante : autre modèle ou autre config, et comparer (fonction K6, point 31, jalon J6.2b).
 
 La variante monte l'agent du run comme le rejeu identique — en mémoire, sous
 le même identifiant, la logique de loom tournant pour de vrai —, mais le monde
@@ -64,19 +64,23 @@ from loom_ia.replay.book import (
 )
 from loom_ia.tools.python import to_output
 
-# Ce qu'un appel d'outil du rejeu en variante devient.
 type ToolFate = Literal["journal", "double", "relaunched", "refused", "run"]
-# Une doublure : appelée avec les arguments de l'appel, comme un outil Python
-# (synchrone ou non) ; sa valeur est traduite comme celle d'un outil.
+"""Ce qu'un appel d'outil du rejeu en variante devient."""
 type Double = Callable[..., object]
+"""Une doublure : appelée avec les arguments de l'appel, comme un outil Python
+(synchrone ou non) ; sa valeur est traduite comme celle d'un outil.
+"""
 
 JUDGE_PREFIX: Final = "judge:"
+"""Préfixe de l'étape d'un juge (``judge:<nom>``), telle que le journal la nomme."""
 REFUSED: Final = (
     "Non exécuté : rejeu en variante. L'outil {name} a des effets de bord "
     "({effects}) et cet appel n'est pas au journal sous ces arguments ; il n'est "
     "jamais réexécuté."
 )
+"""Erreur rendue au modèle pour un outil à effets de bord que le journal ne connaît pas sous ces arguments."""
 NOBODY: Final = "rejeu en variante : cet appel s'exécuterait pour de vrai, et personne n'est là pour l'approuver"
+"""Motif du refus d'une approbation pour un appel qui s'exécuterait pour de vrai."""
 _FATES: Final[Mapping[ToolFate, str]] = {
     "journal": "lu au journal",
     "double": "remplacé par sa doublure",
@@ -101,9 +105,15 @@ class VariantModelClient(AnsweringClient):
 
     @property
     def provider(self) -> str:
+        """Fournisseur du vrai client s'il est créé, sinon celui que l'adaptateur du modèle écrirait."""
         return self._real.provider if self._real is not None else provider_of(self.spec)
 
     async def answer(self, request: ModelRequest) -> ModelResponse | None:
+        """La réponse du journal à une requête identique ; ``None`` sinon : l'appel part pour de vrai, en flux (``stream``).
+
+        Args:
+            request: La requête.
+        """
         recorded = self.book.known(request)
         return recorded_response(recorded) if recorded is not None else None
 
@@ -119,6 +129,7 @@ class VariantModelClient(AnsweringClient):
         self.book.paid(self.spec.pricing.cost(usage), usage)
 
     async def aclose(self) -> None:
+        """Ferme le vrai client, s'il a été créé."""
         if self._real is not None:
             await self._real.aclose()
 
@@ -134,10 +145,17 @@ class VariantModelClient(AnsweringClient):
 
 @dataclass(frozen=True, slots=True)
 class _Decision:
+    """Ce que le rejeu en variante fait d'un appel d'outil, décidé une fois.
+
+    Attributes:
+        fate: Le sort de l'appel.
+        record: L'appel du journal qui le sert (``journal``).
+        effects: Effets de bord déclarés de l'outil (``refused``), pour le dire
+            au modèle.
+    """
+
     fate: ToolFate
-    # L'appel du journal qui le sert (``journal``).
     record: ToolCallRecord | None = None
-    # Effets de bord déclarés de l'outil (``refused``), pour le dire au modèle.
     effects: str = ""
 
 
@@ -153,6 +171,17 @@ class VariantTools:
         self._decisions: dict[tuple[str, str], _Decision] = {}
 
     def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool:
+        """Vrai si la variante répond à la place de l'outil : lu au journal, doublé ou refusé.
+
+        Un rôle tourne toujours. Le sort de chaque appel est décidé une fois
+        (``_decide``) ; un sous-agent relancé ou un outil sans effets de bord
+        s'exécute pour de vrai.
+
+        Args:
+            tool: L'outil appelé.
+            call: L'appel.
+            run_id: Run qui appelle.
+        """
         if tool.spec.kind == "role":
             # De la logique : elle tourne, son modèle passe par le client de la variante.
             return False
@@ -165,6 +194,11 @@ class VariantTools:
         return decision.fate in ("journal", "double", "refused")
 
     def from_journal(self, run_id: RunId, call_id: str) -> bool:
+        """Vrai pour un appel lu au journal de ce même run.
+
+        Doublé, refusé, ou lu au journal d'un autre run de l'arbre, le résultat
+        est neuf : le state s'y pose comme en direct.
+        """
         # Doublé ou refusé, le résultat est neuf : le state s'y pose comme en direct.
         # Lu dans le journal d'un autre run de l'arbre aussi : son state n'est pas
         # celui que ce run-ci a posé. Seul un appel lu au journal a un ``record``.
@@ -180,6 +214,12 @@ class VariantTools:
         arguments: Mapping[str, JsonValue],
         resolved: Mapping[str, JsonValue],
     ) -> tuple[ToolOutput, Consumption | None]:
+        """Le résultat de l'appel selon son sort.
+
+        Lu au journal (son sous-run lu avec lui), sa doublure (références
+        résolues, arguments remplacés compris), ou l'erreur qui dit au modèle
+        qu'il n'est pas exécuté.
+        """
         decision = self._decisions[run_id, call_id]
         match decision.fate:
             case "journal":
@@ -215,6 +255,16 @@ class VariantTools:
         return Approved(by="rejeu", reason=f"appel {_FATES[decision.fate]} : rien ne part")
 
     def _decide(self, tool: AnyTool, call: PendingCall) -> _Decision:
+        """Le sort d'un appel, et la divergence qu'il marque s'il n'est pas au journal.
+
+        Retrouvé au journal par son nom et ses arguments : lu. Sinon, dans l'ordre :
+        sa doublure, un sous-agent relancé, un refus s'il a des effets de bord
+        (jugés avant les références et les politiques), une exécution réelle.
+
+        Args:
+            tool: L'outil appelé.
+            call: L'appel.
+        """
         record = self.book.match_tool(call.name, call.arguments)
         if record is not None:
             return _Decision("journal", record)
@@ -251,6 +301,11 @@ async def doubled(double: Double, name: str, arguments: Mapping[str, JsonValue])
 
 
 def fate_label(fate: ToolFate) -> str:
+    """Le sort d'un appel du rejeu en variante, en clair.
+
+    Args:
+        fate: ``journal``, ``double``, ``relaunched``, ``refused`` ou ``run``.
+    """
     return _FATES[fate]
 
 
@@ -290,6 +345,7 @@ def _steps(spec: AgentSpec) -> list[str]:
 
 
 def _swapped(spec: AgentSpec, models: Mapping[str, str]) -> AgentSpec:
+    """La spec de l'agent où chaque étape nommée appelle son nouveau modèle : ``main``, le juge final, les rôles et leurs juges."""
     update: dict[str, object] = {}
     if MAIN_ROLE in models:
         update["main"] = spec.main.model_copy(update={"model": models[MAIN_ROLE]})

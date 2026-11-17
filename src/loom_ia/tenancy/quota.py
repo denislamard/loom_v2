@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Limitation de débit : quota d'un client, débit d'une clé d'API (L3, #39).
+"""Limitation de débit : quota d'un client, débit d'une clé d'API (fonction L3, point 39).
 
 Fenêtre **glissante** de soixante secondes, et non calendaire comme les
 budgets : un plafond de débit qui laisse passer le double à cheval sur la
@@ -11,7 +11,7 @@ Le même compteur sert deux choses qu'il ne faut pas confondre. Le quota d'un
 à la façade, donc il vaut par les trois accès — mais **par instance**
 ``Loom`` : la fenêtre vit en mémoire, une commande ``loom run`` (un process
 par run) ne l'atteint jamais, et deux workers ou deux ``loom serve`` tiennent
-chacun la leur (test L3 du 22/10). Le débit d'une **clé d'API**
+chacun la leur (essai de la fonction L3, 22/10). Le débit d'une **clé d'API**
 (``rate_limit.per_minute``) protège le serveur : il est vérifié par l'accès
 HTTP, qui répond 429 avec un ``Retry-After``, et tient lui aussi une fenêtre
 par application.
@@ -23,8 +23,8 @@ from typing import Final
 
 from loom_ia.core.model import WINDOW, TenantId
 
-# Ce qu'on compte : un client, ou une clé d'API.
 type Counted = str
+"""Ce qu'on compte : un client, ou une clé d'API."""
 
 
 class QuotaExceeded(RuntimeError):
@@ -32,6 +32,15 @@ class QuotaExceeded(RuntimeError):
 
     ``retry_after`` porte les secondes au bout desquelles la plus ancienne
     demande de la fenêtre en sortira, donc l'instant où la suivante passera.
+
+    Args:
+        what: Ce qui est limité, pour le message (« Client 'dupont' »).
+        limit: Demandes permises par minute.
+        retry_after: Secondes avant que la suivante passe.
+
+    Attributes:
+        limit: Demandes permises par minute.
+        retry_after: Secondes avant que la suivante passe.
     """
 
     def __init__(self, what: str, limit: int, retry_after: float) -> None:
@@ -41,14 +50,31 @@ class QuotaExceeded(RuntimeError):
 
 
 class RateWindow:
-    """Fenêtre glissante partagée, par clé de comptage."""
+    """Fenêtre glissante partagée, par clé de comptage.
+
+    Args:
+        window: Durée de la fenêtre, en secondes (60 par défaut).
+
+    Attributes:
+        window: Durée de la fenêtre, en secondes.
+    """
 
     def __init__(self, window: float = WINDOW) -> None:
         self.window = window
         self._seen: dict[Counted, deque[float]] = {}
 
     def take(self, key: Counted, limit: int, now: float | None = None) -> float | None:
-        """Compte une demande et rend ``None`` ; sinon l'attente, sans rien compter."""
+        """Compte une demande et rend ``None`` ; sinon l'attente, sans rien compter.
+
+        Args:
+            key: Clé de comptage (``tenant:<id>``, clé d'API).
+            limit: Demandes permises dans la fenêtre.
+            now: Instant monotone, en secondes ; ``time.monotonic()`` par
+                défaut.
+
+        Returns:
+            ``None`` si la demande passe ; sinon les secondes à attendre.
+        """
         moment = time.monotonic() if now is None else now
         seen = self._seen.setdefault(key, deque())
         horizon = moment - self.window
@@ -64,15 +90,31 @@ class RateWindow:
 
 
 class Quota:
-    """Quota d'un client : runs lancés par minute, quel que soit l'accès."""
+    """Quota d'un client : runs lancés par minute, quel que soit l'accès.
+
+    Config : ``quotas.runs_per_minute`` du client. Vérifié par la façade
+    ``Loom`` au lancement d'un run, par instance.
+
+    Args:
+        window: Fenêtre partagée ; une neuve par défaut.
+    """
 
     PREFIX: Final = "tenant:"
+    """Début de la clé de comptage d'un client."""
 
     def __init__(self, window: RateWindow | None = None) -> None:
         self._window = window if window is not None else RateWindow()
 
     def check(self, tenant_id: TenantId, limit: int | None) -> None:
-        """Lève ``QuotaExceeded`` si le client a déjà lancé son compte de la minute."""
+        """Compte un run du client, ou refuse s'il a déjà lancé son compte de la minute.
+
+        Args:
+            tenant_id: Le client.
+            limit: Runs permis par minute ; ``None`` : pas de quota.
+
+        Raises:
+            QuotaExceeded: Le quota est atteint.
+        """
         if limit is None:
             return
         waiting = self._window.take(f"{self.PREFIX}{tenant_id}", limit)

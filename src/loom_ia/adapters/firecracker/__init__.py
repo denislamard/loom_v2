@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Bac à sable microVM Firecracker (J6.4c), côté hôte.
+"""Bac à sable microVM Firecracker (jalon J6.4c), côté hôte.
 
 ``Vm`` pilote un dossier de VM construit par ``firecracker/make_vm.sh``
 (démarrage par ``run.sh``, arrêt, vsock) ; ``Session`` parle à execd, le

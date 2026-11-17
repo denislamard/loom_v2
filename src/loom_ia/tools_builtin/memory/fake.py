@@ -29,25 +29,32 @@ def _bucket(token: str, mod: int) -> int:
 
 
 class FakeEmbedder:
+    """Un embedder factice : sac de mots haché, sans modèle."""
+
     def __init__(self, dim: int = 64) -> None:
         self._dim = dim
 
     @property
     def model_name(self) -> str:
+        """``fake-<dim>``."""
         return f"fake-{self._dim}"
 
     @property
     def dim(self) -> int:
+        """La dimension du dense."""
         return self._dim
 
     @property
     def device(self) -> str | None:
+        """Toujours ``None`` : rien n'est chargé."""
         return None
 
     def load(self) -> None:
+        """Rien à charger."""
         pass
 
     def _one(self, text: str) -> Embedding:
+        """Les vecteurs d'un texte : le dense, un sac de mots haché sur ``dim`` cases et normalisé ; le lexical, le compte de chaque mot haché."""
         counts = Counter(_tokens(text))
         dense = [0.0] * self._dim
         for token, n in counts.items():
@@ -65,6 +72,7 @@ class FakeEmbedder:
         )
 
     def embed_documents(self, texts: Sequence[str], cancel: threading.Event | None = None) -> list[Embedding]:
+        """Les vecteurs des textes, dans l'ordre."""
         found: list[Embedding] = []
         for text in texts:
             checkpoint(cancel)
@@ -72,23 +80,30 @@ class FakeEmbedder:
         return found
 
     def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding:
+        """Les vecteurs d'une question."""
         checkpoint(cancel)
         return self._one(text)
 
 
 class FakeReranker:
+    """Un reranker factice : la part des mots de la question trouvés dans le passage."""
+
     @property
     def model_name(self) -> str:
+        """``fake-reranker``."""
         return "fake-reranker"
 
     @property
     def device(self) -> str | None:
+        """Toujours ``None`` : rien n'est chargé."""
         return None
 
     def load(self) -> None:
+        """Rien à charger."""
         pass
 
     def score(self, query: str, passages: Sequence[str], cancel: threading.Event | None = None) -> list[float]:
+        """La part des mots de la question présents dans chaque passage."""
         checkpoint(cancel)
         asked = set(_tokens(query))
         if not asked:

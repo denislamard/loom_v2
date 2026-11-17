@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Expressions régulières à délai : un motif ne gèle plus la boucle d'événements.
+r"""Expressions régulières à délai : un motif ne gèle plus la boucle d'événements.
 
 Un motif mal écrit — ``(a|aa)+$`` — cherche pendant des secondes, parfois des
 minutes, sur quelques dizaines de caractères ; la boucle d'événements attend
@@ -22,7 +22,7 @@ d'une validation entière : un schéma qui porte plusieurs motifs lents peut en
 cumuler plusieurs.
 
 ``regex`` accepte ce que ``re`` accepte (sa version 0, par défaut) et plus :
-classes ``\\p{L}``, quantificateurs possessifs, groupes atomiques. Il va aussi
+classes ``\p{L}``, quantificateurs possessifs, groupes atomiques. Il va aussi
 plus vite que ``re`` sur plusieurs motifs catastrophiques classiques, comme
 ``(a+)+$`` : un motif lent sous ``re`` ne l'est pas forcément sous ``regex``.
 """
@@ -51,21 +51,39 @@ from referencing import Registry, Resource
 from referencing.exceptions import Unresolvable
 from referencing.jsonschema import DRAFT202012
 
-# Les méta-schémas que ``jsonschema`` sait résoudre (le registre qu'il utilise lui-même).
 # ``jsonschema_specifications`` est une dépendance de ``jsonschema`` et ne livre pas de types.
 SPECIFICATIONS: Final = cast("Registry[Any]", _SPECIFICATIONS)
+"""Registre des méta-schémas que ``jsonschema`` sait résoudre, celui qu'il utilise lui-même.
 
-# Durée maximale d'une recherche ou d'une substitution, en secondes. Un motif
-# sain finit en millisecondes ; la marge couvre une machine chargée et un
-# texte de plusieurs mégaoctets.
+``unresolved_references`` y cherche une ``$ref`` qui ne se résout pas dans le
+schéma lui-même.
+"""
+
 REGEX_TIMEOUT: Final = 1.0
+"""Durée maximale d'une recherche ou d'une substitution, en secondes.
 
-# Ce que lève un motif invalide (la config le contrôle au chargement).
+Un motif sain finit en millisecondes ; la marge couvre une machine chargée et
+un texte de plusieurs mégaoctets. Au-delà, ``RegexTimeout`` est levée.
+"""
+
 PatternError = regex.error
+"""Exception levée par un motif invalide ; la config contrôle les motifs au chargement."""
 
 
 class RegexTimeout(Exception):
-    """Un motif n'a pas fini sa recherche dans le délai : il est trop coûteux."""
+    """Un motif n'a pas fini sa recherche dans le délai : il est trop coûteux.
+
+    L'appelant fait échouer le contrôle (contrat de sortie, validation par
+    schéma) ou masque tout le texte (télémétrie) ; il ne conclut jamais que le
+    motif est absent ou que la valeur est conforme.
+
+    Args:
+        pattern: Le motif qui a dépassé le délai.
+
+    Attributes:
+        pattern: Le même motif. Le message dit « motif trop coûteux : <motif>
+            (délai de 1 s dépassé) ».
+    """
 
     def __init__(self, pattern: str) -> None:
         super().__init__(f"motif trop coûteux : {pattern!r} (délai de {REGEX_TIMEOUT:g} s dépassé)")
@@ -73,12 +91,37 @@ class RegexTimeout(Exception):
 
 
 def compile_pattern(pattern: str) -> regex.Pattern[str]:
-    """Motif compilé par le moteur de l'exécution ; ``PatternError`` s'il est invalide."""
+    """Compile un motif avec le moteur ``regex``, celui qui l'exécutera.
+
+    Sert à contrôler un motif de la config au chargement : un motif accepté ici
+    s'exécute ensuite sans surprise.
+
+    Args:
+        pattern: Le motif, dans la syntaxe de ``regex`` (version 0, compatible
+            ``re``).
+
+    Returns:
+        Le motif compilé.
+
+    Raises:
+        PatternError: Le motif est invalide.
+    """
     return regex.compile(pattern)
 
 
 def search(pattern: str | regex.Pattern[str], text: str) -> regex.Match[str] | None:
-    """Première occurrence du motif dans le texte ; ``RegexTimeout`` au-delà du délai."""
+    """Cherche la première occurrence d'un motif dans un texte, avec un délai.
+
+    Args:
+        pattern: Le motif, en texte (compilé à chaque appel) ou déjà compilé.
+        text: Le texte où chercher.
+
+    Returns:
+        La première occurrence, ou ``None`` si le motif n'apparaît pas.
+
+    Raises:
+        RegexTimeout: La recherche a dépassé ``REGEX_TIMEOUT`` (1 s).
+    """
     compiled = regex.compile(pattern) if isinstance(pattern, str) else pattern
     try:
         return compiled.search(text, timeout=REGEX_TIMEOUT)
@@ -87,7 +130,22 @@ def search(pattern: str | regex.Pattern[str], text: str) -> regex.Match[str] | N
 
 
 def substitute(pattern: regex.Pattern[str], replacement: str, text: str) -> str:
-    """Texte dont chaque occurrence du motif est remplacée ; ``RegexTimeout`` au-delà du délai."""
+    """Remplace chaque occurrence d'un motif dans un texte, avec un délai.
+
+    Sert au masquage des données sensibles dans la télémétrie.
+
+    Args:
+        pattern: Le motif compilé.
+        replacement: Le texte de remplacement (références de groupes permises,
+            comme pour ``re.sub``).
+        text: Le texte à traiter.
+
+    Returns:
+        Le texte, chaque occurrence remplacée.
+
+    Raises:
+        RegexTimeout: La substitution a dépassé ``REGEX_TIMEOUT`` (1 s).
+    """
     try:
         return pattern.sub(replacement, text, timeout=REGEX_TIMEOUT)
     except TimeoutError:
@@ -118,7 +176,20 @@ def _bounded[F: Callable[..., Any]](function: F, **names: object) -> F:
     ``additionalProperties`` (par ``find_additional_properties``) et
     ``unevaluatedProperties`` (par ``find_evaluated_property_keys_by_schema``,
     récursive). La copie a le même code et le même espace de noms, sauf ``re`` ;
-    ``names`` redirige vers d'autres copies les fonctions qu'elle appelle.
+    une récursion appelle la copie, pas l'original.
+
+    Warning:
+        Ces fonctions sont privées dans ``jsonschema`` : la dépendance est
+        bornée (``jsonschema>=4.26.0,<4.27``), et relever la borne exige de
+        relire ce module.
+
+    Args:
+        function: La fonction de ``jsonschema`` à copier.
+        **names: Fonctions qu'elle appelle, à remplacer par leur copie à
+            délai (par exemple ``find_additional_properties``).
+
+    Returns:
+        La copie, de même signature.
     """
     original = cast(types.FunctionType, function)
     namespace: dict[str, Any] = {**original.__globals__, "re": _BoundedRe, **names}
@@ -129,7 +200,16 @@ def _bounded[F: Callable[..., Any]](function: F, **names: object) -> F:
 
 
 def _clone(module: types.ModuleType, name: str, **names: object) -> tuple[Callable[..., Any], Callable[..., Any]]:
-    """Une fonction de ``jsonschema`` et sa copie à délai."""
+    """Une fonction de ``jsonschema`` et sa copie à délai, pour la table ``_CLONES``.
+
+    Args:
+        module: Le module privé de ``jsonschema`` qui la définit.
+        name: Le nom de la fonction (celui du mot-clé qu'elle valide).
+        **names: Fonctions appelées à rediriger, comme pour ``_bounded``.
+
+    Returns:
+        Le couple (original, copie).
+    """
     original = _function(module, name)
     return original, _bounded(original, **names)
 
@@ -160,33 +240,58 @@ _CLONES: Final[Mapping[Callable[..., Any], Callable[..., Any]]] = dict(
 
 @cache
 def _bounded_class(base: type[Validator]) -> type[Validator]:
-    """La classe de validation ``base``, dont les mots-clés de motif ont un délai."""
+    """La classe de validation ``base``, dont les mots-clés de motif ont un délai.
+
+    Mise en cache : une classe par version de JSON Schema.
+
+    Args:
+        base: Classe de validation de ``jsonschema`` (``Draft202012Validator``…).
+
+    Returns:
+        Une classe dérivée par ``validators.extend``, où chaque mot-clé dont la
+        fonction figure dans ``_CLONES`` est remplacé par sa copie.
+    """
     swapped = {word: _CLONES[function] for word, function in base.VALIDATORS.items() if function in _CLONES}
     extend = _function(validators, "extend")
     return cast(type[Validator], extend(base, validators=swapped))
 
 
 def bounded_validator(schema: Mapping[str, Any]) -> Validator:
-    """Validateur du schéma dont les motifs ont un délai : ``RegexTimeout`` s'il est dépassé.
+    """Validateur d'un schéma dont les motifs ont un délai.
 
     La classe suit ``$schema`` (2020-12 sinon), comme ``validator_for``. Le
     ``RegexTimeout`` sort tel quel de ``validate``, ``iter_errors`` et
     ``is_valid`` : une erreur de validation serait lue par ``not``, ``anyOf`` ou
     ``if`` comme « ne correspond pas », et ferait réussir un contrôle qui n'a
     pas eu lieu.
+
+    Args:
+        schema: Le schéma, déjà contrôlé par ``check_schema``.
+
+    Returns:
+        Un validateur ``jsonschema`` ordinaire, dont ``pattern``,
+        ``patternProperties``, ``additionalProperties`` et
+        ``unevaluatedProperties`` cherchent leurs motifs avec un délai.
     """
     return _bounded_class(validator_for(schema, default=Draft202012Validator))(schema)
 
 
 def check_schema(schema: Mapping[str, Any]) -> None:
-    """Contrôle un schéma JSON ; ``SchemaError`` s'il est invalide.
+    """Contrôle un schéma JSON avant de s'en servir.
 
     Comme ``check_schema`` de ``jsonschema``, mais le format ``regex`` se
     compile avec ``regex`` : un motif accepté ici s'exécute à la validation.
-    Un ``$schema`` ailleurs qu'à la racine est refusé : ``jsonschema`` change de
-    classe de validation à chaque sous-schéma qui en porte un, et reprendrait la
-    classe d'origine, sans délai. Une ``$ref`` qui ne se résout pas est refusée
-    aussi (``unresolved_references``).
+
+    Args:
+        schema: Le schéma à contrôler (sortie structurée, clé du state, schéma
+            écrit par le modèle pour la forge…).
+
+    Raises:
+        SchemaError: Le schéma ne respecte pas son méta-schéma (la première
+            erreur trouvée) ; un ``$schema`` est déclaré ailleurs qu'à la
+            racine (``jsonschema`` changerait de classe de validation à ce
+            sous-schéma et reprendrait la classe d'origine, sans délai) ; ou une
+            ``$ref`` ne se résout pas (« « $ref » introuvable dans le schéma »).
     """
     if _nested_dialect(schema):
         raise SchemaError("« $schema » ne se déclare qu'à la racine du schéma")
@@ -202,7 +307,7 @@ def check_schema(schema: Mapping[str, Any]) -> None:
 
 
 def unresolved_references(schema: Mapping[str, Any]) -> list[str]:
-    """Les ``$ref`` du schéma qui ne se résolvent pas, dans l'ordre où ils apparaissent.
+    """Les ``$ref`` d'un schéma qui ne se résolvent pas, dans l'ordre où elles apparaissent.
 
     Une référence se résout dans le schéma lui-même (pointeur, ancre, ``$id``
     d'un sous-schéma) ou dans les méta-schémas de ``jsonschema``. Rien ne va
@@ -210,6 +315,13 @@ def unresolved_references(schema: Mapping[str, Any]) -> list[str]:
     sortir du process, et un ``$ref: autre.json`` ne se résoudrait pas non plus
     à l'exécution — il ferait échouer le contrôle de la réponse finale, une
     fois le modèle payé.
+
+    Args:
+        schema: Le schéma à parcourir.
+
+    Returns:
+        Les références introuvables, chacune une seule fois ; une liste vide
+        si toutes se résolvent.
     """
     root = Resource.from_contents(schema, default_specification=DRAFT202012)
     missing: list[str] = []
@@ -232,6 +344,7 @@ def unresolved_references(schema: Mapping[str, Any]) -> list[str]:
 
 
 def _is_regex(instance: object) -> bool:
+    """Contrôle du format ``regex`` : vrai pour un non-texte, ``PatternError`` pour un motif invalide."""
     return not isinstance(instance, str) or bool(regex.compile(instance))
 
 

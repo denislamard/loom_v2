@@ -12,15 +12,18 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 type SourceKind = Literal["text", "url", "file"]
+"""L'origine d'un document : un texte donné, une page web ou un fichier."""
 
 
 def utc_now_iso() -> str:
+    """L'instant présent en ISO 8601, UTC, microsecondes comprises."""
     # Microsecondes conservées : added_at sert de clé de tri, deux ajouts dans la même
     # seconde doivent rester ordonnés.
     return datetime.now(UTC).isoformat()
 
 
 def new_doc_id() -> str:
+    """Un nouvel identifiant de document (UUID 4)."""
     return str(uuid.uuid4())
 
 
@@ -72,6 +75,7 @@ class DocSummary(BaseModel):
 
     @classmethod
     def of(cls, doc: Document) -> DocSummary:
+        """Le résumé d'un document : ses métadonnées et la longueur de son texte."""
         return cls(
             doc_id=doc.doc_id,
             title=doc.title,

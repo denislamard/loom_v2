@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.5c : la rétention — effacer les sessions dormantes, et rien d'autre.
+r"""Phase 5.5c : la rétention — effacer les sessions dormantes, et rien d'autre.
 
     uv run python tests/examples/j5/retention.py                    # les trois cas
     uv run python tests/examples/j5/retention.py --cas borne
     uv run python tests/examples/j5/retention.py --cas clients
     uv run --extra crypto python tests/examples/j5/retention.py --cas scelle
-    uv run --env-file .env --extra crypto --extra anthropic --extra openai \\
+    uv run --env-file .env --extra crypto --extra anthropic --extra openai \
         python tests/examples/j5/retention.py --reel
 
 Le cas `scelle` demande l'extra `crypto` (il éprouve la rencontre avec le sceau

@@ -105,6 +105,7 @@ def apply_limits(limits: dict[str, int]) -> None:
 # Erreurs
 # --------------------------------------------------------------------------- #
 def error(kind: str, message: str, **detail: Any) -> dict[str, Any]:
+    """Un résultat d'échec : ``{ok: false, error: {kind, message, detail}}``."""
     err: dict[str, Any] = {"kind": kind, "message": message}
     if detail:
         err["detail"] = detail
@@ -313,6 +314,7 @@ def write_result(path: Path, payload: dict[str, Any]) -> None:
 # Entree
 # --------------------------------------------------------------------------- #
 def run_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Exécute le job : environnement et dossier de travail posés, point d'entrée chargé, appelé avec ses arguments ; rend le résultat ou l'erreur."""
     dirs = job["dirs"]
     code_dir = Path(dirs["code"])
 
@@ -412,6 +414,7 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
+    """Point d'entrée du runner : lit le descripteur, applique les limites, exécute le job et écrit ``result.json`` ; rend le code de sortie."""
     parser = argparse.ArgumentParser(description="Execute un job execd.")
     parser.add_argument("--job", required=True, help="chemin du descripteur job.json")
     opts = parser.parse_args()

@@ -658,8 +658,11 @@ async def _until_gone(client: Any, *keys: str) -> None:
 
 @pytest.mark.integration
 async def test_a_redis_key_taken_back_by_another_session_is_not_forgotten_with_the_old_one(redis_url: str, redis_client: Any) -> None:
-    """Expirée, puis reprise par une autre session : elle reste listée dans l'ancien ensemble,
-    mais elle est à la nouvelle, et l'oubli de l'ancienne ne l'emporte pas."""
+    """Expirée, puis reprise par une autre session.
+
+    Elle reste listée dans l'ancien ensemble, mais elle est à la nouvelle, et l'oubli de
+    l'ancienne ne l'emporte pas.
+    """
     store = _redis(redis_url, retention=0.2)
     await store.reserve("reprise", 0.2, SCOPE)
     # Une clé plus longue garde l'ensemble de la première session en vie.

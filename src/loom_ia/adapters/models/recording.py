@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Client HTTP qui garde ce qu'il envoie et reçoit (#31, J6.1b).
+"""Client HTTP qui garde ce qu'il envoie et reçoit (point 31, jalon J6.1b).
 
 Passé au SDK à la place de son client par défaut, quand un client de loom a
 demandé les échanges bruts (``telemetry.capture.raw_exchanges``). Il ne garde
@@ -25,8 +25,8 @@ import httpx2
 
 from loom_ia.core.ports import ExchangeLog, RawExchange, exchange_log
 
-# Ceux des clients par défaut d'Anthropic et d'OpenAI.
 LIMITS: Final = httpx2.Limits(max_connections=1000, max_keepalive_connections=100)
+"""Ceux des clients par défaut d'Anthropic et d'OpenAI."""
 
 
 class RecordingClient(httpx2.AsyncClient):
@@ -37,6 +37,12 @@ class RecordingClient(httpx2.AsyncClient):
         super().__init__(limits=LIMITS, follow_redirects=True, transport=transport)
 
     async def send(self, request: httpx2.Request, *, stream: bool = False, **options: Any) -> httpx2.Response:
+        """Envoie la requête et dépose l'échange dans le registre ouvert, s'il y en a un.
+
+        Une erreur d'envoi est déposée, puis relevée. Une réponse lue d'un bloc
+        est déposée tout de suite ; un flux est recopié au fil de sa lecture, et
+        l'échange est déposé à sa fermeture, décompressé.
+        """
         log = exchange_log()
         if log is None:
             return await super().send(request, stream=stream, **options)
@@ -90,6 +96,7 @@ class _Copied(httpx2.AsyncByteStream):
         self._finish()
 
     async def aclose(self) -> None:
+        """Ferme le flux d'origine, puis dépose la copie."""
         try:
             await self._inner.aclose()
         finally:
@@ -109,6 +116,7 @@ def _deposit(
     received: bytes,
     started: float,
 ) -> None:
+    """Dépose un échange : requête, réponse, en-têtes, statut et durée."""
     log.record(
         RawExchange(
             method=request.method,

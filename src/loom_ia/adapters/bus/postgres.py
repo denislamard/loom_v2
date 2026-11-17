@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Bus des nouvelles par ``LISTEN``/``NOTIFY`` de Postgres (#5, H6).
+"""Bus des nouvelles par ``LISTEN``/``NOTIFY`` de Postgres (point 5, fonction H6).
 
 Le bus de qui a déjà Postgres : il n'y a rien de plus à installer, et le
 journal et les nouvelles tiennent sur la même base — donc sur la même panne,
@@ -28,9 +28,10 @@ from loom_ia.core.ports.bus import BusUnavailable, Notice
 
 logger = logging.getLogger(__name__)
 
-# Le canal d'écoute. Fixe : deux déploiements sur la même base partagent leurs
-# nouvelles, ce qui est sans effet puisque chacun relit son propre journal.
 CHANNEL: Final = "loom_events"
+"""Le canal d'écoute. Fixe : deux déploiements sur la même base partagent leurs
+nouvelles, ce qui est sans effet puisque chacun relit son propre journal.
+"""
 
 _NOTIFY: Final = "SELECT pg_notify($1, $2)"
 
@@ -53,6 +54,12 @@ class PostgresBus:
         return f"PostgresBus({CHANNEL!r})"
 
     async def publish(self, notice: Notice) -> None:
+        """Annonce un lot écrit par ``pg_notify`` sur le canal ``loom_events``.
+
+        La connexion de publication est ouverte au premier besoin ; une connexion
+        qui échoue est jetée, la suivante en ouvre une autre. Rien n'est publié
+        après la fermeture.
+        """
         if self._closed:
             return
         async with self._publishing:
@@ -110,6 +117,7 @@ class PostgresBus:
             logger.warning("Bus Postgres : nouvelle illisible, ignorée")
 
     async def aclose(self) -> None:
+        """Ferme le bus : l'écoute s'arrête, les connexions sont fermées."""
         self._closed = True
         self._queue.put_nowait(None)
         speaking, self._speaking = self._speaking, None

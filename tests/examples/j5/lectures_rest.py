@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.4a : lire le journal par REST — la liste des runs, les traces, le document.
+r"""Phase 5.4a : lire le journal par REST — la liste des runs, les traces, le document.
 
     uv run --extra http python tests/examples/j5/lectures_rest.py            # les trois cas
     uv run --extra http python tests/examples/j5/lectures_rest.py --cas runs
     uv run --extra http python tests/examples/j5/lectures_rest.py --cas traces
     uv run --extra http python tests/examples/j5/lectures_rest.py --cas openapi
-    uv run --env-file .env --extra http --extra anthropic --extra openai \\
+    uv run --env-file .env --extra http --extra anthropic --extra openai \
         python tests/examples/j5/lectures_rest.py --reel
 
 Config : ``tests/examples/j5/relance/``, celle de 5.1a. Les clés sont déclarées **en

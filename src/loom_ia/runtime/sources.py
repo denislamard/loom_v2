@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Sources d'outils fournies par des paquets installés : le groupe ``loom_ia.tools`` (J6.4b).
+"""Sources d'outils fournies par des paquets installés : le groupe ``loom_ia.tools`` (jalon J6.4b, fonction D12).
 
 Un paquet déclare dans ses métadonnées un point d'entrée qui désigne une
 fabrique (``ToolSourceFactory``) :
@@ -36,18 +36,24 @@ from loom_ia.tools.configured import ASSESSED
 
 logger = logging.getLogger(__name__)
 
-# Le groupe des points d'entrée que loom lit.
 GROUP: Final = "loom_ia.tools"
+"""Le groupe des points d'entrée que loom lit."""
 
 
 @dataclass(frozen=True, slots=True)
 class Installed:
-    """Un point d'entrée installé, lu dans les métadonnées de son paquet sans l'importer."""
+    """Un point d'entrée installé, lu dans les métadonnées de son paquet sans l'importer.
+
+    Attributes:
+        name: Nom du point d'entrée, celui que cite ``entry_point``.
+        value: Ce qu'il désigne : ``module:attribut``.
+        package: Paquet qui le déclare ; vide si les métadonnées ne le
+            disent pas.
+        version: Version du paquet ; vide si inconnue.
+    """
 
     name: str
-    # Ce qu'il désigne : ``module:attribut``.
     value: str
-    # Paquet qui le déclare, et sa version ; vides si les métadonnées ne le disent pas.
     package: str
     version: str
 
@@ -73,6 +79,17 @@ def source_factory(entry_point: str) -> ToolSourceFactory:
 
     ``ConfigError`` s'il n'est pas installé, si deux paquets le déclarent, si
     son paquet ne s'importe pas ou s'il ne désigne rien d'appelable.
+
+    Args:
+        entry_point: Nom du point d'entrée (``tool_sources[].entry_point``).
+
+    Returns:
+        La fabrique, qui reçoit les ``params`` de la source et rend une
+        ``ToolSource``.
+
+    Raises:
+        ConfigError: Point d'entrée absent ou en double, paquet qui ne
+            s'importe pas, cible non appelable.
     """
     points = [point for point in entry_points(group=GROUP) if point.name == entry_point]
     if not points:
@@ -105,7 +122,23 @@ def _said(point: Installed) -> str:
 
 
 class PackagedSource:
-    """Une source d'un paquet, telle qu'un agent la référence : préfixe, choix, déclarations."""
+    """Une source d'un paquet, telle qu'un agent la référence : préfixe, choix, déclarations.
+
+    Un outil de paquet est traité comme un outil Python (``kind: python``) ;
+    ce que la config fixe l'emporte sur l'évaluation par appel de l'outil.
+    Un nom cité dans ``include``, ``exclude`` ou ``tools`` qui n'existe pas dans
+    la source donne un avertissement, une fois.
+
+    Attributes:
+        inner: La source rendue par la fabrique du paquet.
+        name: Nom de la source dans la config, repris au journal.
+        prefix: Préfixe des outils (``alias``, sinon ``name``).
+        include: Outils exposés, ou ``None`` pour tous.
+        exclude: Outils écartés.
+        required: Vrai si le run échoue sans cette source.
+        declared: Déclarations de ``tool_sources[].tools``, par nom court.
+        chosen: Déclarations de la référence de l'agent, appliquées par-dessus.
+    """
 
     def __init__(
         self,
@@ -119,14 +152,13 @@ class PackagedSource:
         declared: Mapping[str, ToolOverrides] | None = None,
         chosen: Mapping[str, ToolOverrides] | None = None,
     ) -> None:
+        """Enrobe la source du paquet ; les arguments sont décrits dans la docstring de la classe."""
         self.inner = inner
-        # Nom de la source dans la config, repris au journal.
         self.name = name
         self.prefix = prefix
         self.include = include
         self.exclude = exclude
         self.required = required
-        # Déclarations de ``tool_sources[].tools``, puis de la référence de l'agent.
         self.declared: Mapping[str, ToolOverrides] = declared or {}
         self.chosen: Mapping[str, ToolOverrides] = chosen or {}
         self._warned = False
@@ -136,11 +168,29 @@ class PackagedSource:
 
     @asynccontextmanager
     async def open(self, context: SourceContext) -> AsyncGenerator[Sequence[Tool]]:
+        """Ouvre la source du paquet pour un run.
+
+        Args:
+            context: Contexte de l'ouverture (run, client, session).
+
+        Yields:
+            Les outils exposés à l'agent (voir ``select``).
+        """
         async with self.inner.open(context) as provided:
             yield self.select(provided)
 
     def select(self, provided: Sequence[Tool]) -> list[Tool]:
-        """Les outils exposés à l'agent, sous leur nom préfixé et avec leurs déclarations."""
+        """Les outils exposés à l'agent, sous leur nom préfixé et avec leurs déclarations.
+
+        Un outil dont le nom préfixé sort du format des API (lettres, chiffres,
+        ``_`` et ``-``, 64 au plus) est écarté avec un avertissement.
+
+        Args:
+            provided: Les outils de la source, sous leur nom court.
+
+        Returns:
+            Les outils retenus, nommés ``<préfixe>__<nom>``.
+        """
         if not self._warned:
             self._warn_unknown({tool.spec.name for tool in provided})
             self._warned = True
@@ -175,6 +225,7 @@ class PackagedSource:
         return tools
 
     def _warn_unknown(self, names: set[str]) -> None:
+        """Avertit pour chaque nom cité par la config (``include``, ``exclude``, ``tools``) que la source n'a pas."""
         checks = {
             "include": self.include or (),
             "exclude": self.exclude or (),

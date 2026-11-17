@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Exécution des appels d'outils d'un tour (#12, #15, #18, D1, D2, D4, D5).
+"""Exécution des appels d'outils d'un tour (points 12, 15 et 18 ; fonctions D1, D2, D4 et D5).
 
 Chaîne d'un appel : outil connu, reprise sans risque, arguments lisibles,
 références ``$ref`` résolues, arguments conformes au schéma, refus éventuel
@@ -34,14 +34,14 @@ Un sous-agent écrit son propre run, par l'écrivain de la session ; son
 ``tool.called`` nomme ce run enfant, et son ``tool.completed`` porte sa
 consommation.
 
-Fichiers (#15, #16) : avant d'écrire un résultat, les octets qu'il porte
+Fichiers (points 15 et 16) : avant d'écrire un résultat, les octets qu'il porte
 (image renvoyée par un outil) sont rangés dans le stockage d'artefacts et
 remplacés par leur référence, puis un résultat trop long est déporté. Chaque
 fichier rangé donne un ``artifact.stored``, écrit avant le ``tool.completed``
 de l'appel. Un outil délégué indisponible dans le run (rôle vision sans pièce
 jointe, ``artifact_read`` sans déport) n'est ni montré au modèle ni appelable.
 
-Politiques (#2) : ``before_tool`` s'applique à un appel accepté, avant tout
+Politiques (point 2) : ``before_tool`` s'applique à un appel accepté, avant tout
 lancement (arguments remplacés puis validés de nouveau, appel refusé, échec
 du run) ; ``after_tool`` au résultat, avant ses fichiers et son déport
 (résultat remplacé, refusé ou échec du run). Chaque décision part dans la file
@@ -56,13 +56,17 @@ erreur, avec le diagnostic : c'est lui qui a écrit l'appel.
 Diffusion (backlog #009) : un rôle terminal seul dans son lot diffuse sa
 sortie en direct si l'agent diffuse en ``live`` (``on_chunk``).
 
-State de la session (option C) : un outil lit le state tel qu'au début de son
+State de la session (option C, ``docs/state-et-context.md``) : un outil lit le state tel qu'au début de son
 lot (``ToolContext.state``). Son résultat réussi, après les politiques
 ``after_tool`` et avant ses fichiers et son déport, reçoit les écritures que
 ses sources ``from`` et lui-même posent, contrôlées par ``StateRules`` ; un
 résultat en erreur n'en pose aucune. Au rejeu, un résultat lu au journal
 porte déjà les siennes : elles ne sont pas recalculées. Celui d'une doublure
 est neuf : il les reçoit comme celui de l'outil.
+
+Les décisions B-2, D-4 et D-6 citées ici sont celles du délai et des threads
+des outils (``docs/moteur-delai-thread-analyse.md``) ; D3, D6 à D9 et D12
+celles du state de session.
 """
 
 import asyncio
@@ -185,72 +189,92 @@ from loom_ia.engine.writer import SessionWriter
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOOL_TIMEOUT: Final = 30.0
+"""Délai par défaut d'un outil ordinaire, en secondes (``execution.tools.timeout``)."""
 
-# Ordre des appels d'un même tour : ``effects``, un appel à effet attend ceux qui
-# le précèdent et ceux qui le suivent l'attendent ; ``free``, tous partent ensemble.
 type CallOrder = Literal["effects", "free"]
+"""Ordre des appels d'un même tour (``execution.tools.order``).
 
-# Un délai dépassé sur un appel à effet (B-2) : son travail continue en thread…
+``effects`` : un appel à effet attend ceux qui le précèdent et ceux qui le
+suivent l'attendent ; ``free`` : tous partent ensemble.
+"""
+
 LATE_EFFECT: Final = (
     "Délai dépassé : pas de réponse en {limit:g} s, et l'outil n'a pas pu être "
     "arrêté. Son effet est d'état inconnu : il a peut-être eu lieu, ou aura lieu "
     "plus tard. Il n'a pas été relancé ; vérifie avant de le rappeler."
 )
+"""Message au modèle : délai dépassé sur un appel à effet dont le travail continue en thread (décision B-2)."""
 
-# … ou le serveur MCP a été prévenu, sans qu'on sache s'il s'arrête (D-6) …
 REMOTE_EFFECT: Final = (
     "Délai dépassé : pas de réponse en {limit:g} s. Le serveur a été prévenu de "
     "l'abandon de l'appel, mais il a pu en produire tout ou partie de l'effet, ou "
     "le produire encore : son effet est d'état inconnu. Il n'a pas été relancé ; "
     "vérifie avant de le rappeler."
 )
+"""Message au modèle : délai dépassé, le serveur MCP a été prévenu sans qu'on sache s'il s'arrête (décision D-6)."""
 
-# … ou l'outil a été arrêté en cours de route (outil asynchrone).
 STOPPED_EFFECT: Final = (
     "Délai dépassé : pas de réponse en {limit:g} s. L'outil a été arrêté en cours "
     "de route : il a pu produire tout ou partie de son effet, qui est d'état "
     "inconnu. Il n'a pas été relancé ; vérifie avant de le rappeler."
 )
+"""Message au modèle : délai dépassé, l'outil (asynchrone) a été arrêté en cours de route."""
 
 NOT_RUN: Final = (
     "Non exécuté : l'appel à {tool}, qui le précède dans ta réponse, a dépassé son "
     "délai et travaille encore. Cet appel n'est pas parti ; refais-le une fois "
     "l'effet de {tool} vérifié."
 )
+"""Message au modèle : appel non lancé parce qu'un appel à effet qui le précède travaille encore."""
 
-# … ou l'appel en retard est d'un tour précédent du run : le lot suivant l'attend aussi.
 NOT_RUN_SINCE: Final = (
     "Non exécuté : l'appel à {tool} d'un tour précédent a dépassé son délai et "
     "travaille encore. Cet appel n'est pas parti ; refais-le une fois l'effet de "
     "{tool} vérifié."
 )
+"""Message au modèle : l'appel en retard est d'un tour précédent du run ; le lot suivant l'attend aussi."""
 
-# Un délai dépassé avant même que l'outil démarre : tous les threads des outils étaient
-# pris, et le travail, annulé dans la file, n'a rien fait.
 NOT_STARTED: Final = "Délai dépassé : l'outil n'a pas démarré en {limit:g} s, tous les threads des outils étant pris. Il n'a rien fait ; tu peux le rappeler."
+"""Message au modèle : délai dépassé avant que l'outil démarre.
+
+Tous les threads des outils étaient pris, et le travail, annulé dans la
+file, n'a rien fait.
+"""
 
 UNKNOWN_STATE: Final = (
     "État inconnu : l'exécution de cet outil a été interrompue et il a peut-être "
     "produit son effet. Il n'a pas été relancé automatiquement ; vérifie avant de "
     "le rappeler."
 )
+"""Message au modèle : appel interrompu dont l'effet a peut-être eu lieu, non relancé (point 18)."""
 
 type AnyTool = Tool | DelegatedTool
+"""Un outil ordinaire (port ``Tool``) ou délégué."""
 
 
 @dataclass(frozen=True, slots=True)
 class Delegated:
-    """Événement produit par un outil délégué pendant son appel."""
+    """Événement produit par un outil délégué pendant son appel.
+
+    Attributes:
+        call_id: L'appel.
+        role: Rôle qui a produit l'événement, recopié dans l'enveloppe.
+        payload: L'événement.
+    """
 
     call_id: str
-    # Rôle qui a produit l'événement, recopié dans l'enveloppe.
     role: str
     payload: DelegatedPayload
 
 
 @dataclass(frozen=True, slots=True)
 class Stored:
-    """Fichier rangé pendant un appel : sortie d'outil ou résultat déporté."""
+    """Fichier rangé pendant un appel : sortie d'outil ou résultat déporté.
+
+    Attributes:
+        call_id: L'appel.
+        payload: L'événement ``artifact.stored``.
+    """
 
     call_id: str
     payload: ArtifactStored
@@ -258,7 +282,13 @@ class Stored:
 
 @dataclass(frozen=True, slots=True)
 class Decided:
-    """Décision ou contrôle d'une politique d'outil, à écrire avant l'événement concerné."""
+    """Décision ou contrôle d'une politique d'outil, à écrire avant l'événement concerné.
+
+    Attributes:
+        call_id: L'appel.
+        payload: ``policy.decided``, ``guard.checked`` ou un événement d'un
+            juge.
+    """
 
     call_id: str
     payload: PolicyEvent
@@ -279,34 +309,49 @@ type ToolEvent = (
     | QuestionExpired
     | Waiting
 )
+"""Ce que ``run_batch`` émet, dans l'ordre où le moteur l'écrit (``Waiting`` n'est pas écrit)."""
 
 
 @dataclass(frozen=True, slots=True)
 class _Ready:
-    """Appel accepté, prêt à partir."""
+    """Appel accepté, prêt à partir.
+
+    Attributes:
+        call: L'appel du modèle.
+        tool: L'outil.
+        arguments: Arguments après résolution des références.
+        refs: Références résolues.
+        child_run_id: Run enfant d'un sous-agent.
+        approved: Vrai si un humain a approuvé cet appel **après** un
+            lancement d'effet inconnu : il repart, y compris sur une
+            réservation périmée (points 17 et 18). Un accord donné avant le
+            premier lancement ne vaut pas cela.
+        replayed: Vrai si le résultat vient du rejeu (journal, doublure ou
+            refus), pas de l'outil — décidé une fois, à la préparation de
+            l'appel.
+    """
 
     call: PendingCall
     tool: AnyTool
-    # Arguments après résolution des références.
     arguments: dict[str, JsonValue]
     refs: tuple[str, ...]
-    # Run enfant d'un sous-agent.
     child_run_id: RunId | None = None
-    # Un humain a approuvé cet appel **après** un lancement d'effet inconnu :
-    # il repart, y compris sur une réservation périmée (#17, #18). Un accord
-    # donné avant le premier lancement ne vaut pas cela.
     approved: bool = False
-    # Rejeu : le résultat vient du rejeu (journal, doublure ou refus), pas de
-    # l'outil — décidé une fois, à la préparation de l'appel.
     replayed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class OpenedTools:
-    """Outils d'un run : ceux de l'agent, plus ceux de ses sources disponibles."""
+    """Outils d'un run : ceux de l'agent, plus ceux de ses sources disponibles.
+
+    Attributes:
+        tools: Les outils du run.
+        events: À journaliser, dans l'ordre : disjoncteurs ouverts
+            (``circuit.opened``), sources injoignables
+            (``tool_source.unavailable``).
+    """
 
     tools: ToolExecutor
-    # À journaliser, dans l'ordre : disjoncteurs ouverts, sources injoignables.
     events: tuple[CircuitOpened | ToolSourceUnavailable, ...] = ()
 
     @property
@@ -324,7 +369,7 @@ class _Crashed:
 
 @dataclass(frozen=True, slots=True)
 class _Unknown:
-    """Appel dont l'effet est d'état inconnu (#18) : il solde l'appel sans le conclure.
+    """Appel dont l'effet est d'état inconnu (point 18) : il solde l'appel sans le conclure.
 
     Ni résultat ni attente : ce que l'appel devient est décidé après le lot,
     selon ce que son outil a déclaré en ``on_unknown``.
@@ -335,7 +380,7 @@ class _Unknown:
 
 
 class ToolReplay(Protocol):
-    """Résultats d'outils servis à part, au lieu d'exécuter (rejeu J6.2a, J6.2b ; évals J6.3a).
+    """Résultats d'outils servis à part, au lieu d'exécuter (rejeu, jalons J6.2a et J6.2b ; évals, jalon J6.3a).
 
     ``serves`` dit, une fois par appel et avant tout lancement, si le rejeu
     sert lui-même cet appel. Au rejeu identique, ce sont tous les outils qui
@@ -355,7 +400,15 @@ class ToolReplay(Protocol):
     journal : il porte alors le state que le run d'origine a posé.
     """
 
-    def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool: ...
+    def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool:
+        """Vrai si le rejeu sert lui-même cet appel, au lieu de l'exécuter.
+
+        Args:
+            tool: L'outil.
+            call: L'appel du modèle.
+            run_id: Le run.
+        """
+        ...
 
     def from_journal(self, run_id: RunId, call_id: str) -> bool:
         """Le résultat servi pour cet appel vient du journal, avec ses écritures du state.
@@ -372,7 +425,20 @@ class ToolReplay(Protocol):
         name: str,
         arguments: Mapping[str, JsonValue],
         resolved: Mapping[str, JsonValue],
-    ) -> tuple[ToolOutput, Consumption | None]: ...
+    ) -> tuple[ToolOutput, Consumption | None]:
+        """Résultat servi pour un appel, et la consommation qu'il portait.
+
+        Args:
+            run_id: Le run.
+            call_id: L'appel.
+            name: Nom de l'outil.
+            arguments: Arguments tels que le modèle les a écrits.
+            resolved: Arguments que l'outil aurait reçus.
+
+        Returns:
+            Le résultat et la consommation d'un sous-agent, ou ``None``.
+        """
+        ...
 
     async def approve(self, run_id: RunId, pending: PendingApproval) -> ApprovalDecision:
         """Décision en ligne d'une demande d'approbation : un rejeu ne s'arrête pas pour attendre.
@@ -395,12 +461,41 @@ class ToolExecutor:
     est déclaré. ``offload_over`` est le seuil de déport des outils qui n'en
     fixent pas ; ``None`` le désactive.
 
-    ``breakers`` : disjoncteurs des sources (#19, backlog #011), réglés par
+    ``breakers`` : disjoncteurs des sources (point 19, backlog #011), réglés par
     ``circuits`` (nom de la source → réglage, ``None`` pour aucun ; réglage
     par défaut pour une source absente). Sans eux, pas de disjoncteur.
 
     ``state_rules`` : clés du state que l'agent déclare (option C) ; sans
     elles, un outil ne voit pas de state et toute écriture est refusée.
+
+    L'exécuteur d'un agent est construit au montage ; ``opened`` en tire, pour
+    chaque run, une copie qui ajoute les outils de ses sources.
+
+    Attributes:
+        default_timeout: Délai des outils qui n'en fixent pas, en secondes.
+        order: Ordre des appels d'un même tour.
+        grace: Attente au plus du travail en thread d'un appel à effet,
+            après son délai (décision B-2).
+        threads: Pool des outils synchrones (décision D-4).
+        state_rules: Clés du state de l'agent.
+        approval: Délai et effet d'une expiration des demandes d'approbation
+            (point 17).
+        approvers: Qui tranche les demandes de cet agent : figé dans chacune
+            (``docs/loom_role_user.md`` §5.3).
+        denied: Outils retirés à l'appelant, par le nom que voit le modèle.
+        imposed: Approbations imposées par l'appelant, par nom d'outil.
+        idempotency: Magasin d'idempotence partagé (point 49) ; ``None`` :
+            celui du journal du run.
+        validate_arguments: Faux pour ne pas contrôler les arguments contre
+            le schéma.
+        artifacts: Magasin des fichiers du run.
+        offload_over: Seuil de déport, en caractères ; ``None`` : jamais.
+        breakers: Disjoncteurs partagés de l'instance.
+        circuits: Réglage du disjoncteur de chaque source.
+        sources: Sources ouvertes au début de chaque run (serveurs MCP,
+            point 19).
+        replay: Rejeu (jalon J6.2a) : posé sur l'exécuteur d'un agent monté
+            pour rejouer.
     """
 
     def __init__(
@@ -424,20 +519,49 @@ class ToolExecutor:
         grace: float | None = tool_threads.DEFAULT_GRACE,
         threads: tool_threads.ToolThreads | None = None,
     ) -> None:
+        """Déclare les outils et règle l'exécution.
+
+        Args:
+            tools: Outils de l'agent ; ``artifact_read`` s'y ajoute si
+                ``artifacts`` est donné.
+            sources: Sources d'outils ouvertes à chaque run (serveurs MCP).
+            default_timeout: Délai des outils qui n'en fixent pas (30 s).
+            validate_arguments: Contrôler les arguments contre le schéma.
+            artifacts: Magasin des fichiers du run.
+            offload_over: Seuil de déport (50 000 caractères) ; ``None`` le
+                désactive.
+            breakers: Disjoncteurs partagés de l'instance.
+            circuits: Réglage du disjoncteur de chaque source.
+            approval: Délai et effet d'une expiration des approbations.
+            approvers: Qui tranche les demandes de l'agent.
+            idempotency: Magasin d'idempotence partagé.
+            denied: Outils retirés à l'appelant.
+            imposed: Approbations imposées par l'appelant.
+            state_rules: Clés du state de l'agent.
+            order: Ordre des appels d'un même tour.
+            grace: Attente au plus du travail en thread d'un appel à effet
+                après son délai ; ``None`` : sans borne.
+            threads: Pool des outils synchrones : celui de l'instance
+                ``Loom``, sinon un pool propre, dont les threads ne naissent
+                qu'au premier travail.
+
+        Raises:
+            ValueError: Deux outils du même nom.
+        """
         self.default_timeout = default_timeout
         self.order: CallOrder = order
-        # Attente au plus du travail en thread d'un appel à effet, après son délai (B-2).
+        # Attente au plus du travail en thread d'un appel à effet, après son délai (décision B-2).
         self.grace = grace
-        # Pool des outils synchrones (D-4) : celui de l'instance ``Loom``, sinon le sien.
+        # Pool des outils synchrones (décision D-4) : celui de l'instance ``Loom``, sinon le sien.
         # Ses threads ne naissent qu'au premier travail.
         self.threads = threads if threads is not None else tool_threads.ToolThreads()
         # Travail en thread d'appels à effet qui ont dépassé leur délai, et qui tournait
         # encore à la fin de leur lot, par run : le lot suivant du run l'attend.
         self._late: dict[RunId, dict[str, tool_threads.CallThreads]] = {}
         self.state_rules = state_rules or StateRules()
-        # Délai et effet d'une expiration (#17).
+        # Délai et effet d'une expiration (point 17).
         self.approval = approval or ApprovalSettings()
-        # Qui tranche les demandes de cet agent : figé dans chacune (§ 5.3).
+        # Qui tranche les demandes de cet agent : figé dans chacune (docs/loom_role_user.md §5.3).
         self.approvers = approvers or Approvers()
         # Outils retirés, et approbations imposées quoi qu'en dise leur
         # déclaration : posés par l'appelant sous le nom que voit le modèle,
@@ -446,7 +570,7 @@ class ToolExecutor:
         # ouverte — le moteur n'a pas à savoir d'où vient la consigne.
         self.denied = frozenset(denied)
         self.imposed: dict[str, Approval] = dict(imposed or {})
-        # Magasin partagé (#49) ; sans lui, chaque appel reçoit le magasin
+        # Magasin partagé (point 49) ; sans lui, chaque appel reçoit le magasin
         # adossé au journal de son run.
         self.idempotency = idempotency
         self.validate_arguments = validate_arguments
@@ -454,9 +578,9 @@ class ToolExecutor:
         self.offload_over = offload_over
         self.breakers = breakers
         self.circuits: dict[str, CircuitBreaker | None] = dict(circuits or {})
-        # Sources ouvertes au début de chaque run (serveurs MCP, #19).
+        # Sources ouvertes au début de chaque run (serveurs MCP, point 19).
         self.sources: tuple[ToolSource, ...] = tuple(sources)
-        # Rejeu (J6.2a) : posé sur l'exécuteur d'un agent monté pour rejouer.
+        # Rejeu (jalon J6.2a) : posé sur l'exécuteur d'un agent monté pour rejouer.
         self.replay: ToolReplay | None = None
         self._tools: dict[str, AnyTool] = {}
         self._validators: dict[str, Validator] = {}
@@ -477,6 +601,14 @@ class ToolExecutor:
         Disjoncteur : une source écartée n'est pas contactée ; une connexion
         ratée compte un échec, et celle qui ouvre le disjoncteur est signalée
         (``circuit.opened``) ; une connexion réussie remet le compte à zéro.
+
+        Args:
+            context: Contexte de l'ouverture (run, client, session) donné aux
+                sources.
+
+        Yields:
+            Les outils du run et les événements à journaliser ; les sources
+            sont fermées à la sortie.
         """
         if not self.sources:
             yield OpenedTools(tools=self)
@@ -566,6 +698,15 @@ class ToolExecutor:
         return copy
 
     def add(self, tool: AnyTool) -> None:
+        """Déclare un outil ; un outil retiré à l'appelant (``denied``) est ignoré.
+
+        Args:
+            tool: L'outil.
+
+        Raises:
+            ValueError: Un outil du même nom est déjà déclaré.
+            jsonschema.SchemaError: Le schéma des arguments est invalide.
+        """
         spec = tool.spec
         if spec.name in self.denied:
             logger.debug("Outil %s retiré : il n'est pas ouvert à cet appelant", spec.name)
@@ -579,6 +720,7 @@ class ToolExecutor:
         self._validators[spec.name] = bounded_validator(spec.input_schema)
 
     def get(self, name: str) -> AnyTool | None:
+        """L'outil de ce nom, ou ``None``."""
         return self._tools.get(name)
 
     @property
@@ -590,7 +732,7 @@ class ToolExecutor:
         """Vrai si les références ``$ref`` sont montrées : un rôle, un sous-agent ou ``loom.state``.
 
         ``loom.state`` désigne un résultat par sa référence : sans elles, le modèle
-        ne saurait pas quoi lui donner (E4).
+        ne saurait pas quoi lui donner (écart E4 du state v2, ``docs/state_v2_analyse.md``).
 
         Un outil masqué (rôle vision sans pièce jointe, sous-agent au-delà de la
         profondeur permise) ne compte pas.
@@ -600,6 +742,7 @@ class ToolExecutor:
 
     @property
     def specs(self) -> tuple[ToolSpec, ...]:
+        """Descriptions des outils déclarés, dans l'ordre."""
         return tuple(tool.spec for tool in self._tools.values())
 
     def view(
@@ -614,7 +757,21 @@ class ToolExecutor:
         summary: str | None = None,
         session_state: Mapping[str, JsonValue] | None = None,
     ) -> RunView:
-        """Ce que les outils délégués voient du run."""
+        """Ce que les outils délégués voient du run.
+
+        Args:
+            state: L'état du run.
+            writer: Écrivain du journal.
+            scope: Run qui écrit.
+            spans: Span de chaque appel du lot.
+            step_span: Span de l'étape.
+            turns: Historique de la session, par tour.
+            summary: Dernier résumé de compaction.
+            session_state: State de la session.
+
+        Returns:
+            La vue, avec le magasin de fichiers de l'exécuteur.
+        """
         return RunView.of(
             state,
             self.artifacts,
@@ -631,6 +788,9 @@ class ToolExecutor:
         """Ce que le modèle voit des outils, dans l'ordre de déclaration.
 
         Avec ``run``, les outils délégués indisponibles dans ce run sont écartés.
+
+        Args:
+            run: La vue du run, ou ``None`` pour tous les outils.
         """
         return tuple(tool.spec.definition() for tool in self._tools.values() if run is None or _offered(tool, run))
 
@@ -658,25 +818,46 @@ class ToolExecutor:
         de l'étape qui les porte. ``policies`` : celles de l'agent.
         Une décision ``Fail`` à ``before_tool`` arrête le lot avant tout
         lancement. ``on_chunk`` : diffusion en direct, pour un rôle terminal
-        seul dans son lot. ``approver`` : approbateur en ligne (#28) — il
+        seul dans son lot. ``approver`` : approbateur en ligne (point 28) — il
         tranche ici même, et le run ne passe jamais par ``PAUSED`` ; les
         arguments qu'il corrige sont validés comme ceux du modèle. Au rejeu,
         c'est le rejeu qui tranche (``ToolReplay.approve``). ``session_state`` :
         le state de la session à l'ouverture du run ; les outils voient en plus
         ce que le run a écrit avant ce lot.
+
+        Args:
+            state: L'état du run ; ses appels en attente forment le lot.
+            writer: Écrivain du journal.
+            scope: Run qui écrit.
+            spans: Span de chaque appel du lot.
+            step_span: Span de l'étape.
+            policies: Politiques de l'agent.
+            on_chunk: Diffusion en direct d'un rôle terminal.
+            turns: Historique de la session, par tour.
+            summary: Dernier résumé de compaction.
+            approver: Approbateur en ligne.
+            session_state: State de la session à l'ouverture du run.
+            answerer: Répondeur en ligne aux questions (``ask``).
+
+        Yields:
+            Les événements du lot, dans l'ordre où le moteur les écrit :
+            décisions des politiques, ``tool.called``, événements des outils
+            délégués, fichiers rangés, ``tool.completed`` ; puis demandes
+            d'approbation et questions qui mettent le run en pause, ou
+            ``Waiting`` pour un sous-agent qui attend.
         """
         policies = policies or Policies()
         if self.replay is not None:
             approver = partial(self.replay.approve, state.run_id)
             # Un rejeu écrit avant les questions n'a pas ``answer`` : personne ne
-            # répond, la question se clôt sans réponse (wait_answer).
+            # répond, la question se clôt sans réponse (docs/wait_answer.md).
             answers = getattr(self.replay, "answer", None)
             answerer = partial(answers, state.run_id) if answers is not None else _nobody
-        # Un sous-run et un run de compaction n'ont pas de state (D3).
+        # Un sous-run et un run de compaction n'ont pas de state (décision D3 du state de session).
         keeps = bool(self.state_rules) and keeps_state(state)
         current = state_of_run(session_state or {}, state, before=_batch_turn(state)) if keeps else {}
         # Taille du state au fil du lot, dans l'ordre des appels : chaque appel
-        # compte ce que les autres ont posé, voisins déjà soldés compris (D7).
+        # compte ce que les autres ont posé, voisins déjà soldés compris (décision D7 du state de session).
         tally = _batch_tally(state, current) if keeps else BatchTally()
         view = self.view(
             state,
@@ -711,7 +892,7 @@ class ToolExecutor:
                 yield _completed(call, ToolOutput.error(prepared), started=None)
                 continue
             if prepared.tool.spec.asks is not None:
-                # Une question à l'utilisateur (wait_answer) : rien ne s'exécute,
+                # Une question à l'utilisateur (docs/wait_answer.md) : rien ne s'exécute,
                 # ni politique ni approbation. La réponse déjà au journal part au
                 # modèle ; sinon la question s'écrit, et le run attendra.
                 async for event in self._ask(call, prepared, state, answerer, held_questions):
@@ -753,7 +934,7 @@ class ToolExecutor:
                 # Un accord vaut pour un seul lancement. S'il a déjà servi, et
                 # que l'outil n'est pas sûr à relancer, l'effet est d'état
                 # inconnu : la règle de reprise s'applique, comme sans accord
-                # (#18). Un accord encore intact, lui, répond à un état inconnu
+                # (point 18). Un accord encore intact, lui, répond à un état inconnu
                 # si l'appel est déjà parti (il a été demandé après coup).
                 if not settled.launched or (_retry_safe(prepared.tool, launched_with) and _retry_safe(prepared.tool, prepared.arguments)):
                     admitted = replace(prepared, approved=call.started and not settled.launched)
@@ -762,7 +943,7 @@ class ToolExecutor:
                     else:
                         ready.append(admitted)
                     continue
-            # Reprise d'un appel dont l'effet est peut-être produit (#18) :
+            # Reprise d'un appel dont l'effet est peut-être produit (point 18) :
             # il n'est pas relancé de lui-même. L'outil dit ce qu'il advient
             # — le modèle est prévenu, ou un humain tranche.
             unknown = call.started and not _retry_safe(prepared.tool, launched_with)
@@ -784,7 +965,7 @@ class ToolExecutor:
             if isinstance(verdict.subject, BeforeTool):
                 prepared = replace(prepared, arguments=verdict.subject.arguments)
             # Un `approval: always` ne se lève pas : seule la config admin le
-            # peut, et une politique qui dit `Continue` ne l'a pas levé (#17).
+            # peut, et une politique qui dit `Continue` ne l'a pas levé (point 17).
             asked = (
                 (UNKNOWN_STATE, None)
                 if unknown
@@ -803,7 +984,7 @@ class ToolExecutor:
                     ready.append(prepared)
                 continue
             # Le même appel déjà refusé dans ce run : on ne le redemande pas.
-            # Au test D12 du 18/10, Haiku a relancé à l'identique un appel que
+            # À l'essai de la fonction D12 du 18/10, Haiku a relancé à l'identique un appel que
             # Denis venait de refuser, et l'approbateur l'aurait revu sans fin.
             refused = None if unknown else _already_refused(state, prepared)
             if refused is not None:
@@ -818,7 +999,7 @@ class ToolExecutor:
                 continue
             # Approbateur en ligne : il décide dans la boucle. La demande et sa
             # décision sont journalisées quand même — c'est le seul endroit où
-            # l'on saura qui a validé quoi (#17).
+            # l'on saura qui a validé quoi (point 17).
             yield request
             decided = await approver(pending)
             yield _decision(request, decided)
@@ -850,7 +1031,7 @@ class ToolExecutor:
         # Posé avant que le lot annule ses tâches : toute autre annulation vient de l'outil.
         stopping = False
 
-        # Travail en thread d'appels à effet qui ont dépassé leur délai (B-2) : ceux
+        # Travail en thread d'appels à effet qui ont dépassé leur délai (décision B-2) : ceux
         # d'un lot précédent du run d'abord, que la chaîne attend avant tout lancement.
         for run_id, late in list(self._late.items()):
             if not any(threads.running for threads in late.values()):
@@ -951,7 +1132,7 @@ class ToolExecutor:
                 self._late[state.run_id] = running
 
         # Un appel d'état inconnu n'a ni résultat ni conclusion : c'est son
-        # outil qui dit ce qu'il advient (#18). L'erreur revient au modèle ;
+        # outil qui dit ce qu'il advient (point 18). L'erreur revient au modèle ;
         # la pause demande une approbation, comme la règle de reprise.
         for call_id, message in inconnus.items():
             item = launched[call_id]
@@ -974,7 +1155,7 @@ class ToolExecutor:
                 yield _completed(item.call, ToolOutput.error(text), started=None)
 
         # Les appels qui ne demandent rien se sont exécutés ; le run passe en
-        # pause pour les autres (#17). La demande est écrite après le lot, et
+        # pause pour les autres (point 17). La demande est écrite après le lot, et
         # non avant : une décision qui arriverait pendant qu'il tourne
         # trouverait le run encore piloté, et se ferait refuser sa reprise.
         for _, request in held:
@@ -1006,7 +1187,12 @@ class ToolExecutor:
         answerer: Answerer | None,
         held: list[QuestionAsked],
     ) -> AsyncGenerator[ToolEvent]:
-        """Un appel à ``ask`` : sa réponse, ou sa question à écrire (wait_answer)."""
+        """Un appel à ``ask`` : sa réponse, ou sa question à écrire (``docs/wait_answer.md``).
+
+        Une réponse déjà au journal, ou donnée en ligne par ``answerer``, part
+        au modèle ; sinon la question rejoint ``held`` et le run attendra en
+        ``PAUSED``.
+        """
         known = state.question(call.call_id)
         if known is not None and not known.open:
             output = questions.answered_output(known) if known.reply is not None else questions.expired_output(known)
@@ -1200,7 +1386,7 @@ class ToolExecutor:
 
         ``tally`` : le state que le lot laissera, compté dans l'ordre des appels.
         ``lingering`` : reçoit le travail en thread d'un appel à effet qui a dépassé
-        son délai et tourne encore (B-2) ; la chaîne l'attendra.
+        son délai et tourne encore (décision B-2) ; la chaîne l'attendra.
         """
         if lingering is None:
             lingering = {}
@@ -1276,7 +1462,7 @@ class ToolExecutor:
                     threads.abandon()
         if isinstance(output, Waiting):
             # Rien à contrôler ni à conclure : l'appel reste en suspens, et
-            # le parent attend avec son enfant (H4).
+            # le parent attend avec son enfant (fonction H4).
             emit(output)
             return
         if policies:
@@ -1292,11 +1478,11 @@ class ToolExecutor:
         emit(_completed(call, output, started=started, consumption=consumption))
 
     def _posed(self, output: ToolOutput, tool: str, view: RunView, tally: BatchTally, call_id: str) -> ToolOutput:
-        """Le résultat avec les écritures du state qu'il pose (D6 à D8, D12).
+        """Le résultat avec les écritures du state qu'il pose (décisions D6 à D8 et D12 du state de session).
 
         Un résultat en erreur n'en pose aucune, même s'il en portait avant
         qu'une politique ne le refuse. Un sous-run n'écrit pas le state de la
-        session (D3), ni un agent qui n'en déclare pas : ce qu'un outil y écrit
+        session (décision D3), ni un agent qui n'en déclare pas : ce qu'un outil y écrit
         est alors retiré sans bruit. Un outil qui n'écrit rien et qu'aucune
         source ne désigne garde son résultat tel quel.
         """
@@ -1426,7 +1612,10 @@ class ToolExecutor:
         state: RunState,
         emit: Callable[[ToolEvent], None],
     ) -> ToolOutput:
-        """Octets des blocs rangés dans le stockage, remplacés par leur référence (G3)."""
+        """Octets des blocs rangés dans le stockage, remplacés par leur référence (fonction G3).
+
+        Chaque fichier rangé émet un ``Stored`` (``artifact.stored``).
+        """
         blocks: list[OutputBlock] = []
         uris = list(output.artifacts)
         for block in output.blocks:
@@ -1463,7 +1652,7 @@ class ToolExecutor:
         view: RunView,
         emit: Callable[[ToolEvent], None],
     ) -> ToolOutput:
-        """Contenu complet rangé à part, aperçu à la place (#16) ; tronqué sans stockage."""
+        """Contenu complet rangé à part, aperçu à la place (point 16) ; tronqué sans stockage."""
         if self.artifacts is None:
             return truncated(output, limit)
         state = view.state
@@ -1498,7 +1687,7 @@ async def _invoked(
     Un délai dépassé sur un appel à effet n'est pas un échec : l'effet a pu avoir
     lieu, ou aura lieu (un thread ne s'arrête pas, un serveur MCP continue). Il
     est d'état inconnu (``UnknownEffect``), et l'outil dit ce qu'il en advient
-    (``on_unknown``), comme à la reprise d'un appel interrompu (B-2).
+    (``on_unknown``), comme à la reprise d'un appel interrompu (décision B-2).
     """
     scope = asyncio.timeout(limit)
     try:
@@ -1672,7 +1861,7 @@ def _asks_approval(
 
     Le motif dit laquelle des deux premières s'applique : un approbateur qui lit
     « outil déclaré à approbation obligatoire » pour un outil qui ne l'est pas
-    cherche la raison au mauvais endroit (test D7 du 18/10).
+    cherche la raison au mauvais endroit (essai de la fonction D7, 18/10).
 
     Un outil qui évalue ses appels (``assessment``) remplace sa déclaration
     pour cet appel : c'est lui qui dit s'il faut approuver, et pourquoi. La
@@ -1702,7 +1891,7 @@ async def _nobody(_: PendingQuestion) -> NoAnswer:
 
 
 def _request(item: _Ready, asked: tuple[str, str | None], settings: ApprovalSettings, approvers: Approvers) -> ApprovalRequested:
-    """Demande d'approbation d'un appel, prête à écrire, avec qui peut la trancher (§ 5.3)."""
+    """Demande d'approbation d'un appel, prête à écrire, avec qui peut la trancher (``docs/loom_role_user.md`` §5.3)."""
     reason, policy = asked
     expire_at = None if settings.expires_in is None else datetime.now(UTC) + timedelta(seconds=settings.expires_in)
     return ApprovalRequested(
@@ -1744,7 +1933,7 @@ def _decision(request: ApprovalRequested, decided: ApprovalDecision) -> Approval
 def _refused(tool_name: str, verdict: str, reason: str, by: str | None = None) -> str:
     """Ce que le modèle lit d'un appel qu'une approbation n'a pas autorisé.
 
-    Au test D12 du 18/10, « Appel à forge__forge refusé : test D12, pas de VM »
+    À l'essai de la fonction D12 du 18/10, « Appel à forge__forge refusé : test D12, pas de VM »
     a été lu comme une panne : Haiku a relancé l'appel, puis conclu que « le
     service de forge a refusé ». Le texte dit donc qui a tranché, que c'est
     une décision, et ce que le modèle doit en faire.
@@ -1759,8 +1948,8 @@ def _refused(tool_name: str, verdict: str, reason: str, by: str | None = None) -
     return f"Appel à {tool_name} refusé à l'approbation{_by_why(by, reason)}. {_DECIDED}"
 
 
-# Ce qu'un refus demande au modèle : ne pas insister, et le dire.
 _DECIDED = "C'est une décision, pas une panne : ne refais pas cet appel ; dis à l'utilisateur ce qui a été refusé et pourquoi."
+"""Ce qu'un refus demande au modèle : ne pas insister, et le dire."""
 
 
 def _by_why(by: str | None, reason: str) -> str:
@@ -1810,7 +1999,6 @@ def _from_ref(error: ValidationError, origin: RefOrigin, results: ResultIndex) -
     return f"{schema_problem(error)} — valeur transmise par {said.rstrip(',')}"
 
 
-# Les types JSON Schema, dits au modèle.
 _KINDS: Final[Mapping[str, str]] = {
     "string": "du texte",
     "object": "un objet JSON",
@@ -1820,6 +2008,7 @@ _KINDS: Final[Mapping[str, str]] = {
     "boolean": "un booléen",
     "null": "null",
 }
+"""Les types JSON Schema, dits au modèle."""
 
 
 def _kind(value: object) -> str:
@@ -1847,6 +2036,12 @@ class _RunResults:
         self._index = index
 
     async def read(self, ref: str) -> JsonValue:
+        """Contenu du résultat que désigne ``ref`` (``result:N``).
+
+        Raises:
+            ToolError: Référence impossible à résoudre ; le message est
+                destiné au modèle.
+        """
         try:
             resolved, _ = await self._index.resolve({"value": {"$ref": ref}})
         except RefError as exc:
@@ -1869,7 +2064,7 @@ def _as_served(output: ToolOutput, served: ToolOutput) -> ToolOutput:
 
 
 def _batch_tally(state: RunState, current: Mapping[str, JsonValue]) -> BatchTally:
-    """Compte du lot : le state au début du lot, puis les voisins déjà soldés à leur rang (D7, D9).
+    """Compte du lot : le state au début du lot, puis les voisins déjà soldés à leur rang (décisions D7 et D9 du state de session).
 
     Le rang d'un appel est sa place dans la réponse du modèle, comme dans la
     projection ; à la reprise d'un lot interrompu, les appels déjà soldés au
@@ -1924,6 +2119,15 @@ def _completed(
     started: float | None,
     consumption: Consumption | None = None,
 ) -> ToolCompleted:
+    """``tool.completed`` d'un appel : résultat, durée, taille en octets du JSON, consommation d'un sous-agent.
+
+    Args:
+        call: L'appel.
+        output: Son résultat.
+        started: Instant du lancement (``time.perf_counter``) ; ``None`` pour
+            un appel conclu sans lancement (durée 0).
+        consumption: Consommation d'un sous-agent.
+    """
     latency = 0.0 if started is None else (time.perf_counter() - started) * 1000
     return ToolCompleted(
         call_id=call.call_id,

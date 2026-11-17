@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from pydantic import JsonValue
 
 MAX_CELL_CHARS: Final = 1000
+"""Caractères au plus par cellule rendue ; au-delà, le texte est coupé et le dit."""
 
 
 def cell(value: object, zone: ZoneInfo) -> JsonValue:
@@ -56,6 +57,7 @@ def cell(value: object, zone: ZoneInfo) -> JsonValue:
 
 
 def row(values: Sequence[object], zone: ZoneInfo) -> list[JsonValue]:
+    """Une ligne rendue en JSON, cellule par cellule."""
     return [cell(value, zone) for value in values]
 
 

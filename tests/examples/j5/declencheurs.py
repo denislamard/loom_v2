@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 5.4c : les portes d'entrée — un appel extérieur ouvre un run.
+r"""Phase 5.4c : les portes d'entrée — un appel extérieur ouvre un run.
 
     uv run --extra http python tests/examples/j5/declencheurs.py            # les trois cas
     uv run --extra http python tests/examples/j5/declencheurs.py --cas porte
     uv run --extra http python tests/examples/j5/declencheurs.py --cas doublons
     uv run --extra http python tests/examples/j5/declencheurs.py --cas cles
-    uv run --env-file .env --extra http --extra anthropic --extra openai \\
+    uv run --env-file .env --extra http --extra anthropic --extra openai \
         python tests/examples/j5/declencheurs.py --reel
 
 Config : ``tests/examples/j5/relance/``, celle de 5.1a, avec les déclencheurs posés

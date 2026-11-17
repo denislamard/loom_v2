@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Export des runs terminés vers les collecteurs (K4, #29, §14.1).
+"""Export des runs terminés vers les collecteurs (fonction K4, point 29, conception §14.1).
 
 Un abonné du journal, qui ne regarde qu'une chose : l'événement qui **clôt**
 un run (``run.completed``, ``run.failed``, ``run.cancelled``). À ce moment, il
@@ -34,10 +34,15 @@ logger = logging.getLogger(__name__)
 
 
 class SpanSink(Protocol):
-    """Un collecteur : reçoit des spans, les envoie à son rythme."""
+    """Un collecteur : reçoit des spans, les envoie à son rythme.
+
+    Implémentation fournie : ``OtelSpanSink`` (``adapters/telemetry/otel.py``).
+    """
 
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """Nom du collecteur, pour les logs."""
+        ...
 
     def export(self, spans: Sequence[SpanRecord]) -> None:
         """Prend les spans en charge sans attendre le réseau."""
@@ -53,6 +58,15 @@ class RunExporter:
 
     ``content_for`` dit, client par client, si le contenu part
     (``capture.exports: content``) ; ``redactor`` masque ce contenu.
+
+    Monté par ``create_run_exporter`` quand ``telemetry.exporters`` déclare
+    un collecteur monté, et abonné au journal de l'instance.
+
+    Args:
+        store: Le journal, où relire le run.
+        sinks: Les collecteurs.
+        content_for: Vrai si le contenu du client part.
+        redactor: Le masqueur du contenu.
     """
 
     def __init__(
@@ -72,10 +86,12 @@ class RunExporter:
 
     @property
     def sinks(self) -> tuple[SpanSink, ...]:
+        """Les collecteurs."""
         return self._sinks
 
     @property
     def pending(self) -> int:
+        """Exports en cours."""
         return len(self._pending)
 
     def __call__(self, event: Event) -> None:
@@ -90,7 +106,13 @@ class RunExporter:
         task.add_done_callback(self._pending.discard)
 
     async def export_run(self, tenant_id: TenantId, session_id: SessionId, run_id: RunId) -> int:
-        """Exporte un run tel qu'il est au journal ; rend le nombre de spans remis."""
+        """Exporte un run tel qu'il est au journal ; rend le nombre de spans remis.
+
+        Args:
+            tenant_id: Client du run.
+            session_id: Sa session.
+            run_id: Le run.
+        """
         events = await self._store.read(tenant_id, session_id, run_id=run_id)
         if not events:
             return 0
@@ -103,7 +125,11 @@ class RunExporter:
         return len(spans)
 
     async def aclose(self, grace: float) -> None:
-        """Attend les exports en cours, puis vide et ferme les collecteurs."""
+        """Attend les exports en cours, puis vide et ferme les collecteurs.
+
+        Args:
+            grace: Délai laissé aux exports et aux collecteurs, en secondes.
+        """
         self._closed = True
         if self._pending:
             _, late = await asyncio.wait(tuple(self._pending), timeout=grace)

@@ -83,40 +83,63 @@ from loom_ia.tools_builtin._templates import Template, fixed_paragraphs, key
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Scalar, Stored, convert
 
 MAX_TITLE: Final = 300
-# Largeur d'une colonne, en caractères, pour en tirer la part de la page.
+"""Longueur au plus d'un titre."""
 MIN_COLUMN_CHARS: Final = 4
+"""Largeur d'une colonne, en caractères, pour en tirer la part de la page."""
 MAX_COLUMN_CHARS: Final = 40
-# Ce qu'une colonne prend en plus de son texte : les marges de la cellule, et l'en-tête
-# en gras, plus large que le corps.
+"""Longueur au plus d'un en-tête de colonne."""
 COLUMN_PADDING: Final = 2
-# Ce que tient la largeur utile d'une page A4 (17 cm), en caractères de tableau : 90
-# (Helvetica 9,5 pt en fait une centaine en moyenne ; Calibri 10 pt, davantage).
+"""Ce qu'une colonne prend en plus de son texte : les marges de la cellule, et
+l'en-tête en gras, plus large que le corps.
+"""
 PAGE_CHARS: Final = 90
-# Un en-tête est en gras : ses lettres sont plus larges que celles du corps.
+"""Ce que tient la largeur utile d'une page A4 (17 cm), en caractères de
+tableau : 90 (Helvetica 9,5 pt en fait une centaine en moyenne ; Calibri 10
+pt, davantage).
+"""
 BOLD_WIDTH: Final = 1.15
-# Une valeur jusqu'à cette longueur (un rang, un code, un montant, une date) n'est
-# jamais coupée ; une plus longue (un nom, un texte) peut passer à la ligne.
+"""Un en-tête est en gras : ses lettres sont plus larges que celles du corps."""
 SHORT_VALUE_CHARS: Final = 14
+"""Une valeur jusqu'à cette longueur (un rang, un code, un montant, une date)
+n'est jamais coupée ; une plus longue (un nom, un texte) peut passer à la
+ligne.
+"""
 NUMERIC: Final[frozenset[ColumnType]] = frozenset({"integer", "decimal", "amount_eur", "amount_keur", "percent"})
+"""Types de colonne qui portent des nombres."""
 ORDERED_TYPES: Final[frozenset[ColumnType]] = NUMERIC | frozenset[ColumnType]({"date", "datetime"})
+"""Types de colonne qui se comparent : nombres et dates."""
 CENTERED: Final[frozenset[ColumnType]] = frozenset({"date", "datetime", "year", "boolean"})
-# Espace insécable : présente dans toutes les polices, y compris Helvetica (WinAnsi),
-# contrairement à l'espace fine insécable (U+202F) de la typographie française.
+"""Types de colonne centrés."""
 NBSP: Final = "\u00a0"
-# Ce qu'un fichier XML ne peut pas contenir, et qu'aucun document n'affiche.
+"""Espace insécable : présente dans toutes les polices, y compris Helvetica
+(WinAnsi), contrairement à l'espace fine insécable (U+202F) de la
+typographie française.
+"""
 _CONTROL: Final = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+"""Ce qu'un fichier XML ne peut pas contenir, et qu'aucun document n'affiche."""
 
 type Align = Literal["left", "center", "right"]
+"""Alignement d'une colonne."""
 
 
 @dataclass(frozen=True, slots=True)
 class Run:
-    """Un segment de texte et son emphase ; ``\\n`` y est un saut de ligne.
+    r"""Un segment de texte et son emphase ; ``\n`` y est un saut de ligne.
 
     ``link`` : l'adresse d'un lien. ``note`` : une note de bas de page, son texte ; la
     marque n'a pas de texte à elle (``text`` vide), le format la numérote. ``ref`` : un
     renvoi, le rang du titre visé parmi les titres du document (1 pour le premier) ;
     ``text`` est ce titre, que le format écrit, ou remplace par son numéro.
+
+    Attributes:
+        text: Le texte du segment.
+        bold: En gras.
+        italic: En italique.
+        underline: Souligné.
+        link: Adresse d'un lien, s'il en est un.
+        note: Texte d'une note de bas de page appelée ici.
+        ref: Rang du titre visé par un renvoi, parmi les titres du document (1
+            pour le premier).
     """
 
     text: str
@@ -129,65 +152,116 @@ class Run:
 
 
 type Inline = tuple[Run, ...]
+"""Un texte en segments."""
 
 
 @dataclass(frozen=True, slots=True)
 class TitleOut:
+    """Le titre du document, validé.
+
+    Attributes:
+        runs: Ses segments.
+    """
+
     runs: Inline
 
 
 @dataclass(frozen=True, slots=True)
 class HeadingOut:
+    """Un titre validé.
+
+    Attributes:
+        level: Son niveau, de 1 à 3.
+        runs: Ses segments.
+        style: Le style proposé que le modèle de langage a choisi (``style`` du
+            bloc).
+        section: Le titre d'une section du modèle, que l'outil écrit : la place
+            de la section.
+    """
+
     level: int
     runs: Inline
-    # Le style proposé que le modèle de langage a choisi (``style`` du bloc).
     style: str | None = None
-    # Le titre d'une section du modèle, que l'outil écrit : la place de la section.
     section: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ParagraphOut:
+    """Un paragraphe validé.
+
+    Attributes:
+        runs: Ses segments.
+        style: Le style proposé choisi, s'il y en a un.
+    """
+
     runs: Inline
     style: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Entry:
-    """Un élément de liste, et sa sous-liste (trois niveaux en tout)."""
+    """Un élément de liste, et sa sous-liste (trois niveaux en tout).
+
+    Attributes:
+        runs: Ses segments.
+        children: Sa sous-liste.
+        checked: Une liste à cocher : l'élément est coché.
+    """
 
     runs: Inline
     children: tuple[Entry, ...] = ()
-    # Une liste à cocher : l'élément est coché.
     checked: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class ListOut:
+    """Une liste validée.
+
+    Attributes:
+        ordered: Numérotée, ou à puces.
+        entries: Ses éléments.
+        checkboxes: Une liste à cocher (``blocks: [checkboxes]``) : une case
+            devant chaque élément.
+        style: Le style proposé choisi, s'il y en a un.
+    """
+
     ordered: bool
     entries: tuple[Entry, ...]
-    # Une liste à cocher (``blocks: [checkboxes]``) : une case devant chaque élément.
     checkboxes: bool = False
     style: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class FieldsOut:
-    """Des libellés et leurs valeurs ; une valeur vide laisse une ligne à remplir."""
+    """Des libellés et leurs valeurs ; une valeur vide laisse une ligne à remplir.
+
+    Attributes:
+        items: Les champs : libellé, et valeur en segments (vide : une ligne à
+            remplir).
+    """
 
     items: tuple[tuple[str, Inline], ...]
 
 
 @dataclass(frozen=True, slots=True)
 class CodeOut:
-    """Du texte préformaté : ses lignes telles quelles, espaces comprises."""
+    """Du texte préformaté : ses lignes telles quelles, espaces comprises.
+
+    Attributes:
+        text: Le code, tel quel.
+    """
 
     text: str
 
 
 @dataclass(frozen=True, slots=True)
 class SignatureOut:
-    """La zone de signature : un libellé par signataire, et la mention qu'ils écrivent."""
+    """La zone de signature : un libellé par signataire, et la mention qu'ils écrivent.
+
+    Attributes:
+        signers: Les signataires.
+        mention: La mention au-dessus des signatures, s'il y en a une.
+    """
 
     signers: tuple[str, ...]
     mention: str | None
@@ -200,34 +274,55 @@ class ContentsOut:
 
 @dataclass(frozen=True, slots=True)
 class TableOut:
+    """Un tableau validé.
+
+    Attributes:
+        headers: Les en-têtes des colonnes.
+        align: L'alignement de chaque colonne.
+        rows: Les lignes, en texte.
+        total: La ligne de total, s'il y en a une.
+        widths: La part de la largeur utile de chaque colonne ; leur somme vaut
+            1.
+        caption: La légende, s'il y en a une.
+        cells: Les cellules des lignes, en segments (l'emphase, les liens, les
+            notes d'une colonne de texte) ; ``rows`` en garde le texte seul.
+        natural: La largeur que le contenu demande, en part de la largeur utile
+            (1 au plus) : celle d'un tableau qu'un style veut à sa largeur
+            naturelle (``width: content``).
+        style: Le style proposé choisi, s'il y en a un.
+        kinds: La sorte de chaque ligne de ``cells`` (une ligne de groupe n'a
+            qu'une cellule, son libellé) ; vide : toutes des lignes de données.
+        data: Ce que la relecture retrouve d'un tableau que l'outil calcule (le
+            récapitulatif de TVA : ses colonnes, l'acompte), en JSON.
+    """
+
     headers: tuple[str, ...]
     align: tuple[Align, ...]
     rows: tuple[tuple[str, ...], ...]
     total: tuple[str, ...] | None
-    # La part de la largeur utile de chaque colonne ; leur somme vaut 1.
     widths: tuple[float, ...]
     caption: Inline | None
-    # Les cellules des lignes, en segments (l'emphase, les liens, les notes d'une colonne
-    # de texte) ; ``rows`` en garde le texte seul.
     cells: tuple[tuple[Inline, ...], ...]
-    # La largeur que le contenu demande, en part de la largeur utile (1 au plus) : celle
-    # d'un tableau qu'un style veut à sa largeur naturelle (``width: content``).
     natural: float = 1.0
     style: str | None = None
-    # La sorte de chaque ligne de ``cells`` (une ligne de groupe n'a qu'une cellule, son
-    # libellé) ; vide : toutes des lignes de données.
     kinds: tuple[RowKind, ...] = ()
-    # Ce que la relecture retrouve d'un tableau que l'outil calcule (le récapitulatif de
-    # TVA : ses colonnes, l'acompte), en JSON.
     data: str | None = None
 
 
-# Une ligne de tableau : de données, de groupe, de sous-total, de total (en gras).
 type RowKind = Literal["body", "group", "subtotal", "total"]
+"""Une ligne de tableau : de données, de groupe, de sous-total, de total (en gras)."""
 
 
 @dataclass(frozen=True, slots=True)
 class NoteOut:
+    """Un encadré de note validé.
+
+    Attributes:
+        title: Son titre, s'il en a un.
+        runs: Ses segments.
+        style: Le style proposé choisi, s'il y en a un.
+    """
+
     title: str | None
     runs: Inline
     style: str | None = None
@@ -235,6 +330,14 @@ class NoteOut:
 
 @dataclass(frozen=True, slots=True)
 class QuoteOut:
+    """Une citation validée.
+
+    Attributes:
+        runs: Ses segments.
+        source: Sa source, s'il y en a une.
+        style: Le style proposé choisi, s'il y en a un.
+    """
+
     runs: Inline
     source: str | None
     style: str | None = None
@@ -242,12 +345,21 @@ class QuoteOut:
 
 @dataclass(frozen=True, slots=True)
 class ChartOut:
-    """Un graphique : ses libellés, ses séries de nombres, et le type de ces nombres."""
+    """Un graphique : ses libellés, ses séries de nombres, et le type de ces nombres.
+
+    Attributes:
+        kind: Le type de graphique.
+        title: Son titre.
+        categories: Ses libellés.
+        series: (nom, valeurs) ; une valeur manquante est ``None`` : un trou
+            dans la courbe.
+        value_type: Le type des valeurs, pour leur format.
+        caption: Sa légende, s'il y en a une.
+    """
 
     kind: ChartKind
     title: str | None
     categories: tuple[str, ...]
-    # (nom, valeurs) ; une valeur manquante est ``None`` : un trou dans la courbe.
     series: tuple[tuple[str, tuple[float | None, ...]], ...]
     value_type: ColumnType
     caption: Inline | None
@@ -258,28 +370,47 @@ class ImageOut:
     """Une image posée dans le texte : ses octets, sa taille dans la page, ses textes.
 
     ``source`` : l'adresse du fichier lu (« <dossier>/<chemin> »), que garde le .docx.
+
+    Attributes:
+        picture: L'image reconnue.
+        source: Son chemin, tel que le modèle l'a donné.
+        width: Largeur dans la page, en centièmes de millimètre.
+        height: Hauteur dans la page, en centièmes de millimètre.
+        alt: Son texte de remplacement.
+        caption: Sa légende, s'il y en a une.
+        wanted: La largeur demandée : une grille d'images (style) pose côte à
+            côte les « half ».
     """
 
     picture: Picture
     source: str
-    # Largeur et hauteur dans la page, en centièmes de millimètre.
     width: int
     height: int
     alt: str
     caption: Inline | None
-    # La largeur demandée : une grille d'images (style) pose côte à côte les « half ».
     wanted: ImageWidth = "full"
 
 
 type BlockOut = (
     TitleOut | HeadingOut | ParagraphOut | ListOut | TableOut | NoteOut | QuoteOut | ChartOut | ImageOut | SignatureOut | ContentsOut | FieldsOut | CodeOut
 )
+"""Un bloc validé, de toute sorte."""
 
 
 @dataclass(frozen=True, slots=True)
 class SectionOut:
-    """Une section d'un document qui suit un modèle : sa place dans le modèle, son nom, son
-    titre (``None`` s'il n'est pas imprimé), ses blocs ; ``fixed`` : un texte fixe."""
+    """Une section d'un document qui suit un modèle.
+
+    Sa place dans le modèle, son nom, son titre (``None`` s'il n'est pas imprimé), ses
+    blocs ; ``fixed`` : un texte fixe.
+
+    Attributes:
+        position: Sa place dans le modèle, à partir de 1.
+        name: Son nom.
+        title: Son titre écrit, s'il l'est.
+        blocks: Ses blocs.
+        fixed: Son texte fixe, s'il en a un.
+    """
 
     position: int
     name: str
@@ -294,43 +425,66 @@ class Prepared:
 
     ``blocks`` : tous les blocs, à plat, dans l'ordre du document (le titre du document,
     puis le titre et les blocs de chaque section) ; ``sections`` : les mêmes, par section,
-    pour un document qui suit un modèle."""
+    pour un document qui suit un modèle.
+
+    Attributes:
+        title: Le titre du document, pour ses propriétés.
+        blocks: Ses blocs, hors des sections.
+        warnings: Les avertissements de la validation.
+        template: Le modèle suivi, que le document garde dans ses propriétés ;
+            ``None`` sans modèle.
+        sections: Ses sections, s'il suit un modèle.
+    """
 
     title: str | None
     blocks: tuple[BlockOut, ...]
     warnings: tuple[str, ...]
-    # Le modèle suivi, que le document garde dans ses propriétés ; ``None`` sans modèle.
     template: str | None = None
     sections: tuple[SectionOut, ...] | None = None
 
 
-# Les styles proposés qu'un document peut choisir, par type de bloc : leur nom, et pour un
-# titre son niveau (0 pour les autres blocs).
 type Allowed = Mapping[str, Mapping[str, int]]
+"""Les styles proposés qu'un document peut choisir, par type de bloc : leur
+nom, et pour un titre son niveau (0 pour les autres blocs).
+"""
 NO_STYLES: Final[Allowed] = {}
+"""Aucun style proposé."""
 
 
-# Ce qu'a donné la lecture de chaque image, par chemin tel que donné : l'image, ou ce
-# qui l'empêche (droit, fichier absent, format…). Lue par l'outil, avant ``prepare``.
 type Pictures = Mapping[str, Picture | str]
+"""Ce qu'a donné la lecture de chaque image, par chemin tel que donné :
+l'image, ou ce qui l'empêche (droit, fichier absent, format…). Lue par
+l'outil, avant ``prepare``.
+"""
 NO_PICTURES: Final[Pictures] = {}
+"""Aucune image."""
 
 
 @dataclass(slots=True)
 class _State:
-    """Ce que la validation garde d'un bloc à l'autre, sections comprises."""
+    """Ce que la validation garde d'un bloc à l'autre, sections comprises.
+
+    Attributes:
+        problems: Les erreurs et avertissements.
+        zone: Le fuseau des dates.
+        pictures: Les images lues, par chemin.
+        labels: Les libellés du style.
+        allowed: Les styles proposés permis, par type de bloc.
+        level: Le niveau du dernier titre.
+        last_table: Le dernier tableau écrit : la source d'un graphique.
+        targets: Les titres du document qu'un renvoi peut viser, et ceux qui ne
+            s'impriment pas.
+        notes: Les notes de bas de page déjà écrites.
+    """
 
     problems: Problems
     zone: ZoneInfo
     pictures: Pictures
     labels: Labels
     allowed: Allowed
-    # Le niveau du dernier titre, et le dernier tableau écrit : la source d'un graphique.
     level: int = 0
     last_table: tuple[Table, list[list[Stored]]] | None = None
-    # Les titres du document qu'un renvoi peut viser, et ceux qui ne s'impriment pas.
     targets: Targets = field(default_factory=lambda: Targets({}, frozenset(), ()))
-    # Les notes de bas de page déjà écrites.
     notes: int = 0
 
 
@@ -389,8 +543,11 @@ def prepare(
 
 
 def _sections(arguments: WriteArguments, template: Template, state: _State) -> list[SectionOut]:
-    """Les sections du document, dans l'ordre du modèle : celles qu'il remplit, et celles au
-    texte fixe ; les fautes du plan sont dites avec les sections attendues."""
+    """Les sections du document, dans l'ordre du modèle.
+
+    Celles qu'il remplit, et celles au texte fixe ; les fautes du plan sont dites avec
+    les sections attendues.
+    """
     problems = state.problems
     where = f"modèle {template.name}"
     given: dict[int, tuple[str, list[WrittenBlock]]] = {}
@@ -438,8 +595,7 @@ def _sections(arguments: WriteArguments, template: Template, state: _State) -> l
 
 
 def _blocks(written: Sequence[WrittenBlock], label: str, state: _State, *, in_section: bool = False) -> list[BlockOut]:
-    """Les blocs validés ; ``label`` nomme leur place dans les messages (« bloc »,
-    « section « Message », bloc »)."""
+    """Les blocs validés ; ``label`` nomme leur place dans les messages (« bloc », « section « Message », bloc »)."""
     problems = state.problems
     zone = state.zone
     blocks: list[BlockOut] = []
@@ -500,8 +656,11 @@ def _blocks(written: Sequence[WrittenBlock], label: str, state: _State, *, in_se
 
 
 def _style(block: WrittenBlock, where: str, state: _State) -> str | None:
-    """Le style proposé qu'un bloc choisit : permis pour son type (et, pour un titre, son
-    niveau) dans ce document ; sinon une faute qui dit les styles permis."""
+    """Le style proposé qu'un bloc choisit.
+
+    Permis pour son type (et, pour un titre, son niveau) dans ce document ; sinon une
+    faute qui dit les styles permis.
+    """
     style = style_of(block)
     if style is None:
         return None
@@ -519,8 +678,11 @@ def _style(block: WrittenBlock, where: str, state: _State) -> str | None:
 
 
 def lines(text: str) -> str:
-    """Les fins de ligne ramenées à ``\\n`` : un ``\\r\\n`` ou un ``\\r`` venu du modèle (un
-    texte collé d'un document Windows) laisserait un ``\\r`` brut dans le document (B-3)."""
+    r"""Les fins de ligne ramenées à ``\n``.
+
+    Un ``\r\n`` ou un ``\r`` venu du modèle (un texte collé d'un document Windows)
+    laisserait un ``\r`` brut dans le document (B-3).
+    """
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
@@ -540,13 +702,16 @@ def _clean(text: str, where: str, problems: Problems) -> None:
         problems.error(f"{where} : caractère de contrôle U+{ord(found.group()):04X} refusé")
 
 
-# Une case, en tête d'un élément de liste à cocher : « [x] » cochée, « [ ] » vide.
 _CHECKBOX: Final = re.compile(r"^\[([ xX])\]\s+")
+"""Une case, en tête d'un élément de liste à cocher : « [x] » cochée, « [ ] » vide."""
 MAX_SIGNER: Final = 80
+"""Longueur au plus du nom d'un signataire."""
 MAX_MENTION: Final = 200
+"""Longueur au plus de la mention d'une signature."""
 
 
 def _list(block: ListBlock, where: str, state: _State) -> ListOut:
+    """Une liste validée : éléments et sous-listes (trois niveaux en tout), cases d'une liste à cocher, nombre d'éléments borné."""
     problems = state.problems
     count = 0
     checkboxes = isinstance(block, CheckList) and block.checkboxes
@@ -579,8 +744,11 @@ def _list(block: ListBlock, where: str, state: _State) -> ListOut:
 
 
 def _fields(block: Fields, where: str, state: _State) -> FieldsOut:
-    """Des libellés et leurs valeurs : un libellé est du texte simple ; une valeur prend le
-    balisage d'un paragraphe, et vide, elle laisse une ligne à remplir."""
+    """Des libellés et leurs valeurs.
+
+    Un libellé est du texte simple ; une valeur prend le balisage d'un paragraphe, et
+    vide, elle laisse une ligne à remplir.
+    """
     problems = state.problems
     items: list[tuple[str, Inline]] = []
     for number, (label, value) in enumerate(block.items, start=1):
@@ -596,13 +764,16 @@ def _fields(block: Fields, where: str, state: _State) -> FieldsOut:
     return FieldsOut(tuple(items))
 
 
-# Les lignes vides (ou d'espaces) au début d'un texte.
 _BLANK_START: Final = re.compile(r"\A(?:[ \t]*\n)+")
+"""Les lignes vides (ou d'espaces) au début d'un texte."""
 
 
 def _code(block: Code, where: str, problems: Problems) -> CodeOut:
-    """Du texte préformaté : ni balisage ni espaces retirées ; les lignes vides du début et
-    de la fin seules sont ôtées (et les espaces qui finissent la dernière)."""
+    """Du texte préformaté.
+
+    Ni balisage ni espaces retirées ; les lignes vides du début et de la fin seules sont
+    ôtées (et les espaces qui finissent la dernière).
+    """
     text = _BLANK_START.sub("", lines(block.text).rstrip())
     if not text.strip():
         problems.error(f"{where} : texte vide")
@@ -629,6 +800,7 @@ def _signature(block: Signature, where: str, problems: Problems) -> SignatureOut
 
 
 def _table(block: Table, where: str, state: _State) -> tuple[TableOut, list[list[Stored]]]:
+    """Un tableau validé, et ses valeurs converties : colonnes et lignes bornées, types, colonnes calculées, groupes, totaux, largeurs."""
     problems, labels = state.problems, state.labels
     columns = block.columns
     headers = [lines(column.header).strip() for column in columns]
@@ -697,12 +869,16 @@ def _table(block: Table, where: str, state: _State) -> tuple[TableOut, list[list
 
 
 MAX_GROUPS: Final = 20
+"""Groupes au plus dans un tableau."""
 MAX_GROUP_LABEL: Final = 200
+"""Longueur au plus du libellé d'un groupe."""
 
 
 def _groups(block: Table, where: str, problems: Problems) -> list[tuple[str | None, str, list[list[Scalar]]]]:
-    """Les lignes du tableau, par groupe : le libellé du groupe (``None`` sans groupe), sa
-    place dans les messages, ses lignes. Pas de lignes simples entre des groupes."""
+    """Les lignes du tableau, par groupe : le libellé du groupe (``None`` sans groupe), sa place dans les messages, ses lignes.
+
+    Pas de lignes simples entre des groupes.
+    """
     groups = [row for row in block.rows if isinstance(row, Group)]
     simple = [row for row in block.rows if not isinstance(row, Group)]
     if not groups:
@@ -732,8 +908,7 @@ def _row(
     at: str,
     state: _State,
 ) -> list[Stored]:
-    """Une ligne : ses valeurs, dans l'ordre des colonnes données, puis celles que l'outil
-    calcule ; un montant en euros arrondi au centime."""
+    """Une ligne : ses valeurs, dans l'ordre des colonnes données, puis celles que l'outil calcule ; un montant en euros arrondi au centime."""
     problems = state.problems
     if len(row) > len(given):
         computed = [column.header for column in columns if column.compute is not None]
@@ -759,8 +934,9 @@ def _row(
 # --- Calculs ---------------------------------------------------------------------------
 
 MAX_FORMULA: Final = 200
+"""Longueur au plus d'une formule de colonne calculée."""
 CENT: Final = Decimal("0.01")
-# Ce qu'un calcul garde de décimales, par type de colonne : ce que le document écrit.
+"""Le centime : l'arrondi des montants."""
 _QUANTUM: Final[Mapping[ColumnType, Decimal]] = {
     "integer": Decimal(1),
     "decimal": CENT,
@@ -768,8 +944,9 @@ _QUANTUM: Final[Mapping[ColumnType, Decimal]] = {
     "amount_keur": Decimal(1),
     "percent": Decimal("0.001"),
 }
-# Une colonne citée dans une formule : son en-tête entre accolades.
+"""Ce qu'un calcul garde de décimales, par type de colonne : ce que le document écrit."""
 _REFERENCE: Final = re.compile(r"\{([^{}]*)\}")
+"""Une colonne citée dans une formule : son en-tête entre accolades."""
 _PLACEHOLDER: Final = re.compile(r"c\d+")
 _OPERATIONS: Final[Mapping[type[ast.operator], Callable[[Decimal, Decimal], Decimal]]] = {
     ast.Add: lambda first, second: first + second,
@@ -781,8 +958,12 @@ _OPERATIONS: Final[Mapping[type[ast.operator], Callable[[Decimal, Decimal], Deci
 
 @dataclass(frozen=True, slots=True)
 class _Formula:
-    """Une formule lue : son arbre (chaque colonne citée devient ``c0``, ``c1``…), et la
-    colonne de chacune."""
+    """Une formule lue : son arbre (chaque colonne citée devient ``c0``, ``c1``…), et la colonne de chacune.
+
+    Attributes:
+        tree: L'expression lue.
+        sources: Les colonnes qu'elle lit.
+    """
 
     tree: ast.expr
     sources: tuple[int, ...]
@@ -811,6 +992,7 @@ def _formula(
     at: str,
     problems: Problems,
 ) -> _Formula | None:
+    """La formule d'une colonne calculée, lue : des colonnes de nombres à gauche, les quatre opérations et des nombres ; ``None``, avec une erreur, sinon."""
     said = lines(text).strip()
     if len(said) > MAX_FORMULA:
         problems.error(f"{at} : formule de {len(said)} caractères, au-delà de {MAX_FORMULA}")
@@ -862,8 +1044,7 @@ def _allowed(node: ast.expr, count: int) -> bool:
 
 
 def _computed(formula: _Formula, cells: Sequence[Stored], kind: ColumnType, at: str, problems: Problems) -> Stored:
-    """La valeur d'une colonne calculée, arrondie à ce que le document écrit ; vide si une
-    colonne citée l'est."""
+    """La valeur d'une colonne calculée, arrondie à ce que le document écrit ; vide si une colonne citée l'est."""
     values: list[Decimal] = []
     for position in formula.sources:
         value = cells[position]
@@ -882,6 +1063,7 @@ def _computed(formula: _Formula, cells: Sequence[Stored], kind: ColumnType, at: 
 
 
 def _evaluated(node: ast.expr, values: Sequence[Decimal]) -> Decimal:
+    """La valeur d'une formule pour une ligne, en décimal ; ``ZeroDivisionError`` pour une division par zéro."""
     match node:
         case ast.BinOp(left=left, op=op, right=right):
             first, second = _evaluated(left, values), _evaluated(right, values)
@@ -919,8 +1101,10 @@ def _decimal(value: Stored) -> Decimal:
 
 
 def _invoice(block: InvoiceTotals, where: str, state: _State) -> TableOut | None:
-    """Total HT, la TVA de chaque taux (sur le total HT de ce taux, au centime), Total TTC,
-    et, avec ``paid``, l'acompte versé et le net à payer : tirés du tableau qui précède."""
+    """Total HT, la TVA de chaque taux (sur le total HT de ce taux, au centime), Total TTC, et, avec ``paid``, l'acompte versé et le net à payer.
+
+    Tirés du tableau qui précède.
+    """
     problems, labels = state.problems, state.labels
     language = labels.language
     if state.last_table is None:
@@ -993,16 +1177,23 @@ def _invoice(block: InvoiceTotals, where: str, state: _State) -> TableOut | None
 
 # --- La feuille d'émargement ----------------------------------------------------------
 
-# La colonne des participants : la place de leurs noms (en caractères, bornée), et au plus
-# cette part de la page ; les sessions se partagent le reste, pour signer.
 MIN_NAME_CHARS: Final = 12
+"""La colonne des participants : la place de leurs noms (en caractères,
+bornée), et au plus cette part de la page ; les sessions se partagent le
+reste, pour signer.
+"""
 MAX_NAME_CHARS: Final = 30
+"""Longueur au plus d'un nom de série ou de libellé dans un graphique."""
 MAX_NAME_SHARE: Final = 0.4
+"""Part au plus de la largeur prise par les libellés d'un graphique."""
 
 
 def _attendance(block: Attendance, where: str, state: _State) -> TableOut:
-    """Une feuille d'émargement : « Participant » (``labels.participant``) puis une colonne
-    par session ; une ligne par participant, ses cases vides, pour signer."""
+    """Une feuille d'émargement.
+
+    « Participant » (``labels.participant``) puis une colonne par session ; une ligne
+    par participant, ses cases vides, pour signer.
+    """
     problems = state.problems
     names: list[str] = []
     for kind, given in (("participant", block.participants), ("session", block.sessions)):
@@ -1034,8 +1225,7 @@ def _attendance(block: Attendance, where: str, state: _State) -> TableOut:
 
 
 def _places(table: Table) -> list[str]:
-    """La place de chaque ligne d'un tableau, dans l'ordre : « ligne 3 », ou « groupe 2
-    « Cuisine », ligne 1 »."""
+    """La place de chaque ligne d'un tableau, dans l'ordre : « ligne 3 », ou « groupe 2 « Cuisine », ligne 1 »."""
     groups = [row for row in table.rows if isinstance(row, Group)]
     if not groups:
         return [f"ligne {number}" for number in range(1, len(table.rows) + 1)]
@@ -1055,6 +1245,7 @@ def _rate(rate: Decimal, language: Language) -> str:
 # --- Graphiques ----------------------------------------------------------------------------
 
 MAX_LABEL: Final = 60
+"""Longueur au plus d'un libellé de graphique."""
 
 
 def _chart(
@@ -1149,6 +1340,7 @@ def _check_chart(
     where: str,
     problems: Problems,
 ) -> None:
+    """Vérifie un graphique : libellés et séries bornés, longueurs égales ; un camembert, une seule série de valeurs positives."""
     if not categories:
         problems.error(f"{where} : aucun libellé, le graphique serait vide")
     if len(categories) > MAX_CATEGORIES:
@@ -1175,20 +1367,27 @@ def _check_chart(
 
 # --- Images ----------------------------------------------------------------------------
 
-# La largeur d'une image dans la page, en centièmes de millimètre : la largeur utile
-# (17 cm), sa moitié, et celle d'un logo.
 IMAGE_WIDTHS: Final[Mapping[ImageWidth, int]] = {
     "full": 17_000,
     "half": 8_500,
     "small": 4_000,
 }
-# La hauteur au plus : la page utile (25,7 cm), moins la place d'une légende.
+"""La largeur d'une image dans la page, en centièmes de millimètre : la largeur
+utile (17 cm), sa moitié, et celle d'un logo.
+"""
 MAX_IMAGE_HEIGHT: Final = 21_000
-# En deçà, une image s'affiche agrandie au-delà de ses pixels : floue à l'impression.
+"""La hauteur au plus : la page utile (25,7 cm), moins la place d'une légende."""
 MIN_PPI: Final = 96
+"""En deçà, une image s'affiche agrandie au-delà de ses pixels : floue à l'impression."""
 
 
 def _image(block: Image, pictures: Pictures, where: str, problems: Problems) -> ImageOut | None:
+    """Une image validée.
+
+    Le fichier vu dans la conversation, sa taille dans la page selon la largeur
+    demandée, sa légende et son texte de remplacement ; ``None``, avec une erreur,
+    sinon.
+    """
     path = block.path.strip()
     caption = _text(block.caption, f"{where}, caption", problems) or None
     _bare(caption or "", f"{where}, caption", problems)
@@ -1229,8 +1428,7 @@ def _cm(hundredths: int) -> str:
 
 
 def placed(wanted: ImageWidth, pixels_wide: int, pixels_high: int) -> tuple[int, int]:
-    """Largeur et hauteur dans la page (centièmes de mm) : la largeur demandée, les
-    proportions de l'image, la hauteur bornée à celle de la page."""
+    """Largeur et hauteur dans la page (centièmes de mm) : la largeur demandée, les proportions de l'image, la hauteur bornée à celle de la page."""
     width = IMAGE_WIDTHS[wanted]
     height = round(width * pixels_high / pixels_wide)
     if height > MAX_IMAGE_HEIGHT:
@@ -1263,8 +1461,7 @@ def _check_totals(block: Table, where: str, problems: Problems) -> None:
 
 
 def _total_row(block: Table, stored: Sequence[Sequence[Stored]], label: str, language: Language) -> tuple[str, ...]:
-    """La ligne de total (ou de sous-total) de ces lignes : un agrégat par colonne qui en a
-    un, ``label`` à la place de la première sans."""
+    """La ligne de total (ou de sous-total) de ces lignes : un agrégat par colonne qui en a un, ``label`` à la place de la première sans."""
     totals = block.totals or {}
     labelled = _total_label(block)
     cells: list[str] = []
@@ -1289,6 +1486,7 @@ def _total_label(block: Table) -> int | None:
 
 
 def _aggregate(aggregate: Aggregate, values: Sequence[Stored], kind: ColumnType, language: Language) -> str:
+    """L'agrégat d'une colonne (somme, moyenne, compte, minimum, maximum), mis en forme selon son type et la langue."""
     if aggregate == "count":
         return display(len(values), "integer", language)
     if not values:
@@ -1333,8 +1531,7 @@ def _align(kind: ColumnType) -> Align:
 
 
 def _widths(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> tuple[tuple[float, ...], float]:
-    """La part de la largeur utile de chaque colonne, d'après ce qu'elle contient ; et la
-    part de la page que le tableau demande (1 au plus).
+    """La part de la largeur utile de chaque colonne, d'après ce qu'elle contient ; et la part de la page que le tableau demande (1 au plus).
 
     Chaque colonne a un **plancher** : son mot d'en-tête le plus long, en gras, et sa
     valeur la plus longue si elle est courte (``SHORT_VALUE_CHARS``) ; ni l'un ni
@@ -1431,8 +1628,7 @@ _MARK: Final = re.compile(r"\*\*|\*|<u>|</u>")
 
 
 def inline(text: str) -> Inline:
-    """Les segments d'un texte : ``**gras**``, ``*italique*``, ``<u>souligné</u>``, le reste
-    tel quel.
+    """Les segments d'un texte : ``**gras**``, ``*italique*``, ``<u>souligné</u>``, le reste tel quel.
 
     Un marqueur ouvre seulement s'il est suivi d'un caractère visible et refermé
     plus loin ; il ferme seulement s'il suit un caractère visible. Sinon il
@@ -1501,8 +1697,7 @@ def _plain_cell(text: str) -> Inline:
 
 
 def runs_of(block: BlockOut) -> Iterator[Inline]:
-    """Les textes en segments d'un bloc : paragraphe, éléments de liste (sous-listes
-    comprises), note, citation, valeurs de champs, cellules d'un tableau."""
+    """Les textes en segments d'un bloc : paragraphe, éléments de liste (sous-listes comprises), note, citation, valeurs de champs, cellules d'un tableau."""
     match block:
         case ParagraphOut(runs=runs) | NoteOut(runs=runs) | QuoteOut(runs=runs):
             yield runs
@@ -1539,34 +1734,50 @@ def referenced(blocks: Iterable[BlockOut]) -> frozenset[int]:
 
 # --- Liens, notes, renvois -------------------------------------------------------------------
 
-# L'ancre d'un titre que vise un renvoi, dans les deux formats : « _Ref » (un signet caché
-# de Word), puis le rang du titre.
 REF_MARK: Final = "_Ref_loom_"
-# Les guillemets d'un renvoi à un titre sans numéro, par langue.
+"""L'ancre d'un titre que vise un renvoi, dans les deux formats : « _Ref » (un
+signet caché de Word), puis le rang du titre.
+"""
 QUOTES: Final[Mapping[str, tuple[str, str]]] = {
     "fr": ("\u00ab\u00a0", "\u00a0\u00bb"),
     "en": ("\u201c", "\u201d"),
 }
+"""Les guillemets d'un renvoi à un titre sans numéro, par langue."""
 MAX_NOTES: Final = 100
+"""Notes de bas de page au plus dans un document."""
 MAX_NOTE: Final = 500
-# Les schémas d'un lien : une adresse web, ou un courriel.
+"""Longueur au plus d'une note de bas de page."""
 LINK_SCHEMES: Final = ("https", "http", "mailto")
+"""Les schémas d'un lien : une adresse web, ou un courriel."""
 type Markup = Literal["link", "note", "ref"]
+"""Balisage d'un texte riche : lien, note ou renvoi."""
 EVERYTHING: Final[frozenset[Markup]] = frozenset({"link", "note", "ref"})
+"""Tout le balisage permis."""
 LINKS_ONLY: Final[frozenset[Markup]] = frozenset({"link"})
+"""Les liens seulement."""
 _LINK: Final = re.compile(r"\[([^\[\]\n]+)\]\(([^()\s]+)\)")
 _SCHEME: Final = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):")
-# Ce qui, dans un titre ou une légende, serait un lien, une note ou un renvoi.
 _MARKUP: Final = re.compile(r"(?<!\\)\^\[|(?<!\\)§\[|\[[^\[\]\n]+\]\([^()\s]+\)")
-# Les marques de place : un caractère d'usage privé par lien, note ou renvoi, le temps de
-# lire l'emphase autour d'eux.
+"""Ce qui, dans un titre ou une légende, serait un lien, une note ou un renvoi."""
 _PLACE: Final = 0xF0000
+"""Les marques de place : un caractère d'usage privé par lien, note ou renvoi,
+le temps de lire l'emphase autour d'eux.
+"""
 
 
 @dataclass(frozen=True, slots=True)
 class Targets:
-    """Les titres du document qu'un renvoi peut viser : leur rang, par clé (``key``), et
-    leur texte ; les sections dont le nom ne s'imprime pas ; tous les titres, pour le dire."""
+    """Les titres du document qu'un renvoi peut viser.
+
+    Leur rang, par clé (``key``), et leur texte ; les sections dont le nom ne s'imprime
+    pas ; tous les titres, pour le dire.
+
+    Attributes:
+        by_key: Rang et texte de chaque titre, par clé ; ``None`` pour une clé
+            ambiguë.
+        hidden: Les sections dont le nom ne s'imprime pas.
+        titles: Tous les titres, pour les dire.
+    """
 
     by_key: Mapping[str, tuple[int, str] | None]
     hidden: frozenset[str]
@@ -1574,9 +1785,12 @@ class Targets:
 
 
 def _targets(arguments: WriteArguments, template: Template | None) -> Targets:
-    """Les titres du document, dans l'ordre où ils seront écrits : ceux des blocs d'un
-    document libre ; pour un modèle, le nom de chaque section imprimée, puis ses titres.
-    Deux titres de même clé : aucun renvoi ne sait lequel viser (``None``)."""
+    """Les titres du document, dans l'ordre où ils seront écrits.
+
+    Ceux des blocs d'un document libre ; pour un modèle, le nom de chaque section
+    imprimée, puis ses titres. Deux titres de même clé : aucun renvoi ne sait lequel
+    viser (``None``).
+    """
     titles: list[str] = []
     hidden: set[str] = set()
 
@@ -1612,12 +1826,13 @@ def _bare(text: str, where: str, problems: Problems) -> None:
 
 
 def rich(text: str, where: str, state: _State, *, allow: frozenset[Markup] = EVERYTHING) -> Inline:
-    """Le texte d'un paragraphe, d'un élément de liste, d'une note, d'une citation, d'une
-    cellule : l'emphase (``inline``), et ce que ``allow`` permet — un lien
-    ``[texte](https://…)``, une note ``^[texte]``, un renvoi ``§[Titre]``. Une faute
-    (note non refermée, schéma de lien refusé, titre inconnu) est dite avec ``where``.
+    r"""Le texte d'un paragraphe, d'un élément de liste, d'une note, d'une citation, d'une cellule.
 
-    ``\\^[`` et ``\\§[`` s'écrivent tels quels. Un ``[texte](…)`` sans schéma (« (voir) »)
+    L'emphase (``inline``), et ce que ``allow`` permet — un lien ``[texte](https://…)``,
+    une note ``^[texte]``, un renvoi ``§[Titre]``. Une faute (note non refermée, schéma
+    de lien refusé, titre inconnu) est dite avec ``where``.
+
+    ``\^[`` et ``\§[`` s'écrivent tels quels. Un ``[texte](…)`` sans schéma (« (voir) »)
     reste du texte ; un schéma autre que https, http et mailto est refusé.
     """
     problems = state.problems
@@ -1687,8 +1902,7 @@ def rich(text: str, where: str, state: _State, *, allow: frozenset[Markup] = EVE
 
 
 def _closing(text: str, opening: int) -> int | None:
-    """La place du ``]`` qui ferme le ``[`` en ``opening`` (les crochets d'un lien dans une
-    note s'y emboîtent) ; ``None`` sans lui."""
+    """La place du ``]`` qui ferme le ``[`` en ``opening`` (les crochets d'un lien dans une note s'y emboîtent) ; ``None`` sans lui."""
     depth = 0
     for index in range(opening, len(text)):
         if text[index] == "[":
@@ -1701,8 +1915,7 @@ def _closing(text: str, opening: int) -> int | None:
 
 
 def _target(written: str, where: str, state: _State) -> Run:
-    """Le renvoi à un titre : comparé comme les sections d'un modèle (sans numérotation,
-    casse, accents ni emphase)."""
+    """Le renvoi à un titre : comparé comme les sections d'un modèle (sans numérotation, casse, accents ni emphase)."""
     targets = state.targets
     wanted = key(plain(inline(written)))
     found = targets.by_key.get(wanted)
@@ -1720,8 +1933,7 @@ def _target(written: str, where: str, state: _State) -> Run:
 
 
 def _expanded(runs: Inline, places: Sequence[Run | tuple[str, Inline]]) -> list[Run]:
-    """Les segments, chaque marque de place remplacée par son lien, sa note ou son renvoi,
-    dans l'emphase qui l'entoure."""
+    """Les segments, chaque marque de place remplacée par son lien, sa note ou son renvoi, dans l'emphase qui l'entoure."""
     found: list[Run] = []
     for run in runs:
         piece = ""

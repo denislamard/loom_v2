@@ -262,8 +262,11 @@ async def test_exhausted_repairs_follow_on_failure(store: EventStore, on_failure
 
 
 async def test_a_forbidden_text_stays_out_of_the_diagnostics_and_the_logs(store: EventStore, caplog: pytest.LogCaptureFixture) -> None:
-    """Le texte du modèle est au journal, comme message : rien ne le redouble, ni dans les
-    raisons, ni dans le retour au modèle, ni dans l'erreur de fin de run, ni dans les logs INFO."""
+    """Le texte du modèle est au journal, comme message.
+
+    Rien ne le redouble, ni dans les raisons, ni dans le retour au modèle, ni dans
+    l'erreur de fin de run, ni dans les logs INFO.
+    """
     secret = "sk-ABCDEF1234567890XYZ"
     output = OutputContract.model_validate({"must_not_match": r"sk-[A-Za-z0-9]{10,}", "repair": {"max_attempts": 1}})
     model = scripted(Message.assistant(f"La clé : {secret}"), Message.assistant(f"Encore {secret}"))

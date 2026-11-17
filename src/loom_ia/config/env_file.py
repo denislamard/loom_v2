@@ -2,7 +2,7 @@
 """Le fichier d'environnement d'un projet (``.env``), lu au démarrage de ``loom``.
 
 Les clés d'API, les DSN, ``LOOM_PROFILE``… vivent dans l'environnement : la
-configuration ne fait qu'en nommer les variables (§16.3). Un fichier ``.env``
+configuration ne fait qu'en nommer les variables (conception §16.3). Un fichier ``.env``
 les y pose, sans ``export`` ni ``uv run --env-file``.
 
 Le fichier lu, du plus fort au plus faible :
@@ -24,6 +24,8 @@ les noms.
 
 La librairie ne lit rien d'elle-même : ``load_env_file("loom.yaml")`` le fait
 à la demande, avant ``Loom.from_config``.
+
+Fonction M6. Options de la CLI : ``--env-file`` et ``--no-env-file``.
 """
 
 import io
@@ -39,29 +41,34 @@ from dotenv.parser import parse_stream
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.yaml_source import load_yaml
 
-# Le fichier cherché à côté de loom.yaml quand rien d'autre n'est désigné.
 DEFAULT_NAME: Final = ".env"
-# La clé de loom.yaml qui désigne le fichier : à la racine seulement, car il
-# est lu avant le choix du profil.
+"""Le fichier cherché à côté de loom.yaml quand rien d'autre n'est désigné."""
 ENV_FILE_KEY: Final = "env_file"
+"""La clé de loom.yaml qui désigne le fichier : à la racine seulement, car il
+est lu avant le choix du profil.
+"""
 
-# D'où vient le fichier lu.
 type EnvSource = Literal["option", "config", "défaut", "désactivé"]
+"""D'où vient le fichier lu : ``--env-file``, ``env_file:``, le ``.env`` voisin, ou ``--no-env-file``."""
 
 
 @dataclass(frozen=True, slots=True)
 class EnvFileReport:
-    """Ce qu'une lecture a fait : le fichier, d'où il vient, et les noms — jamais les valeurs."""
+    """Ce qu'une lecture a fait : le fichier, d'où il vient, et les noms — jamais les valeurs.
 
-    # Fichier retenu ; ``None`` quand rien n'est à lire (lecture désactivée,
-    # ou pas de loom.yaml à côté duquel chercher).
+    Attributes:
+        path: Fichier retenu ; ``None`` quand rien n'est à lire (lecture
+            désactivée, ou pas de loom.yaml à côté duquel chercher).
+        source: D'où vient le fichier.
+        found: Vrai si le fichier existait et a été lu.
+        loaded: Variables posées depuis le fichier, dans son ordre.
+        kept: Variables du fichier déjà définies : l'environnement l'emporte.
+    """
+
     path: Path | None
     source: EnvSource
-    # Vrai si le fichier existait et a été lu.
     found: bool = False
-    # Variables posées depuis le fichier, dans son ordre.
     loaded: tuple[str, ...] = ()
-    # Variables du fichier déjà définies : l'environnement l'emporte.
     kept: tuple[str, ...] = ()
 
     def describe(self, *, shown: str | None = None) -> str:
@@ -95,8 +102,8 @@ class EnvFileReport:
         return f"variables lues dans {self.path} ({', '.join(self.loaded)}) — en prod, préférer l'environnement du service"
 
 
-# Rapport de ``--no-env-file`` : rien n'est lu.
 DISABLED: Final = EnvFileReport(path=None, source="désactivé")
+"""Rapport de ``--no-env-file`` : rien n'est lu."""
 
 
 def load_env_file(
@@ -111,8 +118,17 @@ def load_env_file(
     désigne un autre fichier, qui l'emporte sur ``env_file:`` de la config et
     sur le ``.env`` voisin. Une variable déjà définie n'est jamais remplacée.
 
-    Lève ``ConfigError`` si le fichier désigné est absent, illisible ou mal
-    formé ; le message dit le fichier et la ligne, jamais une valeur.
+    Args:
+        config: Chemin de ``loom.yaml``.
+        env_file: Fichier désigné par l'appelant (``--env-file``).
+        environ: Environnement à compléter ; ``os.environ`` par défaut.
+
+    Returns:
+        Le rapport : fichier, source, variables posées et gardées.
+
+    Raises:
+        ConfigError: Fichier désigné absent, illisible ou mal formé ; le
+            message dit le fichier et la ligne, jamais une valeur.
     """
     path, source = env_file_path(config, env_file)
     return _load(path, source, (), os.environ if environ is None else environ)
@@ -130,6 +146,17 @@ def reload_env_file(
     posé ses variables : elles sont retirées, puis le fichier — peut-être
     modifié, peut-être désigné autrement par la config — est relu. Ce que le
     shell avait défini reste, comme à la première lecture.
+
+    Args:
+        config: Chemin de ``loom.yaml``.
+        previous: Le rapport de la lecture précédente.
+        environ: Environnement à compléter ; ``os.environ`` par défaut.
+
+    Returns:
+        Le rapport de la nouvelle lecture.
+
+    Raises:
+        ConfigError: Comme ``load_env_file``.
     """
     if previous.source == "désactivé":
         return previous
@@ -140,7 +167,15 @@ def reload_env_file(
 
 
 def env_file_path(config: str | Path, given: str | Path | None = None) -> tuple[Path | None, EnvSource]:
-    """Le fichier à lire et d'où il vient ; ``None`` sans loom.yaml à côté duquel chercher."""
+    """Le fichier à lire et d'où il vient ; ``None`` sans loom.yaml à côté duquel chercher.
+
+    Args:
+        config: Chemin de ``loom.yaml``.
+        given: Fichier désigné par l'appelant, qui l'emporte.
+
+    Raises:
+        ConfigError: ``env_file:`` n'est pas un chemin.
+    """
     if given is not None:
         return Path(given).resolve(), "option"
     root = Path(config).resolve()
@@ -160,6 +195,12 @@ def declared_env_file(config: Path) -> Path | None:
     Lu à part parce que le fichier qu'il désigne peut donner ``LOOM_PROFILE`` :
     il doit l'être avant que le profil ne soit choisi. Un ``loom.yaml``
     illisible rend ``None`` — ``load_config`` le dira, avec ses mots.
+
+    Args:
+        config: Chemin de ``loom.yaml``.
+
+    Raises:
+        ConfigError: ``env_file:`` n'est pas un chemin non vide.
     """
     try:
         data = load_yaml(config.read_text(encoding="utf-8"))
@@ -181,6 +222,12 @@ def _load(
     replace: Iterable[str],
     environ: MutableMapping[str, str],
 ) -> EnvFileReport:
+    """Retire ``replace`` de l'environnement, puis lit le fichier sans écraser une variable définie.
+
+    Raises:
+        ConfigError: Fichier désigné absent (le ``.env`` par défaut peut
+            manquer) ou mal formé.
+    """
     for name in replace:
         environ.pop(name, None)
     if path is None:

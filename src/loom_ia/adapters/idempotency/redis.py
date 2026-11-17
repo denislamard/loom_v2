@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Magasin d'idempotence dans Redis : partagé, rapide, oublieux (#18, #49).
+"""Magasin d'idempotence dans Redis : partagé, rapide, oublieux (points 18 et 49).
 
 Même contrat que les magasins SQL, avec une différence qu'il faut avoir en
 tête : **Redis oublie tout seul**. Une clé porte une durée de vie, et passée
@@ -74,16 +74,13 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import KeyScope
 
-# Préfixes : les enregistrements d'un côté, les appartenances de l'autre.
 RECORD: Final = "loom:idem:k:"
+"""Préfixe des clés d'enregistrement."""
 OWNER: Final = "loom:idem:o:"
-# Délai d'une connexion et d'une réponse de Redis, en secondes.
+"""Préfixe des ensembles d'appartenance : les clés d'une session d'un client."""
 SOCKET_TIMEOUT: Final = 5.0
+"""Délai d'une connexion et d'une réponse de Redis, en secondes."""
 
-# Prendre la clé, ou la reprendre si sa date est passée. Rend 1 si elle est à
-# nous, 0 si quelqu'un la tient encore. L'ensemble d'appartenance survit à la
-# clé : sa durée de vie ne fait que croître (PTTL, pas `PEXPIRE … GT`, qui
-# exige Redis 7), pour qu'une clé plus courte ne raccourcisse pas la sienne.
 _RESERVE: Final = """
 local raw = redis.call('GET', KEYS[1])
 if raw then
@@ -99,14 +96,12 @@ if redis.call('PTTL', KEYS[2]) < tonumber(ARGV[3]) then
 end
 return 1
 """
+"""Prendre la clé, ou la reprendre si sa date est passée. Rend 1 si elle est à
+nous, 0 si quelqu'un la tient encore. L'ensemble d'appartenance survit à la
+clé : sa durée de vie ne fait que croître (PTTL, pas `PEXPIRE … GT`, qui
+exige Redis 7), pour qu'une clé plus courte ne raccourcisse pas la sienne.
+"""
 
-# Enregistrer ce que l'effet a rendu : seulement si la clé est bien tenue.
-# Rend 1 si c'est fait, 0 si la clé n'existe plus, 2 si elle est à un autre
-# détenteur que celui dont le jeton est donné (ARGV[3], absent sans jeton).
-# L'ensemble d'appartenance que la réservation a nommé (`owner`) est rallongé
-# si le résultat vit plus longtemps que lui ; l'enregistrement garde ce nom,
-# collé au JSON tel quel (le recoder abîmerait le résultat : `[]` deviendrait
-# `{}`). Une réservation d'avant `owner` n'a rien à rallonger, comme avant.
 _COMPLETE: Final = """
 local raw = redis.call('GET', KEYS[1])
 if not raw then
@@ -128,9 +123,15 @@ if type(owner) == 'string' and redis.call('PTTL', owner) < tonumber(ARGV[2]) the
 end
 return 1
 """
+"""Enregistrer ce que l'effet a rendu : seulement si la clé est bien tenue.
+Rend 1 si c'est fait, 0 si la clé n'existe plus, 2 si elle est à un autre
+détenteur que celui dont le jeton est donné (ARGV[3], absent sans jeton).
+L'ensemble d'appartenance que la réservation a nommé (`owner`) est rallongé
+si le résultat vit plus longtemps que lui ; l'enregistrement garde ce nom,
+collé au JSON tel quel (le recoder abîmerait le résultat : `[]` deviendrait
+`{}`). Une réservation d'avant `owner` n'a rien à rallonger, comme avant.
+"""
 
-# Rendre une réservation dont l'effet ne s'est pas produit : jamais un résultat,
-# et, avec un jeton (ARGV[1], absent sans jeton), seulement si elle est encore à lui.
 _RELEASE: Final = """
 local raw = redis.call('GET', KEYS[1])
 if not raw then
@@ -146,11 +147,12 @@ end
 redis.call('DEL', KEYS[1])
 return 1
 """
+"""Rendre une réservation dont l'effet ne s'est pas produit : jamais un
+résultat, et, avec un jeton (ARGV[1], absent sans jeton), seulement si elle
+est encore à lui.
+"""
 
 
-# Oublier un ensemble d'appartenance (KEYS[1]) d'un bloc, avec les clés qui lui
-# appartiennent encore. Une clé sans `owner` (écrite avant lui) est à l'ensemble
-# qui la liste ; une clé illisible aussi : l'oubli ne la laisse pas derrière lui.
 _FORGET: Final = """
 local removed = 0
 for _, key in ipairs(redis.call('SMEMBERS', KEYS[1])) do
@@ -166,6 +168,11 @@ for _, key in ipairs(redis.call('SMEMBERS', KEYS[1])) do
 end
 redis.call('DEL', KEYS[1])
 return removed
+"""
+"""Oublier un ensemble d'appartenance (KEYS[1]) d'un bloc, avec les clés qui
+lui appartiennent encore. Une clé sans `owner` (écrite avant lui) est à
+l'ensemble qui la liste ; une clé illisible aussi : l'oubli ne la laisse pas
+derrière lui.
 """
 
 
@@ -221,6 +228,22 @@ class RedisIdempotency:
         return IdempotencyRecord(key=key, status=status, result=held.get("result"), expires_at=expires)
 
     async def reserve(self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None) -> bool:
+        """Prend la clé pour ``ttl`` secondes ; faux si quelqu'un la tient déjà (``IdempotencyStore.reserve``).
+
+        Ce qui protège, c'est la date : une réservation tenue ou un résultat
+        encore mémorisé gardent la clé ; une clé périmée peut être reprise. Un script Lua prend la clé et l'inscrit dans
+        l'ensemble d'appartenance de sa session, d'un seul tenant ; la clé Redis
+        vit au moins le temps de la réservation.
+
+        Args:
+            key: La clé.
+            ttl: Durée de la réservation, en secondes.
+            scope: De qui est la clé (client, session), pour l'oublier avec eux.
+            holder: Jeton propre à cette prise de clé.
+
+        Returns:
+            Vrai si la clé est prise.
+        """
         now = datetime.now(UTC)
         owner = _owner(scope.tenant_id, scope.session_id)
         record = json.dumps(
@@ -246,6 +269,22 @@ class RedisIdempotency:
         return int(taken) == 1
 
     async def complete(self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None) -> None:
+        """Enregistre ce que l'effet a rendu : la clé cesse d'être une réservation (``IdempotencyStore.complete``).
+
+        Un script Lua vérifie le détenteur et écrit le résultat, avec sa durée de
+        vie.
+
+        Args:
+            key: La clé réservée.
+            result: Ce que l'outil a rendu.
+            ttl: Durée de consultation du résultat, en secondes ; ``None`` : la
+                rétention du magasin.
+            holder: Avec un jeton, l'enregistrement n'a lieu que s'il est celui de
+                la clé ; sinon, il est sans effet.
+
+        Raises:
+            KeyError: Le magasin ne connaît plus la clé.
+        """
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=self.retention if ttl is None else ttl)
         record = json.dumps(
@@ -290,6 +329,7 @@ class RedisIdempotency:
         return removed
 
     async def aclose(self) -> None:
+        """Ferme la connexion à Redis, si elle est ouverte."""
         client = self._client
         self._client = None
         if client is not None:

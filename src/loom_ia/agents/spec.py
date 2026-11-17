@@ -1,20 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Définition d'un agent (A9, #50).
+"""Définition d'un agent (fonction A9, point 50).
 
 Sous-ensemble des jalons J1 à J3 : orchestrateur (``main``), outils Python,
 serveurs MCP, rôles délégués (dont le rôle vision, qui reçoit les pièces
-jointes), sous-agents, politiques (J3.1), contrats de sortie (J3.2), juges
-(J3.3) et budgets (J3.4). Ce qui arrive plus tard (approbations, délai d'un
+jointes), sous-agents, politiques (jalon J3.1), contrats de sortie (jalon
+J3.2), juges (jalon J3.3) et budgets (jalon J3.4). Ce qui arrive plus tard (approbations, délai d'un
 run, secours) donne une erreur qui nomme sa phase.
 
-``main`` est lui-même un rôle (C6) : il partage avec les rôles délégués le
+``main`` est lui-même un rôle (fonction C6) : il partage avec les rôles délégués le
 modèle, le prompt système et les réglages ``llm``.
 
 State de la session (option C) : ``state`` déclare les clés que la session
 peut porter, chacune avec son schéma, et les outils dont un résultat la pose
 (``from``) ; ``main.context`` dit ce que l'orchestrateur en reçoit, et le
-``context`` d'un rôle ce que ce rôle en reçoit (#50 : déclaré, il est cité par
-son ``input_template``). Un juge ne reçoit pas le state dans cette version (D11).
+``context`` d'un rôle ce que ce rôle en reçoit (point 50 : déclaré, il est cité par
+son ``input_template``). Un juge ne reçoit pas le state dans cette version
+(décision D11 du state de session).
+
+Un agent se déclare dans un fichier ``agents/<nom>.yaml`` (``AgentSpec``) ;
+``loom schema`` donne le schéma JSON de ces fichiers.
 """
 
 import operator
@@ -72,26 +76,43 @@ from loom_ia.core.template import Template, TemplateError
 from loom_ia.tools_builtin import BUILTIN_TOOLS, Builtin, is_builtin, parameterized_builtins
 
 AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
+"""Nom d'un agent : lettres, chiffres, ``_`` et ``-``, 64 au plus."""
 
 
 class Expose(DomainModel):
-    """Points d'accès qui publient l'agent (N1 à N5)."""
+    """Points d'accès qui publient l'agent (fonctions N1 à N5).
+
+    L'API Python lance tout agent ; ``expose`` ne règle que REST et MCP.
+
+    Attributes:
+        rest: Publié par le serveur HTTP (``/v1/agents/<nom>/…``). Défaut :
+            vrai.
+        mcp: Publié comme outil par le serveur MCP. Défaut : vrai.
+    """
 
     rest: bool = True
     mcp: bool = True
 
 
 class LlmSettings(DomainModel):
-    """Réglages d'appel propres à un rôle (B6)."""
+    """Réglages d'appel propres à un rôle (``llm`` ; fonction B6).
 
-    # Remplace ``max_tokens`` du modèle.
+    Attributes:
+        max_tokens: Remplace ``max_tokens`` du modèle.
+        params: Paramètres du fournisseur (température, raisonnement…),
+            fusionnés clé par clé sur ``params`` du modèle.
+    """
+
     max_tokens: PositiveInt | None = None
-    # Fusionnés clé par clé sur ``params`` du modèle.
     params: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 def _check_chain(model: str, fallbacks: tuple[str, ...]) -> None:
-    """Chaîne de secours sans doublon, sans le modèle lui-même (B4)."""
+    """Chaîne de secours sans doublon, sans le modèle lui-même (fonction B4).
+
+    Raises:
+        ValueError: Un modèle cité deux fois dans la chaîne.
+    """
     chain = [model, *fallbacks]
     doubles = sorted({name for name in chain if chain.count(name) > 1})
     if doubles:
@@ -99,14 +120,25 @@ def _check_chain(model: str, fallbacks: tuple[str, ...]) -> None:
 
 
 class BaseRole(DomainModel):
-    """Ce que ``main`` et les rôles délégués ont en commun (C6)."""
+    """Ce que ``main`` et les rôles délégués ont en commun (fonction C6).
 
-    # Identifiant d'un modèle déclaré dans ``models``.
+    ``system`` et ``system_file`` s'excluent.
+
+    Attributes:
+        model: Identifiant d'un modèle déclaré dans ``models``.
+        fallbacks: Modèles de secours, dans l'ordre (fonction B4, point 10) :
+            identifiants déclarés dans ``models``, sans doublon ni le modèle
+            lui-même.
+        system: Prompt système, en ligne ; peut citer des variables
+            ``{{ … }}``.
+        system_file: Prompt système dans un fichier, relatif à
+            ``resources_dir`` ; lu au chargement.
+        llm: Réglages d'appel du rôle.
+    """
+
     model: str = Field(min_length=1)
-    # Modèles de secours, dans l'ordre (B4, #10) : identifiants déclarés dans ``models``.
     fallbacks: tuple[str, ...] = ()
     system: str = ""
-    # Chemin relatif à ``resources_dir`` ; lu au chargement.
     system_file: Path | None = None
     llm: LlmSettings = LlmSettings()
 
@@ -129,22 +161,34 @@ def system_text(role: BaseRole) -> str:
 
 
 class SessionStateContext(DomainModel):
-    """Contexte ``session_state`` limité à certaines clés du state de la session."""
+    """Contexte ``session_state`` limité à certaines clés du state de la session.
+
+    S'écrit ``- session_state: [client, devis]`` dans ``context`` ; ``- session_state`` seul donne tout le state.
+
+    Attributes:
+        session_state: Les clés reçues, déclarées dans ``state`` ; une au
+            moins.
+    """
 
     session_state: tuple[str, ...] = Field(min_length=1)
 
 
-# Ce que l'orchestrateur reçoit en plus de ses messages : le state de la
-# session, entier (``session_state``) ou certaines de ses clés.
 type MainContextItem = Literal["session_state"] | SessionStateContext
+"""Ce que l'orchestrateur reçoit en plus de ses messages : le state de la session, entier (``session_state``) ou certaines de ses clés."""
 
 SESSION_STATE: Final = "session_state"
+"""Nom du contexte qui donne le state de la session."""
 
 
 class MainRole(BaseRole):
-    """Rôle orchestrateur : le modèle qui mène le run."""
+    """Rôle orchestrateur : le modèle qui mène le run.
 
-    # Contexte ajouté à chaque appel de l'orchestrateur, à la fin de sa requête (D4).
+    Attributes:
+        context: Contexte ajouté à chaque appel de l'orchestrateur, à la fin de
+            sa requête (décision D4 du state de session) : seulement
+            ``session_state``, entier ou par clés.
+    """
+
     context: tuple[MainContextItem, ...] = ()
 
     @model_validator(mode="before")
@@ -173,51 +217,94 @@ class MainRole(BaseRole):
 
 
 type ContextScope = Literal["run", "session"]
+"""Où chercher les résultats de ``tool_results`` : le run seul, ou aussi la session."""
 
 
 class ToolResultsContext(DomainModel):
-    """Contexte ``tool_results`` : résultats réussis des outils nommés."""
+    """Contexte ``tool_results`` : résultats réussis des outils nommés.
+
+    S'écrit ``- tool_results: [crm_lookup]``, avec ``scope`` en option.
+
+    Attributes:
+        tool_results: Les outils dont les résultats sont reçus ; un au moins.
+        scope: ``run`` (défaut) : seulement ce que le run a obtenu. ``session``
+            : à défaut, le dernier résultat connu de la session — qui peut
+            dater d'un tour ancien.
+    """
 
     tool_results: tuple[str, ...] = Field(min_length=1)
-    # ``run`` : seulement ce que le run a obtenu. ``session`` : à défaut, le
-    # dernier résultat connu de la session — qui peut dater d'un tour ancien.
     scope: ContextScope = "run"
 
 
 class LastTurnsContext(DomainModel):
-    """Contexte ``last_turns`` : derniers tours de la session (un tour = un run)."""
+    """Contexte ``last_turns`` : derniers tours de la session (un tour = un run).
+
+    S'écrit ``- last_turns: 3`` ; les tours sont rendus en texte.
+
+    Attributes:
+        last_turns: Nombre de tours reçus.
+    """
 
     last_turns: PositiveInt
 
 
 type ContextName = Literal["user_input", "caller_context", "attachments", "session_summary"]
+"""Contextes simples, nommés par une chaîne."""
 type ContextItem = ContextName | ToolResultsContext | LastTurnsContext
-# Contexte d'un rôle : celui d'un juge, et le state de la session — entier
-# (``session_state``) ou certaines de ses clés. À plat, pour que les erreurs de
-# la config gardent des chemins courts.
+"""Contexte d'un juge."""
 type RoleContextItem = (
     Literal["user_input", "caller_context", "attachments", "session_summary", "session_state"] | ToolResultsContext | LastTurnsContext | SessionStateContext
 )
+"""Contexte d'un rôle : celui d'un juge, et le state de la session.
 
-# Nom d'un juge pour la réponse finale, quand il n'en déclare pas.
+Entier (``session_state``) ou certaines de ses clés. À plat, pour que les
+erreurs de la config gardent des chemins courts.
+"""
+
 OUTPUT_JUDGE: Final = "output"
+"""Nom d'un juge pour la réponse finale, quand il n'en déclare pas."""
 
 
 class JudgeSpec(DomainModel):
-    """Juge d'une sortie (E3, E6, #21) : la réponse finale (agent) ou la sortie d'un rôle.
+    """Juge d'une sortie (fonctions E3 et E6, point 21) : la réponse finale (agent) ou la sortie d'un rôle.
 
     Chaque critère reçoit une note entre 0 et 1 ; un critère bloquant sous son
     seuil fait refuser la sortie, que son auteur répare, puis ``on_failure``
     décide. Le juge voit la sortie, ses critères, le contexte déclaré (liste
-    fixe du #12) et, pour un rôle, ses arguments.
+    fixe du point 12) et, pour un rôle, ses arguments.
+
+    Un juge n'est pas permis sur un outil ni sur la référence d'un sous-agent.
+
+    Attributes:
+        model: Identifiant d'un modèle déclaré dans ``models`` ; s'il est celui
+            qu'il évalue, un avertissement (une erreur en profil ``prod``,
+            fonction E6).
+        fallbacks: Modèles de secours, dans l'ordre (fonction B4, point 10).
+        name: Nom dans le journal (tirage, rôle ``judge:<nom>``) ; par défaut
+            ``output`` pour la réponse finale, le nom du rôle pour un rôle.
+        criteria: Les critères (``name``, ``rule``, ``min_score``,
+            ``blocking``) ; un au moins.
+        context: Contexte reçu : ``user_input``, ``caller_context``,
+            ``attachments``, ``session_summary``, ``tool_results``,
+            ``last_turns`` ; pas ``session_state`` (décision D11 du state de
+            session).
+        when: Déclenchement : ``sample``, ``condition``, ``tenants``,
+            ``profiles``.
+        repair: Réparations demandées à l'auteur de la sortie refusée
+            (``max_attempts``, ``tools``).
+        on_failure: Suite d'une sortie encore refusée après les réparations :
+            ``fail`` (défaut), ``unverified`` ou ``fallback``.
+        fallback_message: Message qui remplace la sortie avec ``on_failure:
+            fallback``.
+        llm: Réglages d'appel du juge.
+        timeout: Délai du juge, en secondes ; sans lui, ceux de son modèle et
+            son retry le bornent.
+        on_error: Erreur du juge (modèle, verdict) : ``block`` (défaut) fait
+            échouer le run, ``allow`` laisse passer.
     """
 
-    # Identifiant d'un modèle déclaré dans ``models``.
     model: str = Field(min_length=1)
-    # Modèles de secours, dans l'ordre (B4, #10).
     fallbacks: tuple[str, ...] = ()
-    # Nom dans le journal (tirage, rôle ``judge:<nom>``) ; par défaut ``output``
-    # pour la réponse finale, le nom du rôle pour un rôle.
     name: str | None = Field(default=None, pattern=CRITERION_NAME_PATTERN)
     criteria: tuple[Criterion, ...] = Field(min_length=1)
     context: tuple[ContextItem, ...] = ()
@@ -226,9 +313,7 @@ class JudgeSpec(DomainModel):
     on_failure: OnFailure = "fail"
     fallback_message: str | None = None
     llm: LlmSettings = LlmSettings()
-    # Délai du juge ; sans lui, ceux de son modèle et son retry le bornent.
     timeout: PositiveFloat | None = None
-    # Erreur du juge (modèle, verdict) : ``block`` fait échouer le run, ``allow`` laisse passer.
     on_error: Literal["block", "allow"] = "block"
 
     @model_validator(mode="before")
@@ -259,6 +344,7 @@ class JudgeSpec(DomainModel):
 
     @property
     def wants_attachments(self) -> bool:
+        """Vrai si le juge reçoit les pièces jointes du run (contexte ``attachments``)."""
         return "attachments" in self.context
 
     @property
@@ -272,23 +358,44 @@ def _empty_object() -> dict[str, JsonValue]:
 
 
 class RoleSpec(BaseRole):
-    """Rôle délégué (C1) : l'orchestrateur l'appelle comme un outil."""
+    """Rôle délégué (fonction C1) : l'orchestrateur l'appelle comme un outil.
+
+    Déclaré dans ``roles`` de l'agent. Un seul appel de modèle, avec son propre
+    prompt et ses réglages ; voir ``engine/roles.py``.
+
+    Attributes:
+        name: Nom de l'outil vu par l'orchestrateur ; ``main`` est réservé.
+        description: Description vue par l'orchestrateur ; le contexte reçu y
+            est ajouté.
+        input_schema: Schéma JSON des arguments que l'orchestrateur fournit ;
+            objet vide par défaut. Sans ``additionalProperties``, les arguments
+            non prévus sont refusés.
+        input_template: Construction du message (point 12) : variables
+            ``args.<argument>`` et ``context.<contexte>`` ; sans template,
+            blocs de contexte puis arguments. Tout le contexte déclaré doit y
+            être cité.
+        context: Contexte ajouté aux arguments, pris dans une liste fixe (point
+            12) : ``user_input``, ``caller_context``, ``attachments``,
+            ``session_summary``, ``session_state``, ``tool_results``,
+            ``last_turns``. Un rôle sans arguments ni contexte est refusé.
+        terminal: Sortie transmise telle quelle comme réponse finale quand le
+            rôle est appelé seul dans son tour (fonction C3, point 13).
+        timeout: Délai de l'appel, en secondes ; sans lui, ceux du modèle et
+            son retry le bornent.
+        output: Contrat de sortie (fonction E5) : réparé par le modèle du rôle,
+            puis ``on_failure``.
+        judge: Juge de la sortie (fonction E5, point 21), après le contrat :
+            réparée par le modèle du rôle.
+    """
 
     name: str = Field(pattern=TOOL_NAME_PATTERN)
     description: str = Field(min_length=1)
-    # Arguments que l'orchestrateur fournit ; objet vide par défaut.
     input_schema: dict[str, JsonValue] = Field(default_factory=_empty_object)
-    # Construction du message (#12) ; sans template, blocs de contexte puis arguments.
     input_template: str | None = None
-    # Contexte ajouté aux arguments, pris dans une liste fixe (#12).
     context: tuple[RoleContextItem, ...] = ()
-    # Sortie transmise telle quelle comme réponse finale (C3, #13).
     terminal: bool = False
-    # Délai de l'appel ; sans lui, ceux du modèle et son retry le bornent.
     timeout: PositiveFloat | None = None
-    # Contrat de sortie (E5) : réparé par le modèle du rôle, puis ``on_failure``.
     output: OutputContract | None = None
-    # Juge de la sortie (E5, #21), après le contrat : réparée par le modèle du rôle.
     judge: JudgeSpec | None = None
 
     @model_validator(mode="before")
@@ -299,6 +406,12 @@ class RoleSpec(BaseRole):
 
     @model_validator(mode="after")
     def _check(self) -> Self:
+        """Nom non réservé, schéma valide, contexte sans doublon, template cohérent.
+
+        Raises:
+            ValueError: Nom ``main``, contexte déclaré deux fois, rôle sans
+                arguments ni contexte, template invalide.
+        """
         if self.name == MAIN_ROLE:
             raise ValueError(f"Le nom {MAIN_ROLE!r} est réservé à l'orchestrateur")
         properties = _check_input_schema(self.input_schema)
@@ -316,13 +429,16 @@ class RoleSpec(BaseRole):
 
     @property
     def declared_context(self) -> list[str]:
-        """Noms du contexte déclaré : ``tool_results.<outil>`` pour chaque outil,
-        ``session_state.<clé>`` pour chaque clé nommée du state."""
+        """Noms du contexte déclaré, un par élément.
+
+        ``tool_results.<outil>`` pour chaque outil, ``session_state.<clé>`` pour
+        chaque clé nommée du state.
+        """
         return _declared_context(self.context)
 
     @property
     def wants_attachments(self) -> bool:
-        """Vrai pour un rôle vision : il reçoit les pièces jointes du run (C4)."""
+        """Vrai pour un rôle vision : il reçoit les pièces jointes du run (fonction C4)."""
         return "attachments" in self.context
 
     @property
@@ -342,8 +458,11 @@ class RoleSpec(BaseRole):
 
 
 def _declared_context(context: tuple[RoleContextItem, ...]) -> list[str]:
-    """Noms d'un contexte déclaré : ``tool_results.<outil>`` pour chaque outil,
-    ``session_state.<clé>`` pour chaque clé nommée du state."""
+    """Noms d'un contexte déclaré, un par élément.
+
+    ``tool_results.<outil>`` pour chaque outil, ``session_state.<clé>`` pour
+    chaque clé nommée du state.
+    """
     names: list[str] = []
     for item in context:
         if isinstance(item, ToolResultsContext):
@@ -370,7 +489,17 @@ def _check_input_schema(schema: dict[str, JsonValue]) -> set[str]:
 
 
 def _check_template(source: str, properties: set[str], declared: list[str]) -> None:
-    """Variables connues, et tout le contexte déclaré utilisé (#50)."""
+    """Variables connues, et tout le contexte déclaré utilisé (point 50).
+
+    Args:
+        source: Le template.
+        properties: Les arguments du schéma d'entrée.
+        declared: Le contexte déclaré.
+
+    Raises:
+        ValueError: Template invalide, variable inconnue, ou contexte déclaré
+            qu'il ne cite pas.
+    """
     try:
         template = Template.parse(source)
     except TemplateError as exc:
@@ -442,7 +571,7 @@ def _reject_judge(data: object, what: str) -> None:
     """Un juge porte sur la réponse finale ou sur un rôle, jamais sur un outil.
 
     Sans ce contrôle, la clé tombait sous « Extra inputs are not permitted »,
-    qui ne dit pas pourquoi (test E5 du 19/10).
+    qui ne dit pas pourquoi (essai de la fonction E5, 19/10).
     """
     if isinstance(data, dict) and "judge" in cast(dict[object, object], data):
         raise ValueError(
@@ -497,37 +626,57 @@ def _only_session_state(data: object) -> None:
             )
 
 
-# Outils fournis à paramètres : leur référence a son propre modèle (plus bas).
-# Seuls les modules légers de leurs paramètres sont importés ici.
 _PARAMETERIZED: Final = parameterized_builtins()
-# Pour l'éditeur : une référence à paramètres relève de son propre modèle.
+"""Outils fournis à paramètres : leur référence a son propre modèle (plus bas).
+
+Seuls les modules légers de leurs paramètres sont importés ici.
+"""
 _NOT_PARAMETERIZED: Final[dict[str, JsonValue] | None] = {"not": {"enum": list[JsonValue](sorted(_PARAMETERIZED))}} if _PARAMETERIZED else None
+"""Pour l'éditeur : une référence à paramètres relève de son propre modèle."""
 
 
 class PythonTool(DomainModel):
-    """Outil Python référencé par un nom enregistré, un chemin ``module:attr``, ou
+    """Outil Python d'un agent (``tools: - python: …``).
+
+    Référencé par un nom enregistré, un chemin ``module:attr``, ou
     ``loom.<outil>`` pour un outil fourni par loom-ia (``loom_ia.tools_builtin``).
 
     Les champs renseignés ici remplacent ce que l'outil déclare lui-même. Un outil
     fourni à paramètres (``loom.local_files``) a son propre modèle, qui ajoute ses
     paramètres à ces réglages communs ; les autres n'acceptent rien de plus.
+
+    Attributes:
+        python: Référence de l'outil : nom enregistré (module de ``imports``),
+            ``module:attr``, ou ``loom.<outil>``.
+        description: Ce que le modèle lit de l'outil, à la place de ce que
+            l'outil en dit (comme ``description`` des surcharges MCP et de
+            paquet).
+        timeout: Délai de l'outil, en secondes ; à défaut,
+            ``execution.tools.timeout`` (30 s).
+        side_effects: Effets de l'outil : ``none``, ``reversible`` ou
+            ``irreversible`` ; ils décident de l'ordre des appels et de la
+            reprise d'un appel interrompu.
+        approval: Approbation : ``never``, ``always`` (chaque appel attend une
+            décision humaine) ou ``policy`` (selon une politique
+            ``before_tool``).
+        idempotent: Vrai si refaire l'appel est sans risque.
+        offload_over: Seuil de déport du résultat, en caractères (point 16).
+        output: Contrat de sortie (fonction E5) : sans réparation, un résultat
+            non conforme revient à l'orchestrateur en erreur.
+        skill: Mode d'emploi ajouté à la description de l'outil (fonction D14),
+            en ligne ; avec ``skill_file``, rangé ici au chargement.
+        skill_file: Mode d'emploi dans un fichier relatif à ``resources_dir``,
+            lu au chargement ; exclut ``skill``.
     """
 
     python: str = Field(min_length=1, json_schema_extra=_NOT_PARAMETERIZED)
-    # Ce que le modèle lit de l'outil, à la place de ce que l'outil en dit
-    # (comme ``description`` des surcharges MCP et de paquet).
     description: str | None = Field(default=None, min_length=1)
     timeout: PositiveFloat | None = None
     side_effects: SideEffects | None = None
     approval: Approval | None = None
     idempotent: bool | None = None
-    # Seuil de déport du résultat, en caractères (#16).
     offload_over: PositiveInt | None = None
-    # Contrat de sortie (E5) : sans réparation, un résultat non conforme revient
-    # à l'orchestrateur en erreur.
     output: OutputContract | None = None
-    # Mode d'emploi ajouté à la description de l'outil : en ligne, ou fichier
-    # relatif à ``resources_dir``, lu au chargement et rangé dans ``skill``.
     skill: SkillText | None = None
     skill_file: Path | None = None
 
@@ -642,31 +791,57 @@ def _validation_said(error: ModelValidationError) -> str:
     return " ; ".join(lines)
 
 
-# Référence ``loom.<outil>`` → modèle de sa référence, pour les outils à paramètres.
 BUILTIN_REFERENCES: Final[dict[str, type[PythonTool]]] = {
     reference: _builtin_reference(reference, model, entry) for reference, (model, entry) in _PARAMETERIZED.items()
 }
+"""Référence ``loom.<outil>`` → modèle de sa référence, pour les outils à paramètres (``loom.sql``, ``loom.local_files``…)."""
 
 
 def builtin_settings(declared: PythonTool, params: type[BaseModel]) -> dict[str, object]:
-    """Les paramètres d'une référence d'outil fourni, à valider par le modèle de l'outil."""
+    """Les paramètres d'une référence d'outil fourni, à valider par le modèle de l'outil.
+
+    Args:
+        declared: La référence, telle que l'agent la déclare.
+        params: Le modèle des paramètres de l'outil.
+
+    Returns:
+        Les valeurs des champs de ``params`` présents dans la référence.
+    """
     return {name: getattr(declared, name) for name in params.model_fields if hasattr(declared, name)}
 
 
 class McpTools(DomainModel):
-    """Serveur MCP référencé par un agent (#19).
+    """Serveur MCP référencé par un agent (point 19).
 
     Les outils prennent le préfixe ``serveur__`` (ou ``alias__``) ; ``include``
     ou ``exclude`` choisit ceux qui sont exposés, ``tools`` fixe leurs
     déclarations pour cet agent.
+
+    Exemple ::
+
+        tools:
+          - mcp: crm
+            alias: c
+            include: [lookup_client]
+            required: true
+
+    Attributes:
+        mcp: Nom d'un serveur déclaré dans ``mcp_servers``.
+        alias: Préfixe plus court que le nom du serveur (40 caractères au
+            plus).
+        include: Outils exposés, par leur nom sur le serveur ; exclut
+            ``exclude``.
+        exclude: Outils écartés ; exclut ``include``.
+        required: Sans ce serveur, le run échoue au lieu de continuer sans ses
+            outils.
+        tools: Surcharges par outil (``description``, ``timeout``,
+            ``side_effects``, ``approval``, ``output``, ``skill``…).
     """
 
     mcp: str = Field(pattern=MCP_NAME_PATTERN)
-    # Préfixe plus court que le nom du serveur.
     alias: str | None = Field(default=None, pattern=MCP_NAME_PATTERN, max_length=40)
     include: tuple[str, ...] | None = None
     exclude: tuple[str, ...] | None = None
-    # Sans ce serveur, le run échoue au lieu de continuer sans ses outils.
     required: bool = False
     tools: dict[str, ToolOverrides] = Field(default_factory=dict)
 
@@ -684,6 +859,7 @@ class McpTools(DomainModel):
 
     @property
     def prefix(self) -> str:
+        """Préfixe des outils : ``alias``, sinon le nom du serveur."""
         return self.alias or self.mcp
 
     def owns(self, tool: str) -> bool:
@@ -692,19 +868,27 @@ class McpTools(DomainModel):
 
 
 class SourceTools(DomainModel):
-    """Source d'outils d'un paquet installé, référencée par un agent (J6.4b).
+    """Source d'outils d'un paquet installé, référencée par un agent (jalon J6.4b, fonction D12).
 
     Comme un serveur MCP : les outils prennent le préfixe ``source__`` (ou
     ``alias__``), ``include`` ou ``exclude`` choisit ceux qui sont exposés,
     ``tools`` fixe leurs déclarations pour cet agent.
+
+    Attributes:
+        source: Nom d'une source déclarée dans ``tool_sources``.
+        alias: Préfixe plus court que le nom de la source (40 caractères au
+            plus).
+        include: Outils exposés ; exclut ``exclude``.
+        exclude: Outils écartés ; exclut ``include``.
+        required: Sans cette source, le run échoue au lieu de continuer sans
+            ses outils.
+        tools: Surcharges par outil, comme pour un serveur MCP.
     """
 
     source: str = Field(pattern=MCP_NAME_PATTERN)
-    # Préfixe plus court que le nom de la source.
     alias: str | None = Field(default=None, pattern=MCP_NAME_PATTERN, max_length=40)
     include: tuple[str, ...] | None = None
     exclude: tuple[str, ...] | None = None
-    # Sans cette source, le run échoue au lieu de continuer sans ses outils.
     required: bool = False
     tools: dict[str, ToolOverrides] = Field(default_factory=dict)
 
@@ -722,6 +906,7 @@ class SourceTools(DomainModel):
 
     @property
     def prefix(self) -> str:
+        """Préfixe des outils : ``alias``, sinon le nom de la source."""
         return self.alias or self.source
 
     def owns(self, tool: str) -> bool:
@@ -730,21 +915,28 @@ class SourceTools(DomainModel):
 
 
 class SubAgentRef(DomainModel):
-    """Sous-agent (C5) : un autre agent de la config, appelé comme un outil.
+    """Sous-agent (fonction C5) : un autre agent de la config, appelé comme un outil.
 
     L'orchestrateur lui passe un seul argument, ``message``. Nom et
     description de l'outil : ceux de l'agent, sauf s'ils sont donnés ici.
+
+    Attributes:
+        agent: Nom de l'agent appelé.
+        name: Nom de l'outil vu par l'orchestrateur ; par défaut, celui de
+            l'agent.
+        description: Description de l'outil ; par défaut, celle de l'agent.
+        budget_share: Part (entre 0 exclu et 1) de ce qui reste au budget du
+            run appelant au moment de l'appel (fonction J4).
+        side_effects: Effets du sous-agent, ceux des outils de son agent :
+            ``irreversible`` par défaut. Ils décident de l'ordre des appels
+            d'un même tour : déclaré ``none``, il tourne en même temps que les
+            autres appels sans effet.
     """
 
     agent: str = Field(pattern=AGENT_NAME_PATTERN)
-    # Nom de l'outil vu par l'orchestrateur ; par défaut, celui de l'agent.
     name: str | None = Field(default=None, pattern=TOOL_NAME_PATTERN)
     description: str | None = None
-    # Part de ce qui reste au budget du run appelant au moment de l'appel (J4).
     budget_share: float | None = Field(default=None, gt=0.0, le=1.0)
-    # Effets du sous-agent, ceux des outils de son agent : ``irreversible`` par
-    # défaut. Ils décident de l'ordre des appels d'un même tour : déclaré
-    # ``none``, il tourne en même temps que les autres appels sans effet.
     side_effects: SideEffects = "irreversible"
 
     @model_validator(mode="before")
@@ -756,10 +948,12 @@ class SubAgentRef(DomainModel):
 
     @property
     def tool_name(self) -> str:
+        """Nom de l'outil vu par l'orchestrateur : ``name``, sinon celui de l'agent."""
         return self.name or self.agent
 
 
 def _tool_kind(value: object) -> str:
+    """Balise d'une référence d'outil : ``mcp``, ``source``, ``python`` ou ``loom.<outil>`` à paramètres."""
     if isinstance(value, McpTools):
         return "mcp"
     if isinstance(value, SourceTools):
@@ -780,24 +974,34 @@ def _tool_kind(value: object) -> str:
 
 
 class PolicyRef(DomainModel):
-    """Politique branchée sur l'agent (#1, #2, §17.4).
+    """Politique branchée sur l'agent (points 1 et 2, conception §17.4).
 
     ``hook`` : un nom enregistré (module de ``imports``), un chemin
     ``module:attr``, ou une politique fournie (``loom.require_tool``).
     ``points`` : ceux où l'agent la branche, parmi ceux qu'elle déclare ; par
     défaut, tous. Les politiques d'un point s'exécutent dans l'ordre déclaré.
+
+    Attributes:
+        hook: La politique.
+        name: Nom dans le journal ; par défaut celui de la politique. Le
+            préfixe ``loom.`` est réservé.
+        points: Points où l'agent la branche ; par défaut, tous ceux qu'elle
+            déclare.
+        params: Paramètres donnés à la politique (``context.params``).
+        timeout: Délai de la politique, en secondes (5 par défaut) ; ``null``
+            le retire.
+        on_error: Erreur de la politique : ``block`` (défaut) fait échouer le
+            run, ``allow`` l'ignore.
+        max_attempts: Réparations (``Retry``) que la politique peut demander
+            pour une sortie ; au-delà, sa décision devient ``Fail``.
     """
 
     hook: str = Field(min_length=1)
-    # Nom dans le journal ; par défaut celui de la politique.
     name: str | None = Field(default=None, pattern=POLICY_NAME_PATTERN)
     points: tuple[HookPoint, ...] | None = Field(default=None, min_length=1)
     params: dict[str, JsonValue] = Field(default_factory=dict)
-    # Délai de la politique ; ``null`` le retire.
     timeout: PositiveFloat | None = 5.0
-    # Erreur de la politique : ``block`` fait échouer le run, ``allow`` l'ignore.
     on_error: Literal["block", "allow"] = "block"
-    # Réparations (``Retry``) que la politique peut demander dans un run.
     max_attempts: PositiveInt = 1
 
     @model_validator(mode="after")
@@ -810,7 +1014,6 @@ class PolicyRef(DomainModel):
 if TYPE_CHECKING:
     type ToolRef = PythonTool | McpTools | SourceTools
 else:
-    # Une variante par outil fourni à paramètres, sous la balise de sa référence.
     ToolRef = Annotated[
         reduce(
             operator.or_,
@@ -823,33 +1026,46 @@ else:
         ),
         Discriminator(_tool_kind),
     ]
+    """Référence d'outil d'un agent : Python, outil fourni à paramètres, serveur MCP ou source.
+
+    Une variante par outil fourni à paramètres, sous la balise de sa
+    référence.
+    """
 
 
-# Nom d'une clé du state : un identifiant, que les templates citent tel quel.
 STATE_KEY_PATTERN: Final = r"^[A-Za-z_][A-Za-z0-9_]{0,63}$"
-# Pointeur JSON (RFC 6901) : vide, ou des segments « /… » où « ~ » s'écrit
-# « ~0 » et « / » s'écrit « ~1 ».
+"""Nom d'une clé du state : un identifiant, que les templates citent tel quel."""
 _JSON_POINTER: Final = re.compile(r"(?:/(?:[^~/]|~[01])*)*")
-# Qui peut demander une écriture d'une clé (state v2, S1) : l'application à
-# l'ouverture d'un run, un outil (``from`` ou ``ToolOutput.state``), le modèle
-# (``loom.state``). Par défaut, l'application et les outils.
+"""Pointeur JSON (RFC 6901) : vide, ou des segments « /… » où « ~ » s'écrit « ~0 » et « / » s'écrit « ~1 »."""
 type StateWriter = Literal["app", "tools", "model"]
+"""Qui peut demander une écriture d'une clé (décision S1 du state v2).
+
+L'application à l'ouverture d'un run, un outil (``from`` ou
+``ToolOutput.state``), le modèle (``loom.state``).
+"""
 DEFAULT_STATE_WRITERS: Final[tuple[StateWriter, ...]] = ("app", "tools")
+"""Écrivains d'une clé qui n'en déclare pas : l'application et les outils."""
 
 
 class StateSource(DomainModel):
-    """Ce qui pose une clé du state (D12) : chaque résultat réussi de l'outil ``tool``.
+    """Ce qui pose une clé du state (décision D12 du state de session) : chaque résultat réussi de l'outil ``tool``.
 
     ``path`` : pointeur JSON (RFC 6901) dans les données du résultat
     (``data``) ; ``""`` les prend entières. ``value`` : valeur fixe ; ``null``
-    efface la clé (D10). L'un ou l'autre, pas les deux.
+    efface la clé (décision D10). L'un ou l'autre, pas les deux.
 
     ``on_missing`` : ce que fait un résultat où ``path`` ne mène à rien.
-    ``refuse`` (défaut) en fait une écriture refusée (D8) : le modèle la lit à la
+    ``refuse`` (défaut) en fait une écriture refusée (décision D8) : le modèle la lit à la
     suite du résultat, et un avertissement va au log — le signe qu'un outil dédié
     a changé la forme de ses données. ``ignore`` ne pose rien, sans rien dire au
     modèle (un message de débogage au log) : un outil générique, comme une
     requête SQL, dont la plupart des résultats ne parlent pas de la clé.
+
+    Attributes:
+        tool: Nom de l'outil, tel que le voit le modèle.
+        path: Pointeur JSON dans les données du résultat.
+        value: Valeur fixe.
+        on_missing: ``refuse`` (défaut) ou ``ignore``.
     """
 
     tool: str = Field(min_length=1)
@@ -869,12 +1085,21 @@ class StateSource(DomainModel):
 
 
 class StateExtract(DomainModel):
-    """Ce que ``loom.state`` tire du résultat que le modèle désigne (state v2, S3).
+    """Ce que ``loom.state`` tire du résultat que le modèle désigne (décision S3 du state v2).
 
     Exactement une règle : ``value`` (la colonne d'une ligne), ``fields`` (un
     objet, champ ← colonne d'une ligne) ou ``columns`` (un objet, champ ← liste
     d'une colonne sur toutes les lignes). ``label`` : le champ qui reçoit le
     libellé donné par le modèle, avec ``fields`` ou ``columns``.
+
+    Attributes:
+        value: Colonne dont la valeur, sur la ligne désignée, devient celle de
+            la clé.
+        fields: Objet construit à partir d'une ligne : champ de la clé ←
+            colonne.
+        columns: Objet construit à partir de toutes les lignes : champ de la
+            clé ← liste des valeurs d'une colonne.
+        label: Champ de l'objet qui reçoit le libellé donné par le modèle.
     """
 
     value: str | None = Field(default=None, min_length=1)
@@ -898,34 +1123,68 @@ class StateExtract(DomainModel):
 
 
 class StateKey(DomainModel):
-    """Clé du state de la session (D6) : son schéma, ce qu'elle désigne, ce qui la pose."""
+    """Clé du state de la session (décision D6 du state de session) : son schéma, ce qu'elle désigne, ce qui la pose.
+
+    Déclarée dans ``state.<clé>`` de l'agent ; le nom : lettres, chiffres et
+    ``_``, 64 au plus, sans chiffre en tête.
+
+    Exemple ::
+
+        state:
+          client_id:
+            schema: {type: string}
+            description: Client en cours
+            from:
+              - tool: crm_lookup
+                path: /id
+
+    Attributes:
+        json_schema: JSON Schema de la valeur (clé ``schema``), contrôlé au
+            chargement : une écriture qui ne le tient pas est refusée (décision
+            D8).
+        description: Ce que la clé désigne : donné avec sa valeur à qui la
+            reçoit.
+        sources: Outils dont un résultat réussi pose la clé (clé ``from``,
+            décision D12) ; chaque outil une fois. Qui peut l'écrire, avec ou
+            sans source, c'est ``writers`` : avec ``tools``, tout outil peut
+            aussi la poser par ``ToolOutput.state`` (écart E1 du state v2).
+        writers: Qui peut demander une écriture (décision S1 du state v2) :
+            ``app``, ``tools``, ``model`` ; ``[app, tools]`` par défaut.
+            ``from`` exige ``tools`` ; ``model`` exige ``extract``.
+        extract: Ce que ``loom.state`` tire du résultat que le modèle désigne :
+            exigé avec ``model`` dans ``writers``, refusé sans.
+        clears: Clés que poser celle-ci par ``loom.state`` efface dans la même
+            écriture : une nouvelle liste remplace le document dont on parlait
+            (``clears: [document]``). Exige ``extract`` ; jamais une clé
+            ``required``.
+        required: Run refusé à l'ouverture si la clé manque au state de la
+            session (décision D13) ; exclut ``default``.
+        default: Valeur lue quand la clé est absente ; elle n'est jamais écrite
+            (décision D13).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid", validate_by_name=True)
 
-    # JSON Schema de la valeur, contrôlé au chargement : une écriture qui ne le
-    # tient pas est refusée (D8).
     json_schema: dict[str, JsonValue] = Field(alias="schema")
-    # Ce que la clé désigne : donné avec sa valeur à qui la reçoit.
     description: str = ""
-    # Outils dont un résultat réussi pose la clé (D12). Qui peut l'écrire, avec
-    # ou sans source, c'est ``writers`` : avec ``tools``, tout outil peut aussi
-    # la poser par ``ToolOutput.state`` (E1).
     sources: tuple[StateSource, ...] = Field(default=(), alias="from")
-    # Qui peut demander une écriture (S1) : ``app``, ``tools``, ``model``.
     writers: tuple[StateWriter, ...] = Field(default=DEFAULT_STATE_WRITERS, min_length=1)
-    # Ce que ``loom.state`` tire du résultat que le modèle désigne : exigé avec
-    # ``model`` dans ``writers``, refusé sans.
     extract: StateExtract | None = None
-    # Clés que poser celle-ci par ``loom.state`` efface dans la même écriture :
-    # une nouvelle liste remplace le document dont on parlait (``clears: [document]``).
     clears: tuple[str, ...] = ()
-    # Run refusé à l'ouverture si la clé manque au state de la session (D13).
     required: bool = False
-    # Valeur lue quand la clé est absente ; elle n'est jamais écrite (D13).
     default: JsonValue = None
 
     @model_validator(mode="after")
     def _check(self) -> Self:
+        """Cohérence de la clé : schéma, ``required`` et ``default``, ``writers``, ``extract``, ``clears``, ``from``.
+
+        Raises:
+            ValueError: Schéma invalide ; ``required`` avec ``default`` ;
+                valeur par défaut ou fixe hors schéma ; écrivain cité deux
+                fois ; ``model`` sans ``extract`` ou l'inverse ; ``clears``
+                sans ``extract`` ; ``from`` sans ``tools`` ; ``value: null``
+                sur une clé ``required`` ; outil cité deux fois.
+        """
         try:
             check_schema(self.json_schema)
         except SchemaError as exc:
@@ -970,16 +1229,20 @@ def _conforms(validator: Validator, value: JsonValue, label: str) -> None:
 
 
 class ApproveAccess(DomainModel):
-    """Qui tranche les demandes d'approbation d'un agent (D-2, § 5.2).
+    """Qui tranche les demandes d'approbation d'un agent (décision D-2 des utilisateurs et rôles, ``docs/loom_role_user.md`` §5.2).
 
     Des rôles d'accès, déclarés dans ``security.roles`` de ``loom.yaml``. Sans
     liste, tout rôle qui a la permission ``approve`` sur l'agent convient.
+
+    Attributes:
+        default: Approbateurs de toute demande de l'agent, à défaut d'une liste
+            par outil.
+        tools: Approbateurs par outil, sous le nom que voit le modèle (préfixe
+            MCP compris), comme ``tenants[].tools_deny`` : c'est le
+            ``tool_name`` de ``approval.requested``.
     """
 
-    # Approbateurs de toute demande de l'agent, à défaut d'une liste par outil.
     default: tuple[str, ...] | None = None
-    # Approbateurs par outil, sous le nom que voit le modèle (préfixe MCP compris),
-    # comme ``tenants[].tools_deny`` : c'est le ``tool_name`` de ``approval.requested``.
     tools: dict[str, tuple[str, ...]] = Field(default_factory=dict[str, tuple[str, ...]])
 
     @model_validator(mode="after")
@@ -992,23 +1255,28 @@ class ApproveAccess(DomainModel):
 
 
 class AgentAccess(DomainModel):
-    """Ce que l'agent exige de qui agit sur lui (D-2, D-7b, § 5.2).
+    """Ce que l'agent exige de qui agit sur lui (décisions D-2 et D-7b des utilisateurs et rôles, ``docs/loom_role_user.md`` §5.2).
 
-    Il ne cite que des rôles d'accès : les utilisateurs se déclarent dans
-    ``loom.yaml``, une fois pour tous les agents. Une liste absente laisse
-    décider les permissions des rôles ; une liste présente restreint.
+    Bloc ``access`` de l'agent. Il ne cite que des rôles d'accès : les
+    utilisateurs se déclarent dans ``loom.yaml``, une fois pour tous les agents.
+    Une liste absente laisse décider les permissions des rôles ; une liste
+    présente restreint.
+
+    Attributes:
+        run: Rôles qui lancent l'agent.
+        answer: Rôles qui répondent à ses questions (``loom.ask``).
+        cancel: Rôles qui arrêtent ses runs.
+        approve: Qui tranche ses demandes d'approbation.
+        self_approval: ``false`` interdit l'auto-approbation sur cet agent,
+            même à un rôle qui a ``self_approve`` (décision D-7b). L'agent ne
+            fait que durcir : ``true`` laisse décider les rôles, il n'ouvre
+            rien.
     """
 
-    # Qui lance l'agent.
     run: tuple[str, ...] | None = None
-    # Qui répond à ses questions (``loom.ask``).
     answer: tuple[str, ...] | None = None
-    # Qui arrête ses runs.
     cancel: tuple[str, ...] | None = None
     approve: ApproveAccess = ApproveAccess()
-    # ``false`` interdit l'auto-approbation sur cet agent, même à un rôle qui a
-    # ``self_approve`` (D-7b). L'agent ne fait que durcir : ``true`` laisse
-    # décider les rôles, il n'ouvre rien.
     self_approval: bool = True
 
     @model_validator(mode="after")
@@ -1020,10 +1288,10 @@ class AgentAccess(DomainModel):
         return self
 
     def approvers(self) -> Approvers:
-        """Qui tranche les demandes de l'agent, tel que le moteur le fige dans chacune (§ 5.3).
+        """Qui tranche les demandes de l'agent, tel que le moteur le fige dans chacune (``docs/loom_role_user.md`` §5.3).
 
         Par outil, la liste de l'outil, à défaut celle de l'agent (``default``) ;
-        une politique ``Pause`` sur n'importe quel outil suit la même règle (§ 5.2).
+        une politique ``Pause`` sur n'importe quel outil suit la même règle (§5.2).
         """
         return Approvers(
             default=self.approve.default,
@@ -1064,62 +1332,127 @@ def _check_access_list(label: str, roles: tuple[str, ...]) -> None:
 
 
 class AgentToolsExecution(DomainModel):
-    """Exécution des outils propre à l'agent ; ``None`` garde le réglage de la racine."""
+    """Exécution des outils propre à l'agent ; ``None`` garde le réglage de la racine.
 
-    # Ordre des appels d'un même tour (``execution.tools.order`` de loom.yaml).
+    Attributes:
+        order: Ordre des appels d'un même tour : ``effects`` ou ``free``
+            (``execution.tools.order`` de loom.yaml).
+    """
+
     order: Literal["effects", "free"] | None = None
 
 
 class AgentExecution(DomainModel):
+    """Exécution propre à l'agent (``execution``) : remplace, clé par clé, celle de loom.yaml.
+
+    Attributes:
+        tools: Exécution des outils de l'agent.
+    """
+
     tools: AgentToolsExecution = AgentToolsExecution()
 
 
 class AgentSpec(DomainModel):
+    """Un agent (fonction A9) : son orchestrateur, ses outils, rôles et sous-agents, ses contrôles et réglages.
+
+    Un fichier ``<agents_dir>/<nom>.yaml`` par agent (conception §17.4), ou un
+    objet passé en Python. Les noms d'outils, de rôles, de sous-agents, de
+    juges et les préfixes MCP sont uniques dans l'agent.
+
+    Exemple ::
+
+        name: support
+        main:
+          model: SONNET
+          system_file: prompts/support.md
+        tools:
+          - python: loom.fetch_page
+          - mcp: crm
+        roles:
+          - name: redacteur
+            model: HAIKU
+            description: Rédige la réponse au client
+            context: [user_input]
+            terminal: true
+
+    Attributes:
+        name: Nom de l'agent : lettres, chiffres, ``_`` et ``-``, 64 au plus.
+            Un nom qui commence par ``_`` est réservé aux agents internes.
+        description: Description de l'agent (sous-agent, outil MCP,
+            ``/v1/agents``).
+        expose: Points d'accès qui le publient.
+        main: L'orchestrateur : modèle, secours, prompt, ``llm``, ``context``.
+        max_iterations: Appels de l'orchestrateur avant la réponse forcée sans
+            outils (10 par défaut).
+        timeout: Délai maximal d'un run, en secondes (fonction A6, backlog
+            #006). Il borne le temps de pilotage cumulé, pas l'horloge :
+            l'attente en file, une pause et le temps entre un plantage et sa
+            reprise ne comptent pas. Un dépassement écrit ``run.failed`` avec
+            ``error_type: timeout`` : c'est une clôture, que ``resume`` ne
+            relance pas, même avec un délai relevé. Sans valeur, pas de délai.
+        approval: Approbations de l'agent (point 17) : délai laissé à
+            l'approbateur (``expires_in``), effet d'une demande périmée
+            (``on_expiry``). Un outil les demande par sa déclaration
+            (``approval: always``) ou par une politique ; qui les tranche,
+            c'est ``access.approve``.
+        access: Qui lance, répond, arrête et approuve (décision D-2 des
+            utilisateurs et rôles) : des rôles d'accès de loom.yaml.
+        output: Contrat de la réponse finale (fonctions A7 et E1) : réparée par
+            l'orchestrateur.
+        judge: Juge de la réponse finale (fonction E3, point 21), après son
+            contrat.
+        budget: Budgets de l'agent (fonction J4 ; ``run``, ``session``,
+            ``on_exceed``) : surchargent ceux de la racine (``budgets``), clé
+            par clé.
+        stream_output: Diffusion de la réponse finale ; par défaut
+            ``after_guards`` si elle est contrôlée (contrat, juge, politique
+            ``on_output``, rôle terminal sous contrat ou jugé), sinon ``live``
+            (point 11).
+        tools: Outils Python (``python``), serveurs MCP (``mcp``) et sources
+            d'outils (``source``), dans l'ordre de déclaration.
+        roles: Rôles délégués.
+        subagents: Sous-agents.
+        policies: Politiques, dans l'ordre d'exécution à chaque point (point
+            2).
+        max_depth: Profondeur maximale d'un run de cet agent pour appeler ses
+            sous-agents : à 1, un run racine les appelle, mais un sous-run de
+            cet agent ne le peut pas.
+        state: State de la session (option C) : les clés qu'elle peut porter
+            (décision D6 du state de session).
+        execution: Exécution des outils : remplace, clé par clé,
+            ``execution.tools`` de loom.yaml.
+    """
+
     name: str = Field(pattern=AGENT_NAME_PATTERN)
     description: str = ""
     expose: Expose = Expose()
     main: MainRole
     max_iterations: PositiveInt = 10
-    # Délai maximal d'un run, en secondes (A6, backlog #006). Il borne le temps
-    # de pilotage cumulé, pas l'horloge : l'attente en file, une pause et le
-    # temps entre un plantage et sa reprise ne comptent pas. Un dépassement
-    # écrit ``run.failed`` avec ``error_type: timeout`` : c'est une clôture,
-    # que ``resume`` ne relance pas, même avec un délai relevé. Sans valeur,
-    # pas de délai.
     timeout: PositiveFloat | None = None
-    # Approbations de l'agent (#17) : délai laissé à l'approbateur, effet
-    # d'une demande périmée. Un outil les demande par sa déclaration
-    # (``approval: always``) ou par une politique ; qui les tranche, c'est
-    # ``access.approve``.
     approval: ApprovalSettings = ApprovalSettings()
-    # Qui lance, répond, arrête et approuve (D-2) : des rôles d'accès de loom.yaml.
     access: AgentAccess = AgentAccess()
-    # Contrat de la réponse finale (A7, E1) : réparée par l'orchestrateur.
     output: OutputContract | None = None
-    # Juge de la réponse finale (E3, #21), après son contrat.
     judge: JudgeSpec | None = None
-    # Budgets de l'agent (J4) : surchargent ceux de la racine, clé par clé.
     budget: Budgets | None = None
-    # Diffusion de la réponse finale ; par défaut ``after_guards`` si elle est
-    # contrôlée (contrat, juge, politique on_output, rôle terminal sous contrat
-    # ou jugé), sinon ``live`` (#11).
     stream_output: StreamOutput | None = None
-    # Outils Python et serveurs MCP, dans l'ordre de déclaration.
     tools: tuple[ToolRef, ...] = ()
     roles: tuple[RoleSpec, ...] = ()
     subagents: tuple[SubAgentRef, ...] = ()
-    # Politiques, dans l'ordre d'exécution à chaque point (#2).
     policies: tuple[PolicyRef, ...] = ()
-    # Profondeur maximale d'un run de cet agent pour appeler ses sous-agents :
-    # à 1, un run racine les appelle, mais un sous-run de cet agent ne le peut pas.
     max_depth: PositiveInt = 1
-    # State de la session (option C) : les clés qu'elle peut porter (D6).
     state: dict[str, StateKey] = Field(default_factory=dict[str, StateKey])
-    # Exécution des outils : remplace, clé par clé, ``execution.tools`` de loom.yaml.
     execution: AgentExecution = AgentExecution()
 
     @model_validator(mode="after")
     def _check_state(self) -> Self:
+        """Clés du state valides, et citées seulement si déclarées (``main.context``, rôles, ``loom.state``, ``clears``).
+
+        Raises:
+            ValueError: Nom de clé invalide, clé citée mais non déclarée,
+                ``model`` dans ``writers`` sans l'outil ``loom.state`` (ou
+                l'inverse), clé écrite par le modèle sans lui être montrée,
+                ``clears`` incohérent.
+        """
         for key in self.state:
             if not re.fullmatch(STATE_KEY_PATTERN, key):
                 raise ValueError(f"state : clé {key!r} invalide (lettres, chiffres et '_', 64 au plus, sans chiffre en tête)")
@@ -1185,6 +1518,12 @@ class AgentSpec(DomainModel):
 
     @model_validator(mode="after")
     def _unique_tools(self) -> Self:
+        """Outils, préfixes MCP et de source, rôles, sous-agents et juges uniques dans l'agent.
+
+        Raises:
+            ValueError: Un nom déclaré deux fois ; le message dit comment
+                départager (``alias``, ``name``).
+        """
         names = [tool.python for tool in self.python_tools]
         doubles = {name for name in names if names.count(name) > 1}
         if doubles:
@@ -1235,12 +1574,15 @@ class AgentSpec(DomainModel):
 
     @property
     def python_tools(self) -> tuple[PythonTool, ...]:
+        """Outils Python de l'agent, outils fournis compris."""
         return tuple(tool for tool in self.tools if isinstance(tool, PythonTool))
 
     @property
     def mcp_tools(self) -> tuple[McpTools, ...]:
+        """Serveurs MCP référencés par l'agent."""
         return tuple(tool for tool in self.tools if isinstance(tool, McpTools))
 
     @property
     def source_tools(self) -> tuple[SourceTools, ...]:
+        """Sources d'outils de paquets référencées par l'agent."""
         return tuple(tool for tool in self.tools if isinstance(tool, SourceTools))

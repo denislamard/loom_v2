@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 3.4 : un budget arrête le run, qui donne une réponse forcée ; puis le rapport de coûts.
+r"""Phase 3.4 : un budget arrête le run, qui donne une réponse forcée ; puis le rapport de coûts.
 
     uv run python tests/examples/j3/budget.py                    # budget atteint : réponse forcée
     uv run python tests/examples/j3/budget.py --action warn      # avertissement : le run continue
     uv run python tests/examples/j3/budget.py --plafond 1        # budget large : rien ne se passe
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j3/budget.py --reel --appels 1
 
 Même config que les exemples précédents (``tests/examples/j3/relance/``). Les deux

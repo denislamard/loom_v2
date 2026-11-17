@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Journal qui prévient ses abonnés à chaque écriture (#22).
+"""Journal qui prévient ses abonnés à chaque écriture (point 22).
 
 Les trois accès de la phase 1.6 doivent suivre un run pendant qu'il se
 déroule. Plutôt que de relire le journal en boucle, cet enrobage remet
@@ -33,14 +33,19 @@ from loom_ia.core.ports import EventBus, EventStore, Notice, SessionRecord
 logger = logging.getLogger(__name__)
 
 type EventSink = Callable[[Event], None]
+"""Abonné : appelé avec chaque événement remis ; il ne doit rien attendre."""
 type EventFilter = Callable[[Event], bool]
+"""Filtre d'un abonné : vrai pour un événement à lui remettre."""
 
-# Attentes successives, en secondes, avant de se réabonner à un bus tombé : la
-# dernière vaut ensuite pour toutes les tentatives suivantes.
 FOLLOW_BACKOFF: Final = (1.0, 2.0, 5.0, 10.0, 30.0)
-# Attente maximale d'une publication sur le bus : au-delà, la nouvelle est abandonnée
-# (l'écriture, elle, a eu lieu), et un bus muet ne suspend pas chaque écriture.
+"""Attentes successives, en secondes, avant de se réabonner à un bus tombé : la
+dernière vaut ensuite pour toutes les tentatives suivantes.
+"""
 PUBLISH_TIMEOUT: Final = 5.0
+"""Attente maximale d'une publication sur le bus : au-delà, la nouvelle est
+abandonnée (l'écriture, elle, a eu lieu), et un bus muet ne suspend pas
+chaque écriture.
+"""
 
 
 class Subscription:
@@ -56,6 +61,7 @@ class Subscription:
         self._closed = False
 
     def offer(self, event: Event) -> None:
+        """Met un événement en file, sauf si l'abonnement est fermé."""
         if not self._closed:
             self._queue.put_nowait(event)
 
@@ -67,6 +73,7 @@ class Subscription:
 
     @property
     def pending(self) -> int:
+        """Événements en file, pas encore lus."""
         return self._queue.qsize()
 
     def __aiter__(self) -> Self:
@@ -82,7 +89,7 @@ class Subscription:
 class NotifyingEventStore:
     """Enrobe un journal et remet ce qu'il écrit aux abonnés du process.
 
-    Avec un ``bus`` (5.3c), il remet aussi ce que **les autres process**
+    Avec un ``bus`` (jalon J5.3c), il remet aussi ce que **les autres process**
     écrivent : leurs nouvelles disent où regarder, le journal est relu, et les
     événements retrouvés vont aux mêmes abonnés. Un abonné ne sait pas d'où
     vient ce qu'il reçoit, et c'est tout l'intérêt — SSE, ``Loom.stream()``,
@@ -102,10 +109,12 @@ class NotifyingEventStore:
 
     @property
     def inner(self) -> EventStore:
+        """Le journal enrobé."""
         return self._inner
 
     @property
     def listeners(self) -> int:
+        """Nombre d'abonnés en cours."""
         return len(self._sinks)
 
     @contextmanager
@@ -123,7 +132,7 @@ class NotifyingEventStore:
         ``sink`` et ``accept`` sont appelés depuis ``append`` : ils ne doivent
         rien attendre. ``own`` écarte ce que le bus rapporte des autres
         process : l'abonné ne reçoit que ce que cette instance écrit — c'est
-        ce qu'il faut à un export, que chaque process fait pour sa part (6.1a).
+        ce qu'il faut à un export, que chaque process fait pour sa part (jalon J6.1a).
         """
         entry = (sink, run_id, accept, own)
         self._sinks.append(entry)
@@ -145,6 +154,24 @@ class NotifyingEventStore:
                 subscription.close()
 
     async def append(self, drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
+        """Écrit un lot à la suite du journal d'une session (``EventStore.append``).
+
+        Le lot est écrit dans le journal enrobé, remis aux abonnés de ce process,
+        puis annoncé sur le bus s'il y en a un. Un abonné qui échoue est
+        journalisé, sans faire échouer l'écriture.
+
+        Args:
+            drafts: Le lot, dans un seul journal (même client, même session).
+            expected_seq: Dernier ``seq`` connu de l'appelant ; ``None`` désactive
+                ce contrôle.
+
+        Returns:
+            Les événements écrits, numérotés à la suite.
+
+        Raises:
+            SequenceConflict: Le journal a avancé depuis ``expected_seq`` ; rien
+                n'est écrit.
+        """
         events = await self._inner.append(drafts, expected_seq=expected_seq)
         for event in events:
             self._offer(event, own=True)
@@ -173,7 +200,7 @@ class NotifyingEventStore:
                     event.seq,
                 )
 
-    # --- Bus (5.3c) -------------------------------------------------------
+    # --- Bus (jalon J5.3c) -------------------------------------------------------
 
     @property
     def source(self) -> str:
@@ -269,18 +296,28 @@ class NotifyingEventStore:
         after_seq: int = 0,
         run_id: RunId | None = None,
     ) -> list[Event]:
+        """Lit le journal enrobé (``EventStore.read``)."""
         return await self._inner.read(tenant_id, session_id, after_seq=after_seq, run_id=run_id)
 
     async def query(self, query: EventQuery) -> list[Event]:
+        """Cherche dans le journal enrobé (``EventStore.query``)."""
         return await self._inner.query(query)
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Dernier ``seq`` du journal enrobé (``EventStore.last_seq``)."""
         return await self._inner.last_seq(tenant_id, session_id)
 
     async def sessions(self, tenant_id: TenantId) -> list[SessionRecord]:
+        """Sessions du journal enrobé (``EventStore.sessions``)."""
         return await self._inner.sessions(tenant_id)
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Supprime le journal d'une session (RGPD) ; rend le nombre d'événements supprimés.
+
+        Oublie aussi la position atteinte : recréé sous le même identifiant, le
+        journal repart de 1. Les autres process gardent la leur, le bus
+        n'annonçant pas les suppressions.
+        """
         removed = await self._inner.delete(tenant_id, session_id)
         # Recréé sous le même identifiant, ce journal repart de 1 : une position
         # restée haute en ferait ignorer les nouvelles. Les **autres** process
@@ -289,5 +326,6 @@ class NotifyingEventStore:
         return removed
 
     async def aclose(self) -> None:
+        """Retire tous les abonnés, puis ferme le journal enrobé."""
         self._sinks.clear()
         await self._inner.aclose()

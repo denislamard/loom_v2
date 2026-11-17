@@ -17,17 +17,24 @@ from loom_ia.core.ports import ToolError
 from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools import tool
 
-MAX_BYTES: Final = 5_000_000  # au-delà, on ne lit pas la suite de la page
+MAX_BYTES: Final = 5_000_000
+"""Octets lus au plus ; au-delà, la suite de la page n'est pas lue."""
 MAX_REDIRECTS: Final = 5
+"""Redirections suivies au plus."""
 MAX_LINKS: Final = 50
-MAX_ADDRESSES: Final = 3  # adresses d'un même nom essayées tour à tour si la connexion échoue
+"""Liens rendus au plus."""
+MAX_ADDRESSES: Final = 3
+"""Adresses d'un même nom essayées tour à tour si la connexion échoue."""
 ALLOWED_PORTS: Final = frozenset({80, 443})
+"""Ports permis : 80 et 443."""
 HEADERS: Final = {
     "User-Agent": "Mozilla/5.0 (compatible; loom_ia-fetch_page/1.0)",
     "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
     "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
 }
+"""En-têtes envoyés avec chaque requête."""
 TIMEOUT: Final = httpx2.Timeout(15.0, connect=5.0)
+"""Délais : 15 s en tout, 5 s pour se connecter."""
 
 
 @tool(side_effects="none", timeout=45, offload_over=20_000)
@@ -38,7 +45,7 @@ async def fetch_page(url: str) -> str:
     À utiliser pour consulter une page dont on connaît l'adresse, ou suivre un lien
     trouvé dans une page déjà lue. Ne gère ni JavaScript, ni connexion à un compte,
     ni PDF, ni image.
-    """
+    """  # noqa: D205  # Docstring vue par le modèle (description de l'outil) : à ne pas reformater.
     page = await download(url)
     # Décoder et analyser une grosse page prend jusqu'à une seconde ou deux : hors de
     # la boucle asyncio, pour ne pas figer le moteur ni les outils lancés en parallèle.
@@ -47,14 +54,20 @@ async def fetch_page(url: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Downloaded:
-    """Une page téléchargée, pas encore décodée."""
+    """Une page téléchargée, pas encore décodée.
 
-    # Adresse finale, après les redirections.
+    Attributes:
+        url: Adresse finale, après les redirections.
+        body: Le corps reçu.
+        charset: Jeu de caractères annoncé, s'il l'est.
+        media_type: Type annoncé.
+        truncated: Vrai si la page dépassait ``MAX_BYTES`` et a été coupée.
+    """
+
     url: str
     body: bytes
     charset: str | None
     media_type: str
-    # Vrai si la page dépassait MAX_BYTES et a été coupée.
     truncated: bool
 
 
@@ -102,10 +115,12 @@ def is_html(media_type: str) -> bool:
 # --- Garde-fous réseau ---------------------------------------------------------
 
 _DEFAULT_PORTS: Final = {"http": 80, "https": 443}
-# IPv4 logées dans une IPv6 que ipaddress tient pour globales : préfixe NAT64 bien connu
-# (64:ff9b::7f00:1 désigne 127.0.0.1 derrière une passerelle NAT64) et IPv4 « compatibles »
-# (::a.b.c.d, obsolètes). Les IPv4 « mappées », 6to4 et Teredo, ipaddress les juge déjà.
 _EMBEDDED_IPV4: Final = (ipaddress.IPv6Network("64:ff9b::/96"), ipaddress.IPv6Network("::/96"))
+"""IPv4 logées dans une IPv6 que ipaddress tient pour globales : préfixe NAT64
+bien connu (64:ff9b::7f00:1 désigne 127.0.0.1 derrière une passerelle NAT64)
+et IPv4 « compatibles » (::a.b.c.d, obsolètes). Les IPv4 « mappées », 6to4
+et Teredo, ipaddress les juge déjà.
+"""
 
 
 async def resolve(host: str, port: int) -> list[str]:
@@ -157,6 +172,14 @@ class _PublicOnlyTransport(httpx2.AsyncBaseTransport):
         self._inner = inner
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        """Envoie la requête à une adresse publique seulement.
+
+        Port 80 ou 443 ; nom résolu en adresses publiques, essayées tour à tour
+        (``MAX_ADDRESSES``) ; le nom gardé pour TLS.
+
+        Raises:
+            ToolError: Port refusé, ou aucune adresse publique.
+        """
         url, extensions = request.url, request.extensions
         host = url.raw_host.decode("ascii")
         port = url.port if url.port is not None else _DEFAULT_PORTS.get(url.scheme)
@@ -180,6 +203,7 @@ class _PublicOnlyTransport(httpx2.AsyncBaseTransport):
         return await self._inner.handle_async_request(request)
 
     async def aclose(self) -> None:
+        """Ferme le transport enrobé."""
         await self._inner.aclose()
 
 
@@ -252,8 +276,11 @@ _ASCII: Final = bytes(range(128))
 
 
 def decode(body: bytes, charset: str | None, media_type: str) -> str:
-    """Texte de la page, dans l'ordre des navigateurs : BOM, en-tête HTTP, déclaration dans
-    le document ; à défaut UTF-8, ou windows-1252 si ce n'en est visiblement pas."""
+    """Texte de la page, dans l'ordre des navigateurs.
+
+    BOM, en-tête HTTP, déclaration dans le document ; à défaut UTF-8, ou windows-1252 si
+    ce n'en est visiblement pas.
+    """
     for bom, encoding in _BOMS:
         if body.startswith(bom):
             return body[len(bom) :].decode(encoding, errors="replace")
@@ -299,33 +326,37 @@ def _render(body: bytes, charset: str | None, media_type: str, url: str, truncat
 
 # --- HTML vers texte -------------------------------------------------------------
 
-# Contenu brut, que l'analyseur rend d'un bloc jusqu'à la balise fermante : ignoré.
 _RAW: Final = frozenset({"script", "style", "iframe", "xmp", "noembed", "noframes"})
-# Écartés avec tout leur contenu.
+"""Contenu brut, que l'analyseur rend d'un bloc jusqu'à la balise fermante : ignoré."""
 _DROPPED: Final = frozenset({"noscript", "template", "svg", "canvas"})
+"""Écartés avec tout leur contenu."""
 _BLOCKS: Final = frozenset(
     "p div br hr section article main header footer nav aside ul ol blockquote form figure figcaption dl dt dd address details summary fieldset caption".split()
 )
 _HEADINGS: Final = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
-# Repères de la page (landmarks HTML et ARIA). Le texte et les liens du contenu principal
-# (``<main>``, ``role="main"``) passent en premier, ceux du pourtour (menus, bandeaux, pied de
-# page, encadrés) en dernier : un aperçu tronqué montre ainsi le contenu, pas les menus.
-# Dans le contenu principal, rien n'est pourtour : un header y est le titre d'une fiche.
 _CHROME_TAGS: Final = frozenset({"nav", "aside"})
+"""Repères de la page (landmarks HTML et ARIA). Le texte et les liens du
+contenu principal (``<main>``, ``role="main"``) passent en premier, ceux du
+pourtour (menus, bandeaux, pied de page, encadrés) en dernier : un aperçu
+tronqué montre ainsi le contenu, pas les menus. Dans le contenu principal,
+rien n'est pourtour : un header y est le titre d'une fiche.
+"""
 _CHROME_ROLES: Final = frozenset({"navigation", "complementary", "banner", "contentinfo"})
-# header et footer ne sont le bandeau et le pied de page que hors d'un article ou d'une
-# section : dans l'un d'eux, ils en sont le titre et la signature.
 _EDGE_TAGS: Final = frozenset({"header", "footer"})
+"""header et footer ne sont le bandeau et le pied de page que hors d'un article
+ou d'une section : dans l'un d'eux, ils en sont le titre et la signature.
+"""
 _SECTIONING: Final = frozenset({"article", "section"})
-# Sans balise fermante, ou facultative : sans arbre DOM, impossible de savoir où ils
-# finissent, donc jamais écartés comme décoratifs.
 _UNBOUNDED: Final = frozenset(
     "area base br col embed hr img input link meta source track wbr "  # vides
     "html head body p li dt dd option optgroup rb rt rtc rp colgroup caption "  # fin facultative
     "thead tbody tfoot tr td th".split()
 )
-# Polices d'icônes à ligatures : le nom de l'icône (« arrow_upward ») est le texte de l'élément.
+"""Sans balise fermante, ou facultative : sans arbre DOM, impossible de savoir
+où ils finissent, donc jamais écartés comme décoratifs.
+"""
 _ICON_FONT: Final = re.compile(r"material-(?:icons|symbols)")
+"""Polices d'icônes à ligatures : le nom de l'icône (« arrow_upward ») est le texte de l'élément."""
 _DECORATIVE_MAX: Final = 500  # au-delà, un élément « caché » est sans doute du contenu
 _CELL_MAX: Final = 200  # au-delà, une cellule est un bloc de mise en page, pas une donnée
 _LABEL_MAX: Final = 120
@@ -340,6 +371,15 @@ class _Region:
 
     Retirer à la fermeture, plutôt que ne rien écrire, rend l'erreur bénigne : un élément
     jamais fermé (HTML mal formé) n'emporte pas la fin de la page, il reste dans le texte.
+
+    Attributes:
+        tag: Balise de l'élément.
+        decorative: ``aria-hidden`` ou icône : texte retiré seulement s'il est
+            court.
+        out: La partie du texte où il écrit.
+        mark: Position dans cette partie à son ouverture.
+        links: Nombre de liens à son ouverture.
+        depth: Éléments de même balise ouverts dedans, plus lui.
     """
 
     tag: str
@@ -355,7 +395,13 @@ type _Kind = Literal["main", "chrome", "section"]
 
 @dataclass(slots=True)
 class _Landmark:
-    """Repère ouvert : le contenu principal, un élément du pourtour, ou un article."""
+    """Repère ouvert : le contenu principal, un élément du pourtour, ou un article.
+
+    Attributes:
+        tag: Balise du repère.
+        kind: Contenu principal, pourtour ou article.
+        depth: Éléments de même balise ouverts dedans, plus lui.
+    """
 
     tag: str
     kind: _Kind
@@ -364,6 +410,14 @@ class _Landmark:
 
 @dataclass(slots=True)
 class _Table:
+    """Un tableau en cours de lecture.
+
+    Attributes:
+        parent: Où vont les lignes rendues.
+        cells: Cellules de la ligne en cours.
+        cell: Cellule ouverte.
+    """
+
     parent: list[str]  # où vont les lignes rendues
     cells: list[str] = field(default_factory=list[str])  # cellules de la ligne en cours
     cell: list[str] | None = None  # cellule ouverte
@@ -377,6 +431,11 @@ class _Extractor(HTMLParser):
     """
 
     def __init__(self, url: str) -> None:
+        """Prépare la lecture d'une page.
+
+        Args:
+            url: Adresse de la page : la base des liens, sauf ``<base href>``.
+        """
         super().__init__(convert_charrefs=True)
         self.url = url
         self.base = url  # remplacée par <base href> s'il y en a un
@@ -401,6 +460,7 @@ class _Extractor(HTMLParser):
     # -- Événements de l'analyseur
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Une balise ouvrante : repères, régions écartées, titres, listes, tableaux, liens, blocs de code."""
         if self._raw is not None:
             return
         if tag in _RAW:
@@ -449,6 +509,7 @@ class _Extractor(HTMLParser):
             self._out().append("\n")
 
     def handle_endtag(self, tag: str) -> None:
+        """Une balise fermante : ferme ce qu'elle avait ouvert."""
         if self._raw is not None:
             if tag == self._raw:
                 self._raw = None
@@ -475,6 +536,7 @@ class _Extractor(HTMLParser):
         self._end_landmarks(tag)
 
     def handle_data(self, data: str) -> None:
+        """Du texte : au titre, au bloc de code (tel quel) ou à la partie en cours (espaces réduits)."""
         if self._raw is not None:
             return
         data = data.replace("\x00", "")  # réservé aux marques des blocs de code
@@ -485,6 +547,7 @@ class _Extractor(HTMLParser):
         self._add_label(data)
 
     def close(self) -> None:
+        """Termine la lecture : titre, lien, bloc de code et tableaux restés ouverts."""
         super().close()
         self._end_title()
         self._close_link()
@@ -497,6 +560,7 @@ class _Extractor(HTMLParser):
     # -- Résultat
 
     def text(self) -> str:
+        """Le texte de la page : le contenu principal, le reste du corps, puis le pourtour, blocs de code remis à leur place."""
         text = _tidy([*self._main, "\n\n", *self._body, "\n\n", *self._chrome])
         return _CODE_MARK.sub(lambda mark: f"```\n{self._code[int(mark[1])]}\n```", text)
 
@@ -557,6 +621,7 @@ class _Extractor(HTMLParser):
                 return
 
     def _end_regions(self, tag: str) -> None:
+        """Ferme les régions de cette balise ; ce qu'une région écartée a écrit est retiré (une région décorative ne perd son texte que s'il est court)."""
         for region in self._regions:
             if region.tag == tag:
                 region.depth -= 1
@@ -639,7 +704,7 @@ def _is_decorative(attributes: dict[str, str | None]) -> bool:
 
 
 def _absolute(base: str, href: str | None) -> str | None:
-    """Adresse http(s) absolue d'un lien, sans fragment ; None pour mailto:, javascript:…"""
+    """Adresse http(s) absolue d'un lien, sans fragment ; None pour un autre schéma (mailto:, javascript:…)."""
     if not href:
         return None
     try:

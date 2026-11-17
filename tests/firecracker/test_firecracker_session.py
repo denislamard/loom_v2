@@ -808,8 +808,7 @@ async def test_the_group_of_a_job_ends_with_it_and_holds_nothing_back(execd: Pat
 
 @pytest.mark.usefixtures("room_to_fork")
 async def test_a_descendant_out_of_the_group_cannot_hold_the_reply_or_the_place(execd: Path, tmp_path: Path) -> None:
-    """Sorti du groupe, il garde les tuyaux : la lecture s'arrête après un court délai, et la
-    place d'exécution est rendue au job suivant."""
+    """Sorti du groupe, il garde les tuyaux : la lecture s'arrête après un court délai, et la place d'exécution est rendue au job suivant."""
     pidfile = tmp_path / "pid"
     try:
         async with await _open(execd) as session, await _open(execd) as other:

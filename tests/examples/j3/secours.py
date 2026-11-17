@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 3.5a : l'orchestrateur tombe en panne, son secours prend la suite ; le disjoncteur s'ouvre.
+r"""Phase 3.5a : l'orchestrateur tombe en panne, son secours prend la suite ; le disjoncteur s'ouvre.
 
     uv run python tests/examples/j3/secours.py                  # trois runs, modèles simulés
     uv run python tests/examples/j3/secours.py --runs 1
-    uv run --env-file .env --extra anthropic --extra openai \\
+    uv run --env-file .env --extra anthropic --extra openai \
         python tests/examples/j3/secours.py --reel
 
 Même config que les exemples précédents (``tests/examples/j3/relance/``). L'exemple

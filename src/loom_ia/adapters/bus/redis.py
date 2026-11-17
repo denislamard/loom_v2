@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Bus des nouvelles par la publication/abonnement de Redis (#5, H6).
+"""Bus des nouvelles par la publication/abonnement de Redis (point 5, fonction H6).
 
 Le bus de qui a déjà Redis, ou qui ne veut pas faire porter ses nouvelles par
 sa base. Redis publie sans rien garder : un abonné absent au moment de la
@@ -31,12 +31,15 @@ from loom_ia.core.ports.bus import Notice
 
 logger = logging.getLogger(__name__)
 
-# Le canal des nouvelles. Fixe, comme le canal Postgres.
 CHANNEL: Final = "loom:events"
-# Délai d'une connexion, et d'une réponse à une publication, en secondes. L'écoute
-# n'en a pas (le silence du canal y est normal) : un contrôle de santé la remplace.
+"""Le canal des nouvelles. Fixe, comme le canal Postgres."""
 SOCKET_TIMEOUT: Final = 5.0
+"""Délai d'une connexion, et d'une réponse à une publication, en secondes.
+L'écoute n'en a pas (le silence du canal y est normal) : un contrôle de
+santé la remplace.
+"""
 HEALTH_CHECK: Final = 30
+"""Intervalle du contrôle de santé de la connexion d'écoute, en secondes."""
 
 
 class RedisBus:
@@ -53,6 +56,7 @@ class RedisBus:
         return f"RedisBus({CHANNEL!r})"
 
     async def publish(self, notice: Notice) -> None:
+        """Annonce un lot écrit sur le canal ``loom:events`` de Redis ; rien après la fermeture."""
         if self._closed:
             return
         if self._speaking is None:
@@ -89,6 +93,7 @@ class RedisBus:
             await hearing.aclose()
 
     async def aclose(self) -> None:
+        """Ferme le bus : le désabonnement arrête l'écoute, puis les connexions sont fermées."""
         self._closed = True
         pubsub = self._pubsub
         if pubsub is not None:

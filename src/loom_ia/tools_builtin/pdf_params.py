@@ -43,14 +43,33 @@ from loom_ia.tools_builtin._style_params import StyleField
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 
 REFERENCE: Final = "loom.pdf"
-# Plancher de pypdf pour lire un PDF : les versions antérieures bouclent sans fin sur des
-# PDF forgés (CVE-2026-59935, -59937). Ici, et non dans l'outil, pour que ``loom.memory``
-# le vérifie sans importer reportlab.
+"""Référence de l'outil dans la config."""
 SAFE_PYPDF: Final = (6, 14, 2)
+"""Plancher de pypdf pour lire un PDF : les versions antérieures bouclent sans
+fin sur des PDF forgés (CVE-2026-59935, -59937). Ici, et non dans l'outil,
+pour que ``loom.memory`` le vérifie sans importer reportlab.
+"""
 
 
 class PdfParams(BaseModel):
-    """Paramètres de ``loom.pdf``."""
+    """Paramètres de ``loom.pdf``.
+
+    Attributes:
+        folders: Dossiers permis, au moins un ; le droit ``delete`` n'y a pas
+            cours.
+        timezone: Fuseau IANA où passe une date-heure qui en porte un : le
+            document l'écrit à l'heure de ce fuseau, sans le nommer.
+        blocks: Les blocs facultatifs, chacun payé en tokens à chaque appel au
+            modèle : chart (environ 430), image (environ 190), signature, toc
+            et checkboxes (environ 190 à eux trois), fields (environ 115), code
+            (environ 75), invoice_totals (environ 185), attendance (environ
+            130). Aucun par défaut.
+        templates: Les modèles de document, par nom : fichiers relatifs à
+            resources_dir, lus au chargement.
+        style: La charte : un fichier de style relatif à resources_dir, lu au
+            chargement, ou un style écrit en ligne ; le style d'un modèle se
+            nomme dans le fichier du modèle (``style:``).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -60,18 +79,9 @@ class PdfParams(BaseModel):
         AfterValidator(checked_folders(REFERENCE)),
         Field(json_schema_extra={"minItems": 1}),
     ]
-    # Fuseau IANA où passe une date-heure qui en porte un : le document l'écrit
-    # à l'heure de ce fuseau, sans le nommer.
     timezone: str = DEFAULT_TIMEZONE
-    # Les blocs facultatifs, chacun payé en tokens à chaque appel au modèle : chart
-    # (environ 430), image (environ 190), signature, toc et checkboxes (environ 190 à eux
-    # trois), fields (environ 115), code (environ 75), invoice_totals (environ 185),
-    # attendance (environ 130). Aucun par défaut.
     blocks: Blocks = ()
-    # Les modèles de document, par nom : fichiers relatifs à resources_dir, lus au chargement.
     templates: Templates = {}
-    # La charte : un fichier de style relatif à resources_dir, lu au chargement, ou un style
-    # écrit en ligne ; le style d'un modèle se nomme dans le fichier du modèle (style:).
     style: StyleField = None
 
     @model_validator(mode="before")
@@ -81,8 +91,7 @@ class PdfParams(BaseModel):
 
     @classmethod
     def precheck(cls, value: object) -> object:
-        """Avant toute validation, aussi sur la référence de la config (``agents.spec``) :
-        les clés de la 2.0 refusées avec ce qui les remplace."""
+        """Avant toute validation, aussi sur la référence de la config (``agents.spec``) : les clés de la 2.0 refusées avec ce qui les remplace."""
         return no_old_keys(value)
 
     @model_validator(mode="after")

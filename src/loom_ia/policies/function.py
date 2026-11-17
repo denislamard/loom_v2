@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Politiques écrites en Python (#1, #2).
+"""Politiques écrites en Python (points 1 et 2).
 
 Une fonction reçoit ce qui se passe au point d'accroche, et éventuellement
 son contexte (nom, paramètres de la config, réparations déjà demandées) ;
@@ -18,6 +18,10 @@ la politique.
 
 Une fonction synchrone s'exécute dans la boucle : elle doit être rapide et
 ne pas faire d'entrée-sortie (sinon, l'écrire en ``async``).
+
+Nom : celui de la fonction par défaut, ou ``name`` ; 1 à 64 caractères
+(lettres, chiffres, ``_``, ``.``, ``-``), sans le préfixe ``loom.``, réservé
+aux politiques fournies.
 """
 
 import inspect
@@ -38,10 +42,15 @@ from loom_ia.core.model import (
 )
 
 type PolicyFunction = Callable[..., Decision | Awaitable[Decision]]
+"""Fonction d'une politique : ``(sujet)`` ou ``(sujet, contexte)``, synchrone ou asynchrone."""
 
 
 class FunctionPolicy:
-    """Politique construite à partir d'une fonction ; reste appelable comme elle."""
+    """Politique construite à partir d'une fonction ; reste appelable comme elle.
+
+    Attributes:
+        fn: La fonction.
+    """
 
     def __init__(
         self,
@@ -52,6 +61,22 @@ class FunctionPolicy:
         name: str | None = None,
         builtin: bool = False,
     ) -> None:
+        """Contrôle la déclaration de la politique.
+
+        Args:
+            fn: La fonction : un ou deux paramètres positionnels obligatoires
+                (le sujet, puis le contexte).
+            points: Points d'accroche où elle sait s'appliquer.
+            decisions: Décisions qu'elle peut rendre en plus de ``Continue``.
+            name: Nom de la politique ; par défaut celui de la fonction.
+            builtin: Vrai pour une politique fournie par loom-ia : son nom
+                doit commencer par ``loom.``, et seulement le sien.
+
+        Raises:
+            ValueError: Nom invalide ou préfixe ``loom.`` mal employé, point
+                ou décision inconnus, aucun point.
+            TypeError: La fonction n'a pas un ou deux paramètres obligatoires.
+        """
         self.fn = fn
         policy_name = name or fn.__name__
         if not re.fullmatch(POLICY_NAME_PATTERN, policy_name):
@@ -68,23 +93,36 @@ class FunctionPolicy:
 
     @property
     def name(self) -> str:
+        """Nom de la politique."""
         return self._name
 
     @property
     def points(self) -> frozenset[HookPoint]:
+        """Points d'accroche où elle sait s'appliquer."""
         return self._points
 
     @property
     def decisions(self) -> frozenset[DecisionKind]:
+        """Décisions qu'elle peut rendre, ``continue`` exclue."""
         return self._decisions
 
     async def decide(self, subject: PolicySubject, context: PolicyContext) -> Decision:
+        """Appelle la fonction, avec le contexte si elle le reçoit, et attend son résultat.
+
+        Args:
+            subject: Le sujet du point d'accroche.
+            context: Le contexte de la politique.
+
+        Returns:
+            La décision de la fonction ; le moteur la contrôle ensuite.
+        """
         result = self.fn(subject, context) if self._with_context else self.fn(subject)
         if inspect.isawaitable(result):
             return await result
         return result
 
     def __call__(self, *args: object) -> Decision | Awaitable[Decision]:
+        """Appelle la fonction telle quelle : la politique reste utilisable comme elle."""
         return self.fn(*args)
 
     def __repr__(self) -> str:
@@ -97,7 +135,21 @@ def policy(
     decisions: Iterable[DecisionKind],
     name: str | None = None,
 ) -> Callable[[PolicyFunction], FunctionPolicy]:
-    """Déclare une fonction comme politique."""
+    """Déclare une fonction comme politique.
+
+    Args:
+        points: Points d'accroche où elle sait s'appliquer.
+        decisions: Décisions qu'elle peut rendre en plus de ``Continue``.
+        name: Nom de la politique ; par défaut celui de la fonction.
+
+    Returns:
+        Un décorateur qui rend une ``FunctionPolicy``.
+
+    Raises:
+        ValueError: Déclaration invalide (voir ``FunctionPolicy``), levée à
+            la décoration.
+        TypeError: La fonction n'a pas un ou deux paramètres obligatoires.
+    """
 
     def wrap(fn: PolicyFunction) -> FunctionPolicy:
         return FunctionPolicy(fn, points=points, decisions=decisions, name=name)

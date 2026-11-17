@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Adaptateur ``sdk: anthropic`` : API Messages, en streaming (B1, B8).
+"""Adaptateur ``sdk: anthropic`` : API Messages, en streaming (fonctions B1 et B8).
 
 Sert aussi les fournisseurs compatibles (MiniMax…) via ``base_url`` ; sans
 lui, l'adresse officielle d'Anthropic, quelle que soit ``ANTHROPIC_BASE_URL``.
@@ -16,17 +16,17 @@ Traduction des messages :
 - ``tool_choice: required`` devient ``{"type": "any"}`` ; un modèle qui le
   refuse est déclaré ``capabilities.forced_tool_choice: false`` (sa requête
   arrive alors en ``auto``), et l'erreur 400 du fournisseur le rappelle ;
-- cache de prompt (B5) : les points déclarés par ``cache`` (prompt système,
+- cache de prompt (fonction B5) : les points déclarés par ``cache`` (prompt système,
   dernier outil, dernier bloc de la conversation) et les blocs marqués
   ``cache_breakpoint`` reçoivent un ``cache_control``, au plus quatre par
   requête (les marques les plus récentes d'abord) ; jamais sur un bloc de
   raisonnement. Le state de la session, que le moteur ajoute en fin de requête
-  (D4), n'est pas de la conversation : son point se pose sur le bloc qui le
+  (décision D4 du state de session), n'est pas de la conversation : son point se pose sur le bloc qui le
   précède, et un state qui change ne fait pas perdre le cache de l'historique ;
 - le schéma de sortie (``output_schema``) devient ``output_config.format``
   pour un modèle déclaré ``native_json: true``, après adaptation par le SDK
   (``transform_schema`` : mots-clés non pris en charge reportés dans les
-  descriptions ; le contrat de sortie vérifie le schéma d'origine) (B9) ;
+  descriptions ; le contrat de sortie vérifie le schéma d'origine) (fonction B9) ;
 - fin du flux : ``message_stop`` la dit. Sans lui, le flux a été coupé : l'appel
   échoue en ``transient``, au lieu de rendre un début de réponse sans consommation ;
 - coupure, délai ou erreur de protocole du client HTTP (``httpx2``) pendant la lecture du flux :
@@ -93,16 +93,17 @@ from loom_ia.core.ports import ModelError
 logger = logging.getLogger(__name__)
 
 PROVIDER: Final = "anthropic"
-# Adresse sans ``base_url`` : passée au SDK pour qu'il ne lise pas ANTHROPIC_BASE_URL.
+"""Nom du fournisseur, tel que le journal et la télémétrie l'écrivent."""
 DEFAULT_BASE_URL: Final = "https://api.anthropic.com"
-# Variable que le SDK lit pour ajouter des en-têtes à chaque requête.
+"""Adresse sans ``base_url`` : passée au SDK pour qu'il ne lise pas ANTHROPIC_BASE_URL."""
 CUSTOM_HEADERS_ENV: Final = "ANTHROPIC_CUSTOM_HEADERS"
-# L'API exige max_tokens.
+"""Variable que le SDK lit pour ajouter des en-têtes à chaque requête."""
 DEFAULT_MAX_TOKENS: Final = 4096
-# Points de cache permis par requête.
+"""L'API exige max_tokens."""
 MAX_CACHE_POINTS: Final = 4
-# Blocs qui ne peuvent pas porter de point de cache.
+"""Points de cache permis par requête."""
 _UNCACHEABLE: Final = frozenset({"thinking", "redacted_thinking"})
+"""Blocs qui ne peuvent pas porter de point de cache."""
 
 _STOP_REASONS: Final[dict[str, StopReason]] = {
     "end_turn": "end",
@@ -145,6 +146,19 @@ class AnthropicModel:
         api_key: str,
         http_client: httpx2.AsyncClient | None = None,
     ) -> None:
+        """Prépare le client du SDK, sans retries et sans rien lire de l'environnement.
+
+        L'adresse vient de ``base_url``, à défaut celle de l'API officielle : le SDK
+        ne lit pas ``ANTHROPIC_BASE_URL``. Les en-têtes que l'environnement ajouterait sont
+        omis (``ANTHROPIC_CUSTOM_HEADERS``), le délai total est ``timeouts.total``. Sans
+        ``api_key_env``, aucune clé n'est envoyée : un 401 le dira.
+
+        Args:
+            spec: Le modèle déclaré.
+            api_key: Clé de l'API (``NO_API_KEY`` : aucune).
+            http_client: Client HTTP à utiliser, par exemple celui qui garde les
+                échanges bruts (``RecordingClient``) ; à défaut, celui du SDK.
+        """
         self.spec = spec
         # Sans ``api_key_env``, aucune clé n'est envoyée : un 401 le dira.
         self._sent_key = api_key != NO_API_KEY
@@ -159,15 +173,34 @@ class AnthropicModel:
 
     @property
     def provider(self) -> str:
+        """Nom du fournisseur : ``anthropic``."""
         return PROVIDER
 
     async def aclose(self) -> None:
+        """Ferme le client du SDK."""
         await self._client.close()
 
     def __repr__(self) -> str:
         return f"AnthropicModel({self.spec.id!r}, model={self.spec.model!r})"
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        """Envoie la requête à l'API Messages et rend la réponse en morceaux neutres.
+
+        Pose les points de cache, le choix d'outil, ``max_tokens`` (celui de la
+        requête, puis du modèle, puis 4 096) et le schéma de sortie
+        (``output_config``) ; les ``params`` du modèle partent dans le corps. Sans ``capabilities.streaming``, la réponse entière est lue puis
+        rendue en flux simulé.
+
+        Args:
+            request: La requête neutre.
+
+        Yields:
+            Les morceaux de la réponse.
+
+        Raises:
+            ModelError: Erreur de l'API ou du transport, classée ; flux coupé avant
+                sa fin (``transient``) ; JSON illisible (``transient``).
+        """
         cache = self.spec.cache
         marks: list[_Mark] = []
         tail: list[_Mark] = []
@@ -245,8 +278,8 @@ class AnthropicModel:
 
 # --- Requête -------------------------------------------------------------------
 
-# Bloc d'un message marqué ``cache_breakpoint`` : (tour, position dans le tour).
 type _Mark = tuple[int, int]
+"""Bloc d'un message marqué ``cache_breakpoint`` : (tour, position dans le tour)."""
 
 
 def to_anthropic_messages(
@@ -258,7 +291,7 @@ def to_anthropic_messages(
     """Messages neutres → messages de l'API, fusionnés par rôle.
 
     ``marks`` reçoit la place des blocs marqués ``cache_breakpoint`` ; ``tail``,
-    celle du state de la session (D4) en fin de requête, où finit la conversation.
+    celle du state de la session (décision D4 du state de session) en fin de requête, où finit la conversation.
     """
     turns: list[tuple[_Role, list[sdk.ContentBlockParam]]] = []
     state = _trailing_state(messages) if tail is not None else None
@@ -280,7 +313,7 @@ def to_anthropic_messages(
 
 
 def _trailing_state(messages: Sequence[Message]) -> int | None:
-    """Place du state que le moteur ajoute en fin de requête (D4), ou None.
+    """Place du state que le moteur ajoute en fin de requête (décision D4 du state de session), ou None.
 
     C'est le dernier message, ou l'avant-dernier devant la consigne d'une
     réponse forcée, et jamais le premier : la demande le précède toujours.
@@ -303,11 +336,11 @@ def place_cache_points(
     *,
     tail: _Mark | None = None,
 ) -> None:
-    """Pose les ``cache_control`` : réglage ``cache`` du modèle, puis blocs marqués (B5).
+    """Pose les ``cache_control`` : réglage ``cache`` du modèle, puis blocs marqués (fonction B5).
 
     Au plus quatre : ceux du réglage d'abord (outils, système, conversation),
     puis les marques, des plus récentes aux plus anciennes. ``tail`` : place du
-    state de la session (D4) ; le point de la conversation se pose avant lui.
+    state de la session (décision D4 du state de session) ; le point de la conversation se pose avant lui.
     """
     control: sdk.CacheControlEphemeralParam = {"type": "ephemeral"}
     if cache is not None and cache.ttl != "5m":
@@ -341,7 +374,7 @@ def _last_cacheable(messages: list[sdk.MessageParam], tail: _Mark | None = None)
     """Dernier bloc de la conversation qui peut porter un point de cache.
 
     Sans ``tail``, dans le dernier message. Avec, avant ce bloc — le state de
-    la session (D4) —, en remontant les messages s'il le faut : un point posé
+    la session (décision D4 du state de session) —, en remontant les messages s'il le faut : un point posé
     sur le state, qui change, ne servirait à aucun appel suivant.
     """
     if not messages:
@@ -380,7 +413,7 @@ def _hinted(error: ModelError, request: ModelRequest) -> ModelError:
 
 
 def _tool_choice(request: ModelRequest) -> sdk.ToolChoiceParam:
-    """``required`` devient ``any`` : le modèle doit appeler au moins un outil (#012)."""
+    """``required`` devient ``any`` : le modèle doit appeler au moins un outil (backlog #012)."""
     match request.tool_choice:
         case "none":
             return {"type": "none"}
@@ -391,6 +424,11 @@ def _tool_choice(request: ModelRequest) -> sdk.ToolChoiceParam:
 
 
 def to_anthropic_tools(request: ModelRequest) -> list[sdk.ToolParam]:
+    """Les outils proposés, au format de l'API : nom, description et schéma d'entrée.
+
+    Args:
+        request: La requête neutre.
+    """
     tools: list[sdk.ToolParam] = []
     for tool in request.tools:
         schema: dict[str, object] = {**tool.input_schema}
@@ -399,6 +437,12 @@ def to_anthropic_tools(request: ModelRequest) -> list[sdk.ToolParam]:
 
 
 def _to_block(block: ContentBlock) -> sdk.ContentBlockParam | None:
+    """Un bloc neutre au format de l'API ; ``None`` pour un bloc qui ne part pas.
+
+    Un texte vide ne part pas, ni un raisonnement venu d'un autre fournisseur
+    ou sans signature ; un JSON part en texte, une image en base64. Une
+    référence de fichier non remplacée par le moteur lève ``ModelError``.
+    """
     match block:
         case TextBlock(text=text):
             return {"type": "text", "text": text} if text else None
@@ -500,11 +544,20 @@ class StreamParser:
         self.stopped = False
 
     def feed(self, event: sdk.RawMessageStreamEvent) -> list[ModelChunk]:
+        """Traduit un événement du flux en morceaux neutres.
+
+        L'entrée est facturée dès ``message_start`` et part tout de suite en
+        ``UsageDelta`` ; le reste de la consommation et la raison d'arrêt suivent
+        au ``message_stop``, qui marque le flux complet (``stopped``).
+
+        Args:
+            event: Événement brut du SDK.
+        """
         match event:
             case sdk.RawMessageStartEvent(message=message):
                 # L'entrée est facturée dès ici : un flux coupé ensuite (délai,
                 # réseau, annulation) la doit quand même. Elle part donc tout de
-                # suite ; le reste suivra au ``message_stop`` (test J1 du 21/10).
+                # suite ; le reste suivra au ``message_stop`` (essai de la fonction J1, 21/10).
                 self._model = message.model
                 self.record_usage(message.usage)
                 self._sent = self.usage()
@@ -542,6 +595,7 @@ class StreamParser:
         self._usage.update({key: value for key, value in values.items() if value is not None})
 
     def usage(self) -> Usage:
+        """La consommation retenue jusqu'ici."""
         return Usage(
             input_tokens=self._usage.get("input", 0),
             output_tokens=self._usage.get("output", 0),
@@ -551,6 +605,7 @@ class StreamParser:
         )
 
     def _block_start(self, index: int, block: sdk.ContentBlock) -> list[ModelChunk]:
+        """Le début d'un bloc : texte, raisonnement (signé ou masqué), ou appel d'outil, numéroté dans l'ordre des appels ; un autre type de bloc est ignoré."""
         match block:
             case sdk.TextBlock(text=text):
                 return [TextDelta(text=text)] if text else []
@@ -611,6 +666,15 @@ def response_to_chunks(message: sdk.Message) -> list[ModelChunk]:
 
 
 def to_model_error(exc: anthropic.APIError | httpx2.HTTPError) -> ModelError:
+    """Une erreur du SDK ou du transport, classée en ``ModelError``.
+
+    Une coupure, un délai ou une erreur de protocole pendant la lecture du flux
+    est transitoire. Une erreur HTTP est classée par son statut (sauf le 200
+    d'un flux ouvert), son type et son ``Retry-After``.
+
+    Args:
+        exc: L'erreur levée.
+    """
     if isinstance(exc, httpx2.HTTPError):
         # Coupure, délai ou protocole en cours de flux : le SDK n'enrobe que l'envoi de la
         # requête, pas la lecture du corps. Sans code HTTP ni indice : transitoire.

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Outils fournis par loom-ia (``loom.<outil>``) : catalogue, montage, ``loom validate``,
-et le préfixe ``loom.`` réservé dans le registre.
+"""Outils fournis par loom-ia (``loom.<outil>``) : catalogue, montage, ``loom validate``, et le préfixe ``loom.`` réservé dans le registre.
 
 Aucun n'est actif d'office : un agent n'a que les outils qu'il liste. Les essais
 de montage s'appuient sur un outil fourni d'essai, ajouté au catalogue le temps

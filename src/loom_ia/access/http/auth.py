@@ -1,33 +1,33 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Clés d'API de l'accès REST (N2, #39).
+"""Clés d'API de l'accès REST (fonction N2, point 39).
 
 La configuration ne garde que l'empreinte des clés (``sha256:…``) : la clé
 elle-même n'existe qu'une fois, à sa création. Une instance sans clé déclarée
-agit au nom de ``server.http.user``, sur la boucle locale (D-1b) ; sans l'un
-ni l'autre, ``create_app`` refuse de la servir (D-1).
+agit au nom de ``server.http.user``, sur la boucle locale (décision D-1b des utilisateurs et rôles) ; sans l'un
+ni l'autre, ``create_app`` refuse de la servir (décision D-1 des utilisateurs et rôles).
 
 Permissions vérifiées : ``run`` pour lancer un run, ``read`` pour lire agents,
 statuts, événements et rapports, ``admin`` pour lancer un run sans ses juges
 (``judges: skip``, J3). Ce sont celles des rôles de l'utilisateur de la clé,
-que la clé peut restreindre (``scopes``, ``agents``, D-4) ; un refus dit
+que la clé peut restreindre (``scopes``, ``agents``, décision D-4 des utilisateurs et rôles) ; un refus dit
 lequel des deux manque.
 
-Client (L1, #34) : une clé agit **au nom du client de son utilisateur**, et
+Client (fonction L1, point 34) : une clé agit **au nom du client de son utilisateur**, et
 c'est la seule chose qui le dit en REST — rien dans le corps d'une requête ne
 peut le changer. Toute lecture est donc bornée au client de la clé : on ne peut pas
 demander le journal d'un autre, faute de façon de le nommer.
 
-Débit (#39, J5.1b) : une clé peut porter un ``rate_limit``. Il protège le
+Débit (point 39, jalon J5.1b) : une clé peut porter un ``rate_limit``. Il protège le
 serveur, il ne dit rien du métier — c'est le quota du client qui le fait, et
 lui vaut par tous les accès. Vérifié à l'identification, donc sur **toutes**
 les routes REST et sur le MCP HTTP, dans une même fenêtre par clé, et répondu
 par un 429 avec un ``Retry-After``.
 
-Expiration et contenu (J5.2a) : une clé peut porter une date de fin — elle
+Expiration et contenu (jalon J5.2a) : une clé peut porter une date de fin — elle
 est alors reconnue puis **refusée** (401), pour que le message dise « expirée »
 et non « inconnue ». Et la permission ``read_content`` décide de ce qu'une lecture
 montre : sans elle, les routes répondent, mais privées de ce qu'un utilisateur
-a écrit et de ce qu'un modèle a répondu (§14.2). Ce qu'une clé **lance**, elle
+a écrit et de ce qu'un modèle a répondu (conception §14.2). Ce qu'une clé **lance**, elle
 le reçoit : c'est la relecture qui demande la permission.
 """
 
@@ -44,7 +44,9 @@ from loom_ia.config.models import Permission, SecurityConfig
 from loom_ia.tenancy import RateWindow
 
 BEARER: Final = "bearer "
+"""Préfixe de l'en-tête ``Authorization`` qui porte une clé, en minuscules."""
 API_KEY_HEADER: Final = "x-api-key"
+"""En-tête qui porte la clé, à défaut d'``Authorization: Bearer``."""
 _CHALLENGE: Final = {"WWW-Authenticate": "Bearer"}
 
 
@@ -69,7 +71,7 @@ def refusal(
     call_id: str | None = None,
     headers: dict[str, str] | None = None,
 ) -> HTTPException:
-    """Le refus d'une requête, écrit au journal d'audit (D-9) : à lever par l'accès.
+    """Le refus d'une requête, écrit au journal d'audit (décision D-9 des utilisateurs et rôles) : à lever par l'accès.
 
     ``actor`` nomme l'utilisateur refusé quand ce n'est pas celui de la clé :
     l'utilisateur qu'une passerelle endosse (``as_user``). La route, l'agent et
@@ -100,7 +102,7 @@ def identify(
 ) -> Caller:
     """Reconnaît l'appelant, ou refuse la requête.
 
-    Sans clé déclarée, ``local_user`` (``server.http.user``, D-1b) est
+    Sans clé déclarée, ``local_user`` (``server.http.user``, décision D-1b des utilisateurs et rôles) est
     l'appelant de toute requête : une instance locale qui sait au nom de qui
     elle agit. ``create_app`` refuse une instance qui n'a ni l'un ni l'autre ;
     appelé quand même, c'est un 401. ``access`` dit, au journal d'audit, par

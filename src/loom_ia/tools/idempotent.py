@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Outils dont l'effet n'est produit qu'une fois (#18, #49).
+"""Outils dont l'effet n'est produit qu'une fois (points 18 et 49).
 
 Le moteur relance un appel interrompu. Pour un outil sans effet de bord c'est
 sans conséquence ; pour un outil qui envoie un courriel ou débite un compte,
@@ -87,32 +87,37 @@ from loom_ia.tools.python import FunctionTool
 
 logger = logging.getLogger(__name__)
 
-# Durée d'une réservation sans délai propre à l'outil : au-delà, elle est
-# réputée abandonnée et l'état de son effet devient inconnu.
 DEFAULT_RESERVATION: Final = 300.0
+"""Durée d'une réservation sans délai propre à l'outil : au-delà, elle est
+réputée abandonnée et l'état de son effet devient inconnu.
+"""
 
-# Clé métier d'un appel, tirée de ses arguments.
 type KeyMaker = Callable[[dict[str, JsonValue]], str]
+"""Clé métier d'un appel, tirée de ses arguments."""
 
-# Quelqu'un d'autre tient la clé et n'a pas fini : ce n'est pas un échec, et
-# le modèle ne doit surtout pas en relancer un second.
 BUSY: Final = "Cet appel est déjà en cours ailleurs : ne le relance pas, attends son résultat."
+"""Quelqu'un d'autre tient la clé et n'a pas fini : ce n'est pas un échec, et
+le modèle ne doit surtout pas en relancer un second.
+"""
 
-# Réservation périmée : l'exécution précédente n'a pas rendu la clé, et rien
-# ne dit si son effet a eu lieu (#18).
 UNKNOWN_EFFECT: Final = (
     "État inconnu : une exécution précédente de cet appel s'est interrompue et "
     "a peut-être produit son effet. Il n'a pas été relancé ; vérifie avant de "
     "le rappeler."
 )
+"""Réservation périmée : l'exécution précédente n'a pas rendu la clé, et rien
+ne dit si son effet a eu lieu (point 18).
+"""
 
-# Ce que rend un appel rejoué dont l'effet a eu lieu, mais dont le résultat était
-# trop gros pour être mémorisé : le dire, plutôt que de laisser croire à un échec.
 OVERSIZED: Final = (
     "Cet appel a déjà produit son effet, mais son résultat ({size} caractères) dépasse "
     "la limite de {limit} caractères mémorisables : il n'a pas été conservé. L'effet "
     "n'est pas relancé ; vérifie son résultat à la source."
 )
+"""Ce que rend un appel rejoué dont l'effet a eu lieu, mais dont le résultat
+était trop gros pour être mémorisé : le dire, plutôt que de laisser croire à
+un échec.
+"""
 
 
 class IdempotentTool[**P, R]:
@@ -128,6 +133,18 @@ class IdempotentTool[**P, R]:
     ``retry_unknown`` : reprendre une réservation périmée et refaire l'effet,
     au lieu de le signaler — à ne vouloir que si refaire est moins grave que
     ne pas faire, par exemple quand l'API appelée dédoublonne elle-même.
+
+    Args:
+        tool: L'outil, déclaré par ``@tool``.
+        key: Clé métier tirée des arguments.
+        reservation: Durée de la prise de clé, en secondes.
+        ttl: Durée de mémorisation du résultat, en secondes.
+        retry_unknown: Reprendre une réservation périmée et refaire l'effet.
+
+    Attributes:
+        reservation: Durée de la prise de clé, ou ``None``.
+        ttl: Durée de mémorisation, ou ``None``.
+        retry_unknown: Reprise d'une réservation périmée.
     """
 
     def __init__(
@@ -139,6 +156,7 @@ class IdempotentTool[**P, R]:
         ttl: float | None = None,
         retry_unknown: bool = False,
     ) -> None:
+        """Enveloppe l'outil : sa déclaration passe à ``idempotent: true``."""
         self._tool = tool
         self._spec = tool.spec.model_copy(update={"idempotent": True, "business_key": key is not None})
         self._key = key
@@ -148,6 +166,7 @@ class IdempotentTool[**P, R]:
 
     @property
     def spec(self) -> ToolSpec:
+        """Déclaration de l'outil, ``idempotent`` vrai et ``business_key`` selon ``key``."""
         return self._spec
 
     @property
@@ -172,9 +191,27 @@ class IdempotentTool[**P, R]:
         return f"{context.tenant_id}:{self._spec.name}:{self._key(arguments)}"
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        """Appelle l'outil enveloppé directement, sans clé ni registre d'idempotence."""
         return self._tool(*args, **kwargs)
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        """L'effet mémorisé s'il a eu lieu, sinon l'appel de l'outil sous réservation de sa clé.
+
+        Hors moteur (pas de magasin), l'outil est appelé tel quel.
+
+        Args:
+            arguments: Arguments du modèle.
+            context: Contexte de l'appel : magasin, clé technique, client.
+
+        Returns:
+            Le résultat mémorisé (le moteur écrit alors ``idempotency.reused``),
+            ou celui de l'outil.
+
+        Raises:
+            ToolError: Un autre appel tient la clé et n'a pas fini (``BUSY``).
+            UnknownEffect: Réservation périmée sans ``retry_unknown`` : l'effet a
+                peut-être eu lieu.
+        """
         store = context.idempotency
         if store is None:
             # Appelé hors moteur : il n'y a pas de reprise à craindre.
@@ -222,7 +259,7 @@ class IdempotentTool[**P, R]:
             # l'extérieur (``CancelledError`` n'est pas une ``Exception``) ne
             # disent rien de l'effet, qui a pu avoir lieu : la clé reste prise
             # jusqu'à son expiration, et l'appel suivant tombe sur l'état
-            # inconnu (#18) au lieu de refaire l'effet.
+            # inconnu (point 18) au lieu de refaire l'effet.
             await store.release(key, **proof)
             raise
         await self._record(store, key, output, proof, context)
@@ -318,7 +355,19 @@ def idempotent[**P, R](
     ttl: float | None = None,
     retry_unknown: bool = False,
 ) -> IdempotentTool[P, R] | Callable[[FunctionTool[P, R]], IdempotentTool[P, R]]:
-    """Mémorise l'effet de l'outil sous sa clé, avec ou sans options."""
+    """Mémorise l'effet de l'outil sous sa clé, avec ou sans options.
+
+    Args:
+        tool: L'outil, quand le décorateur s'emploie sans parenthèses.
+        key: Clé métier tirée des arguments ; sans elle, la clé de l'appel.
+        reservation: Durée de la prise de clé, en secondes.
+        ttl: Durée de mémorisation du résultat, en secondes.
+        retry_unknown: Refaire l'effet d'une réservation périmée.
+
+    Returns:
+        Une ``IdempotentTool``, ou un décorateur qui en rend une. À placer
+        au-dessus de ``@tool``.
+    """
 
     def wrap(target: FunctionTool[P, R]) -> IdempotentTool[P, R]:
         return IdempotentTool(target, key=key, reservation=reservation, ttl=ttl, retry_unknown=retry_unknown)

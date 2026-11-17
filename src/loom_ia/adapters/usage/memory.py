@@ -16,9 +16,11 @@ from typing import Final
 
 from loom_ia.core.model import RunId, Spent, TenantId
 
-# Périodes gardées par client et par genre de période (jour, mois) : la courante,
-# plus de quoi traverser un changement de fenêtre sans perdre la précédente.
 MAX_PERIODS: Final = 8
+"""Périodes gardées par client et par genre de période (jour, mois) : la
+courante, plus de quoi traverser un changement de fenêtre sans perdre la
+précédente.
+"""
 
 
 class InMemoryUsageCounter:
@@ -28,12 +30,29 @@ class InMemoryUsageCounter:
         self._runs: dict[TenantId, dict[str, dict[RunId, Spent]]] = {}
 
     async def consumed(self, tenant_id: TenantId, period: str) -> Spent:
+        """Somme de ce qu'ont coûté les runs d'un client sur une période (``UsageCounter.consumed``).
+
+        Args:
+            tenant_id: Le client.
+            period: La période (``day:…``, ``month:…``).
+        """
         total = Spent()
         for spent in self._runs.get(tenant_id, {}).get(period, {}).values():
             total += spent
         return total
 
     async def record(self, tenant_id: TenantId, period: str, run_id: RunId, spent: Spent) -> None:
+        """Pose ce qu'un run a coûté ; réenregistrer le même run remplace, sans doubler.
+
+        Seules les ``MAX_PERIODS`` périodes les plus récentes de chaque genre (jour,
+        mois) sont gardées.
+
+        Args:
+            tenant_id: Le client.
+            period: La période.
+            run_id: Le run.
+            spent: Ce qu'il a coûté.
+        """
         periods = self._runs.setdefault(tenant_id, {})
         periods.setdefault(period, {})[run_id] = spent
         # Par genre, et non toutes ensemble : les clés ``day:…`` se trient avant les clés
@@ -44,6 +63,7 @@ class InMemoryUsageCounter:
             del periods[key]
 
     async def aclose(self) -> None:
+        """Oublie tous les compteurs."""
         self._runs.clear()
 
     def __repr__(self) -> str:
