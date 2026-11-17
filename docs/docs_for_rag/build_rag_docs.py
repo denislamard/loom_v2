@@ -25,9 +25,14 @@ Cinq sortes de pages, dans ``docs/docs_for_rag/generated_docs/`` :
 Le JSONL (``docs/docs_for_rag/generated_docs.jsonl``) reprend ces pages et
 les documents existants retenus (``EXISTING_DOCS``), au format de
 ``loom memory export`` : il se charge par ``loom memory import``. Un document
-a un identifiant stable, tiré de son chemin : un jeu doré peut s'y référer.
-``import`` saute un document déjà présent, même modifié : après une
-régénération, on recharge une base vide.
+de plus de ``SPLIT_OVER`` caractères y est découpé à ses titres ``##``, puis
+``###`` pour une section encore trop grosse (``split_page``) : ``get`` rend
+alors une section qu'un agent peut lire, et la recherche, qui rend au plus
+quelques passages par document, en trouve dans plus de sections. Les fichiers
+sur le disque ne sont pas découpés. Un document a un identifiant stable, tiré
+de son chemin et de sa section : un jeu doré peut s'y référer. ``import``
+saute un document déjà présent, même modifié : après une régénération, on
+recharge une base vide.
 
 Les pages sont écrites seulement si leur texte change, et une page qui n'est
 plus générée est supprimée.
@@ -93,6 +98,8 @@ EXISTING_DOCS: tuple[str, ...] = (
     "docs/howto/06-outils-fournis.md",
 )
 """Les documents existants qui vont dans le RAG, tels quels. Les analyses d'impact n'y vont pas."""
+SPLIT_OVER: int = 8000
+"""Au-delà, en caractères, un document est découpé à ses titres dans le JSONL."""
 DOC_NAMESPACE: uuid.UUID = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/denislamard/loom_v2")
 """L'espace des identifiants de documents : ``uuid5(DOC_NAMESPACE, chemin)``."""
 
@@ -371,6 +378,18 @@ def summary_of(model: type) -> str:
     return _inline(" ".join(doc.split("\n\n")[0].split()))
 
 
+def description_of(model: type) -> str:
+    """La docstring d'une classe en Markdown, sans sa section ``Attributes`` (ses champs sont listés à part).
+
+    Un modèle de config peut lire une autre forme que ses champs (une liste
+    ramenée à une table par un validateur) : sa docstring le dit, et la page
+    doit le dire aussi.
+    """
+    doc = inspect.cleandoc(model.__doc__ or "")
+    kept = re.split(r"^Attributes:\s*$", doc, maxsplit=1, flags=re.MULTILINE)[0]
+    return docstring_markdown(kept)
+
+
 def _is_model(value: object) -> bool:
     return isinstance(value, type) and issubclass(value, BaseModel)
 
@@ -469,6 +488,27 @@ def yaml_key(name: str, info: FieldInfo) -> str:
     return alias or name
 
 
+def section_defaults(made: BaseModel, limit: int = 600) -> str:
+    """Les défauts d'une section, à plat et sans les valeurs nulles : « `events.backend: memory`… ».
+
+    La section et ses sous-sections peuvent finir dans des documents séparés
+    du RAG : la clé qui les contient dit donc elle-même ce qu'elles valent par
+    défaut.
+    """
+    leaves: list[str] = []
+
+    def walk(value: object, prefix: str) -> None:
+        if isinstance(value, Mapping) and value:
+            for key, inner in cast(Mapping[str, object], value).items():
+                walk(inner, f"{prefix}.{key}" if prefix else key)
+        elif value is not None:
+            leaves.append(f"`{prefix}: {value_text(cast(object, value))}`")
+
+    walk(made.model_dump(mode="json", by_alias=True), "")
+    said = ", ".join(leaves)
+    return f"les défauts de la section ({_short(said, limit)})" if leaves else "les défauts de la section"
+
+
 def field_line(path: str, name: str, info: FieldInfo, docs: Mapping[str, str]) -> str:
     """Une clé : chemin, type, obligatoire ou défaut, bornes, description."""
     facts = [f"type `{type_text(info.annotation)}`"]
@@ -480,9 +520,9 @@ def field_line(path: str, name: str, info: FieldInfo, docs: Mapping[str, str]) -
         except TypeError:
             made = None
         if made is not None:
-            facts.append(f"défaut : `{value_text(made)}`" if not isinstance(made, BaseModel) else "défaut : les défauts de la section")
+            facts.append(f"défaut : `{value_text(made)}`" if not isinstance(made, BaseModel) else f"défaut : {section_defaults(made)}")
     elif isinstance(info.default, BaseModel):
-        facts.append("défaut : les défauts de la section")
+        facts.append(f"défaut : {section_defaults(info.default)}")
     else:
         facts.append(f"défaut : `{value_text(info.default)}`")
     bounds = bounds_text(info)
@@ -545,7 +585,7 @@ def model_sections(
     out = [
         heading,
         "",
-        summary_of(model),
+        description_of(model),
         "",
         f"Modèle Pydantic : `{model.__module__}.{model.__qualname__}`.",
         "",
@@ -730,9 +770,13 @@ def tool_pages(ref: Reference) -> list[Page]:
         target = entry if isinstance(entry, str) else entry.target
         intro = f"L'outil `{name}` est fourni avec loom_v2. Un agent l'active dans son `agent.yaml` : `- python: {name}` dans `tools`."
         lines = [f"# {title}", "", intro, ""]
-        doc = module_docstring(target.split(":")[0])
-        if doc:
-            lines += [f"## Ce que fait {name}", "", docstring_markdown(doc), ""]
+        params = None if isinstance(entry, str) else entry.params
+        # Ce que fait l'outil, puis son mode d'emploi (le module de ses paramètres) : la
+        # section que trouvent les questions générales (« quelles actions ? quels modèles ? »).
+        about = [module_docstring(target.split(":")[0]), module_docstring(params.split(":")[0]) if params else None]
+        if any(about):
+            lines += [f"## Ce que fait {name}", ""]
+            lines += [part for text in about if text for part in (docstring_markdown(text), "")]
         lines += [f"## Comment {name} est monté", "", f"- cible : `{target}`"]
         if not isinstance(entry, str):
             if entry.extra:
@@ -743,7 +787,6 @@ def tool_pages(ref: Reference) -> list[Page]:
             if entry.own_description:
                 lines.append("- l'outil tire sa description de ses réglages : `description` est refusé, `skill` ajoute du texte")
         lines.append("")
-        params = None if isinstance(entry, str) else entry.params
         if params:
             module_name, model_name = params.split(":")
             model = cast(
@@ -751,9 +794,9 @@ def tool_pages(ref: Reference) -> list[Page]:
                 getattr(importlib.import_module(module_name), model_name),
             )
             lines += [
-                f"## Les réglages de {name} dans agent.yaml",
+                f"## Les paramètres de {name} dans agent.yaml (réglages sous sa référence)",
                 "",
-                f"Ce sont des clés de sa référence dans `tools`, à côté de `python: {name}`.",
+                f"Les paramètres de `{name}` sont des clés de sa référence dans `tools`, à côté de `python: {name}`.",
                 "",
             ]
             lines += model_sections(
@@ -961,14 +1004,77 @@ def commit_time(repo: Path) -> str:
         return datetime.now(UTC).isoformat()
 
 
-def write_jsonl(repo: Path, pages: Sequence[Page]) -> None:
-    """Écrit le JSONL de ``loom memory import`` : un ``Document`` par page."""
+_FENCE_LINE: re.Pattern[str] = re.compile(r"^\s*(```|~~~)")
+
+
+def _sections(text: str, level: int) -> list[tuple[str | None, list[str]]]:
+    """Le texte coupé à ses titres de ``level`` (hors blocs de code) : (titre, lignes sans le titre) ; le premier morceau n'a pas de titre."""
+    marker = "#" * level + " "
+    found: list[tuple[str | None, list[str]]] = [(None, [])]
+    fenced = False
+    for line in text.splitlines():
+        if _FENCE_LINE.match(line):
+            fenced = not fenced
+        if not fenced and line.startswith(marker):
+            found.append((line[len(marker) :].strip(), []))
+        else:
+            found[-1][1].append(line)
+    return found
+
+
+def anchor(heading: str) -> str:
+    """L'ancre d'un titre, comme GitHub l'écrit : minuscules, sans ponctuation, espaces en tirets."""
+    lowered = re.sub(r"[^\w\- ]", "", heading.lower(), flags=re.UNICODE)
+    return lowered.strip().replace(" ", "-")
+
+
+def split_page(page: Page) -> list[Page]:
+    """Les documents d'une page dans le JSONL : elle-même, ou ses sections si elle dépasse ``SPLIT_OVER``.
+
+    Chaque section devient un document dont le titre est « titre de la page >
+    titre de la section » et dont le texte commence par ce titre en ``#`` :
+    le chemin de titres de ses passages reste complet. Le texte d'avant le
+    premier ``##`` garde le titre et le chemin de la page. Une section encore
+    trop grosse est recoupée à ses ``###`` ; au-delà, elle reste entière.
+    """
+    if len(page.text) <= SPLIT_OVER:
+        return [page]
+    pieces: list[Page] = []
+    used: dict[str, int] = {}
+
+    def add(titles: Sequence[str], lines: Sequence[str]) -> None:
+        body = "\n".join(lines).strip()
+        if not body:
+            return
+        if not titles:
+            pieces.append(Page(page.path, page.title, page.tags, body + "\n", page.generated))
+            return
+        key = "/".join(anchor(t) for t in titles)
+        used[key] = used.get(key, 0) + 1
+        path = f"{page.path}#{key}" + (f"-{used[key]}" if used[key] > 1 else "")
+        title = " > ".join([page.title, *titles])
+        pieces.append(Page(path, title, page.tags, f"# {title}\n\n{body}\n", page.generated))
+
+    for heading, lines in _sections(page.text, 2):
+        if heading is None:
+            add([], lines)
+            continue
+        if len("\n".join(lines)) <= SPLIT_OVER:
+            add([heading], lines)
+            continue
+        for sub, sub_lines in _sections("\n".join(lines), 3):
+            add([heading] if sub is None else [heading, sub], sub_lines)
+    return pieces
+
+
+def write_jsonl(repo: Path, pages: Sequence[Page]) -> int:
+    """Écrit le JSONL de ``loom memory import`` : un ``Document`` par page, ou par section d'une grosse page ; rend leur nombre."""
     from loom_ia.tools_builtin.memory.chunk import content_hash
     from loom_ia.tools_builtin.memory.records import Document
 
     added = commit_time(repo)
     lines: list[str] = []
-    for page in pages:
+    for page in (piece for whole in pages for piece in split_page(whole)):
         doc = Document(
             doc_id=str(uuid.uuid5(DOC_NAMESPACE, page.path)),
             title=page.title,
@@ -982,6 +1088,7 @@ def write_jsonl(repo: Path, pages: Sequence[Page]) -> None:
         )
         lines.append(doc.model_dump_json())
     (repo / JSONL).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return len(lines)
 
 
 def all_pages(repo: Path) -> list[Page]:
@@ -1011,15 +1118,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     # L'aide d'argparse se plie à la largeur du terminal : une largeur fixe rend les pages identiques d'un poste à l'autre.
     os.environ["COLUMNS"] = "100"
+    # Et elle se colore dans un terminal (Python 3.14) : les codes ANSI finiraient dans les pages.
+    os.environ["PYTHON_COLORS"] = "0"
+    os.environ["NO_COLOR"] = "1"
     repo = cast(Path, args.repo).resolve()
     pages = all_pages(repo)
     written, removed = write_pages(repo, pages)
-    write_jsonl(repo, pages)
+    documents = write_jsonl(repo, pages)
     by_tag: dict[str, int] = {}
     for page in pages:
         by_tag[page.tags[0]] = by_tag.get(page.tags[0], 0) + 1
     counts = ", ".join(f"{tag} {n}" for tag, n in sorted(by_tag.items()))
-    print(f"{len(pages)} documents ({counts}) ; {written} page(s) écrite(s), {removed} supprimée(s) ; {JSONL}")
+    print(f"{len(pages)} pages ({counts}) ; {written} écrite(s), {removed} supprimée(s) ; {JSONL} : {documents} documents")
     return 0
 
 

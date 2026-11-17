@@ -6,12 +6,12 @@ Modèle Pydantic : `loom_ia.agents.spec.AgentSpec`.
 
 - `name` (type `str` ; obligatoire ; bornes : motif `^[A-Za-z0-9_-]{1,64}$`) : Nom de l'agent : lettres, chiffres, `_` et `-`, 64 au plus. Un nom qui commence par `_` est réservé aux agents internes.
 - `description` (type `str` ; défaut : `""`) : Description de l'agent (sous-agent, outil MCP, `/v1/agents`).
-- `expose` (type `Expose` ; défaut : les défauts de la section) : Points d'accès qui le publient.
+- `expose` (type `Expose` ; défaut : les défauts de la section (`rest: true`, `mcp: true`)) : Points d'accès qui le publient.
 - `main` (type `MainRole` ; obligatoire) : L'orchestrateur : modèle, secours, prompt, `llm`, `context`.
 - `max_iterations` (type `int` ; défaut : `10` ; bornes : > 0) : Appels de l'orchestrateur avant la réponse forcée sans outils (10 par défaut).
 - `timeout` (type `float | null` ; défaut : `null`) : Délai maximal d'un run, en secondes (fonction A6, backlog #006). Il borne le temps de pilotage cumulé, pas l'horloge : l'attente en file, une pause et le temps entre un plantage et sa reprise ne comptent pas. Un dépassement écrit `run.failed` avec `error_type: timeout` : c'est une clôture, que `resume` ne relance pas, même avec un délai relevé. Sans valeur, pas de délai.
-- `approval` (type `ApprovalSettings` ; défaut : les défauts de la section) : Approbations de l'agent (point 17) : délai laissé à l'approbateur (`expires_in`), effet d'une demande périmée (`on_expiry`). Un outil les demande par sa déclaration (`approval: always`) ou par une politique ; qui les tranche, c'est `access.approve`.
-- `access` (type `AgentAccess` ; défaut : les défauts de la section) : Qui lance, répond, arrête et approuve (décision D-2 des utilisateurs et rôles) : des rôles d'accès de loom.yaml.
+- `approval` (type `ApprovalSettings` ; défaut : les défauts de la section (`expires_in: 86400.0`, `on_expiry: "deny"`)) : Approbations de l'agent (point 17) : délai laissé à l'approbateur (`expires_in`), effet d'une demande périmée (`on_expiry`). Un outil les demande par sa déclaration (`approval: always`) ou par une politique ; qui les tranche, c'est `access.approve`.
+- `access` (type `AgentAccess` ; défaut : les défauts de la section (`approve.tools: {}`, `self_approval: true`)) : Qui lance, répond, arrête et approuve (décision D-2 des utilisateurs et rôles) : des rôles d'accès de loom.yaml.
 - `output` (type `OutputContract | null` ; défaut : `null`) : Contrat de la réponse finale (fonctions A7 et E1) : réparée par l'orchestrateur.
 - `judge` (type `JudgeSpec | null` ; défaut : `null`) : Juge de la réponse finale (fonction E3, point 21), après son contrat.
 - `budget` (type `Budgets | null` ; défaut : `null`) : Budgets de l'agent (fonction J4 ; `run`, `session`, `on_exceed`) : surchargent ceux de la racine (`budgets`), clé par clé.

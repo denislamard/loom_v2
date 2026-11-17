@@ -21,7 +21,7 @@ Modèle Pydantic : `loom_ia.core.model.mcp_spec.McpServerSpec`.
 - `mcp_servers[].connect_timeout` (type `float` ; défaut : `10.0` ; bornes : > 0) : Délai d'établissement de la connexion, initialisation comprise, en secondes. Défaut : 10.
 - `mcp_servers[].idle_timeout` (type `float | null` ; défaut : `300.0`) : Portée `shared` : fermeture après ce délai sans utilisation, en secondes ; `None` la garde ouverte. Défaut : 300.
 - `mcp_servers[].tools` (type `dict[str, ToolOverrides]` ; défaut : `{}`) : Déclarations par outil (effets, approbation, délai…), qui s'ajoutent à ce que le serveur annonce.
-- `mcp_servers[].circuit_breaker` (type `CircuitBreaker | null` ; défaut : les défauts de la section) : Disjoncteur sur les connexions ratées de suite (backlog #011) ; actif par défaut (5 échecs, 60 s), `null` le retire.
+- `mcp_servers[].circuit_breaker` (type `CircuitBreaker | null` ; défaut : les défauts de la section (`failures: 5`, `cooldown: 60.0`)) : Disjoncteur sur les connexions ratées de suite (backlog #011) ; actif par défaut (5 échecs, 60 s), `null` le retire.
 
 ## `mcp_servers[].tools.<nom>`
 

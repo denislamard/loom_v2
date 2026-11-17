@@ -3,9 +3,9 @@
 Entretient la mémoire d'un agent (loom.memory) : export, import….
 
 ```text
-[1;34musage: [0m[1;35mloom memory[0m [[32m-h[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m |
-                   [36m--no-env-file[0m]
-                   [32m{export,import,reindex,eval} ...[0m
+usage: loom memory [-h] [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE |
+                   --no-env-file]
+                   {export,import,reindex,eval} ...
 ```
 
 Arguments et options de `loom memory` :
@@ -20,9 +20,9 @@ Arguments et options de `loom memory` :
 Écrit les documents en JSONL.
 
 ```text
-[1;34musage: [0m[1;35mloom memory export[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m]
-                          [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                          [32magent[0m [32mfile[0m
+usage: loom memory export [-h] [--tenant TENANT] [--config CONFIG] [--profile {dev,prod}]
+                          [--env-file ENV_FILE | --no-env-file]
+                          agent file
 ```
 
 `loom memory` : la base de l'agent, hors de tout run (`access/cli/memory.py`).
@@ -42,9 +42,9 @@ Arguments et options de `loom memory export` :
 Réimporte un export JSONL.
 
 ```text
-[1;34musage: [0m[1;35mloom memory import[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m]
-                          [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                          [32magent[0m [32mfile[0m
+usage: loom memory import [-h] [--tenant TENANT] [--config CONFIG] [--profile {dev,prod}]
+                          [--env-file ENV_FILE | --no-env-file]
+                          agent file
 ```
 
 `loom memory` : la base de l'agent, hors de tout run (`access/cli/memory.py`).
@@ -64,9 +64,9 @@ Arguments et options de `loom memory import` :
 Recalcule les passages avec le modèle de la config.
 
 ```text
-[1;34musage: [0m[1;35mloom memory reindex[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m]
-                           [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                           [32magent[0m
+usage: loom memory reindex [-h] [--tenant TENANT] [--config CONFIG] [--profile {dev,prod}]
+                           [--env-file ENV_FILE | --no-env-file]
+                           agent
 ```
 
 `loom memory` : la base de l'agent, hors de tout run (`access/cli/memory.py`).
@@ -85,9 +85,9 @@ Arguments et options de `loom memory reindex` :
 Mesure la recherche sur un jeu doré.
 
 ```text
-[1;34musage: [0m[1;35mloom memory eval[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--k [33mK[0m] [[36m--json[0m] [[36m--config [33mCONFIG[0m]
-                        [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                        [32magent[0m [32mfile[0m
+usage: loom memory eval [-h] [--tenant TENANT] [--k K] [--json] [--config CONFIG]
+                        [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
+                        agent file
 ```
 
 `loom memory` : la base de l'agent, hors de tout run (`access/cli/memory.py`).

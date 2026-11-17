@@ -6,6 +6,25 @@ La clé `security` de `loom.yaml` et tout ce qu'elle contient.
 
 Qui agit sur loom, et ce que chacun peut faire (`security` ; décisions D-1 à D-5 des utilisateurs et rôles).
 
+Au moins un rôle et un utilisateur sont exigés (décision D-1), et le fichier
+des refus (décision D-9) : le contrôle est fait par `LoomConfig.check`,
+pour que le message donne la config minimale plutôt que l'erreur générique
+d'un champ manquant.
+
+Exemple :
+
+```
+security:
+  roles:
+    - id: operateur
+      permissions: [run, answer, read]
+  users:
+    - id: denis
+      roles: [operateur]
+  audit:
+    path: .loom/audit.jsonl
+```
+
 Modèle Pydantic : `loom_ia.config.models.SecurityConfig`.
 
 - `security.roles` (type `tuple[AccessRole, ...]` ; défaut : `[]`) : Rôles d'accès.
@@ -16,6 +35,15 @@ Modèle Pydantic : `loom_ia.config.models.SecurityConfig`.
 ## `security.roles[]`
 
 Rôle d'accès : des permissions, éventuellement bornées à des agents (décision D-3 des utilisateurs et rôles).
+
+À ne pas confondre avec les rôles LLM d'un agent (`roles:` dans
+`agent.yaml`), qui délèguent à un modèle : un rôle d'accès dit ce qu'un
+utilisateur peut faire sur loom, et ne se déclare que dans
+`security.roles`.
+
+Permissions : `run`, `answer`, `cancel`, `approve`,
+`self_approve` (avec `approve`), `amend`, `read`, `read_content`,
+`admin`, `act_as` (avec `act_as_roles`).
 
 Modèle Pydantic : `loom_ia.config.models.AccessRole`.
 
@@ -29,6 +57,11 @@ Modèle Pydantic : `loom_ia.config.models.AccessRole`.
 
 Utilisateur : une personne ou un service qui agit sur loom (décisions D-1 et D-2 des utilisateurs et rôles).
 
+Il porte les droits, par ses rôles d'accès, et le client au nom duquel il
+agit. Une clé d'API ne fait que le reconnaître (décision D-4) : une
+personne garde la même identité au journal, quel que soit l'accès qu'elle
+emprunte.
+
 Modèle Pydantic : `loom_ia.config.models.UserSpec`.
 
 - `security.users[].id` (type `str` ; obligatoire ; bornes : motif `^[A-Za-z0-9_-]{1,64}$`) : Identifiant de l'utilisateur, écrit au journal (`by`) et donné à `--user`.
@@ -39,6 +72,10 @@ Modèle Pydantic : `loom_ia.config.models.UserSpec`.
 ## `security.api_keys[]`
 
 Clé déclarée dans la config, par son empreinte seulement (point 39).
+
+Elle identifie un utilisateur (décision D-4 des utilisateurs et rôles) : le
+client et les droits sont les siens. `scopes` et `agents` ne peuvent
+que les restreindre. `loom keys create` donne la clé et le bloc à coller.
 
 Modèle Pydantic : `loom_ia.config.models.ApiKey`.
 
@@ -54,6 +91,8 @@ Modèle Pydantic : `loom_ia.config.models.ApiKey`.
 
 Débit d'une clé d'API, vérifié par l'accès HTTP (point 39) ; au-delà, 429 et `Retry-After`.
 
+Se pose à la création de la clé (`loom keys create --rate-limit`).
+
 Modèle Pydantic : `loom_ia.core.model.quota.RateLimit`.
 
 - `security.api_keys[].rate_limit.per_minute` (type `int` ; obligatoire ; bornes : > 0) : Requêtes permises par minute à cette clé.
@@ -61,6 +100,11 @@ Modèle Pydantic : `loom_ia.core.model.quota.RateLimit`.
 ## `security.audit`
 
 Le fichier où chaque refus d'accès est écrit (`security.audit` ; décision D-9 des utilisateurs et rôles, `access/audit.py`).
+
+Une ligne JSON par refus, ajoutée par tous les accès — SDK, REST, MCP,
+CLI — de tous les processus qui partagent la config. `path` est relatif
+au fichier de config. `retention_days` borne l'âge des lignes, que
+`loom retention` efface au-delà ; `null` (le défaut) les garde toutes.
 
 Modèle Pydantic : `loom_ia.config.models.AuditConfig`.
 

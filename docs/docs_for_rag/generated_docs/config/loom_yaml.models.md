@@ -16,16 +16,19 @@ Modèle Pydantic : `loom_ia.core.model.model_spec.ModelSpec`.
 - `models[].api_key_env` (type `str | null` ; défaut : `null`) : Nom de la variable d'environnement qui contient la clé ; un client peut la rediriger vers la sienne (`secrets`).
 - `models[].max_tokens` (type `int | null` ; défaut : `null`) : Plafond de tokens de sortie par appel ; un emplacement peut le surcharger. Une sortie coupée sur cette limite est une erreur `truncated`.
 - `models[].params` (type `dict[str, JsonValue]` ; défaut : `{}`) : Réglages transmis tels quels au fournisseur (température, thinking…). Une surcharge remplace une clé entière, pas son contenu (fonction B6).
-- `models[].timeouts` (type `ModelTimeouts` ; défaut : les défauts de la section) : Délais de l'appel (`ModelTimeouts`).
-- `models[].retry` (type `RetryPolicy` ; défaut : les défauts de la section) : Nouvelles tentatives (`RetryPolicy`).
-- `models[].capabilities` (type `ModelCapabilities` ; défaut : les défauts de la section) : Capacités déclarées (`ModelCapabilities`).
-- `models[].pricing` (type `Pricing` ; défaut : les défauts de la section) : Grille tarifaire, en dollars par million de tokens (`Pricing`). Sans tarif, les appels comptent 0 $.
-- `models[].circuit_breaker` (type `CircuitBreaker | null` ; défaut : les défauts de la section) : Disjoncteur (point 10) ; actif par défaut (5 échecs, 60 s), `null` le retire.
+- `models[].timeouts` (type `ModelTimeouts` ; défaut : les défauts de la section (`first_token: 60.0`, `idle: 60.0`, `total: 300.0`)) : Délais de l'appel (`ModelTimeouts`).
+- `models[].retry` (type `RetryPolicy` ; défaut : les défauts de la section (`max_attempts: 3`, `initial_delay: 1.0`, `multiplier: 2.0`, `max_delay: 30.0`)) : Nouvelles tentatives (`RetryPolicy`).
+- `models[].capabilities` (type `ModelCapabilities` ; défaut : les défauts de la section (`tools: true`, `thinking: false`, `native_json: false`, `forced_tool_choice: true`, `streaming: true`, `vision: false`, `image_input: ["base64"]`, `image_formats: ["jpeg", "png", "gif", "webp"]`, `tool_result_media: false`)) : Capacités déclarées (`ModelCapabilities`).
+- `models[].pricing` (type `Pricing` ; défaut : les défauts de la section (`input: 0.0`, `output: 0.0`, `cache_read: 0.0`, `cache_write: 0.0`, `tiers: []`)) : Grille tarifaire, en dollars par million de tokens (`Pricing`). Sans tarif, les appels comptent 0 $.
+- `models[].circuit_breaker` (type `CircuitBreaker | null` ; défaut : les défauts de la section (`failures: 5`, `cooldown: 60.0`)) : Disjoncteur (point 10) ; actif par défaut (5 échecs, 60 s), `null` le retire.
 - `models[].cache` (type `PromptCache | null` ; défaut : `null`) : Points de cache de prompt, pour `sdk: anthropic` seulement.
 
 ## `models[].timeouts`
 
 Délais d'un appel de modèle (`models[].timeouts`), en secondes ; `None` désactive un délai.
+
+Un délai dépassé est une erreur `transient` : il donne lieu à de
+nouvelles tentatives, puis à la bascule vers le secours.
 
 Modèle Pydantic : `loom_ia.core.model.model_spec.ModelTimeouts`.
 
@@ -37,6 +40,12 @@ Modèle Pydantic : `loom_ia.core.model.model_spec.ModelTimeouts`.
 
 Nouvelles tentatives sur les erreurs `transient` et `overloaded`.
 
+Délai de la tentative n+1 : `initial_delay * multiplier ** (n - 1)`, plafonné à
+`max_delay`, puis tiré au hasard entre la moitié et la totalité de cette
+valeur. Un `Retry-After` du fournisseur remplace ce calcul ; s'il dépasse
+`max_delay`, l'appel est abandonné. Chaque tentative ratée écrit un
+`model.retried`. Se déclare sous `models[].retry`.
+
 Modèle Pydantic : `loom_ia.core.model.model_spec.RetryPolicy`.
 
 - `models[].retry.max_attempts` (type `int` ; défaut : `3` ; bornes : > 0) : Nombre total de tentatives, la première comprise. Défaut : 3.
@@ -47,6 +56,23 @@ Modèle Pydantic : `loom_ia.core.model.model_spec.RetryPolicy`.
 ## `models[].capabilities`
 
 Capacités déclarées d'un modèle (`models[].capabilities`), contrôlées au démarrage (fonction B9).
+
+Images (point 14) : un modèle sans `vision` n'en reçoit qu'une mention
+textuelle. Pour un modèle avec `vision`, chaque image est lue dans le
+stockage d'artefacts et envoyée en base64, après contrôle de son format
+(`image_formats`) et de sa taille (`max_image_bytes`).
+
+`tools` : le modèle sait appeler des outils ; exigé d'un orchestrateur
+qui en a, d'un juge (verdict par outil imposé) et de leurs secours.
+`thinking` : il produit un raisonnement et l'attend en retour pendant
+ses tours d'outils ; avec l'API Chat, le raisonnement de la boucle en
+cours lui est renvoyé (#7, backlog #015). `native_json` : il accepte un
+schéma de sortie JSON ; celui du contrat lui est transmis pour un appel
+sans outils (fonction B9). `forced_tool_choice` : il accepte qu'on lui impose
+d'appeler un outil (`tool_choice: required`) ; sans elle, une requête qui
+l'impose part en `auto` (`engine.fallback.sendable`). Claude Opus 5.5
+et Fable 5.1 refusent l'outil imposé (400) : le verdict d'un juge leur est
+alors demandé par la consigne seule.
 
 Modèle Pydantic : `loom_ia.core.model.model_spec.ModelCapabilities`.
 
@@ -65,6 +91,14 @@ Modèle Pydantic : `loom_ia.core.model.model_spec.ModelCapabilities`.
 ## `models[].pricing`
 
 Grille tarifaire d'un modèle, en dollars par million de tokens.
+
+Les tokens de raisonnement sont déjà comptés dans `output_tokens` par les
+fournisseurs : ils ne sont pas facturés une seconde fois.
+
+Paliers (`tiers`) : certains fournisseurs changent de prix au-delà d'un
+nombre de tokens d'entrée par appel (MiniMax-M3 double ses prix au-delà de
+512k). Le palier le plus haut dont le seuil est dépassé s'applique à tout
+l'appel.
 
 Modèle Pydantic : `loom_ia.core.model.usage.Pricing`.
 
@@ -90,6 +124,13 @@ Modèle Pydantic : `loom_ia.core.model.usage.PriceTier`.
 
 Disjoncteur d'un modèle ou d'un serveur MCP (#10, #19, backlog #011).
 
+Après `failures` échecs de suite, la cible est écartée pendant
+`cooldown` secondes, pour tous les runs de l'instance : un modèle passe
+directement à son secours, un serveur MCP est indisponible. Ensuite, un
+essai : réussi, le disjoncteur se referme ; raté, il se rouvre. L'ouverture
+écrit un `circuit.opened`. Se déclare sous `models[].circuit_breaker` ou
+`mcp_servers[].circuit_breaker` ; `null` le retire.
+
 Modèle Pydantic : `loom_ia.core.model.model_spec.CircuitBreaker`.
 
 - `models[].circuit_breaker.failures` (type `int` ; défaut : `5` ; bornes : > 0) : Échecs de suite qui ouvrent le disjoncteur. Défaut : 5.
@@ -98,6 +139,14 @@ Modèle Pydantic : `loom_ia.core.model.model_spec.CircuitBreaker`.
 ## `models[].cache`
 
 Points de cache de prompt d'un modèle `sdk: anthropic` (`models[].cache`, fonction B5).
+
+`system` : sur le prompt système ; `tools` : sur le dernier outil ;
+`messages` : sur le dernier bloc de la conversation, un point qui avance
+à chaque appel. L'adaptateur les traduit en `cache_control` (au plus
+quatre par requête, blocs marqués `cache_breakpoint` compris). Le prix
+d'écriture (`pricing.cache_write`) est celui de la durée choisie.
+
+Les API OpenAI et leurs compatibles cachent seules : `cache` y est refusé.
 
 Modèle Pydantic : `loom_ia.core.model.model_spec.PromptCache`.
 

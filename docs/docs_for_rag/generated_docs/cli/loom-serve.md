@@ -3,8 +3,8 @@
 Sert l'API REST.
 
 ```text
-[1;34musage: [0m[1;35mloom serve[0m [[32m-h[0m] [[36m--host [33mHOST[0m] [[36m--port [33mPORT[0m] [[36m--reload[0m] [[36m--config [33mCONFIG[0m]
-                  [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
+usage: loom serve [-h] [--host HOST] [--port PORT] [--reload] [--config CONFIG]
+                  [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
 ```
 
 `loom serve` : sert l'API REST (extra `http`) ; `--host` et `--port` remplacent ceux de `server.http`.

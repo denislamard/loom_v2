@@ -6,6 +6,13 @@ La clé `judge` de `agent.yaml` et tout ce qu'elle contient.
 
 Juge d'une sortie (fonctions E3 et E6, point 21) : la réponse finale (agent) ou la sortie d'un rôle.
 
+Chaque critère reçoit une note entre 0 et 1 ; un critère bloquant sous son
+seuil fait refuser la sortie, que son auteur répare, puis `on_failure`
+décide. Le juge voit la sortie, ses critères, le contexte déclaré (liste
+fixe du point 12) et, pour un rôle, ses arguments.
+
+Un juge n'est pas permis sur un outil ni sur la référence d'un sous-agent.
+
 Modèle Pydantic : `loom_ia.agents.spec.JudgeSpec`.
 
 - `judge.model` (type `str` ; obligatoire ; bornes : longueur ≥ 1) : Identifiant d'un modèle déclaré dans `models` ; s'il est celui qu'il évalue, un avertissement (une erreur en profil `prod`, fonction E6).
@@ -13,11 +20,11 @@ Modèle Pydantic : `loom_ia.agents.spec.JudgeSpec`.
 - `judge.name` (type `str | null` ; défaut : `null` ; bornes : motif `^[A-Za-z0-9_-]{1,64}$`) : Nom dans le journal (tirage, rôle `judge:<nom>`) ; par défaut `output` pour la réponse finale, le nom du rôle pour un rôle.
 - `judge.criteria` (type `tuple[Criterion, ...]` ; obligatoire ; bornes : longueur ≥ 1) : Les critères (`name`, `rule`, `min_score`, `blocking`) ; un au moins.
 - `judge.context` (type `tuple[ContextItem, ...]` ; défaut : `[]`) : Contexte reçu : `user_input`, `caller_context`, `attachments`, `session_summary`, `tool_results`, `last_turns` ; pas `session_state` (décision D11 du state de session).
-- `judge.when` (type `JudgeWhen` ; défaut : les défauts de la section) : Déclenchement : `sample`, `condition`, `tenants`, `profiles`.
-- `judge.repair` (type `RepairSettings` ; défaut : les défauts de la section) : Réparations demandées à l'auteur de la sortie refusée (`max_attempts`, `tools`).
+- `judge.when` (type `JudgeWhen` ; défaut : les défauts de la section (`sample: 1.0`)) : Déclenchement : `sample`, `condition`, `tenants`, `profiles`.
+- `judge.repair` (type `RepairSettings` ; défaut : les défauts de la section (`max_attempts: 1`, `tools: "auto"`)) : Réparations demandées à l'auteur de la sortie refusée (`max_attempts`, `tools`).
 - `judge.on_failure` (type `OnFailure` ; défaut : `"fail"`) : Suite d'une sortie encore refusée après les réparations : `fail` (défaut), `unverified` ou `fallback`.
 - `judge.fallback_message` (type `str | null` ; défaut : `null`) : Message qui remplace la sortie avec `on_failure: fallback`.
-- `judge.llm` (type `LlmSettings` ; défaut : les défauts de la section) : Réglages d'appel du juge.
+- `judge.llm` (type `LlmSettings` ; défaut : les défauts de la section (`params: {}`)) : Réglages d'appel du juge.
 - `judge.timeout` (type `float | null` ; défaut : `null`) : Délai du juge, en secondes ; sans lui, ceux de son modèle et son retry le bornent.
 - `judge.on_error` (type `"block" | "allow"` ; défaut : `"block"`) : Erreur du juge (modèle, verdict) : `block` (défaut) fait échouer le run, `allow` laisse passer.
 
@@ -36,6 +43,8 @@ Modèle Pydantic : `loom_ia.core.model.judge.Criterion`.
 
 Contexte `tool_results` : résultats réussis des outils nommés.
 
+S'écrit `- tool_results: [crm_lookup]`, avec `scope` en option.
+
 Modèle Pydantic : `loom_ia.agents.spec.ToolResultsContext`.
 
 - `judge.context[].tool_results` (type `tuple[str, ...]` ; obligatoire ; bornes : longueur ≥ 1) : Les outils dont les résultats sont reçus ; un au moins.
@@ -44,6 +53,8 @@ Modèle Pydantic : `loom_ia.agents.spec.ToolResultsContext`.
 ## `judge.context[]` (forme `LastTurnsContext`)
 
 Contexte `last_turns` : derniers tours de la session (un tour = un run).
+
+S'écrit `- last_turns: 3` ; les tours sont rendus en texte.
 
 Modèle Pydantic : `loom_ia.agents.spec.LastTurnsContext`.
 

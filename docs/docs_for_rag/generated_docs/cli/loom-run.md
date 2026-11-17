@@ -3,11 +3,11 @@
 Lance un run et attend sa fin.
 
 ```text
-[1;34musage: [0m[1;35mloom run[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--user [33mUTILISATEUR[0m] [[36m--stream[0m] [[36m--json[0m] [[32m-q[0m] [[36m--onlydata[0m]
-                [[36m--session [33mSESSION[0m] [[36m--run-id [33mRUN_ID[0m] [[36m--attach [33mFICHIER[0m]
-                [[36m--judges [33m{auto,force,skip}[0m] [[36m--state [33mCLE=VALEUR[0m] [[36m--config [33mCONFIG[0m]
-                [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                [32magent[0m [32mmessage[0m
+usage: loom run [-h] [--tenant TENANT] [--user UTILISATEUR] [--stream] [--json] [-q] [--onlydata]
+                [--session SESSION] [--run-id RUN_ID] [--attach FICHIER]
+                [--judges {auto,force,skip}] [--state CLE=VALEUR] [--config CONFIG]
+                [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
+                agent message
 ```
 
 `loom run <agent> <message>` : lance un run et attend sa fin ; la réponse sur stdout, le bilan sur stderr.

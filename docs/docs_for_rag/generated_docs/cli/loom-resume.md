@@ -3,9 +3,9 @@
 Reprend un run interrompu.
 
 ```text
-[1;34musage: [0m[1;35mloom resume[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--user [33mUTILISATEUR[0m] [[36m--json[0m] [[36m--session [33mSESSION[0m]
-                   [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                   [32mrun_id[0m
+usage: loom resume [-h] [--tenant TENANT] [--user UTILISATEUR] [--json] [--session SESSION]
+                   [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
+                   run_id
 ```
 
 `loom resume <run_id>` : reprend un run interrompu et attend sa fin.

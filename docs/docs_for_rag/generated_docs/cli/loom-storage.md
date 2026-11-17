@@ -3,9 +3,9 @@
 Stockages de service : le SQL à appliquer.
 
 ```text
-[1;34musage: [0m[1;35mloom storage[0m [[32m-h[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m |
-                    [36m--no-env-file[0m]
-                    [32m{sql} ...[0m
+usage: loom storage [-h] [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE |
+                    --no-env-file]
+                    {sql} ...
 ```
 
 Arguments et options de `loom storage` :
@@ -20,8 +20,8 @@ Arguments et options de `loom storage` :
 Imprime le SQL du stockage Postgres déclaré (tables, rôle, politiques).
 
 ```text
-[1;34musage: [0m[1;35mloom storage sql[0m [[32m-h[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m |
-                        [36m--no-env-file[0m]
+usage: loom storage sql [-h] [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE |
+                        --no-env-file]
 ```
 
 Le SQL à appliquer pour le stockage Postgres que la config déclare.

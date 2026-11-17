@@ -6,6 +6,11 @@ La clé `policies` de `agent.yaml` et tout ce qu'elle contient.
 
 Politique branchée sur l'agent (points 1 et 2, conception §17.4).
 
+`hook` : un nom enregistré (module de `imports`), un chemin
+`module:attr`, ou une politique fournie (`loom.require_tool`).
+`points` : ceux où l'agent la branche, parmi ceux qu'elle déclare ; par
+défaut, tous. Les politiques d'un point s'exécutent dans l'ordre déclaré.
+
 Modèle Pydantic : `loom_ia.agents.spec.PolicyRef`.
 
 - `policies[].hook` (type `str` ; obligatoire ; bornes : longueur ≥ 1) : La politique.

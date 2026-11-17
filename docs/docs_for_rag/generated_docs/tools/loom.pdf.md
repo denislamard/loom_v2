@@ -14,6 +14,32 @@ reportlab et pypdf viennent de l'extra `pdf` ; ce paquet n'est importé qu'au
 montage d'un agent qui active l'outil. Ses paramètres sont dans
 `pdf_params`, module léger que la config importe seul.
 
+Paramètres de `loom.pdf` : les dossiers permis, le fuseau, les modèles et le style.
+
+Module léger — Pydantic et `_office_params` seulement — : la config
+l'importe pour valider la référence au chargement, sans importer l'outil ni pypdf ni reportlab.
+
+    - python: loom.pdf
+      folders:
+      - name: modeles
+        path: modeles
+        rights: [ read ]               # les fichiers que l'outil peut lire
+      - name: sortie
+        path: sortie
+        rights: [ write, overwrite ]   # remplacer un fichier : approbation par défaut
+      timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
+      blocks: [chart, image]           # les blocs facultatifs : chart, image, signature, toc,
+\                                       # checkboxes, fields, code, invoice_totals,
+\                                       # attendance ; aucun par défaut
+      style: styles/charte.yaml        # la charte (facultatif), relative à resources_dir
+      templates:                       # modèles de document, relatifs à resources_dir ; le
+        facture: templates/facture.yaml  # style d'un modèle se nomme dans son fichier
+
+`style` et les modèles sont ceux de `loom.word` : un même fichier sert aux deux.
+
+Les dossiers suivent la forme de `loom.local_files` (`name`, `path`,
+`rights`, `approval`) ; le droit `delete` n'a pas de sens ici et est refusé.
+
 ## Comment loom.pdf est monté
 
 - cible : `loom_ia.tools_builtin.pdf:build`
@@ -21,9 +47,9 @@ montage d'un agent qui active l'outil. Ses paramètres sont dans
 - réglages communs refusés sur sa référence : `approval`, `side_effects`, `idempotent`, car les droits de chaque dossier les expriment (folders[].rights), et l'approbation se règle par dossier (folders[].approval)
 - l'outil tire sa description de ses réglages : `description` est refusé, `skill` ajoute du texte
 
-## Les réglages de loom.pdf dans agent.yaml
+## Les paramètres de loom.pdf dans agent.yaml (réglages sous sa référence)
 
-Ce sont des clés de sa référence dans `tools`, à côté de `python: loom.pdf`.
+Les paramètres de `loom.pdf` sont des clés de sa référence dans `tools`, à côté de `python: loom.pdf`.
 
 ### `tools[]` (référence `python: loom.pdf`)
 
@@ -45,6 +71,11 @@ Même forme que `tools[].folders[]` (page « Outil fourni loom.excel »).
 
 Un modèle de document : son fichier YAML (relatif à `resources_dir`), puis son texte.
 
+Le chargeur de config lit le fichier et range son texte dans `text`, comme un
+`skill_file` dans `skill` ; `file` n'est alors plus gardé. Le style que nomme le
+modèle (`style:` dans son fichier) est lu en même temps et rangé dans `style`. En
+config, le chemin seul : `note: templates/note.yaml`.
+
 Modèle Pydantic : `loom_ia.tools_builtin._office_params.TemplateRef`.
 
 - `tools[].templates.<nom>.file` (type `Path | null` ; défaut : `null`) : Fichier YAML du modèle, relatif à `resources_dir` ; plus gardé une fois lu.
@@ -54,6 +85,10 @@ Modèle Pydantic : `loom_ia.tools_builtin._office_params.TemplateRef`.
 ### `tools[].templates.<nom>.style`
 
 Un style : son fichier (relatif à `resources_dir`), ou son contenu.
+
+Le chargeur de config lit le fichier (et ses logos) et range le style dans
+`spec` ; `file` n'est alors plus gardé. En config : `style: styles/charte.yaml`,
+ou le style écrit en ligne (`style: { heading1: { color: 0B5D3B } }`).
 
 Modèle Pydantic : `loom_ia.tools_builtin._style_params.StyleRef`.
 
@@ -103,6 +138,10 @@ Modèle Pydantic : `loom_ia.tools_builtin._style_params.PageSpec`.
 
 Ce qu'écrit un en-tête ou un pied de page (`page.header`, `page.footer`).
 
+Trois zones sur une ligne, ou une table ; des lignes de toute la largeur ; le logo,
+posé dans l'élément qui le demande ; `first_page: false` pour une première page
+sans.
+
 Modèle Pydantic : `loom_ia.tools_builtin._style_params.BandSpec`.
 
 - `tools[].templates.<nom>.style.spec.page.header.first_page` (type `bool | null` ; défaut : `null`) : (sans description)
@@ -117,6 +156,10 @@ Modèle Pydantic : `loom_ia.tools_builtin._style_params.BandSpec`.
 
 Le logo d'un en-tête ou d'un pied.
 
+Son fichier (PNG ou JPEG, relatif à `resources_dir` ; ses octets une fois lu au
+chargement), sa largeur (cm), l'écart à son texte (pt). Écrit en court : le fichier
+seul.
+
 Modèle Pydantic : `loom_ia.tools_builtin._style_params.BandLogoSpec`.
 
 - `tools[].templates.<nom>.style.spec.page.header.logo.file` (type `str | bytes` ; obligatoire) : (sans description)
@@ -126,6 +169,12 @@ Modèle Pydantic : `loom_ia.tools_builtin._style_params.BandLogoSpec`.
 ### `tools[].templates.<nom>.style.spec.page.header.left`
 
 Un élément d'un en-tête ou d'un pied de page : une zone, une ligne, une cellule de sa table.
+
+Un texte (`text`), ou des lignes (`lines`, dans une cellule seulement), avec
+`{page}`, `{pages}`, `{title}` ; le nom du style qui le met en forme
+(`style`, un style qui part de `header` ou de `footer`) ; le logo de l'en-tête
+ou du pied (`logo: true`). Écrit en court : un texte, ou une liste de lignes.
+Aucune propriété de style : elles vont dans le style qu'il nomme.
 
 Modèle Pydantic : `loom_ia.tools_builtin._style_params.BandElementSpec`.
 
@@ -149,6 +198,12 @@ Même forme que `tools[].templates.<nom>.style.spec.page.header.left` (page « O
 ### `tools[].templates.<nom>.style.spec.page.header.table`
 
 La table d'un en-tête ou d'un pied de page.
+
+La largeur de chaque colonne (une longueur, une proportion, ou `auto` : la place
+qui reste, partagée) ; ses lignes, chacune un élément par colonne ; le nom du style
+qui l'habille (`style`, qui part de `header` ou de `footer` ; `header` ou
+`footer` sans lui) : son cadre, son fond, ses filets intérieurs (`borders`,
+`line`), l'écart entre ses colonnes (`column_gap`).
 
 Modèle Pydantic : `loom_ia.tools_builtin._style_params.BandTableSpec`.
 
@@ -211,6 +266,8 @@ Modèle Pydantic : `loom_ia.tools_builtin._style_params.ChartSpec`.
 
 Les fichiers TrueType d'une police, relatifs à `resources_dir` ; leurs octets une fois lus au chargement.
 
+`regular` seul suffit : le gras et l'italique le prennent.
+
 Modèle Pydantic : `loom_ia.tools_builtin._style_params.FontFiles`.
 
 - `tools[].templates.<nom>.style.spec.fonts.<nom>.regular` (type `str | bytes` ; obligatoire) : (sans description)
@@ -221,6 +278,9 @@ Modèle Pydantic : `loom_ia.tools_builtin._style_params.FontFiles`.
 ### `tools[].templates.<nom>.style.spec.styles.<nom>`
 
 Les propriétés d'un style nommé, telles qu'écrites ; toutes facultatives.
+
+Leurs noms sont ceux du registre (`PROPERTIES`) ; une autre est dite par
+`describe`.
 
 Modèle Pydantic : `loom_ia.tools_builtin._style_params.Props`.
 

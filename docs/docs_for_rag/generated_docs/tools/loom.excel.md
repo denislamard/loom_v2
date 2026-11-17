@@ -26,6 +26,31 @@ openpyxl vient de l'extra `office` ; ce paquet n'est importé qu'au montage
 d'un agent qui active l'outil. Ses paramètres sont dans `excel_params`,
 module léger que la config importe seul.
 
+Paramètres de `loom.excel` : les dossiers permis, le recalcul par LibreOffice, les graphiques.
+
+Module léger — Pydantic et `_office_params` seulement — : la config
+l'importe pour valider la référence au chargement, sans importer l'outil ni
+openpyxl.
+
+    - python: loom.excel
+      folders:
+      - name: donnees
+        path: donnees
+        rights: [ read ]               # les CSV / JSON que l'outil peut lire
+      - name: sortie
+        path: sortie
+        rights: [ write, overwrite ]   # remplacer un classeur : approbation par défaut
+      - name: brouillons
+        path: brouillons
+        rights: [ write, overwrite ]
+        approval: { overwrite: never } # remplacer sans validation : dit explicitement
+      timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
+      recalc: true                     # vérifier les formules avec LibreOffice
+      charts: true                     # des graphiques dans les onglets ; false par défaut
+
+Les dossiers suivent la forme de `loom.local_files` (`name`, `path`,
+`rights`, `approval`) ; le droit `delete` n'a pas de sens ici et est refusé.
+
 ## Comment loom.excel est monté
 
 - cible : `loom_ia.tools_builtin.excel:build`
@@ -33,9 +58,9 @@ module léger que la config importe seul.
 - réglages communs refusés sur sa référence : `approval`, `side_effects`, `idempotent`, car les droits de chaque dossier les expriment (folders[].rights), et l'approbation se règle par dossier (folders[].approval)
 - l'outil tire sa description de ses réglages : `description` est refusé, `skill` ajoute du texte
 
-## Les réglages de loom.excel dans agent.yaml
+## Les paramètres de loom.excel dans agent.yaml (réglages sous sa référence)
 
-Ce sont des clés de sa référence dans `tools`, à côté de `python: loom.excel`.
+Les paramètres de `loom.excel` sont des clés de sa référence dans `tools`, à côté de `python: loom.excel`.
 
 ### `tools[]` (référence `python: loom.excel`)
 

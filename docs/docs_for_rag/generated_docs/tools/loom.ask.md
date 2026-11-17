@@ -14,14 +14,23 @@ réponse de l'utilisateur, qui revient au modèle comme résultat de l'appel.
 Ce n'est pas une demande d'autorisation : une action à faire valider passe
 par l'approbation (`approval`), que la config décide.
 
+Paramètres de `loom.ask` : le délai laissé à l'utilisateur.
+
+    tools:
+    - python: loom.ask
+      expires_in: 86400        # facultatif : sans réponse après ce délai (s), le modèle l'apprend
+
+Module léger — Pydantic seulement — : la config l'importe pour valider la
+référence au chargement, sans importer l'outil.
+
 ## Comment loom.ask est monté
 
 - cible : `loom_ia.tools_builtin.ask:build`
 - réglages communs refusés sur sa référence : `approval`, `side_effects`, `idempotent`, `timeout`, `output`, car l'outil ne fait rien lui-même : il pose une question et attend la réponse de l'utilisateur ; une action à faire valider passe par l'approbation
 
-## Les réglages de loom.ask dans agent.yaml
+## Les paramètres de loom.ask dans agent.yaml (réglages sous sa référence)
 
-Ce sont des clés de sa référence dans `tools`, à côté de `python: loom.ask`.
+Les paramètres de `loom.ask` sont des clés de sa référence dans `tools`, à côté de `python: loom.ask`.
 
 ### `tools[]` (référence `python: loom.ask`)
 

@@ -12,7 +12,7 @@ Modèle Pydantic : `loom_ia.agents.spec.MainRole`.
 - `main.fallbacks` (type `tuple[str, ...]` ; défaut : `[]`) : (sans description)
 - `main.system` (type `str` ; défaut : `""`) : (sans description)
 - `main.system_file` (type `Path | null` ; défaut : `null`) : (sans description)
-- `main.llm` (type `LlmSettings` ; défaut : les défauts de la section) : (sans description)
+- `main.llm` (type `LlmSettings` ; défaut : les défauts de la section (`params: {}`)) : (sans description)
 - `main.context` (type `tuple[MainContextItem, ...]` ; défaut : `[]`) : Contexte ajouté à chaque appel de l'orchestrateur, à la fin de sa requête (décision D4 du state de session) : seulement `session_state`, entier ou par clés.
 
 ## `main.llm`
@@ -27,6 +27,8 @@ Modèle Pydantic : `loom_ia.agents.spec.LlmSettings`.
 ## `main.context[]`
 
 Contexte `session_state` limité à certaines clés du state de la session.
+
+S'écrit `- session_state: [client, devis]` dans `context` ; `- session_state` seul donne tout le state.
 
 Modèle Pydantic : `loom_ia.agents.spec.SessionStateContext`.
 

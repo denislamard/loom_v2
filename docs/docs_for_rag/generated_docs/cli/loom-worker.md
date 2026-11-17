@@ -3,8 +3,8 @@
 Consomme la file des tâches de fond (runs, reprises, résumés).
 
 ```text
-[1;34musage: [0m[1;35mloom worker[0m [[32m-h[0m] [[36m--jobs [33mN[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m |
-                   [36m--no-env-file[0m]
+usage: loom worker [-h] [--jobs N] [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE |
+                   --no-env-file]
 ```
 
 `loom worker` : consomme la file des tâches de fond jusqu'à Ctrl-C ou SIGTERM, `--jobs` tâches de front.

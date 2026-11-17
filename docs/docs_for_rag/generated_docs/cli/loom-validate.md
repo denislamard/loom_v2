@@ -3,8 +3,8 @@
 Vérifie la config et monte les agents.
 
 ```text
-[1;34musage: [0m[1;35mloom validate[0m [[32m-h[0m] [[36m--no-keys[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m]
-                     [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
+usage: loom validate [-h] [--no-keys] [--config CONFIG] [--profile {dev,prod}]
+                     [--env-file ENV_FILE | --no-env-file]
 ```
 
 `loom validate` : vérifie la config, monte chaque agent pour chaque client, puis imprime le rapport.

@@ -36,6 +36,19 @@ Modèle Pydantic : `loom_ia.core.model.budget.SessionBudget`.
 
 Plafonds d'un client sur une fenêtre calendaire, en UTC (`budgets.tenant`, fonctions J4 et L3).
 
+Ce n'est pas un budget de run : il ne borne pas ce qu'un run dépense, il
+borne ce qu'un client a le droit de **lancer**. Il est donc lu une fois,
+avant d'ouvrir le run — la journée d'un artisan est finie ou elle ne l'est
+pas, et l'avertir en cours de route par une réponse forcée lui ferait
+payer une génération pour l'apprendre.
+
+Pas de `max_calls` : compter les appels de modèle d'une journée n'apprend
+rien de plus que ses tokens, et ce que le schéma annonce (conception §17.7)
+est le coût et les tokens.
+
+Un run refusé lève `BudgetExhausted` ; l'API REST le rend en 429, avec
+un `Retry-After` jusqu'à la bascule de la période.
+
 Modèle Pydantic : `loom_ia.core.model.budget.TenantBudget`.
 
 - `budget.tenant.max_cost_per_day` (type `float | null` ; défaut : `null`) : Dollars par jour (UTC).

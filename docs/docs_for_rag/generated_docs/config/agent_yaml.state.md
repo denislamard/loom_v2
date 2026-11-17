@@ -6,6 +6,21 @@ La clé `state` de `agent.yaml` et tout ce qu'elle contient.
 
 Clé du state de la session (décision D6 du state de session) : son schéma, ce qu'elle désigne, ce qui la pose.
 
+Déclarée dans `state.<clé>` de l'agent ; le nom : lettres, chiffres et
+`_`, 64 au plus, sans chiffre en tête.
+
+Exemple :
+
+```
+state:
+  client_id:
+    schema: {type: string}
+    description: Client en cours
+    from:
+      - tool: crm_lookup
+        path: /id
+```
+
 Modèle Pydantic : `loom_ia.agents.spec.StateKey`.
 
 - `state.<nom>.schema` (type `dict[str, JsonValue]` ; obligatoire) : JSON Schema de la valeur (clé `schema`), contrôlé au chargement : une écriture qui ne le tient pas est refusée (décision D8).
@@ -21,6 +36,17 @@ Modèle Pydantic : `loom_ia.agents.spec.StateKey`.
 
 Ce qui pose une clé du state (décision D12 du state de session) : chaque résultat réussi de l'outil `tool`.
 
+`path` : pointeur JSON (RFC 6901) dans les données du résultat
+(`data`) ; `""` les prend entières. `value` : valeur fixe ; `null`
+efface la clé (décision D10). L'un ou l'autre, pas les deux.
+
+`on_missing` : ce que fait un résultat où `path` ne mène à rien.
+`refuse` (défaut) en fait une écriture refusée (décision D8) : le modèle la lit à la
+suite du résultat, et un avertissement va au log — le signe qu'un outil dédié
+a changé la forme de ses données. `ignore` ne pose rien, sans rien dire au
+modèle (un message de débogage au log) : un outil générique, comme une
+requête SQL, dont la plupart des résultats ne parlent pas de la clé.
+
 Modèle Pydantic : `loom_ia.agents.spec.StateSource`.
 
 - `state.<nom>.from[].tool` (type `str` ; obligatoire ; bornes : longueur ≥ 1) : Nom de l'outil, tel que le voit le modèle.
@@ -31,6 +57,11 @@ Modèle Pydantic : `loom_ia.agents.spec.StateSource`.
 ## `state.<nom>.extract`
 
 Ce que `loom.state` tire du résultat que le modèle désigne (décision S3 du state v2).
+
+Exactement une règle : `value` (la colonne d'une ligne), `fields` (un
+objet, champ ← colonne d'une ligne) ou `columns` (un objet, champ ← liste
+d'une colonne sur toutes les lignes). `label` : le champ qui reçoit le
+libellé donné par le modèle, avec `fields` ou `columns`.
 
 Modèle Pydantic : `loom_ia.agents.spec.StateExtract`.
 

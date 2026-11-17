@@ -3,9 +3,9 @@
 Consommation d'un run, d'une session, ou d'un client sur une période.
 
 ```text
-[1;34musage: [0m[1;35mloom report[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--session [33mSESSION[0m] [[36m--period [33m{day,month}[0m] [[36m--json[0m]
-                   [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                   [32m[run_id][0m
+usage: loom report [-h] [--tenant TENANT] [--session SESSION] [--period {day,month}] [--json]
+                   [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
+                   [run_id]
 ```
 
 `loom report` : consommation d'un run, d'une session, ou du client sur une période.

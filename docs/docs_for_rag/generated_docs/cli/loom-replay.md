@@ -3,11 +3,11 @@
 Rejoue un run fini, à l'identique (sans appel) ou en variante, et dit où il s'écarte.
 
 ```text
-[1;34musage: [0m[1;35mloom replay[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--session [33mSESSION[0m] [[36m--journal [33mFICHIER[0m]
-                   [[36m--mode [33m{exact,variant}[0m] [[36m--model [33mETAPE=MODELE[0m] [[36m--double [33mOUTIL=REF[0m]
-                   [[36m--export [33mFICHIER[0m] [[36m--json[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m]
-                   [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                   [32m[run_id][0m
+usage: loom replay [-h] [--tenant TENANT] [--session SESSION] [--journal FICHIER]
+                   [--mode {exact,variant}] [--model ETAPE=MODELE] [--double OUTIL=REF]
+                   [--export FICHIER] [--json] [--config CONFIG] [--profile {dev,prod}]
+                   [--env-file ENV_FILE | --no-env-file]
+                   [run_id]
 ```
 
 Rejoue un run ; rend 1 s'il diverge (ou si la variante échoue), 2 s'il ne peut pas l'être.

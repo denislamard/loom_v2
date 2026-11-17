@@ -13,6 +13,48 @@ attendent une approbation humaine par défaut. Ses paramètres sont dans
 `memory_params`, module léger que la config importe seul ; ce paquet n'est
 importé qu'au montage d'un agent qui active l'outil.
 
+Paramètres de `loom.memory` : la base, le projet, les modèles et les actions permises.
+
+Module léger — Pydantic seulement — : la config l'importe pour valider la
+référence au chargement, sans importer l'outil, ni torch, ni transformers.
+
+    - python: loom.memory
+      store: { path: memoire/agent.db }        # ou { path_env: MEMOIRE_BASE }
+      project: documentation                   # fixé : le modèle ne le choisit pas
+      folders:                                 # pour add_file seulement
+      - { name: workspace, path: /home/denis/temp/agent/workspace }
+      models: { device: cpu, preload: true, offline: true }
+\      # ou, calcul confié à loom-mem-gpu : models: { server: { url: http://127.0.0.1:8765 } }
+      retrieval: { rerank_candidates: 8 }
+      actions:
+        search: {}
+        get: {}
+        add_text: {}                           # écriture : approbation always par défaut
+        add_file: {}
+        update: {}
+        delete: {}
+
+`actions` liste les actions **permises** ; une action absente n'est ni
+montrée au modèle ni exécutée. Chacune prend son approbation par défaut :
+`never` pour une lecture (`search`, `get`, `list_docs`, `projects`),
+`always` pour une écriture (`add_text`, `add_url`, `add_file`,
+`update`, `delete`). `{approval: never}` ou `{approval: always}` la
+change. Une liste (`actions: [search, get]`) vaut des actions aux défauts.
+
+`store` désigne le fichier SQLite de la mémoire : `path`, absolu ou
+relatif au fichier de config, ou `path_env`, la variable qui le porte — lue
+dans les secrets du client, pour qu'un client ait sa base. L'outil crée le
+fichier s'il manque, jamais son dossier.
+
+`models.server` confie les calculs à `loom-mem-gpu`, qui garde les modèles
+en VRAM (`docs/loom-mem-gpu.md`) : `device`, `fp16`, `offline` et
+`preload` se règlent alors sur l'application, et sont refusés ici.
+
+`project` fixé, le modèle n'a pas d'argument `project` : tout ce qu'il
+écrit va dans ce projet, et il ne lit, ne modifie ni ne supprime rien d'un
+autre. Sans lui, le modèle donne le projet à chaque écriture et peut filtrer
+ses recherches.
+
 ## Comment loom.memory est monté
 
 - cible : `loom_ia.tools_builtin.memory:build`
@@ -20,9 +62,9 @@ importé qu'au montage d'un agent qui active l'outil.
 - réglages communs refusés sur sa référence : `approval`, `side_effects`, `idempotent`, car chaque action permise a son approbation (actions.<action>.approval), et ses effets tiennent à l'action
 - l'outil tire sa description de ses réglages : `description` est refusé, `skill` ajoute du texte
 
-## Les réglages de loom.memory dans agent.yaml
+## Les paramètres de loom.memory dans agent.yaml (réglages sous sa référence)
 
-Ce sont des clés de sa référence dans `tools`, à côté de `python: loom.memory`.
+Les paramètres de `loom.memory` sont des clés de sa référence dans `tools`, à côté de `python: loom.memory`.
 
 ### `tools[]` (référence `python: loom.memory`)
 
@@ -33,9 +75,9 @@ Modèle Pydantic : `loom_ia.tools_builtin.memory_params.MemoryParams`.
 - `tools[].store` (type `StoreSpec` ; obligatoire) : Le fichier SQLite de la mémoire.
 - `tools[].project` (type `str | null` ; défaut : `null` ; bornes : motif `^[a-z0-9][a-z0-9_.-]{0,63}$`) : Projet où l'outil range et cherche ; en minuscules.
 - `tools[].folders` (type `tuple[MemoryFolder, ...]` ; défaut : `[]`) : Dossiers où `add_file` peut lire, de noms distincts.
-- `tools[].models` (type `ModelsSpec` ; défaut : les défauts de la section) : Modèles d'embedding et de reranking.
-- `tools[].retrieval` (type `RetrievalSpec` ; défaut : les défauts de la section) : Réglages de la recherche.
-- `tools[].chunking` (type `ChunkingSpec` ; défaut : les défauts de la section) : Découpage des documents.
+- `tools[].models` (type `ModelsSpec` ; défaut : les défauts de la section (`kind: "bge-m3"`, `embedder: "BAAI/bge-m3"`, `reranker: "BAAI/bge-reranker-v2-m3"`, `device: "auto"`, `fp16: true`, `preload: false`, `offline: false`)) : Modèles d'embedding et de reranking.
+- `tools[].retrieval` (type `RetrievalSpec` ; défaut : les défauts de la section (`prefetch_limit: 15`, `rerank_candidates: 20`, `max_chunks_per_doc: 2`, `snippet_chars: 300`, `full_chunk_chars: 1000`, `min_score: 0.1`)) : Réglages de la recherche.
+- `tools[].chunking` (type `ChunkingSpec` ; défaut : les défauts de la section (`target_chars: 1800`, `max_chars: 2400`, `overlap_chars: 180`, `min_chars: 200`)) : Découpage des documents.
 - `tools[].actions` (type `dict[MemoryAction, ActionSpec]` ; obligatoire) : Actions permises (`search`, `get`, `list_docs`, `projects`, `add_text`, `add_url`, `add_file`, `update`, `delete`), et l'approbation de chacune.
 
 ### `tools[].store`

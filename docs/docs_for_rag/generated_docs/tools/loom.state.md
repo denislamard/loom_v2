@@ -30,15 +30,26 @@ que l'écriture. L'écriture passe ensuite par les contrôles du moteur, comme
 celle de tout outil (décisions D6 à D9 du state de session) : seule la taille totale du state, qui dépend des
 voisins du lot, peut encore la refuser, en le disant à la suite du résultat.
 
+Paramètres de `loom.state` : aucun.
+
+Ce que l'outil écrit se déclare sur les clés du state de l'agent
+(`writers: [model]` et `extract:`), pas sur sa référence :
+
+    tools:
+    - python: loom.state
+
+Module léger — Pydantic seulement — : la config l'importe pour valider la
+référence au chargement, sans importer l'outil.
+
 ## Comment loom.state est monté
 
 - cible : `loom_ia.tools_builtin.state:build`
 - réglages communs refusés sur sa référence : `approval`, `side_effects`, `idempotent`, car l'outil n'agit que sur le state de la session, sans effet hors de loom ; qui peut écrire chaque clé se règle sur la clé (state.<clé>.writers)
 - l'outil tire sa description de ses réglages : `description` est refusé, `skill` ajoute du texte
 
-## Les réglages de loom.state dans agent.yaml
+## Les paramètres de loom.state dans agent.yaml (réglages sous sa référence)
 
-Ce sont des clés de sa référence dans `tools`, à côté de `python: loom.state`.
+Les paramètres de `loom.state` sont des clés de sa référence dans `tools`, à côté de `python: loom.state`.
 
 ### `tools[]` (référence `python: loom.state`)
 

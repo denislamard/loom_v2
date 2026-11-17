@@ -6,6 +6,24 @@ La clé `tenants` de `loom.yaml` et tout ce qu'elle contient.
 
 Un client, et la liste fermée de ce qu'il surcharge (fonction L1, points 33 et 34, conception §17.8).
 
+Tout le reste de la configuration lui est commun : mêmes agents, mêmes
+prompts, mêmes outils. Un client ne redéfinit que ce qui le distingue —
+les modèles qu'il paie, les secrets qu'il apporte, ce qu'on lui permet.
+Les prompts ne sont **pas** surchargeables (conception §6) : seules les
+variables qu'ils citent le sont, ce qui garde la logique métier dans un
+seul endroit.
+
+Exemple :
+
+```
+tenants:
+  - id: dupont
+    agents: [support]
+    models: {SONNET: HAIKU}
+    secrets: {ANTHROPIC_API_KEY: DUPONT_ANTHROPIC_KEY}
+    variables: {entreprise: Dupont SARL}
+```
+
 Modèle Pydantic : `loom_ia.config.models.TenantSpec`.
 
 - `tenants[].id` (type `loom_ia.core.model.ids.TenantId` ; obligatoire) : Identifiant du client.
@@ -29,6 +47,9 @@ Même forme que `budget` (page « agent.yaml : la clé budget »).
 
 Débit accordé à un client (fonction L3), déclaré sous `tenants[].quotas`.
 
+Un run refusé lève `QuotaExceeded` ; l'API REST le rend en 429 avec
+`Retry-After`.
+
 Modèle Pydantic : `loom_ia.core.model.quota.Quotas`.
 
 - `tenants[].quotas.runs_per_minute` (type `int | null` ; défaut : `null`) : Runs qu'un client peut lancer par minute, tous accès confondus, par instance `Loom` (fenêtre en mémoire, voir le module). Un sous-run n'en est pas un : il est lancé par son parent, pas par le client. `None` (défaut) : pas de limite.
@@ -44,6 +65,9 @@ Même forme que `storage.retention` (page « loom.yaml : la clé storage »).
 ## `tenants[].telemetry`
 
 Ce qu'un client surcharge de la télémétrie : sa capture, rien d'autre.
+
+Les motifs de masquage et les collecteurs sont ceux du déploiement : un
+client choisit si son contenu part, pas où il va.
 
 Modèle Pydantic : `loom_ia.config.telemetry.TenantTelemetry`.
 

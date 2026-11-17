@@ -8,8 +8,8 @@ Serveurs de l'instance (`server`) : HTTP et MCP.
 
 Modèle Pydantic : `loom_ia.config.models.ServerConfig`.
 
-- `server.http` (type `HttpServer` ; défaut : les défauts de la section) : Serveur HTTP (`loom serve`).
-- `server.mcp` (type `McpAccess` ; défaut : les défauts de la section) : Serveur MCP (`loom mcp`, et HTTP sous `/mcp`).
+- `server.http` (type `HttpServer` ; défaut : les défauts de la section (`host: "127.0.0.1"`, `port: 8000`, `base_path: ""`, `max_body_bytes: 134217728`)) : Serveur HTTP (`loom serve`).
+- `server.mcp` (type `McpAccess` ; défaut : les défauts de la section (`file_roots: []`, `http: false`, `allowed_origins: []`, `allowed_hosts: []`)) : Serveur MCP (`loom mcp`, et HTTP sous `/mcp`).
 
 ## `server.http`
 

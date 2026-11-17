@@ -10,12 +10,14 @@ Modèle Pydantic : `loom_ia.config.models.SessionsConfig`.
 
 - `sessions.snapshot_every` (type `int` ; défaut : `50` ; bornes : > 0) : Événements ajoutés depuis le dernier marqueur avant qu'un snapshot de l'historique soit écrit (50 par défaut ; conception §11.2). Le relire coûte moins que de rejouer ce qu'il couvre ; l'écrire recopie l'historique dans le journal.
 - `sessions.compaction` (type `CompactionConfig | null` ; défaut : `null`) : Résumé des sessions longues. Sans ce bloc, une session n'est jamais résumée : elle grandit jusqu'à la fenêtre du modèle.
-- `sessions.media` (type `SessionMedia` ; défaut : les défauts de la section) : Images des tours précédents dans les requêtes (fonction F4).
-- `sessions.state` (type `StateLimits` ; défaut : les défauts de la section) : Limites du state de la session ; ses clés sont déclarées par les agents.
+- `sessions.media` (type `SessionMedia` ; défaut : les défauts de la section (`keep_images: "all"`)) : Images des tours précédents dans les requêtes (fonction F4).
+- `sessions.state` (type `StateLimits` ; défaut : les défauts de la section (`max_value_bytes: 1024`, `max_total_bytes: 4096`)) : Limites du state de la session ; ses clés sont déclarées par les agents.
 
 ## `sessions.compaction`
 
 Résumé d'une session devenue longue (point 23, conception §11.3).
+
+Bloc `sessions.compaction` de la config.
 
 Modèle Pydantic : `loom_ia.config.compaction.CompactionConfig`.
 
@@ -38,6 +40,9 @@ Modèle Pydantic : `loom_ia.config.models.SessionMedia`.
 ## `sessions.state`
 
 Taille du state d'une session (`sessions.state` ; décision D7 du state de session), en octets de JSON compact.
+
+Le state part avec chaque appel de l'orchestrateur qui le reçoit, et
+l'estimation qui déclenche la compaction ne le compte pas : il reste petit.
 
 Modèle Pydantic : `loom_ia.config.models.StateLimits`.
 

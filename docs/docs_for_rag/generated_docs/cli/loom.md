@@ -1,9 +1,9 @@
 # Commande loom : options globales et liste des commandes
 
 ```text
-[1;34musage: [0m[1;35mloom[0m [[32m-h[0m] [[36m--version[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m |
-            [36m--no-env-file[0m]
-            [32m{validate,run,state,resume,replay,inspect,eval,approve,reject,answer,serve,mcp,keys,report,sessions,worker,retention,storage,memory,schema} ...[0m
+usage: loom [-h] [--version] [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE |
+            --no-env-file]
+            {validate,run,state,resume,replay,inspect,eval,approve,reject,answer,serve,mcp,keys,report,sessions,worker,retention,storage,memory,schema} ...
 ```
 
 L'analyseur de la ligne de commande : options globales, puis une sous-commande par action.

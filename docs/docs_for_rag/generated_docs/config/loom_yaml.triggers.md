@@ -6,6 +6,16 @@ La clé `triggers` de `loom.yaml` et tout ce qu'elle contient.
 
 Une porte d'entrée déclarée (`triggers`) : ce qu'un appel extérieur ouvre (fonction H6, jalon J5.4c).
 
+Un déclencheur existe parce que celui qui appelle **ne connaît pas l'API
+de loom** : un planificateur, un CRM, une passerelle de paiement envoient
+leur charge à eux. La config dit donc quoi en faire — quel agent, et quel
+message, rendu depuis la charge reçue.
+
+Le client vient de la **clé d'API** et de nulle part ailleurs (point 34) : un
+déclencheur ne le nomme pas, sans quoi une clé pourrait lancer un run au
+nom d'un autre. La même liste `agents` d'une clé borne ce qu'elle peut
+déclencher, puisqu'un déclencheur nomme son agent.
+
 Modèle Pydantic : `loom_ia.config.models.TriggerSpec`.
 
 - `triggers[].name` (type `str` ; obligatoire ; bornes : motif `^[a-z0-9][a-z0-9_-]{0,63}$`) : Dernier segment de la route (`POST /v1/hooks/<name>`) : un identifiant sûr, qui sert aussi de facette au journal.

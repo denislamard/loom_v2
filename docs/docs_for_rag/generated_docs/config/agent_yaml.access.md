@@ -6,17 +6,25 @@ La clé `access` de `agent.yaml` et tout ce qu'elle contient.
 
 Ce que l'agent exige de qui agit sur lui (décisions D-2 et D-7b des utilisateurs et rôles, `docs/loom_role_user.md` §5.2).
 
+Bloc `access` de l'agent. Il ne cite que des rôles d'accès : les
+utilisateurs se déclarent dans `loom.yaml`, une fois pour tous les agents.
+Une liste absente laisse décider les permissions des rôles ; une liste
+présente restreint.
+
 Modèle Pydantic : `loom_ia.agents.spec.AgentAccess`.
 
 - `access.run` (type `tuple[str, ...] | null` ; défaut : `null`) : Rôles qui lancent l'agent.
 - `access.answer` (type `tuple[str, ...] | null` ; défaut : `null`) : Rôles qui répondent à ses questions (`loom.ask`).
 - `access.cancel` (type `tuple[str, ...] | null` ; défaut : `null`) : Rôles qui arrêtent ses runs.
-- `access.approve` (type `ApproveAccess` ; défaut : les défauts de la section) : Qui tranche ses demandes d'approbation.
+- `access.approve` (type `ApproveAccess` ; défaut : les défauts de la section (`tools: {}`)) : Qui tranche ses demandes d'approbation.
 - `access.self_approval` (type `bool` ; défaut : `true`) : `false` interdit l'auto-approbation sur cet agent, même à un rôle qui a `self_approve` (décision D-7b). L'agent ne fait que durcir : `true` laisse décider les rôles, il n'ouvre rien.
 
 ## `access.approve`
 
 Qui tranche les demandes d'approbation d'un agent (décision D-2 des utilisateurs et rôles, `docs/loom_role_user.md` §5.2).
+
+Des rôles d'accès, déclarés dans `security.roles` de `loom.yaml`. Sans
+liste, tout rôle qui a la permission `approve` sur l'agent convient.
 
 Modèle Pydantic : `loom_ia.agents.spec.ApproveAccess`.
 

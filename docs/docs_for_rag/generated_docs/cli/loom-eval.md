@@ -3,9 +3,9 @@
 Joue une suite d'évals : des cas et leurs attendus, pour chaque variante, en mémoire (outils à effets de bord doublés ou refusés).
 
 ```text
-[1;34musage: [0m[1;35mloom eval[0m [[32m-h[0m] [[36m--case [33mNOM[0m] [[36m--variant [33mNOM[0m] [[36m--export [33mDOSSIER[0m] [[36m--json[0m] [[36m--config [33mCONFIG[0m]
-                 [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                 [32msuite[0m
+usage: loom eval [-h] [--case NOM] [--variant NOM] [--export DOSSIER] [--json] [--config CONFIG]
+                 [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
+                 suite
 ```
 
 Joue une suite d'évals ; 0 si tout passe, 1 si un attendu tombe, 2 si elle est injouable.

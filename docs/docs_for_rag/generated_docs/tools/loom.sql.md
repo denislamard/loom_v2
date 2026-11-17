@@ -22,6 +22,41 @@ qu'au montage d'un agent qui active l'outil, et asyncpg seulement pour une
 base Postgres. Ses paramètres sont dans `sql_params`, module léger que la
 config importe seul.
 
+Paramètres de `loom.sql` : les bases permises, et pour chacune ses tables et leurs droits.
+
+Module léger — Pydantic seulement — : la config l'importe pour valider la
+référence au chargement, sans importer l'outil, ni sqlglot, ni asyncpg.
+
+    - python: loom.sql
+      timezone: Europe/Paris
+      databases:
+      - name: crm
+        postgres: { dsn_env: CRM_DATABASE_URL, schema: public }
+        tables:
+          clients:  [ select ]
+          relances: [ select, insert ]     # approbations par défaut
+          devis:                           # modifier sans validation : dit explicitement
+            rights: [ select, update ]
+            approval: { update: never }
+        describe:
+          devis.statut: "brouillon | envoye | relance | accepte | refuse"
+      - name: stock
+        sqlite: { path: data/stock.db }
+        tables:
+          articles: [ select ]
+
+`tables` donne, pour chaque table (ou vue), la liste de ses droits
+**accordés** ; un droit absent est refusé. Chaque droit prend son approbation
+par défaut : `select` et `insert` à `never`, `update` et `delete` à
+`always`. Pour en changer, la table s'écrit en objet, ``{rights: […],
+approval: {droit: never | always}}``, comme les dossiers de
+`loom.local_files`. `update` et `delete` exigent `select` : la base lit
+les colonnes de leur `WHERE`. `DatabaseSpec` garde la forme que lit
+l'outil : pour chaque table, un `TableSpec` et sa table droit → approbation.
+
+Le DSN d'une base Postgres ne vient jamais de la config : elle nomme la
+variable qui le porte (`dsn_env`), comme `api_key_env` pour un modèle.
+
 ## Comment loom.sql est monté
 
 - cible : `loom_ia.tools_builtin.sql:build`
@@ -29,9 +64,9 @@ config importe seul.
 - réglages communs refusés sur sa référence : `approval`, `side_effects`, `idempotent`, car les droits de chaque table les expriment (tables), et l'approbation se règle par table (tables.<table>.approval)
 - l'outil tire sa description de ses réglages : `description` est refusé, `skill` ajoute du texte
 
-## Les réglages de loom.sql dans agent.yaml
+## Les paramètres de loom.sql dans agent.yaml (réglages sous sa référence)
 
-Ce sont des clés de sa référence dans `tools`, à côté de `python: loom.sql`.
+Les paramètres de `loom.sql` sont des clés de sa référence dans `tools`, à côté de `python: loom.sql`.
 
 ### `tools[]` (référence `python: loom.sql`)
 
@@ -79,6 +114,10 @@ Modèle Pydantic : `loom_ia.tools_builtin.sql_params.SqliteSpec`.
 ### `tools[].databases[].tables.<nom>`
 
 Une table permise, telle que l'outil la lit : sa table droit → approbation.
+
+La config l'écrit en liste ou en `{rights, approval}` ; `DatabaseSpec`
+la ramène à cette forme (`_table`), et nomme la base et la table dans ses
+messages.
 
 Modèle Pydantic : `loom_ia.tools_builtin.sql_params.TableSpec`.
 

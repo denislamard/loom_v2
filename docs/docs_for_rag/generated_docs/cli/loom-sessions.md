@@ -3,9 +3,9 @@
 Journaux de session : lister, exporter, supprimer.
 
 ```text
-[1;34musage: [0m[1;35mloom sessions[0m [[32m-h[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m |
-                     [36m--no-env-file[0m]
-                     [32m{list,show,files,export,delete} ...[0m
+usage: loom sessions [-h] [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE |
+                     --no-env-file]
+                     {list,show,files,export,delete} ...
 ```
 
 Arguments et options de `loom sessions` :
@@ -20,8 +20,8 @@ Arguments et options de `loom sessions` :
 Sessions du journal, la plus récente d'abord.
 
 ```text
-[1;34musage: [0m[1;35mloom sessions list[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--json[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m]
-                          [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
+usage: loom sessions list [-h] [--tenant TENANT] [--json] [--config CONFIG] [--profile {dev,prod}]
+                          [--env-file ENV_FILE | --no-env-file]
 ```
 
 `loom sessions list` : sessions du client, la plus récemment écrite d'abord (identifiant, nombre d'événements, date).
@@ -51,9 +51,9 @@ Arguments et options de `loom sessions list` :
 Fiche d'une session : ses runs, et les approbations en attente.
 
 ```text
-[1;34musage: [0m[1;35mloom sessions show[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--json[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m]
-                          [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                          [32msession_id[0m
+usage: loom sessions show [-h] [--tenant TENANT] [--json] [--config CONFIG] [--profile {dev,prod}]
+                          [--env-file ENV_FILE | --no-env-file]
+                          session_id
 ```
 
 Fiche d'une session : ce qu'un approbateur doit voir en revenant.
@@ -78,11 +78,11 @@ Arguments et options de `loom sessions show` :
 Fichiers d'une session ; --out les écrit sous leur vrai nom.
 
 ```text
-[1;34musage: [0m[1;35mloom sessions files[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--json[0m]
-                           [[36m--origin [33m{attachment,tool_output,offload}[0m] [[36m--out [33mDOSSIER[0m] [[36m--force[0m]
-                           [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m |
-                           [36m--no-env-file[0m]
-                           [32msession_id[0m
+usage: loom sessions files [-h] [--tenant TENANT] [--json]
+                           [--origin {attachment,tool_output,offload}] [--out DOSSIER] [--force]
+                           [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE |
+                           --no-env-file]
+                           session_id
 ```
 
 Fichiers d'une session, lus au journal ; `--out` les écrit sous leur vrai nom.
@@ -110,9 +110,9 @@ Arguments et options de `loom sessions files` :
 Écrit les événements d'une session en JSONL.
 
 ```text
-[1;34musage: [0m[1;35mloom sessions export[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--out [33mFICHIER[0m] [[36m--config [33mCONFIG[0m]
-                            [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                            [32msession_id[0m
+usage: loom sessions export [-h] [--tenant TENANT] [--out FICHIER] [--config CONFIG]
+                            [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
+                            session_id
 ```
 
 `loom sessions export <session_id>` : écrit les événements de la session en JSONL, sur stdout ou dans `--out`.
@@ -143,9 +143,9 @@ Arguments et options de `loom sessions export` :
 Supprime une session : journal, fichiers et clés (RGPD).
 
 ```text
-[1;34musage: [0m[1;35mloom sessions delete[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--yes[0m] [[36m--config [33mCONFIG[0m]
-                            [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                            [32msession_id[0m
+usage: loom sessions delete [-h] [--tenant TENANT] [--yes] [--config CONFIG]
+                            [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
+                            session_id
 ```
 
 `loom sessions delete <session_id>` : supprime la session — journal, fichiers et clés d'idempotence (RGPD).

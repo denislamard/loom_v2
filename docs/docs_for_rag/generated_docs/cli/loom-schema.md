@@ -3,8 +3,8 @@
 JSON Schema du fichier de configuration.
 
 ```text
-[1;34musage: [0m[1;35mloom schema[0m [[32m-h[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m |
-                   [36m--no-env-file[0m]
+usage: loom schema [-h] [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE |
+                   --no-env-file]
 ```
 
 `loom schema` : imprime le JSON Schema du fichier de configuration.

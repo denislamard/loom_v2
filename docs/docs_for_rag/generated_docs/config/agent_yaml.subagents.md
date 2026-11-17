@@ -6,6 +6,9 @@ La clé `subagents` de `agent.yaml` et tout ce qu'elle contient.
 
 Sous-agent (fonction C5) : un autre agent de la config, appelé comme un outil.
 
+L'orchestrateur lui passe un seul argument, `message`. Nom et
+description de l'outil : ceux de l'agent, sauf s'ils sont donnés ici.
+
 Modèle Pydantic : `loom_ia.agents.spec.SubAgentRef`.
 
 - `subagents[].agent` (type `str` ; obligatoire ; bornes : motif `^[A-Za-z0-9_-]{1,64}$`) : Nom de l'agent appelé.

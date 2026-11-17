@@ -6,6 +6,13 @@ La clé `tools` de `agent.yaml` et tout ce qu'elle contient.
 
 Outil Python d'un agent (`tools: - python: …`).
 
+Référencé par un nom enregistré, un chemin `module:attr`, ou
+`loom.<outil>` pour un outil fourni par loom-ia (`loom_ia.tools_builtin`).
+
+Les champs renseignés ici remplacent ce que l'outil déclare lui-même. Un outil
+fourni à paramètres (`loom.local_files`) a son propre modèle, qui ajoute ses
+paramètres à ces réglages communs ; les autres n'acceptent rien de plus.
+
 Modèle Pydantic : `loom_ia.agents.spec.PythonTool`.
 
 - `tools[].python` (type `str` ; obligatoire ; bornes : longueur ≥ 1) : Référence de l'outil : nom enregistré (module de `imports`), `module:attr`, ou `loom.<outil>`.
@@ -59,6 +66,20 @@ La référence `python: loom.ask` : les clés communes d'un outil Python, et les
 
 Serveur MCP référencé par un agent (point 19).
 
+Les outils prennent le préfixe `serveur__` (ou `alias__`) ; `include`
+ou `exclude` choisit ceux qui sont exposés, `tools` fixe leurs
+déclarations pour cet agent.
+
+Exemple :
+
+```
+tools:
+  - mcp: crm
+    alias: c
+    include: [lookup_client]
+    required: true
+```
+
 Modèle Pydantic : `loom_ia.agents.spec.McpTools`.
 
 - `tools[].mcp` (type `str` ; obligatoire ; bornes : motif `^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)*$`) : Nom d'un serveur déclaré dans `mcp_servers`.
@@ -71,6 +92,11 @@ Modèle Pydantic : `loom_ia.agents.spec.McpTools`.
 ## `tools[].tools.<nom>`
 
 Déclarations d'un outil fixées par la config ; `None` garde celle de l'outil.
+
+Se déclarent sur la référence de l'outil dans `tools` d'un agent, ou
+sous `mcp_servers[].tools.<outil>`. Un outil fourni à paramètres en
+refuse certaines (`approval`, `side_effects`, `idempotent`), que
+ses paramètres expriment déjà.
 
 Modèle Pydantic : `loom_ia.core.model.tooling.ToolOverrides`.
 
@@ -91,6 +117,10 @@ Même forme que `output` (page « agent.yaml : la clé output »).
 ## `tools[]` (forme `SourceTools`)
 
 Source d'outils d'un paquet installé, référencée par un agent (jalon J6.4b, fonction D12).
+
+Comme un serveur MCP : les outils prennent le préfixe `source__` (ou
+`alias__`), `include` ou `exclude` choisit ceux qui sont exposés,
+`tools` fixe leurs déclarations pour cet agent.
 
 Modèle Pydantic : `loom_ia.agents.spec.SourceTools`.
 

@@ -3,10 +3,10 @@
 Répond à une question que le run attend.
 
 ```text
-[1;34musage: [0m[1;35mloom answer[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--user [33mUTILISATEUR[0m] [[36m--answer [33mRÉPONSE[0m] [[36m--call [33mCALL_ID[0m]
-                   [[36m--session [33mSESSION[0m] [[36m--no-wait[0m] [[36m--json[0m] [[36m--config [33mCONFIG[0m]
-                   [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                   [32mrun_id[0m [32m[texte][0m
+usage: loom answer [-h] [--tenant TENANT] [--user UTILISATEUR] [--answer RÉPONSE] [--call CALL_ID]
+                   [--session SESSION] [--no-wait] [--json] [--config CONFIG]
+                   [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
+                   run_id [texte]
 ```
 
 Répond à une question que le run attend (wait_answer), puis pilote sa reprise.

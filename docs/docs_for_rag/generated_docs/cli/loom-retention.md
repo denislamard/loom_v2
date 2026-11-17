@@ -3,8 +3,8 @@
 Efface les sessions dormantes au-delà de la borne déclarée (RGPD).
 
 ```text
-[1;34musage: [0m[1;35mloom retention[0m [[32m-h[0m] [[36m--tenant [33mTENANT[0m] [[36m--yes[0m] [[36m--json[0m] [[36m--config [33mCONFIG[0m]
-                      [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
+usage: loom retention [-h] [--tenant TENANT] [--yes] [--json] [--config CONFIG]
+                      [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
 ```
 
 Balaie les sessions dormantes ; sans `--yes`, dit seulement ce qui partirait.

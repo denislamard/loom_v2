@@ -8,8 +8,8 @@ Exécution des runs (`execution`) : outils, pièces jointes, arrêt, concession.
 
 Modèle Pydantic : `loom_ia.config.models.ExecutionConfig`.
 
-- `execution.tools` (type `ToolsExecution` ; défaut : les défauts de la section) : Exécution des outils.
-- `execution.attachments` (type `AttachmentPolicy` ; défaut : les défauts de la section) : Pièces jointes acceptées à l'entrée d'un run (fonction G1) : formats d'image, taille et nombre maximaux.
+- `execution.tools` (type `ToolsExecution` ; défaut : les défauts de la section (`timeout: 30.0`, `validate_arguments: true`, `offload_over: 50000`, `order: "effects"`, `threads: 16`, `grace: 30.0`)) : Exécution des outils.
+- `execution.attachments` (type `AttachmentPolicy` ; défaut : les défauts de la section (`max_bytes: 5242880`, `types: ["image/jpeg", "image/png", "image/gif", "image/webp"]`, `max_files: 10`)) : Pièces jointes acceptées à l'entrée d'un run (fonction G1) : formats d'image, taille et nombre maximaux.
 - `execution.shutdown_timeout` (type `float` ; défaut : `30.0` ; bornes : > 0) : Délai laissé aux tâches de fond (compaction) à la fermeture de l'instance, en secondes (30).
 - `execution.lease` (type `float` ; défaut : `60.0` ; bornes : > 0) : Durée de la concession prise sur un run par l'instance qui le pilote (point 27), en secondes ; elle est renouvelée au tiers tant qu'il tourne. Passée, un autre worker peut reprendre le run — ce qui n'arrive que si le porteur est mort.
 
@@ -29,6 +29,9 @@ Modèle Pydantic : `loom_ia.config.models.ToolsExecution`.
 ## `execution.attachments`
 
 Pièces jointes acceptées à l'entrée d'un run (`execution.attachments`, fonction G1).
+
+Le format se reconnaît à la signature binaire ; PDF, audio et autres
+fichiers ne sont pas encore pris en charge.
 
 Modèle Pydantic : `loom_ia.core.model.media.AttachmentPolicy`.
 

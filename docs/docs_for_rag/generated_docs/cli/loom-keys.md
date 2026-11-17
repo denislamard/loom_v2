@@ -3,9 +3,9 @@
 Clés d'API de l'accès REST.
 
 ```text
-[1;34musage: [0m[1;35mloom keys[0m [[32m-h[0m] [[36m--config [33mCONFIG[0m] [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m |
-                 [36m--no-env-file[0m]
-                 [32m{create} ...[0m
+usage: loom keys [-h] [--config CONFIG] [--profile {dev,prod}] [--env-file ENV_FILE |
+                 --no-env-file]
+                 {create} ...
 ```
 
 Arguments et options de `loom keys` :
@@ -20,10 +20,10 @@ Arguments et options de `loom keys` :
 Fabrique une clé et son empreinte.
 
 ```text
-[1;34musage: [0m[1;35mloom keys create[0m [[32m-h[0m] [36m--user [33mUTILISATEUR[0m [[36m--scope [33mPERMISSION[0m] [[36m--agent [33mAGENT[0m]
-                        [[36m--expires [33mQUAND[0m] [[36m--rate-limit [33mN[0m] [[36m--config [33mCONFIG[0m]
-                        [[36m--profile [33m{dev,prod}[0m] [[36m--env-file [33mENV_FILE[0m | [36m--no-env-file[0m]
-                        [32mid[0m
+usage: loom keys create [-h] --user UTILISATEUR [--scope PERMISSION] [--agent AGENT]
+                        [--expires QUAND] [--rate-limit N] [--config CONFIG]
+                        [--profile {dev,prod}] [--env-file ENV_FILE | --no-env-file]
+                        id
 ```
 
 `loom keys create <id> --user <utilisateur>` : fabrique une clé d'API et imprime le bloc `security.api_keys` à ajouter à la config.
