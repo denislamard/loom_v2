@@ -170,6 +170,12 @@ exclude = ["*.md"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 
+[tool.ruff.lint.pydocstyle]
+# Docstrings au format Google (docs/docs_for_rag/conventions.md). Les règles « D »
+# ne sont pas encore dans ``select`` : ``ruff check --select D`` les applique lot
+# par lot, jusqu'à leur activation pour tout le dépôt.
+convention = "google"
+
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
