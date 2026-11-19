@@ -14,7 +14,7 @@ import json
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -96,9 +96,10 @@ def boot(config: Path, *, at: Path | None = None, **keys: Any) -> Path:
     """
     path = at if at is not None else config.parent / BOOT_FILE
     folder = Path(os.path.relpath(config.parent, path.parent))
-    data = yaml.safe_load(config.read_text(encoding="utf-8")) if config.is_file() else None
-    if isinstance(data, dict) and any(key in data for key in ("profile", "env_file")):
-        moved = {key: data.pop(key) for key in ("profile", "env_file") if key in data}
+    loaded: object = yaml.safe_load(config.read_text(encoding="utf-8")) if config.is_file() else None
+    data = cast("dict[str, Any]", loaded) if isinstance(loaded, dict) else None
+    if data is not None and any(key in data for key in ("profile", "env_file")):
+        moved: dict[str, Any] = {key: data.pop(key) for key in ("profile", "env_file") if key in data}
         keys = {**moved, **keys}
         config.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
     content: dict[str, Any] = {"version": 1, **keys, "config": {"source": "file", "path": str(folder), "file": config.name}}

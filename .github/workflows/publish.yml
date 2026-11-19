@@ -75,6 +75,7 @@ jobs:
           mkdir -p "$smoke/cfg/agents" "$smoke/cfg/prompts"
           cat > "$smoke/cfg/loom.yaml" <<'YAML'
           version: 1
+          workpath: .
           agents_dir: agents/
           resources_dir: prompts/
           models:
@@ -96,6 +97,12 @@ jobs:
             audit:
               path: audit.jsonl
           YAML
+          # L'amorce : le premier fichier lu, qui dit où lire la config (2.0.22).
+          cat > "$smoke/cfg/loom-boot.yaml" <<'YAML'
+          version: 1
+          config:
+            source: file
+          YAML
           cat > "$smoke/cfg/agents/smoke.yaml" <<'YAML'
           name: smoke
           description: Essai du wheel.
@@ -113,10 +120,10 @@ jobs:
           test "$("$smoke/venv/bin/python" -m loom_ia --version)" = "loom $version"
           "$loom" --help > /dev/null
           "$loom" schema > /dev/null
-          "$loom" --config cfg/loom.yaml validate | tee validate.txt
+          "$loom" --config cfg/loom-boot.yaml validate | tee validate.txt
           grep -q "✓ 1 agent monté" validate.txt
           grep -q "forge · loom-ia $version" validate.txt
-          "$loom" --config cfg/loom.yaml run smoke "bonjour" --user dev 2> /dev/null | tee run.txt
+          "$loom" --config cfg/loom-boot.yaml run smoke "bonjour" --user dev 2> /dev/null | tee run.txt
           grep -qx "ok" run.txt
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
