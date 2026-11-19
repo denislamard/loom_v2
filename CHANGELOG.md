@@ -2,7 +2,7 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.22 - non publiée
+## 2.0.22 - publiée
 
 ### Configuration : l'amorce `loom-boot.yaml` et `workpath` (`docs/analyse-source-config.md`)
 - ⚠ **Deux fichiers, toujours.** loom lit d'abord l'amorce, `loom-boot.yaml`, toujours locale, qui dit où lire la config : `version`, `profile`, `env_file` et le bloc `config` (`source: file`, `path`, le dossier de `loom.yaml`, `.` par défaut, et `file`, `loom.yaml` par défaut). `--config` la désigne (`./loom-boot.yaml` par défaut), comme `Loom.from_config()`, `Bench`, `assert_replays` et le `config` d'une suite d'évals. **Pas de migration** : un projet sans amorce est refusé, et le message donne l'amorce à écrire ; une config donnée à sa place (`--config loom.yaml`) est reconnue et le message le dit.
