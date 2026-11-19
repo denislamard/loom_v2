@@ -2147,11 +2147,7 @@ def _protected_paths(config: LoomConfig) -> tuple[Protected, ...]:
     found: list[Protected] = []
     base = config.base_dir
     names = _code_names(config)
-    if config.boot_file is not None:
-        found.append(Protected(config.boot_file, "l'amorce"))
-        found.append(Protected(config.boot_file.parent / ENV_FILE_DEFAULT, "le fichier d'environnement"))
     if config.config_file is not None:
-        found.append(Protected(config.config_file, "le fichier de config"))
         # Le dossier de la config : on peut en exposer un sous-dossier, pas lui.
         found.append(Protected(config.config_file.parent, "le dossier de la config"))
     if base is not None:
@@ -2163,6 +2159,11 @@ def _protected_paths(config: LoomConfig) -> tuple[Protected, ...]:
             found.append(Protected(base / f"{top}.py", f"le module Python {top!r}"))
             found.append(Protected(base / top, f"le module Python {top!r}", subtree=True))
         found += _code_beside(base)
+    if config.config_file is not None:
+        found.append(Protected(config.config_file, "le fichier de config"))
+    if config.boot_file is not None:
+        found.append(Protected(config.boot_file, "l'amorce"))
+        found.append(Protected(config.boot_file.parent / ENV_FILE_DEFAULT, "le fichier d'environnement"))
     found += _code_found(names)
     found += _mcp_code(config, base)
     if config.env_file is not None:

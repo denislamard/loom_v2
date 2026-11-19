@@ -12,6 +12,7 @@
 # journal : le second relit la conversation et sait de quel devis on parle,
 # sans qu'on le lui redise.
 version: 1
+workpath: .
 
 imports: [outils, politiques]     # modules voisins de ce fichier
 agents_dir: agents/

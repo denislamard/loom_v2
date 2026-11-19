@@ -71,7 +71,7 @@ from loom_ia.runtime import apply_logging
 from loom_ia.tenancy import PERIODS
 from loom_ia.usage import amount
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 CAS = ("budget", "quota", "reprise", "debit")
 
 DUPONT = TenantId("dupont-plomberie")

@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, secured
+from conftest import DEV, boot, designated, secured
 
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
@@ -108,7 +108,7 @@ def conversation(tmp_path: Path) -> ConfigFactory:
             "main": {"model": "FAKE", "system": "Tu relances."},
         }
         (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return boot(tmp_path / "loom.yaml")
 
     return build
 
@@ -817,11 +817,11 @@ def test_a_missing_summary_key_does_not_fail_the_run(
     """La clé du modèle de résumé manque : le run de l'utilisateur démarre quand même (revue)."""
     monkeypatch.delenv("CLE_RESUME_ABSENTE", raising=False)
     path = conversation(compaction={"over_tokens": 40, "hard_tokens": 60, "keep_last": 1})
-    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
     for model in config["models"]:
         if model["id"] == "RESUME":
             model.update(sdk="anthropic", api_key_env="CLE_RESUME_ABSENTE")
-    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(config), encoding="utf-8")
 
     async def go() -> tuple[RunStatus, list[Event]]:
         await written(tmp_path, 2)
@@ -993,7 +993,7 @@ def withrole(tmp_path: Path) -> Callable[..., Path]:
             ],
         }
         (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return boot(tmp_path / "loom.yaml")
 
     return build
 

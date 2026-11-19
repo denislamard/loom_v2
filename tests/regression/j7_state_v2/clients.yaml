@@ -5,7 +5,7 @@
 # aussi jouée, et ses `expect.state` contrôlent ce que chaque run laisse.
 # Réenregistrer, après un changement voulu, et relire le diff :
 #   uv run loom eval tests/regression/j7_state_v2/clients.yaml --export tests/regression/j7_state_v2/journaux/
-config: ../../examples/j7/state_v2/loom.yaml
+config: ../../examples/j7/state_v2/loom-boot.yaml
 agent: clients
 cases:
   # Un seul client : le modèle désigne le résultat, loom en tire id et code.

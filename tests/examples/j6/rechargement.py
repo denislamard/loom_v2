@@ -151,6 +151,11 @@ def copie(dossier: Path) -> Path:
     return fichier
 
 
+def amorce(fichier: Path) -> Path:
+    """L'amorce de la copie (``loom-boot.yaml``), à côté de son ``loom.yaml`` : c'est elle qu'on lance."""
+    return fichier.with_name("loom-boot.yaml")
+
+
 def sans_cles(config: LoomConfig) -> dict[str, str]:
     """L'environnement, moins toutes les clés d'API que la config nomme."""
     noms = {spec.api_key_env for spec in config.models if spec.api_key_env}
@@ -293,14 +298,14 @@ def requetes(port: int, run_id: str, modele: str) -> list[str]:
 
 def cas_prompt(args: argparse.Namespace, dossier: Path, controle: Controle) -> None:
     fichier = copie(dossier)
-    config = load_config(fichier)
+    config = load_config(amorce(fichier))
     agent = "relance_reel" if args.reel else "relance"
     spec = next(spec for spec in config.agents if spec.name == agent)
     role = next(role for role in spec.roles if role.name == ROLE)
     redacteur = config.model_spec(role.model)
     modele = redacteur.model
     console = dossier / "console.log"
-    process, port = lancer(fichier, console, environ(args, config))
+    process, port = lancer(amorce(fichier), console, environ(args, config))
     print(f"  config : copie de {shown(J4)}, échanges bruts capturés")
     terminal = "terminal" if role.terminal else "non terminal"
     print(f"  agent  : {agent} (rôle {ROLE}, {terminal} : {redacteur.id}, {modele})")
@@ -366,11 +371,11 @@ def cas_prompt(args: argparse.Namespace, dossier: Path, controle: Controle) -> N
 
 def cas_agent(args: argparse.Namespace, dossier: Path, controle: Controle) -> None:
     fichier = copie(dossier)
-    config = load_config(fichier)
+    config = load_config(amorce(fichier))
     source = "relance_reel" if args.reel else "relance"
     nouveau = f"{source}_bis"
     console = dossier / "console.log"
-    process, port = lancer(fichier, console, environ(args, config))
+    process, port = lancer(amorce(fichier), console, environ(args, config))
     print(f"  config : copie de {shown(J4)} ; l'agent ajouté copie {source}")
     try:
         if not _pret(process, port, console, controle, "agent"):
@@ -423,10 +428,10 @@ def cas_agent(args: argparse.Namespace, dossier: Path, controle: Controle) -> No
 
 def cas_casse(args: argparse.Namespace, dossier: Path, controle: Controle) -> None:
     fichier = copie(dossier)
-    config = load_config(fichier)
+    config = load_config(amorce(fichier))
     agent = "relance_reel" if args.reel else "relance"
     console = dossier / "console.log"
-    process, port = lancer(fichier, console, environ(args, config))
+    process, port = lancer(amorce(fichier), console, environ(args, config))
     racine = fichier.parent
     print(f"  config : copie de {shown(J4)}")
     casses: list[tuple[str, Path, Callable[[str], str], str]] = [
@@ -502,12 +507,12 @@ def cas_casse(args: argparse.Namespace, dossier: Path, controle: Controle) -> No
 
 def cas_donnees(args: argparse.Namespace, dossier: Path, controle: Controle) -> None:
     fichier = copie(dossier)
-    config = load_config(fichier)
+    config = load_config(amorce(fichier))
     agent = "relance_reel" if args.reel else "relance"
     racine = fichier.parent
     console = dossier / "console.log"
     depart = _etat(racine)
-    process, port = lancer(fichier, console, environ(args, config))
+    process, port = lancer(amorce(fichier), console, environ(args, config))
     print(f"  config : copie de {shown(J4)}, journal en JSONL sous data/")
     try:
         if not _pret(process, port, console, controle, "donnees"):
@@ -561,14 +566,14 @@ UTILISATEUR_LOCAL = "server:\n  http: {user: dev}\n"
 
 def cas_prod(args: argparse.Namespace, dossier: Path, controle: Controle) -> None:
     fichier = copie(dossier)
-    config = load_config(fichier)
+    config = load_config(amorce(fichier))
     locale = fichier.read_text(encoding="utf-8")
     # L'utilisateur local (server.http.user, D-1b) est refusé en prod lui aussi :
     # retiré le temps du lancement, pour que le refus montré soit celui de --reload.
     fichier.write_text(locale.replace(UTILISATEUR_LOCAL, ""), encoding="utf-8")
     console = dossier / "console.log"
     titre("loom --profile prod serve --reload")
-    process, port = lancer(fichier, console, environ(args, config), "--profile", "prod")
+    process, port = lancer(amorce(fichier), console, environ(args, config), "--profile", "prod")
     try:
         code = process.wait(timeout=DELAI)
     except subprocess.TimeoutExpired:
@@ -587,13 +592,13 @@ def cas_prod(args: argparse.Namespace, dossier: Path, controle: Controle) -> Non
     titre("La config qui passe en prod pendant que le serveur tourne")
     fichier.write_text(locale, encoding="utf-8")
     console = dossier / "console-2.log"
-    process, port = lancer(fichier, console, environ(args, config))
+    process, port = lancer(amorce(fichier), console, environ(args, config))
     try:
         if not _pret(process, port, console, controle, "prod"):
             return
         departs = agents(port)
-        bon = fichier.read_text(encoding="utf-8")
-        verdict, dit = releve(console, process, lambda: fichier.write_text(f"profile: prod\n{bon}", encoding="utf-8"))
+        bon = amorce(fichier).read_text(encoding="utf-8")
+        verdict, dit = releve(console, process, lambda: amorce(fichier).write_text(f"profile: prod\n{bon}", encoding="utf-8"))
         montre(dit)
         print(
             "  refusé, et l'ancien process sert encore : "
@@ -603,7 +608,7 @@ def cas_prod(args: argparse.Namespace, dossier: Path, controle: Controle) -> Non
                 verdict == "refuse" and "refusé en profil 'prod'" in dit and agents(port) == departs,
             )
         )
-        verdict, _ = releve(console, process, lambda: fichier.write_text(bon, encoding="utf-8"))
+        verdict, _ = releve(console, process, lambda: amorce(fichier).write_text(bon, encoding="utf-8"))
         print("  la ligne retirée : rechargé : " + controle.tient(f"prod : la config rétablie n'est pas servie ({verdict})", verdict == "recharge"))
     finally:
         arreter(process, port, controle, "prod")
@@ -686,7 +691,7 @@ def main(argv: list[str]) -> int:
         )
         return 2
     try:
-        config = load_config(J4 / "loom.yaml")
+        config = load_config(J4 / "loom-boot.yaml")
     except ConfigError as error:
         print(f"Configuration : {error}", file=sys.stderr)
         return 2

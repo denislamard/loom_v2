@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, secured
+from conftest import DEV, boot, secured
 
 from loom_ia.access.api import InvalidAnswer, Loom, QuestionStale, UnknownQuestion
 from loom_ia.adapters.stores import JsonlEventStore
@@ -115,7 +115,7 @@ def config(
         (tmp_path / "agents" / "aide.yaml").write_text(yaml.safe_dump(helper), encoding="utf-8")
         agent = {**agent, "tools": [], "subagents": [{"agent": "aide", "description": "Aide."}]}
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 @asynccontextmanager

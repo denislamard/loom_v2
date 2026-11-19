@@ -54,7 +54,7 @@ def test_the_profile_comes_from_the_option_then_the_environment_then_the_file(
 ) -> None:
     monkeypatch.delenv(PROFILE_ENV, raising=False)
     assert chosen_profile(None, None) == (None, "aucun")
-    assert chosen_profile(None, "dev") == ("dev", "config")
+    assert chosen_profile(None, "dev") == ("dev", "amorce")
     monkeypatch.setenv(PROFILE_ENV, "prod")
     assert chosen_profile(None, "dev") == ("prod", PROFILE_ENV)
     # L'option l'emporte sur les deux.
@@ -280,7 +280,7 @@ def test_validate_says_which_profile_applies(demo: ConfigFactory, capsys: pytest
     path = str(demo(profile="dev", profiles={"prod": {"storage": {"events": {"backend": "memory"}}}}))
     assert main(["--config", path, "validate"]) == 0
     sans = capsys.readouterr().out
-    assert "  Profil       dev (par config) — assoupli\n  Surcharges   prod\n" in sans
+    assert "  Profil       dev (par l'amorce) — assoupli\n  Surcharges   prod\n" in sans
 
     assert main(["--config", path, "--profile", "prod", "validate"]) == 0
     option = capsys.readouterr().out
@@ -288,7 +288,7 @@ def test_validate_says_which_profile_applies(demo: ConfigFactory, capsys: pytest
 
     assert main(["--config", str(demo()), "validate"]) == 0
     aucun = capsys.readouterr().out
-    assert "  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')" in aucun
+    assert "  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:' dans l'amorce)" in aucun
 
 
 # --- Capacités à déclarer -----------------------------------------------------

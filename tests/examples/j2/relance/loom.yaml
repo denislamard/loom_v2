@@ -4,6 +4,7 @@
 #   relance       modèles simulés (sdk: fake), sans clé ni réseau ;
 #   relance_reel  MiniMax-M3 pour l'orchestrateur, gpt-oss-120b (Together) pour le rôle.
 version: 1
+workpath: .
 
 imports: [outils]                 # module voisin de ce fichier
 agents_dir: agents/

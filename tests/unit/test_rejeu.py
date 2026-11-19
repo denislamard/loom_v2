@@ -67,7 +67,9 @@ from conftest import (
     PNG,
     SCRIPT,
     ConfigFactory,
+    boot,
     demo_agent,
+    designated,
     secured,
 )
 from pydantic import JsonValue
@@ -228,7 +230,7 @@ def atelier(tmp_path: Path) -> ConfigFactory:
             "roles": [role],
         }
         (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return boot(tmp_path / "loom.yaml")
 
     return build
 
@@ -322,7 +324,7 @@ async def test_an_approval_is_decided_as_it_was(tmp_path: Path) -> None:
         ],
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    path = tmp_path / "loom.yaml"
+    path = boot(tmp_path / "loom.yaml")
     async with Loom.from_config(path) as loom:
         run = await loom.run("demo", "Envoie.", session_id=SESSION, user=DEV)
         await loom.approve(
@@ -733,7 +735,7 @@ async def test_an_unfinished_run_is_refused(tmp_path: Path) -> None:
         "tools": [{"python": "envoyer", "approval": "always"}],
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    async with Loom.from_config(tmp_path / "loom.yaml") as loom:
+    async with Loom.from_config(boot(tmp_path / "loom.yaml")) as loom:
         run = await loom.run("demo", "Envoie.", session_id=SESSION, user=DEV)
         with pytest.raises(ReplayError, match="inachevé"):
             await loom.replay(run.run_id, session_id=SESSION)
@@ -920,10 +922,10 @@ async def test_what_a_journal_cannot_replay_is_refused(atelier: ConfigFactory, t
 
 def en_service(config: Path) -> None:
     """Le journal de la config dans Postgres, par un DSN que l'environnement n'a pas."""
-    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    data = yaml.safe_load(designated(config).read_text(encoding="utf-8"))
     data["storage"]["events"] = {"backend": "postgres", "dsn_env": "LOOM_REJEU_DSN_ABSENT"}
     data["storage"]["artifacts"] = {"backend": "memory"}
-    config.write_text(yaml.safe_dump(data), encoding="utf-8")
+    designated(config).write_text(yaml.safe_dump(data), encoding="utf-8")
 
 
 async def test_the_kit_asserts_that_journals_replay(atelier: ConfigFactory, tmp_path: Path) -> None:
@@ -1118,7 +1120,7 @@ def variante(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         ],
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 async def enregistre(path: Path) -> RunId:
@@ -1484,10 +1486,10 @@ def test_the_variant_command_shows_both_answers_without_obeying_them(variante: P
     Essai synchrone : la commande lance sa propre boucle, le run d'origine aussi.
     """
     run_id = asyncio.run(enregistre(variante))
-    config = yaml.safe_load(variante.read_text(encoding="utf-8"))
+    config = yaml.safe_load(designated(variante).read_text(encoding="utf-8"))
     [autre] = [model for model in config["models"] if model["id"] == "AUTRE"]
     autre["params"]["script"][-1]["text"] = HOSTILE
-    variante.write_text(yaml.safe_dump(config), encoding="utf-8")
+    designated(variante).write_text(yaml.safe_dump(config), encoding="utf-8")
     base = ["--config", str(variante), "replay", run_id, "--session", SESSION, "--mode", "variant"]
 
     assert main([*base, "--model", "main=AUTRE"]) == 0
@@ -1626,7 +1628,7 @@ def etat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         },
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 ETAT_FINAL: dict[str, JsonValue] = {

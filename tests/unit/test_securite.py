@@ -30,6 +30,7 @@ from conftest import (
     QUESTION,
     ConfigFactory,
     demo_agent,
+    designated,
     secured,
 )
 
@@ -709,12 +710,12 @@ def test_validate_shows_each_key_and_flags_an_expired_one(demo: ConfigFactory, c
 
 def without(path: Path, *keys: str) -> Path:
     """La config ``path`` réécrite sans ces clés de ``security`` (toutes, sans clé)."""
-    root = yaml.safe_load(path.read_text(encoding="utf-8"))
+    root = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
     if keys:
         root["security"] = {k: v for k, v in root["security"].items() if k not in keys}
     else:
         del root["security"]
-    path.write_text(yaml.safe_dump(root), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(root), encoding="utf-8")
     return path
 
 
@@ -1420,9 +1421,9 @@ def wait_answer_config(tmp_path: Path) -> Path:
     from test_wait_answer import config as asking
 
     path = asking(tmp_path)
-    root = yaml.safe_load(path.read_text(encoding="utf-8"))
+    root = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
     root["security"] = secured({"security": BUREAU})["security"]
-    path.write_text(yaml.safe_dump(root), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(root), encoding="utf-8")
     return path
 
 

@@ -299,11 +299,12 @@ def ecrit_config(base: Path, args: argparse.Namespace, *, efface: str | None = N
     ]
     agents = [("assistant", "FAKE_MAIN")]
     if reel:
-        m3 = load_config(J4 / "loom.yaml").model_spec("M3_MAIN")
+        m3 = load_config(J4 / "loom-boot.yaml").model_spec("M3_MAIN")
         modeles.append(m3.model_dump(mode="json", exclude_defaults=True))
         agents.append(("assistant_reel", m3.id))
     config: dict[str, Any] = {
         "version": 1,
+        "workpath": ".",
         "models": modeles,
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "WARNING"}, "capture": {"raw_exchanges": True}},
@@ -329,7 +330,8 @@ def ecrit_config(base: Path, args: argparse.Namespace, *, efface: str | None = N
             "tools": [outil],
         }
         (base / "agents" / f"{nom}.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return base / "loom.yaml"
+    (base / "loom-boot.yaml").write_text("version: 1\nconfig:\n  source: file\n", encoding="utf-8")
+    return base / "loom-boot.yaml"
 
 
 # --- Ce que le journal dit d'un run -------------------------------------------------

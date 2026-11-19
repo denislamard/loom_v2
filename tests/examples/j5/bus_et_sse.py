@@ -54,7 +54,7 @@ from loom_ia.runtime import apply_logging, create_bus, create_event_store, creat
 
 type Attente = Callable[[], Awaitable[bool]]
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 CAS = ("traverse", "sse", "cles")
 BUS = ("postgres", "redis")
 

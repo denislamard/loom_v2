@@ -11,6 +11,7 @@ s'arrête en attendant un humain (J4.5).
 """
 
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ import pytest
 import yaml
 
 from loom_ia.access.cli.main import USER_ENV
-from loom_ia.config.models import LOOPBACK_HOSTS
+from loom_ia.config.models import BOOT_FILE, LOOPBACK_HOSTS
 
 QUESTION = "Combien font 12 fois 7, plus 3 ?"
 ANSWER = "12 fois 7, plus 3, font 87."
@@ -76,8 +77,39 @@ AUDIT_FILE = "audit.jsonl"
 
 # Le même bloc, à écrire tel quel dans un loom.yaml rédigé à la main.
 SECURITY_YAML = (
+    "workpath: .\n"
     f"security:\n  roles: [{{id: owner, permissions: [{', '.join(EVERYTHING)}]}}]\n  users: [{{id: {DEV}, roles: [owner]}}]\n  audit: {{path: {AUDIT_FILE}}}\n"
 )
+
+
+def boot(config: Path, *, at: Path | None = None, **keys: Any) -> Path:
+    """Écrit l'amorce qui désigne ``config`` ; rend son chemin.
+
+    C'est elle que lisent ``load_config``, ``Loom.from_config`` et ``--config``
+    (décision A-1). Elle s'écrit à ``at``, par défaut ``loom-boot.yaml`` à côté
+    de ``config``. Les mots-clés complètent l'amorce : ``profile``,
+    ``env_file``.
+
+    Un ``profile`` ou un ``env_file`` écrit à la racine de la config par un
+    essai (une fabrique qui les reçoit en mots-clés) passe dans l'amorce, où
+    il se déclare désormais (décision A-2).
+    """
+    path = at if at is not None else config.parent / BOOT_FILE
+    folder = Path(os.path.relpath(config.parent, path.parent))
+    data = yaml.safe_load(config.read_text(encoding="utf-8")) if config.is_file() else None
+    if isinstance(data, dict) and any(key in data for key in ("profile", "env_file")):
+        moved = {key: data.pop(key) for key in ("profile", "env_file") if key in data}
+        keys = {**moved, **keys}
+        config.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    content: dict[str, Any] = {"version": 1, **keys, "config": {"source": "file", "path": str(folder), "file": config.name}}
+    path.write_text(yaml.safe_dump(content), encoding="utf-8")
+    return path
+
+
+def designated(boot_file: Path) -> Path:
+    """Le fichier de config que désigne une amorce écrite par ``boot``."""
+    content = yaml.safe_load(boot_file.read_text(encoding="utf-8"))
+    return boot_file.parent / content["config"]["path"] / content["config"]["file"]
 
 
 def audited(config: Path) -> list[dict[str, str]]:
@@ -96,7 +128,8 @@ def secured(config: dict[str, Any]) -> dict[str, Any]:
     Ce que la config déclare déjà est gardé. Sans ``roles``, le rôle ``owner`` ;
     sans ``users``, un utilisateur par client déclaré (de même identifiant, dans
     ce client), ou ``dev`` quand la config n'en nomme aucun ; sans ``audit``,
-    ``audit.jsonl`` à côté de la config.
+    ``audit.jsonl`` à côté de la config. Sans ``workpath``, le dossier de
+    l'amorce (``.``), qui est aussi celui de la config dans ces essais.
 
     Une API REST sans clé agit au nom de ``dev`` (``server.http.user``, D-1b)
     quand c'est permis : sans client déclaré, sans MCP HTTP, sur la boucle
@@ -112,7 +145,7 @@ def secured(config: dict[str, Any]) -> dict[str, Any]:
         "users",
         [{"id": tenant, "roles": ["owner"], "tenant": tenant} for tenant in tenants] or [{"id": DEV, "roles": ["owner"]}],
     )
-    secured = {**config, "security": security}
+    secured = {"workpath": ".", **config, "security": security}
     server: dict[str, Any] = dict(config.get("server") or {})
     http: dict[str, Any] = dict(server.get("http") or {})
     mcp: dict[str, Any] = server.get("mcp") or {}
@@ -172,7 +205,7 @@ def demo(tmp_path: Path) -> ConfigFactory:
         for agent in agents or [demo_agent()]:
             path = tmp_path / "agents" / f"{agent['name']}.yaml"
             path.write_text(yaml.safe_dump(agent), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return boot(tmp_path / "loom.yaml")
 
     return build
 
@@ -263,7 +296,7 @@ def tree(tmp_path: Path) -> ConfigFactory:
         for agent in agents:
             path = tmp_path / "agents" / f"{agent['name']}.yaml"
             path.write_text(yaml.safe_dump(agent), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return boot(tmp_path / "loom.yaml")
 
     return build
 
@@ -318,6 +351,6 @@ def atelier(tmp_path: Path) -> Callable[..., Path]:
             ],
         }
         (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return boot(tmp_path / "loom.yaml")
 
     return build

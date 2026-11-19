@@ -2,6 +2,7 @@
 # Configuration de l'agent demo du jalon J1.
 # Le modèle est simulé (sdk: fake) : aucune clé ni réseau.
 version: 1
+workpath: .
 
 imports: [outils]                 # module voisin de ce fichier
 agents_dir: agents/

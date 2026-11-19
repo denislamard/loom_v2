@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, SECURITY_YAML, secured
+from conftest import DEV, SECURITY_YAML, boot, designated, secured
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
@@ -82,7 +82,7 @@ def write(
         (base / "prompts" / name).write_text(text, encoding="utf-8")
     for name, source in (modules or {}).items():
         (base / f"{name}.py").write_text(source, encoding="utf-8")
-    return base / "loom.yaml"
+    return boot(base / "loom.yaml")
 
 
 def test_load_resolves_paths_and_agents(tmp_path: Path) -> None:
@@ -314,7 +314,7 @@ def test_missing_agents_dir(tmp_path: Path) -> None:
 
 
 def test_unreadable_files(tmp_path: Path) -> None:
-    with pytest.raises(ConfigError, match="Fichier illisible"):
+    with pytest.raises(ConfigError, match="Amorce introuvable"):
         load_config(tmp_path / "absent.yaml")
 
     path = write(tmp_path)
@@ -369,7 +369,7 @@ def test_a_merge_key_may_be_overridden_and_the_same_key_may_repeat_elsewhere(
     tmp_path: Path,
 ) -> None:
     path = write(tmp_path)
-    path.write_text(
+    designated(path).write_text(
         "version: 1\nmodels:\n- &base {id: FAKE, sdk: fake, model: fake-1, max_tokens: 100}\n- <<: *base\n  id: AUTRE\n  max_tokens: 200\n" + SECURITY_YAML,
         encoding="utf-8",
     )
@@ -410,7 +410,7 @@ def test_an_error_no_single_agent_causes_stays_with_loom_yaml(tmp_path: Path) ->
     path = write(tmp_path, agents={"a": AGENT, "b": AGENT})
     with pytest.raises(ConfigError, match="Agent déclaré deux fois") as refus:
         load_config(path)
-    assert refus.value.source == path
+    assert refus.value.source == designated(path)
 
 
 def test_an_unresolved_tool_names_its_agent_and_tool(tmp_path: Path) -> None:

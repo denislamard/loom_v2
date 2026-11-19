@@ -425,10 +425,11 @@ def ecrit_config(dossier: Path, vm: Path, *, reel: bool, modele: str) -> tuple[P
     elif modele == "haiku":
         choisi = HAIKU_55
     else:
-        m3 = load_config(J4 / "loom.yaml").model_spec("M3_MAIN")
+        m3 = load_config(J4 / "loom-boot.yaml").model_spec("M3_MAIN")
         choisi = m3.model_dump(mode="json", exclude_defaults=True)
     config: dict[str, Any] = {
         "version": 1,
+        "workpath": ".",
         # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur ;
         # où s'écrivent les refus d'accès (D-9).
         "security": {
@@ -461,7 +462,8 @@ def ecrit_config(dossier: Path, vm: Path, *, reel: bool, modele: str) -> tuple[P
         "tools": [{"source": "forge"}],
     }
     (base / "agents" / f"{nom}.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return base / "loom.yaml", choisi["model"]
+    (base / "loom-boot.yaml").write_text("version: 1\nconfig:\n  source: file\n", encoding="utf-8")
+    return base / "loom-boot.yaml", choisi["model"]
 
 
 def proposes(events: list[Event]) -> list[str]:

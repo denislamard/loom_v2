@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import boot, secured
 
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.agents import AgentSpec
@@ -389,7 +389,7 @@ def write_config(tmp_path: Path, policies: list[dict[str, Any]]) -> Path:
         "policies": policies,
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 async def test_policies_from_the_config(tmp_path: Path) -> None:

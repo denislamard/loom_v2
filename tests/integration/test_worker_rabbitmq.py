@@ -95,6 +95,7 @@ def config_file(root: Path, *, tool: bool) -> Path:
     ]
     config: dict[str, Any] = {
         "version": 1,
+        "workpath": ".",
         # Qui agit sur loom (D-1) : un rôle et un utilisateur ; où vont les refus (D-9).
         "security": {
             "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
@@ -119,8 +120,9 @@ def config_file(root: Path, *, tool: bool) -> Path:
         config["imports"] = ["outil_dormeur"]
         agent["tools"] = [{"python": "dormir", "side_effects": "none", "idempotent": True}]
     (root / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (root / "loom-boot.yaml").write_text("version: 1\nconfig:\n  source: file\n", encoding="utf-8")
     (root / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return root / "loom.yaml"
+    return root / "loom-boot.yaml"
 
 
 def job_of(kind: JobKind, run: str | None = None) -> Job:

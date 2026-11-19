@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import designated
 from pydantic import JsonValue
 from test_call_order import atelier, awaiting
 
@@ -284,9 +285,9 @@ async def test_cancelling_the_batch_leaves_the_thread_to_its_end(
 
 def config_avec(tmp_path: Path, **tools: object) -> Path:
     path = atelier(tmp_path, order="effects", approval=None)
-    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
     config["execution"]["tools"] |= tools
-    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(config), encoding="utf-8")
     return path
 
 
@@ -371,9 +372,9 @@ print(f"sortie {time.monotonic() - started:.1f}", file=sys.stderr)
 def test_a_pausing_tool_with_a_deadline_needs_a_durable_journal(tmp_path: Path) -> None:
     """D-10 : un délai dépassé met le run en pause ; un journal en mémoire le perdrait."""
     path = atelier(tmp_path, order="effects", approval=None)
-    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
     config["storage"] = {"events": {"backend": "memory"}}
-    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(config), encoding="utf-8")
     source = (tmp_path / "outils_ordre.py").read_text(encoding="utf-8")
     (tmp_path / "outils_ordre.py").write_text(
         source.replace(

@@ -59,7 +59,7 @@ from loom_ia.core.ports import SealError
 from loom_ia.runtime import apply_logging
 from loom_ia.testing import RunJournal
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 CAS = ("borne", "clients", "scelle")
 
 DUPONT = TenantId("dupont-plomberie")

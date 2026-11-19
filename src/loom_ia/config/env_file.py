@@ -89,7 +89,8 @@ class EnvFileReport:
             details.append(f"lues : {', '.join(self.loaded)}")
         if self.kept:
             details.append(f"déjà définies, gardées : {', '.join(self.kept)}")
-        return f"{path} (par {self.source}) — {' ; '.join(details) or 'aucune variable'}"
+        source = "l'amorce" if self.source == "amorce" else self.source
+        return f"{path} (par {source}) — {' ; '.join(details) or 'aucune variable'}"
 
     def prod_warning(self) -> str | None:
         """L'avertissement du profil prod quand des variables viennent du fichier, sinon None.

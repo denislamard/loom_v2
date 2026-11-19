@@ -161,6 +161,7 @@ def demo(tmp_path: Path) -> ConfigFactory:
         (tmp_path / "outils_acces.py").write_text(OUTILS, encoding="utf-8")
         config: dict[str, Any] = {
             "version": 1,
+            "workpath": ".",
             # Qui agit sur loom (D-1) : un rôle et un utilisateur ; où vont les refus (D-9).
             "security": {
                 "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
@@ -174,11 +175,14 @@ def demo(tmp_path: Path) -> ConfigFactory:
             "telemetry": {"logging": {"level": "WARNING"}},
             **root,
         }
+        # profile et env_file se déclarent dans l'amorce (décision A-2).
+        boot = {"version": 1, **{key: config.pop(key) for key in ("profile", "env_file") if key in config}, "config": {"source": "file"}}
         (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (tmp_path / "loom-boot.yaml").write_text(yaml.safe_dump(boot), encoding="utf-8")
         for agent in agents or [demo_agent()]:
             path = tmp_path / "agents" / f"{agent['name']}.yaml"
             path.write_text(yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return tmp_path / "loom-boot.yaml"
 
     return build
 
@@ -278,7 +282,7 @@ def test_a_folder_that_starts_being_watched_is_watched(demo: ConfigFactory, serv
     shared = tmp_path.parent / f"{tmp_path.name}-prompts"
     shared.mkdir()
     (shared / "demo.md").write_text("Tu calcules, ailleurs.", encoding="utf-8")
-    rewrite(config, lambda data: data.update(resources_dir=str(shared)))
+    rewrite(config.with_name("loom.yaml"), lambda data: data.update(resources_dir=str(shared)))
     server.until(lambda: f"surveille {tmp_path}, {shared}" in server.said, "pas suivi")
     done = server.said.count("Rechargé")
     (shared / "demo.md").write_text("Tu calcules, ailleurs, autrement.", encoding="utf-8")
@@ -295,7 +299,7 @@ def test_an_env_file_outside_the_config_folder_reloads_and_is_reread(demo: Confi
     config = demo(env_file=f"../{secrets.parent.name}/loom.env")
     server = served(config)
     server.ready()
-    assert f"Env        : {secrets} (par config) — lues : LOOM_ESSAI_CLE" in server.said
+    assert f"Env        : {secrets} (par l'amorce) — lues : LOOM_ESSAI_CLE" in server.said
 
     secrets.write_text("LOOM_ESSAI_CLE=valeur-secrete-2\nLOOM_ESSAI_NOUVELLE=1\n", encoding="utf-8")
     server.until(lambda: "Rechargé" in server.said, "pas rechargé")

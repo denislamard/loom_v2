@@ -41,7 +41,7 @@ from loom_ia.core.events import (
 from loom_ia.core.model import DEFAULT_TENANT
 from loom_ia.runtime import apply_logging
 
-CONFIG = Path(__file__).parent / "assistant" / "loom.yaml"
+CONFIG = Path(__file__).parent / "assistant" / "loom-boot.yaml"
 QUESTION = "Quelle heure est-il à Paris ? Et combien d'heures y a-t-il entre le 1er septembre et le 31 décembre 2026 ?"
 
 

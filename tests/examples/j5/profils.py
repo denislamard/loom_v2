@@ -48,7 +48,7 @@ from loom_ia.config.loader import PROFILE_ENV, chosen_profile
 from loom_ia.core.model import SessionId, TenantId, new_id
 from loom_ia.runtime import apply_logging
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 CAS = ("provenance", "durcit", "assouplit")
 
 DUPONT = TenantId("dupont-plomberie")
@@ -221,6 +221,7 @@ def _minuscule(dossier: Path) -> Path:
     (dossier / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
     config: dict[str, Any] = {
         "version": 1,
+        "workpath": ".",
         # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur ;
         # où s'écrivent les refus d'accès (D-9).
         "security": {
@@ -233,8 +234,9 @@ def _minuscule(dossier: Path) -> Path:
         "execution": {"tools": {"timeout": 30, "offload_over": 1000}},
         "profiles": {"prod": {"execution": {"tools": {"timeout": 90}}, "imports": ["outils_un"]}},
     }
-    fichier = dossier / "loom.yaml"
-    fichier.write_text(yaml.safe_dump(config), encoding="utf-8")
+    (dossier / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    fichier = dossier / "loom-boot.yaml"
+    fichier.write_text("version: 1\nconfig:\n  source: file\n", encoding="utf-8")
     return fichier
 
 

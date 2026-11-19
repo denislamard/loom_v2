@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, secured
+from conftest import DEV, boot, secured
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -185,7 +185,7 @@ def config_file(
         "tools": tools if tools is not None else [{"source": "carnet"}],
     }
     (base / "agents" / "relance.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return base / "loom.yaml"
+    return boot(base / "loom.yaml")
 
 
 # --- La config ---------------------------------------------------------------------

@@ -44,7 +44,7 @@ from loom_ia.core.events import Event
 from loom_ia.core.model import Attachment, RunId, TextDelta
 
 HERE = Path(__file__).parent
-CONFIG = HERE / "assistant" / "loom.yaml"
+CONFIG = HERE / "assistant" / "loom-boot.yaml"
 PHOTO = HERE / "files" / "photo.jpg"
 AGENT = "assistant"
 QUESTION = (

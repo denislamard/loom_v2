@@ -21,7 +21,7 @@ from typing import Any, Final, cast
 
 import pytest
 import yaml
-from conftest import DEV, secured
+from conftest import DEV, boot, secured
 
 from loom_ia.access.api import Loom
 from loom_ia.config import load_config
@@ -95,7 +95,7 @@ def write_config(
         "tools": [memory],
     }
     (base / "agents" / "assistant.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8")
-    return base / "loom.yaml"
+    return boot(base / "loom.yaml")
 
 
 def completed(events: list[Any], action: str) -> list[ToolCompleted]:

@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, secured
+from conftest import DEV, boot, secured
 
 from loom_ia.access import Loom
 from loom_ia.access.api import SessionFile, UnknownSession
@@ -114,7 +114,7 @@ def atelier(tmp_path: Path) -> Path:
         ],
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 async def produced(path: Path) -> tuple[SessionFile, ...]:

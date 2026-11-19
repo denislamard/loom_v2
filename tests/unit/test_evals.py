@@ -52,7 +52,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, HOSTILE, HOSTILE_SHOWN, secured
+from conftest import DEV, HOSTILE, HOSTILE_SHOWN, boot, designated, secured
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.access import Loom
@@ -270,13 +270,13 @@ def labo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         ],
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 def suite(path: Path, **fields: Any) -> Path:
     """Écrit une suite à côté de la config ; par défaut, un cas de relance qui attend l'envoi."""
     data: dict[str, Any] = {
-        "config": "loom.yaml",
+        "config": "loom-boot.yaml",
         "agent": "demo",
         "cases": [
             {
@@ -293,8 +293,8 @@ def suite(path: Path, **fields: Any) -> Path:
 
 
 def retouche(config: Path, target: Path, **root: Any) -> Path:
-    """La config, complétée à sa racine, écrite à ``target`` (elle-même ou une copie)."""
-    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    """La config, complétée à sa racine, écrite à ``target`` (elle-même ou une copie) ; rend son amorce."""
+    data = yaml.safe_load(designated(config).read_text(encoding="utf-8"))
     merged = {**data, **root}
     if "tenants" in root:
         # Les utilisateurs suivent les clients déclarés (``secured``) : un par client,
@@ -302,8 +302,11 @@ def retouche(config: Path, target: Path, **root: Any) -> Path:
         merged["security"] = {k: v for k, v in merged["security"].items() if k != "users"}
         http = {k: v for k, v in merged["server"]["http"].items() if k != "user"}
         merged["server"] = {**merged["server"], "http": http}
+    if target == config:
+        designated(config).write_text(yaml.safe_dump(secured(merged)), encoding="utf-8")
+        return config
     target.write_text(yaml.safe_dump(secured(merged)), encoding="utf-8")
-    return target
+    return boot(target, at=target.with_name(f"{target.stem}-boot.yaml"))
 
 
 def lignes(path: Path) -> list[str]:
@@ -318,7 +321,7 @@ async def jouer(path: Path, **options: Any) -> Any:
 
 
 def test_a_suite_is_read_relative_to_its_file(labo: Path) -> None:
-    lue = load_suite(suite(labo, variants=[{"name": "autre", "config": "loom.yaml"}]))
+    lue = load_suite(suite(labo, variants=[{"name": "autre", "config": "loom-boot.yaml"}]))
     assert lue.name == "suite" and lue.base_dir == labo.parent
     assert lue.resolved(lue.config) == labo
     assert lue.resolved(lue.variants[0].config) == labo
@@ -712,9 +715,9 @@ def majuscules(subject: BeforeTool) -> Decision:
 def avec_politique(config: Path) -> None:
     """Une politique ``before_tool`` qui remplace les arguments de l'envoi."""
     (config.parent / "politiques_labo.py").write_text(POLITIQUES, encoding="utf-8")
-    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    data = yaml.safe_load(designated(config).read_text(encoding="utf-8"))
     data["imports"] = [*data["imports"], "politiques_labo"]
-    config.write_text(yaml.safe_dump(data), encoding="utf-8")
+    designated(config).write_text(yaml.safe_dump(data), encoding="utf-8")
     agents = config.parent / "agents" / "demo.yaml"
     agent = yaml.safe_load(agents.read_text(encoding="utf-8"))
     agent["policies"] = [{"hook": "majuscules"}]
@@ -755,7 +758,7 @@ async def test_a_subagent_runs_and_its_tools_are_intercepted(tree: Any, monkeypa
     target.write_text(
         yaml.safe_dump(
             {
-                "config": "loom.yaml",
+                "config": "loom-boot.yaml",
                 "agent": "demo",
                 "doubles": {"calculer": "doublures_arbre:calcul"},
                 "cases": [
@@ -796,7 +799,7 @@ async def test_a_double_on_a_subagent_answers_in_its_place(tree: Any) -> None:
     target.write_text(
         yaml.safe_dump(
             {
-                "config": "loom.yaml",
+                "config": "loom-boot.yaml",
                 "agent": "demo",
                 "doubles": {"verifier": "doublures_sous_agent:verif"},
                 "cases": [
@@ -828,7 +831,7 @@ async def test_variants_compare_models_and_configs(labo: Path) -> None:
         variants=[
             {"name": "base"},
             {"name": "autre-modele", "models": {"main": "AUTRE"}},
-            {"name": "autre-config", "config": "autre.yaml"},
+            {"name": "autre-config", "config": "autre-boot.yaml"},
         ],
         cases=[
             {"name": "relance", "input": RELANCE, "expect": {"contains": ["martin"]}},
@@ -855,10 +858,10 @@ async def test_variants_compare_models_and_configs(labo: Path) -> None:
 
 def test_the_eval_report_shows_a_text_without_obeying_it(labo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Le texte d'un attendu qui tombe se montre ; ses caractères de contrôle n'agissent pas."""
-    config = yaml.safe_load(labo.read_text(encoding="utf-8"))
+    config = yaml.safe_load(designated(labo).read_text(encoding="utf-8"))
     [principal] = [model for model in config["models"] if model["id"] == "MAIN"]
     principal["params"]["script"][-1]["text"] = HOSTILE
-    labo.write_text(yaml.safe_dump(config), encoding="utf-8")
+    designated(labo).write_text(yaml.safe_dump(config), encoding="utf-8")
     cas = {"name": "calcul", "input": CALCUL, "expect": {"contains": ["introuvable"]}}
     path = suite(labo, cases=[cas])
 
@@ -870,7 +873,7 @@ def test_the_eval_report_shows_a_text_without_obeying_it(labo: Path, capsys: pyt
 
 def avec_panne(config: Path) -> None:
     """La config, plus un modèle ``PANNE`` dont le fournisseur refuse la première requête."""
-    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    data = yaml.safe_load(designated(config).read_text(encoding="utf-8"))
     panne = {
         "id": "PANNE",
         "sdk": "fake",
@@ -1139,7 +1142,7 @@ class Coffre:
 
 def avec_cle_du_coffre(labo: Path) -> None:
     """L'agent ``demo`` parle à un modèle qui exige sa clé, sur un port fermé : pas de réseau."""
-    config = yaml.safe_load(labo.read_text(encoding="utf-8"))
+    config = yaml.safe_load(designated(labo).read_text(encoding="utf-8"))
     config["models"].append(
         {
             "id": "CLE",
@@ -1150,7 +1153,7 @@ def avec_cle_du_coffre(labo: Path) -> None:
             "retry": {"max_attempts": 1},
         }
     )
-    labo.write_text(yaml.safe_dump(config), encoding="utf-8")
+    designated(labo).write_text(yaml.safe_dump(config), encoding="utf-8")
     agent_file = labo.parent / "agents" / "demo.yaml"
     agent = yaml.safe_load(agent_file.read_text(encoding="utf-8"))
     agent["main"]["model"] = "CLE"
@@ -1159,7 +1162,7 @@ def avec_cle_du_coffre(labo: Path) -> None:
 
 def modeles_qui_repondent(labo: Path, texte: str) -> list[dict[str, Any]]:
     """Les modèles de la config, ``MAIN`` répondant ``texte`` d'emblée."""
-    models: list[dict[str, Any]] = yaml.safe_load(labo.read_text(encoding="utf-8"))["models"]
+    models: list[dict[str, Any]] = yaml.safe_load(designated(labo).read_text(encoding="utf-8"))["models"]
     for model in models:
         if model["id"] == "MAIN":
             model["params"] = {"script": [{"text": texte}]}
@@ -1268,11 +1271,11 @@ async def test_a_replay_case_says_where_todays_config_diverges(labo: Path) -> No
 
 def sans_cle(config: Path) -> None:
     """Le modèle ``MAIN`` servi par un vrai client, dont la clé manque ; ses réglages intacts."""
-    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    data = yaml.safe_load(designated(config).read_text(encoding="utf-8"))
     for model in data["models"]:
         if model["id"] == "MAIN":
             model.update(sdk="anthropic", api_key_env="EVAL_CLE_ABSENTE")
-    config.write_text(yaml.safe_dump(data), encoding="utf-8")
+    designated(config).write_text(yaml.safe_dump(data), encoding="utf-8")
 
 
 async def test_a_replay_needs_no_key(labo: Path) -> None:

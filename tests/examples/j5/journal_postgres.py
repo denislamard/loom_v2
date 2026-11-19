@@ -46,7 +46,7 @@ from loom_ia.core.model import SessionId, TenantId, new_id
 from loom_ia.core.ports import IdempotencyStore, KeyScope
 from loom_ia.runtime import apply_logging, create_idempotency_store
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 CAS = ("journal", "barriere", "cles")
 
 # La config ne porte jamais un DSN, seulement le nom de la variable qui le

@@ -51,7 +51,7 @@ from loom_ia.runtime import apply_logging, create_event_store
 
 type Attente = Callable[[], Awaitable[bool]]
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 CAS = ("file", "reprise", "differe")
 
 # La config nomme la variable qui porte l'URL, jamais l'URL : l'exemple la pose

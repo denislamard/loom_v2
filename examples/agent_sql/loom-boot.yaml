@@ -1,0 +1,5 @@
+version: 1
+config:
+  source: file
+  path: .
+  file: loom.yaml

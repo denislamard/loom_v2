@@ -227,7 +227,7 @@ def ecrit_config(dossier: Path, source: dict[str, Any], *, reel: bool = False) -
     base = dossier / "relance"
     (base / "agents").mkdir(parents=True)
     (base / "carnet.json").write_text(json.dumps(CARNET, ensure_ascii=False, indent=2), encoding="utf-8")
-    m3 = load_config(J4 / "loom.yaml").model_spec("M3_MAIN")
+    m3 = load_config(J4 / "loom-boot.yaml").model_spec("M3_MAIN")
     simule: dict[str, Any] = {
         "id": "FAKE_MAIN",
         "sdk": "fake",
@@ -244,6 +244,7 @@ def ecrit_config(dossier: Path, source: dict[str, Any], *, reel: bool = False) -
     }
     config: dict[str, Any] = {
         "version": 1,
+        "workpath": ".",
         # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur ;
         # où s'écrivent les refus d'accès (D-9).
         "security": {
@@ -266,7 +267,8 @@ def ecrit_config(dossier: Path, source: dict[str, Any], *, reel: bool = False) -
         "tools": [{"source": "carnet"}],
     }
     (base / "agents" / f"{nom}.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return base / "loom.yaml"
+    (base / "loom-boot.yaml").write_text("version: 1\nconfig:\n  source: file\n", encoding="utf-8")
+    return base / "loom-boot.yaml"
 
 
 CARNET_SOURCE: dict[str, Any] = {
