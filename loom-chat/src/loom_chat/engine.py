@@ -248,6 +248,23 @@ class ChatEngine:
         """
         await self._loom.answer(RunId(run_id), call_id=call_id, answers=reply.answers, text=reply.text, user=self._user)
 
+    async def held_elsewhere(self, run_id: str, session_id: str) -> float | None:
+        """Secondes de concession qui restent à un autre process sur ce run, ``None`` s'il n'en tient pas.
+
+        Après un arrêt brutal, la concession du process précédent court encore :
+        loom reprend le run à sa fin. La console le dit, plutôt que de laisser
+        croire que rien ne se passe.
+
+        Args:
+            run_id: Le run.
+            session_id: Sa session.
+        """
+        claim = (await self._loom.state(RunId(run_id), session_id=SessionId(session_id))).claim
+        if claim is None or claim.worker_id == self._loom.worker_id:
+            return None
+        left = (claim.lease_until - datetime.now(claim.lease_until.tzinfo)).total_seconds()
+        return left if left > 0 else None
+
     async def resume(self, run_id: str) -> RunResult:
         """Reprend un run interrompu.
 
@@ -259,10 +276,10 @@ class ChatEngine:
     async def resume_when_free(self, run_id: str, on_wait: Callable[[float], Awaitable[None]] | None = None, attempts: int = 5) -> RunResult:
         """Reprend un run que l'ancien processus tenait : attend la fin de sa concession, puis reprend.
 
-        Avec une file en mémoire, loom abandonne la reprise qu'il a mise en file si un autre
-        worker tient encore le run (le processus précédent, après un arrêt brutal) : c'est
-        pourquoi la console reprend elle-même. Dans le même processus, loom ne pilote le run
-        qu'une fois à la fois ; cette reprise attend alors la sienne et rend le run tel quel.
+        Sert à « Reprendre » (Ctrl+R), qui appelle ``resume()`` directement : loom
+        y rend le conflit à l'appelant. Après une décision ou une réponse, il n'y
+        a rien à faire : loom met lui-même la reprise en file, et la repose pour
+        la fin de la concession du process précédent (``docs/analyse-memory.md``).
 
         Args:
             run_id: Le run.

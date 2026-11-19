@@ -7,6 +7,9 @@ reprise, pas par la file.
 
 ``key`` dédoublonne : un même travail demandé deux fois pendant qu'il tourne
 n'est lancé qu'une fois (un seul résumé par session et par position, point 23).
+Un travail qui se repose lui-même, depuis sa propre tâche, n'est pas un doublon :
+c'est ainsi qu'un run tenu par un autre worker est repris après son bail
+(``Loom._after_the_lease``).
 ``max_running`` borne les travaux menés de front : les suivants attendent
 leur tour, ``pending``. Une reprise au démarrage remet d'un coup tous les
 runs laissés en plan ; sans borne, ils partaient tous ensemble.
@@ -84,8 +87,10 @@ class AsyncioTaskQueue:
         """Met une tâche en file et rend son identifiant (``TaskQueue.submit``).
 
         Avec ``key``, un travail de même clé encore ouvert n'est pas relancé : son
-        identifiant est rendu. Avec ``delay``, le travail attend d'abord ce
-        nombre de secondes.
+        identifiant est rendu. Sauf s'il s'agit du travail qui appelle : il se
+        repose lui-même (après le bail d'un autre pilote), la nouvelle tâche
+        prend la clé, et la fin de l'ancienne ne la libère pas. Avec ``delay``,
+        le travail attend d'abord ce nombre de secondes.
 
         Args:
             job: La tâche.
@@ -99,7 +104,7 @@ class AsyncioTaskQueue:
             raise RuntimeError("File fermée : plus de tâche acceptée")
         if key is not None:
             waiting = self._entries.get(self._by_key.get(key, ""))
-            if waiting is not None and waiting.open:
+            if waiting is not None and waiting.open and waiting.task is not asyncio.current_task():
                 return self._by_key[key]
         job_id = new_id()
         entry = _Entry(job=job, key=key, state="pending", delayed=bool(delay))

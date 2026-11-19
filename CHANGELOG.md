@@ -2,7 +2,14 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.23 - publiée
+## 2.0.23 - non publiée
+
+### Reprise d'un run tenu par un process mort, file en mémoire (`docs/analyse-memory.md`)
+- ⚠ **La reprise attend la fin du bail du mort, au lieu d'être perdue.** Avec la file en mémoire (par défaut), une reprise mise en file après un arrêt brutal — `approve`, `reject`, `answer`, l'expiration d'une approbation, `recover()` — tombait sur la concession du process mort (`ClaimConflict`) et s'arrêtait là : le run restait en plan jusqu'à un `resume()` à la main. Elle est désormais reposée pour l'après-bail (`execution.lease`, 60 s par défaut), comme avec un courtier, et bornée de même (`MAX_CLAIM_WAITS`) quand l'autre process est vivant. `_after_the_lease` ne fait plus d'exception pour la file en mémoire : sa prémisse (« le pilote qui tient le run est dans ce process ») était fausse, chaque instance ayant son propre `worker_id`.
+- **File en mémoire : un travail peut se reposer lui-même sous sa clé.** `AsyncioTaskQueue.submit` ne prend plus pour un doublon le travail qui appelle, depuis sa propre tâche ; tout autre travail de même clé encore ouvert reste dédoublonné.
+- Inchangés : le chemin RabbitMQ (`loom worker`), `resume()` appelé directement et `loom resume` (le conflit est rendu à l'appelant, 409 en REST), `loom approve` / `loom reject` en CLI (la fermeture n'attend pas la reprise différée ; le run reste à reprendre).
+- Essais : `tests/unit/test_durable.py` (reprise après le bail du mort par `recover()`, `approve`, `reject` et `answer` ; la fermeture ne l'attend pas), `tests/unit/test_worker.py` (un travail se repose lui-même ; un autre de même clé reste dédoublonné).
+- **loom-chat 2.0.23** : après une approbation ou une réponse donnée hors du run en cours (après un redémarrage), la console ne relance plus le run elle-même — loom s'en charge — et dit que la reprise attend la fin de la concession du processus précédent. « Reprendre » (Ctrl+R) garde sa relance avec attente, `resume()` rendant le conflit à l'appelant.
 
 ## 2.0.22 - publiée
 

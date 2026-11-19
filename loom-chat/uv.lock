@@ -236,7 +236,7 @@ wheels = [
 
 [[package]]
 name = "loom-chat"
-version = "2.0.22"
+version = "2.0.23"
 source = { editable = "." }
 dependencies = [
     { name = "loom-ia", extra = ["anthropic"] },
@@ -271,7 +271,7 @@ dev = [
 
 [[package]]
 name = "loom-ia"
-version = "2.0.22"
+version = "2.0.23"
 source = { editable = "../" }
 dependencies = [
     { name = "httpx2" },

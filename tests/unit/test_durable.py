@@ -932,6 +932,134 @@ def test_an_approval_after_a_stop_elsewhere_decides_nothing(durable: ConfigFacto
     assert types[-1] == "run.cancelled" and "approval.granted" not in types
 
 
+# --- Reprise après le bail d'un mort, file en mémoire (docs/analyse-memory.md) ---
+
+LEASE = 1.0
+"""Bail du worker mort, en secondes : assez long pour qu'une reprise trop tôt se voie."""
+
+ASK = {
+    "questions": [
+        {"question": "Court ou long ?", "header": "Style", "options": [{"label": "Court"}, {"label": "Long"}]},
+    ]
+}
+
+
+async def _finished(loom: Loom, run_id: RunId, *, within: float = 10.0) -> float:
+    """Attend la fin du run et rend le temps écoulé ; échoue au-delà de ``within`` secondes."""
+    started = time.monotonic()
+    while time.monotonic() - started < within:
+        if (await loom.state(run_id, session_id=SESSION)).finished:
+            return time.monotonic() - started
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"run {run_id} toujours en plan après {within} s")
+
+
+def _waiting_agent(durable: ConfigFactory, tmp_path: Path, tool: dict[str, Any], call: dict[str, Any]) -> Path:
+    """Agent ``demo`` qui appelle un outil fourni qui attend un humain, puis répond."""
+    path = durable()
+    config = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
+    config["models"][0]["params"] = {"script": [{"tool_calls": [call]}, {"text": ANSWER}]}
+    designated(path).write_text(yaml.safe_dump(config), encoding="utf-8")
+    agent = yaml.safe_load((tmp_path / "agents" / "demo.yaml").read_text(encoding="utf-8"))
+    agent["tools"] = [tool]
+    (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
+    return path
+
+
+async def _held_by_the_dead(path: Path, run_id: RunId) -> None:
+    """Pose sur le run la concession d'un worker mort, comme si son pilote avait planté sans la rendre."""
+    store = JsonlEventStore(Path(load_config(path).storage.events.path or ""))
+    try:
+        events = await store.read(DEFAULT_TENANT, SESSION)
+        scope = RunScope(tenant_id=DEFAULT_TENANT, session_id=SESSION, run_id=run_id, root_run_id=run_id, agent="demo")
+        until = datetime.now(UTC) + timedelta(seconds=LEASE)
+        await store.append([scope.draft(RunClaimed(worker_id="worker-mort", lease_until=until))], expected_seq=events[-1].seq)
+    finally:
+        await store.aclose()
+
+
+def test_recover_takes_over_a_run_held_by_a_dead_worker_after_its_lease(durable: ConfigFactory) -> None:
+    """File en mémoire : la reprise au démarrage tombe sur le bail du mort, et revient après lui."""
+    path = durable()
+    store_path = Path(load_config(path).storage.events.path or "")
+
+    async def go() -> float:
+        journal, _ = await _held(store_path, worker="worker-mort", seconds=LEASE)
+        async with Loom.from_config(path) as loom:
+            started = time.monotonic()
+            assert await loom.recover() == (journal.run_id,)
+            await _finished(loom, journal.run_id)
+            assert (await loom.state(journal.run_id, session_id=SESSION)).status is RunStatus.COMPLETED
+            return time.monotonic() - started
+
+    # Pas avant la fin du bail : c'est la concession qui a tenu le second pilote.
+    assert asyncio.run(go()) >= LEASE * 0.8
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+def test_a_decision_after_a_crash_resumes_the_run_after_the_dead_workers_lease(durable: ConfigFactory, tmp_path: Path, decision: str) -> None:
+    """Une approbation donnée après un arrêt brutal : la reprise attend le bail du mort, puis mène le run au bout."""
+    path = _waiting_agent(
+        durable,
+        tmp_path,
+        {"python": "loom.current_datetime", "approval": "always"},
+        {"name": "current_datetime", "arguments": {}},
+    )
+
+    async def go() -> RunStatus:
+        async with Loom.from_config(path) as before:
+            run = await before.run("demo", QUESTION, session_id=SESSION, user=DEV)
+            assert run.status is RunStatus.PAUSED
+        await _held_by_the_dead(path, run.run_id)
+        async with Loom.from_config(path) as after:
+            if decision == "approve":
+                assert await after.approve(run.run_id, session_id=SESSION, user=DEV)
+            else:
+                assert await after.reject(run.run_id, session_id=SESSION, user=DEV, reason="non")
+            await _finished(after, run.run_id)
+            return (await after.state(run.run_id, session_id=SESSION)).status
+
+    assert asyncio.run(go()) is RunStatus.COMPLETED
+
+
+def test_an_answer_after_a_crash_resumes_the_run_after_the_dead_workers_lease(durable: ConfigFactory, tmp_path: Path) -> None:
+    """Une réponse donnée après un arrêt brutal (wait_answer) : même reprise après le bail du mort."""
+    path = _waiting_agent(durable, tmp_path, {"python": "loom.ask"}, {"name": "ask", "arguments": ASK})
+
+    async def go() -> RunStatus:
+        async with Loom.from_config(path) as before:
+            run = await before.run("demo", QUESTION, session_id=SESSION, user=DEV)
+            assert run.status is RunStatus.PAUSED
+        await _held_by_the_dead(path, run.run_id)
+        async with Loom.from_config(path) as after:
+            await after.answer(run.run_id, answers=[["Court"]], session_id=SESSION, user=DEV)
+            await _finished(after, run.run_id)
+            return (await after.state(run.run_id, session_id=SESSION)).status
+
+    assert asyncio.run(go()) is RunStatus.COMPLETED
+
+
+def test_closing_does_not_wait_for_the_end_of_a_dead_workers_lease(durable: ConfigFactory) -> None:
+    """La reprise reposée après un long bail ne retient pas la fermeture : le run reste au journal."""
+    path = durable()
+    store_path = Path(load_config(path).storage.events.path or "")
+
+    async def go() -> tuple[float, RunStatus]:
+        journal, _ = await _held(store_path, worker="worker-mort", seconds=600)
+        loom = Loom.from_config(path)
+        async with loom:
+            await loom.recover()
+            await asyncio.sleep(0.2)
+            started = time.monotonic()
+        closed = time.monotonic() - started
+        async with Loom.from_config(path) as again:
+            return closed, (await again.state(journal.run_id, session_id=SESSION)).status
+
+    closed, status = asyncio.run(go())
+    assert closed < 5.0
+    assert not status.is_terminal
+
+
 # --- Utilitaires --------------------------------------------------------------
 
 

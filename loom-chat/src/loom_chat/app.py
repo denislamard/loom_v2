@@ -481,7 +481,7 @@ class ChatApp(App[None]):
         return task
 
     def _continue(self, view: View, run_id: str, after_seq: int) -> None:
-        """Reprend hors ligne un run décidé ou interrompu, et le suit : attend la concession de l'ancien processus si besoin."""
+        """Reprend hors ligne un run interrompu (Ctrl+R), et le suit : attend la concession de l'ancien processus si besoin."""
         assert view.session_id is not None
         self._follow(view, run_id, after_seq)
 
@@ -500,6 +500,19 @@ class ChatApp(App[None]):
                 await self._paint(view)
 
         self._spawn(resume(), view=view, what="Reprise")
+
+    async def _after_decision(self, view: View, run_id: str, after_seq: int) -> None:
+        """Suit le run qu'une décision ou une réponse a remis en file : loom le reprend lui-même.
+
+        Après un arrêt brutal, la reprise attend la fin de la concession du
+        process précédent : la console le dit.
+        """
+        assert view.session_id is not None
+        self._follow(view, run_id, after_seq)
+        left = await self.engine.held_elsewhere(run_id, view.session_id)
+        if left is not None:
+            view.lines.append(("système", f"Reprise à la fin de la concession du processus précédent (environ {int(left) + 1} s)."))
+            await self._paint(view)
 
     def _follow(self, view: View, run_id: str, after_seq: int) -> None:
         """Suit le run repris hors ligne : ses nouveaux événements s'affichent, et ses demandes s'ouvrent."""
@@ -565,7 +578,7 @@ class ChatApp(App[None]):
                     await self._closed_elsewhere(view, ask.call_id, "Cette approbation n'attend plus : tranchée ailleurs, ou expirée.")
                     return
                 view.approvals.pop(ask.call_id, None)
-                self._continue(view, ask.run_id, before)
+                await self._after_decision(view, ask.run_id, before)
         finally:
             view.shown.discard(ask.call_id)
         await self._paint(view)
@@ -609,7 +622,7 @@ class ChatApp(App[None]):
                     await self._closed_elsewhere(view, ask.call_id, "Cette question n'attend plus : répondue ailleurs, ou expirée.")
                     return
                 view.questions.pop(ask.call_id, None)
-                self._continue(view, ask.run_id, before)
+                await self._after_decision(view, ask.run_id, before)
         finally:
             view.shown.discard(ask.call_id)
         await self._paint(view)

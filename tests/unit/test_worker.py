@@ -84,6 +84,52 @@ async def test_the_memory_queue_runs_no_more_than_its_cap_at_once(demo: ConfigFa
     assert [await queue.state(job_id) for job_id in ids] == ["done"] * 10
 
 
+async def test_a_memory_job_can_requeue_itself_under_its_own_key() -> None:
+    """Un travail qui se repose depuis sa propre tâche n'est pas un doublon de lui-même (reprise après un bail)."""
+    calls: list[Job] = []
+
+    async def handler(job: Job) -> None:
+        calls.append(job)
+        if len(calls) == 1:
+            await queue.submit(job, key="run:r", delay=0.01)
+
+    queue = AsyncioTaskQueue({"resume": handler})
+    job = Job(kind="resume", tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"))
+    first = await queue.submit(job, key="run:r")
+    for _ in range(100):
+        if len(calls) == 2:
+            break
+        await asyncio.sleep(0.01)
+    await queue.drain()
+    assert len(calls) == 2
+    assert await queue.state(first) == "done"
+    # La clé est libérée à la fin de la seconde tâche : un nouveau travail repart.
+    again = await queue.submit(job, key="run:r")
+    assert again != first
+    await queue.aclose()
+
+
+async def test_another_memory_job_with_the_same_key_is_still_deduplicated() -> None:
+    """Hors de sa propre tâche, un travail de même clé encore ouvert n'est pas relancé."""
+    gate = asyncio.Event()
+    calls = 0
+
+    async def handler(job: Job) -> None:
+        nonlocal calls
+        calls += 1
+        await gate.wait()
+
+    queue = AsyncioTaskQueue({"resume": handler})
+    job = Job(kind="resume", tenant_id=DEFAULT_TENANT, session_id=SessionId("s"), run_id=RunId("r"))
+    first = await queue.submit(job, key="run:r")
+    await asyncio.sleep(0.01)
+    assert await queue.submit(job, key="run:r") == first
+    gate.set()
+    await queue.drain()
+    assert calls == 1
+    await queue.aclose()
+
+
 def test_rabbitmq_is_the_only_brokered_backend() -> None:
     assert BROKERED_QUEUES == ("rabbitmq",)
     assert set(BROKERED_QUEUES) <= set(QUEUE_BACKENDS)

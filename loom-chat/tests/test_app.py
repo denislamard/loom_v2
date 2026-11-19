@@ -435,7 +435,7 @@ CRASH = textwrap.dedent(
 )
 
 
-async def test_restart_reopens_pending_approval(tmp_path: Path) -> None:
+async def test_restart_reopens_pending_approval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     create_project(tmp_path, "fake")
     env = {**os.environ, "DATA": str(tmp_path)}
     crash = await asyncio.create_subprocess_exec(sys.executable, "-c", CRASH, env=env)
@@ -447,7 +447,14 @@ async def test_restart_reopens_pending_approval(tmp_path: Path) -> None:
         sid = app.listing[0].session_id
         await app.open_session(sid)
         await _until(pilot, lambda: isinstance(app.screen, ApprovalModal) and bool(app.screen.query("#approve")))
+
+        async def no_relaunch(*_: object, **__: object) -> None:
+            raise AssertionError("après une décision, c'est loom qui reprend le run, pas la console")
+
+        monkeypatch.setattr(app.engine, "resume_when_free", no_relaunch)
         await pilot.click("#approve")
+        # Le process tué tient encore le run : la console dit que la reprise attend sa concession.
+        await _until(pilot, lambda: any(line[1].startswith("Reprise à la fin de la concession") for line in _view(app).lines if isinstance(line, tuple)))
         # La reprise tourne en arrière-plan : la question du modèle reste en attente.
         await _until(pilot, lambda: bool(_view(app).questions), seconds=120)
         assert _view(app).approvals == {}

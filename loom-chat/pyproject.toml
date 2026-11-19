@@ -1,6 +1,6 @@
 [project]
 name = "loom-chat"
-version = "2.0.22"
+version = "2.0.23"
 description = "Console de chat Textual pour essayer loom-ia en quelques minutes."
 readme = "README.md"
 license = "Apache-2.0"
@@ -22,7 +22,7 @@ classifiers = [
 
 # loom-chat importe des modules internes de loom-ia et suit ses versions : la même, exactement.
 # tests/test_package.py vérifie que les deux numéros restent égaux.
-dependencies = ["loom-ia[anthropic]==2.0.22", "pyyaml>=6", "rich>=15", "textual>=8.2,<9"]
+dependencies = ["loom-ia[anthropic]==2.0.23", "pyyaml>=6", "rich>=15", "textual>=8.2,<9"]
 
 [project.urls]
 Repository = "https://github.com/denislamard/loom_v2"

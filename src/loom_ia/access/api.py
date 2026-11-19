@@ -3842,26 +3842,34 @@ class Loom:
         await self._result(final)
 
     async def _after_the_lease(self, job: Job, conflict: ClaimConflict) -> None:
-        """Repose le travail pour la fin du bail, quand la file est servie (fonction H6).
+        """Repose le travail pour la fin du bail de l'autre pilote (fonction H6).
 
-        Avec une file en mémoire, le pilote qui tient le run est dans ce
-        process : il le mènera au bout, et il n'y a rien à reprogrammer.
+        Le pilote qui tient le run est toujours un autre worker : chaque
+        instance a le sien, et ``_claim`` ne refuse que la concession vivante
+        d'un autre — deux pilotages d'une même instance font la queue
+        (``_holding``) sans se heurter. C'est vrai avec un courtier comme avec
+        la file en mémoire (``docs/analyse-memory.md``).
 
-        Avec un courtier, c'est autre chose. Un worker tué n'acquitte pas son
-        travail, donc le courtier le redélivre **tout de suite** — mais le bail
-        du mort court encore, et personne ne le renouvellera. Le second pilote
-        arrive donc trop tôt, et s'il en restait là le run attendrait la
-        prochaine reprise au démarrage. On repose le travail pour l'après-bail,
-        et c'est ainsi qu'un run passe d'un worker à l'autre sans qu'on s'en
+        Le plus souvent, cet autre est mort. Un worker tué n'acquitte pas son
+        travail, et le courtier le redélivre **tout de suite** ; avec la file en
+        mémoire, c'est une décision prise après le redémarrage (``approve``,
+        ``reject``, ``answer``), une expiration ou ``recover()`` qui le remet en
+        file. Dans les deux cas, le bail du mort court encore et personne ne le
+        renouvellera : le second pilote arrive trop tôt, et s'il en restait là
+        le run resterait en plan. On repose le travail pour l'après-bail, et
+        c'est ainsi qu'un run passe d'un worker à l'autre sans qu'on s'en
         occupe.
 
-        Si le bail appartient à un pilote bien vivant, la même chose se répète
-        au rythme des renouvellements : c'est une surveillance, et elle
-        s'arrête d'elle-même quand le run se termine. Bornée quand même — au
+        Si le bail appartient à un pilote bien vivant (un autre process sur le
+        même journal), la même chose se répète au rythme des renouvellements :
+        c'est une surveillance, et elle s'arrête d'elle-même quand le run se
+        termine (``_piloted_job`` laisse un run fini). Bornée quand même — au
         bout de ``MAX_CLAIM_WAITS`` attentes, on laisse le run au journal.
+
+        Le travail est reposé sous sa propre clé, depuis sa propre tâche : la
+        file en mémoire ne le prend pas pour un doublon de lui-même
+        (``AsyncioTaskQueue.submit``).
         """
-        if not self._config.storage.queue.brokered:
-            return
         waited = job.params.get("claim_waits")
         waits = int(waited) + 1 if isinstance(waited, int) else 1
         if waits > MAX_CLAIM_WAITS:
