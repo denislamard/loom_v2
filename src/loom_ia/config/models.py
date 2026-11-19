@@ -1398,8 +1398,10 @@ class LoomConfig(DomainModel):
     Attributes:
         version: Version du schéma ; 1.
         profile: Profil actif (fonction M4) : ``dev`` assouplit, ``prod``
-            durcit, absent ne change rien. Posé au chargement, où l'option et
-            la variable d'environnement l'emportent sur le fichier.
+            durcit, absent ne change rien. Posé au chargement d'après
+            l'amorce, où l'option et la variable d'environnement l'emportent
+            (décision A-2) ; refusé dans le fichier de config. Hors du schéma
+            publié.
         profiles: Surcharges partielles par profil, fusionnées au chargement :
             les objets en profondeur, les listes remplacées.
         workpath: Dossier de travail de l'instance (décisions A-4 et A-5),
@@ -1408,15 +1410,19 @@ class LoomConfig(DomainModel):
             outils, le ``cwd`` des serveurs MCP et les modules Python voisins
             (``imports``, ``module:attr``) s'y rapportent. Un chemin relatif
             se rapporte au dossier de l'amorce ; en conteneur, un chemin
-            absolu monté depuis l'hôte (``/loom-data``).
-        base_dir: Dossier du fichier de config, posé au chargement : les
-            modules voisins sont importables et les chemins relatifs s'y
-            rapportent. Hors du schéma publié (``loom schema``) : on ne l'écrit
-            pas (essai de la fonction M1, 21/10).
-        env_file: Fichier d'environnement du projet, relatif au dossier de la
-            config : lu par ``loom`` avant la config elle-même
-            (``config/env_file.py``), au lieu du ``.env`` voisin. À la racine
-            seulement, car il peut donner le profil.
+            absolu monté depuis l'hôte (``/loom-data``). Rendu absolu au
+            chargement. Facultatif pour une config construite en Python : le
+            dossier courant.
+        boot_file: L'amorce lue (``loom-boot.yaml``), posée au chargement ;
+            ``None`` pour une config construite en Python. Hors du schéma
+            publié.
+        config_file: Le fichier de config que l'amorce désigne, posé au
+            chargement : son dossier est la racine des documents
+            (``agents_dir``, ``resources_dir``, ``schema_file``). Hors du
+            schéma publié.
+        env_file: Fichier d'environnement du projet, posé au chargement
+            d'après l'amorce (décision A-2) ; refusé dans le fichier de
+            config. Hors du schéma publié.
         imports: Modules chargés au démarrage, qui enregistrent leurs outils et
             politiques (point 50).
         agents_dir: Dossier des fichiers d'agents (``agents`` par défaut), un
@@ -1446,11 +1452,12 @@ class LoomConfig(DomainModel):
     """
 
     version: int
-    profile: Profile | None = None
+    profile: SkipJsonSchema[Profile | None] = None
     profiles: dict[Profile, dict[str, JsonValue]] = Field(default_factory=dict[Profile, dict[str, JsonValue]])
     workpath: Path | None = None
-    base_dir: SkipJsonSchema[Path | None] = None
-    env_file: Path | None = None
+    boot_file: SkipJsonSchema[Path | None] = None
+    config_file: SkipJsonSchema[Path | None] = None
+    env_file: SkipJsonSchema[Path | None] = None
     imports: tuple[str, ...] = ()
     agents_dir: Path = Path("agents")
     resources_dir: Path = Path("prompts")
@@ -1467,6 +1474,17 @@ class LoomConfig(DomainModel):
     server: ServerConfig = ServerConfig()
     triggers: tuple[TriggerSpec, ...] = ()
     agents: tuple[AgentSpec, ...] = ()
+
+    @property
+    def base_dir(self) -> Path | None:
+        """Le dossier de travail (``workpath``) : nom d'usage dans le code de montage.
+
+        Les modules voisins y sont importables, et les chemins de travail
+        relatifs (outils, stockage, serveurs MCP) s'y rapportent. ``None``
+        pour une config construite en Python sans ``workpath`` : le dossier
+        courant.
+        """
+        return self.workpath
 
     @property
     def strict(self) -> bool:

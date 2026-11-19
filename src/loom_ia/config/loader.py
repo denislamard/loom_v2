@@ -1,13 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Lecture de ``loom.yaml`` et des agents (fonction M1, point 35).
+"""Lecture de l'amorce, de ``loom.yaml`` et des agents (fonction M1, point 35).
 
-``safe_load`` (sans clé en double, ``yaml_source``) puis validation stricte
-par les modèles Pydantic. Les chemins (``agents_dir``, ``resources_dir``,
-journal, artefacts, ``cwd`` des serveurs MCP, ``schema_file`` des contrats de
-sortie) sont relatifs au fichier de config et deviennent absolus au
-chargement ; un schéma de sortie donné par fichier (JSON ou YAML) est lu et
-vérifié à ce moment-là.
-Un serveur MCP stdio sans ``cwd`` se lance depuis le dossier de la config. Un
+L'amorce (``loom-boot.yaml``) est lue d'abord : elle donne le profil, le
+fichier d'environnement et l'endroit où lire la config (décisions A-1 et
+A-2). ``safe_load`` (sans clé en double, ``yaml_source``) puis validation
+stricte par les modèles Pydantic.
+
+Deux racines pour les chemins relatifs (décisions A-5 et A-6) :
+
+- le dossier de la config pour les documents : ``agents_dir``,
+  ``resources_dir``, ``schema_file`` des contrats de sortie ;
+- ``workpath``, lui-même relatif au dossier de l'amorce, pour le travail :
+  journal, artefacts, idempotence, audit, ``cwd`` des serveurs MCP,
+  ``file_roots``, stockage des clients, modules Python voisins.
+
+Tous deviennent absolus au chargement ; un schéma de sortie donné par
+fichier (JSON ou YAML) est lu et vérifié à ce moment-là.
+Un serveur MCP stdio sans ``cwd`` se lance depuis ``workpath``. Un
 ``system_file`` manquant, un modèle inconnu ou un agent en double arrêtent
 le démarrage. Un ``system_file`` ou un ``skill_file`` doit rester dans
 ``resources_dir`` : ailleurs, un dossier ouvert à un outil laisserait l'agent
@@ -26,7 +35,7 @@ from pydantic import ValidationError
 from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, PythonTool, SourceTools, system_text
 from loom_ia.config.env_file import ENV_FILE_KEY
 from loom_ia.config.errors import ConfigError, from_validation
-from loom_ia.config.models import PROFILES, LoomConfig, Profile, StorageConfig, TenantSpec
+from loom_ia.config.models import BOOT_FILE, CONFIG_FILE, PROFILES, BootConfig, LoomConfig, Profile, StorageConfig, TenantSpec
 from loom_ia.config.yaml_source import DuplicateKey, load_yaml
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -56,6 +65,18 @@ AGENT_SUFFIXES = (".yaml", ".yml")
 """Extensions des fichiers d'agents lus dans ``agents_dir``."""
 _AGENT_NAMED: Final = re.compile(r"Agent '([^']+)'")
 """Début du message d'un contrôle qui porte sur un agent (``LoomConfig.check``)."""
+BOOT_KEYS: Final = ("profile", ENV_FILE_KEY)
+"""Clés de l'amorce refusées dans la config : elles sont lues avant elle (décision A-2)."""
+WORKPATH_KEY: Final = "workpath"
+"""Clé du dossier de travail, obligatoire dans la config (décision A-4)."""
+CONFIG_KEYS: Final = frozenset({"models", "agents", "agents_dir", "resources_dir", "security", "storage", "mcp_servers", WORKPATH_KEY})
+"""Clés qui disent qu'un fichier est une config et non une amorce."""
+BOOT_EXAMPLE: Final = f"""  version: 1
+  config:
+    source: file
+    path: .
+    file: {CONFIG_FILE}"""
+"""L'amorce minimale, donnée dans les messages qui la réclament."""
 PROFILE_ENV: Final = "LOOM_PROFILE"
 """Variable qui l'emporte sur le fichier : ce qu'un conteneur sait poser."""
 WHOLE: Final = frozenset({"params", "llm"})
@@ -66,44 +87,54 @@ de sens (décision de conception, conception §17.9).
 
 
 def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
-    """Config complète : fichier racine, surcharges du profil, puis les agents.
+    """Config complète : l'amorce, la config qu'elle désigne, les surcharges du profil, puis les agents.
 
     Le profil se choisit à trois endroits, du plus fort au plus faible :
-    l'argument (``--profile``), ``LOOM_PROFILE``, puis ``profile:`` dans le
-    fichier. ``chosen_profile`` rend le même arbitrage avec sa provenance,
+    l'argument (``--profile``), ``LOOM_PROFILE``, puis ``profile:`` dans
+    l'amorce. ``chosen_profile`` rend le même arbitrage avec sa provenance,
     pour qui veut l'afficher.
 
-    Étapes : lecture YAML (sans clé en double), surcharges du profil, chemins
+    Étapes : lecture de l'amorce, puis de la config qu'elle désigne (YAML
+    sans clé en double), surcharges du profil, ``workpath`` exigé, chemins
     rendus absolus, agents de ``agents_dir`` lus et préparés (prompts,
     skills, schémas de sortie, modèles et styles de documents), puis
     validation de l'ensemble et contrôle des variables des prompts.
 
     Args:
-        path: Chemin de ``loom.yaml``.
+        path: Chemin de l'amorce (``loom-boot.yaml``).
         profile: Profil donné par l'appelant (``--profile``).
 
     Returns:
-        La configuration validée, ``base_dir`` posé.
+        La configuration validée, ``workpath``, ``boot_file`` et
+        ``config_file`` posés.
 
     Raises:
-        ConfigError: Fichier illisible, YAML invalide, clé en double, champ
-            inconnu ou invalide, fichier cité absent ou hors de
-            ``resources_dir``, agent en double, incohérence (modèle,
-            serveur, agent non déclarés…). Le message nomme le fichier et
-            le chemin dans le YAML.
+        ConfigError: Amorce absente ou invalide, config absente, fichier
+            illisible, YAML invalide, clé en double, ``profile`` ou
+            ``env_file`` dans la config, ``workpath`` absent, champ inconnu
+            ou invalide, fichier cité absent ou hors de ``resources_dir``,
+            agent en double, incohérence (modèle, serveur, agent non
+            déclarés…). Le message nomme le fichier et le chemin dans le
+            YAML.
     """
-    root = Path(path).resolve()
+    boot_file = Path(path).resolve()
+    boot = read_boot(boot_file)
+    boot_dir = boot_file.parent
+    active, _ = chosen_profile(profile, boot.profile)
+    config_dir = (boot_dir / boot.config.path).resolve()
+    root = config_dir / boot.config.file
+    if not root.is_file():
+        raise ConfigError(f"config — fichier de config introuvable : {root} (config.path et config.file de l'amorce)", source=boot_file)
     data = _read_yaml(root)
-    base_dir = root.parent
-    _check_env_file_at_root(data, source=root)
-    active, _ = chosen_profile(profile, data.get("profile"))
+    _check_boot_keys(data, source=root)
     data = _merged(data, active, source=root)
+    workpath = _workpath(data, boot_dir, source=root)
     draft = _validate(LoomConfig, {**data, "agents": data.get("agents", [])}, source=root)
 
-    resources_dir = base_dir / draft.resources_dir
-    loaded = _load_agents(base_dir / draft.agents_dir, resources_dir, base_dir)
+    resources_dir = config_dir / draft.resources_dir
+    loaded = _load_agents(config_dir / draft.agents_dir, resources_dir, config_dir)
     # Les agents écrits dans loom.yaml suivent les mêmes règles que ceux d'agents_dir.
-    inline = [_prepared(spec, resources_dir, base_dir, source=root) for spec in draft.agents]
+    inline = [_prepared(spec, resources_dir, config_dir, source=root) for spec in draft.agents]
     agents = [*inline, *(spec for spec, _ in loaded)]
     try:
         config = LoomConfig.model_validate({**data, "agents": agents})
@@ -117,7 +148,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
         server.model_copy(
             update={
                 "tools": _with_skills(
-                    _with_schemas(server.tools, base_dir, source=root),
+                    _with_schemas(server.tools, config_dir, source=root),
                     resources_dir,
                     f"mcp_servers[{server.name}]",
                     source=root,
@@ -130,7 +161,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
         declared.model_copy(
             update={
                 "tools": _with_skills(
-                    _with_schemas(declared.tools, base_dir, source=root),
+                    _with_schemas(declared.tools, config_dir, source=root),
                     resources_dir,
                     f"tool_sources[{declared.name}]",
                     source=root,
@@ -141,20 +172,22 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     )
     loaded = config.model_copy(
         update={
-            # L'option et la variable l'emportent sur le fichier : la config
+            # L'option et la variable l'emportent sur l'amorce : la config
             # chargée porte le profil qui s'applique vraiment.
             "profile": active,
-            "base_dir": base_dir,
-            "env_file": None if config.env_file is None else (base_dir / config.env_file).resolve(),
-            "agents_dir": base_dir / config.agents_dir,
-            "resources_dir": base_dir / config.resources_dir,
-            "storage": _absolute_storage(config.storage, base_dir),
-            "sessions": _absolute_sessions(config, base_dir / config.resources_dir, source=root),
-            "server": _absolute_server(config, base_dir),
-            "security": _absolute_security(config, base_dir),
-            "mcp_servers": tuple(_launched_from(server, base_dir) for server in servers),
+            "workpath": workpath,
+            "boot_file": boot_file,
+            "config_file": root,
+            "env_file": None if boot.env_file is None else (boot_dir / boot.env_file).resolve(),
+            "agents_dir": config_dir / config.agents_dir,
+            "resources_dir": config_dir / config.resources_dir,
+            "storage": _absolute_storage(config.storage, workpath),
+            "sessions": _absolute_sessions(config, config_dir / config.resources_dir, source=root),
+            "server": _absolute_server(config, workpath),
+            "security": _absolute_security(config, workpath),
+            "mcp_servers": tuple(_launched_from(server, workpath) for server in servers),
             "tool_sources": sources,
-            "tenants": tuple(_absolute_tenant(tenant, base_dir) for tenant in config.tenants),
+            "tenants": tuple(_absolute_tenant(tenant, workpath) for tenant in config.tenants),
         }
     )
     _check_variables(loaded, source=root)
@@ -165,15 +198,44 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     return loaded
 
 
+def read_boot(path: Path) -> BootConfig:
+    """L'amorce (``loom-boot.yaml``), lue et validée.
+
+    Un projet sans amorce est refusé (décision A-3) : le message donne
+    l'amorce minimale à écrire. Un fichier de config donné à la place de
+    l'amorce (``--config loom.yaml``) est reconnu à ses clés, et le message
+    le dit.
+
+    Args:
+        path: Chemin de l'amorce.
+
+    Returns:
+        L'amorce validée.
+
+    Raises:
+        ConfigError: Amorce absente, illisible, invalide, ou fichier de
+            config donné à sa place.
+    """
+    if not path.is_file():
+        raise ConfigError(f"Amorce introuvable : {path}. Un projet loom commence par un {BOOT_FILE}, qui dit où lire la config :\n{BOOT_EXAMPLE}")
+    data = _read_yaml(path)
+    if "config" not in data and CONFIG_KEYS & data.keys():
+        raise ConfigError(
+            f"ce fichier est une config de loom, pas une amorce : écrire un {BOOT_FILE} qui la désigne, et le donner à --config :\n{BOOT_EXAMPLE}",
+            source=path,
+        )
+    return _validate(BootConfig, data, source=path)
+
+
 def chosen_profile(given: str | None, in_file: object = None) -> tuple[Profile | None, str]:
-    """Le profil actif et d'où il vient : option, environnement, fichier, ou rien.
+    """Le profil actif et d'où il vient : option, environnement, amorce, ou rien.
 
     Un profil qu'on ne voit pas est un profil qu'on oublie : la provenance est
     rendue avec lui pour que ``loom validate`` et ``loom serve`` la disent.
 
     Args:
         given: Profil donné par l'appelant.
-        in_file: Valeur de ``profile:`` dans le fichier.
+        in_file: Valeur de ``profile:`` dans l'amorce.
 
     Returns:
         Le profil (``dev``, ``prod`` ou ``None``) et sa provenance.
@@ -184,7 +246,7 @@ def chosen_profile(given: str | None, in_file: object = None) -> tuple[Profile |
     candidats: tuple[tuple[object, str], ...] = (
         (given, "option"),
         (os.environ.get(PROFILE_ENV), PROFILE_ENV),
-        (in_file, "config"),
+        (in_file, "amorce"),
     )
     for value, source in candidats:
         if value is None:
@@ -196,22 +258,48 @@ def chosen_profile(given: str | None, in_file: object = None) -> tuple[Profile |
     return None, "aucun"
 
 
-def _check_env_file_at_root(data: dict[str, Any], *, source: Path) -> None:
-    """Refuse ``env_file`` dans ``profiles`` : il est lu avant le choix du profil.
+def _check_boot_keys(data: dict[str, Any], *, source: Path) -> None:
+    """Refuse ``profile`` et ``env_file`` dans la config : ils appartiennent à l'amorce (décision A-2).
 
-    Accepté là, il passerait la validation et ne serait jamais lu — le fichier
-    qu'il désigne peut lui-même donner ``LOOM_PROFILE``. Tous les profils sont
-    vérifiés, pas seulement l'actif : l'erreur ne doit pas attendre la prod.
+    Lus avant la config, ils n'y seraient jamais pris en compte : le fichier
+    d'environnement peut donner ``LOOM_PROFILE``, et le profil choisit les
+    surcharges. Les surcharges de chaque profil sont vérifiées aussi, pas
+    seulement celles de l'actif : l'erreur ne doit pas attendre la prod.
     """
+    for key in BOOT_KEYS:
+        if key in data:
+            raise ConfigError(f"{key} — refusé dans la config : il se déclare dans l'amorce ({BOOT_FILE}), lue avant elle", source=source)
     declared = data.get("profiles")
     if not isinstance(declared, dict):
         return
     for name, overrides in cast("dict[str, Any]", declared).items():
-        if isinstance(overrides, dict) and ENV_FILE_KEY in overrides:
-            raise ConfigError(
-                f"profiles.{name}.{ENV_FILE_KEY} — refusé : le fichier d'environnement est lu avant le choix du profil ; déclarer '{ENV_FILE_KEY}' à la racine",
-                source=source,
-            )
+        if not isinstance(overrides, dict):
+            continue
+        for key in BOOT_KEYS:
+            if key in overrides:
+                raise ConfigError(f"profiles.{name}.{key} — refusé : il se déclare dans l'amorce ({BOOT_FILE}), lue avant la config", source=source)
+
+
+def _workpath(data: dict[str, Any], boot_dir: Path, *, source: Path) -> Path:
+    """Le dossier de travail, exigé et rendu absolu (décision A-4).
+
+    Lu après les surcharges du profil : un profil peut le changer
+    (``profiles.prod.workpath: /loom-data``). Un chemin relatif se rapporte
+    au dossier de l'amorce.
+
+    Raises:
+        ConfigError: ``workpath`` absent, vide ou qui n'est pas un chemin.
+    """
+    value = data.get(WORKPATH_KEY)
+    if value is None:
+        raise ConfigError(
+            f"{WORKPATH_KEY} — obligatoire : le dossier de travail de l'instance (journal, données des outils, modules Python), "
+            f"relatif au dossier de l'amorce ou absolu ; par exemple 'workpath: .'",
+            source=source,
+        )
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"{WORKPATH_KEY} — un chemin de dossier est attendu", source=source)
+    return (boot_dir / value).resolve()
 
 
 def _merged(data: dict[str, Any], active: Profile | None, *, source: Path) -> dict[str, Any]:

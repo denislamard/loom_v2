@@ -12,8 +12,10 @@ Le préfixe ``loom.`` est réservé à ce que fournit loom-ia (outils et politiq
 aucun nom enregistré ne le porte (décision D5 de l'analyse des outils fournis,
 ``docs/tools-builtin-analyse.md``).
 
-Les modules voisins du fichier de config sont importables : son dossier est
-ajouté à ``sys.path`` le temps du chargement. Un module voisin est importé
+Les modules voisins sont importables depuis le dossier de travail
+(``workpath``, décision A-5) : il est ajouté à ``sys.path`` le temps du
+chargement — ``imports: [tools.Wireframe]`` se lit
+``<workpath>/tools/Wireframe``. Un module voisin est importé
 sous son seul nom ; deux configs d'un même process peuvent pourtant avoir
 chacune le sien sous le même nom (``outils.py``). Un module que loom a importé
 comme voisin d'une config est donc retiré de ``sys.modules`` quand une autre
@@ -95,7 +97,7 @@ def import_modules(names: Iterable[str], *, base_dir: Path | None = None) -> Reg
 
     Args:
         names: Les modules.
-        base_dir: Dossier de la config : ses modules voisins sont importables.
+        base_dir: Dossier de travail (``workpath``) : ses modules sont importables.
 
     Returns:
         Le registre.
@@ -121,7 +123,7 @@ def resolve(reference: str, registry: Registry, *, base_dir: Path | None = None)
     Args:
         reference: Le nom, ou ``module:attr``.
         registry: Les objets enregistrés.
-        base_dir: Dossier de la config.
+        base_dir: Dossier de travail (``workpath``).
 
     Returns:
         L'objet.
@@ -149,7 +151,7 @@ def resolve(reference: str, registry: Registry, *, base_dir: Path | None = None)
 
 
 _NEIGHBOURS: dict[str, Path] = {}
-"""Modules voisins importés par loom : nom de premier niveau → dossier de la config pour laquelle ils l'ont été."""
+"""Modules voisins importés par loom : nom de premier niveau → dossier de travail de la config pour laquelle ils l'ont été."""
 
 
 class _importable:

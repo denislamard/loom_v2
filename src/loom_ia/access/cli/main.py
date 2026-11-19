@@ -23,10 +23,10 @@
                                    export, import, reindex, eval
     loom schema                    JSON Schema du fichier de configuration
 
-``--config`` désigne le fichier de configuration (``./loom.yaml`` par
-défaut). Avant de le lire, chaque commande pose les variables du fichier
-d'environnement du projet : ``env_file:`` de la config, sinon le ``.env`` de
-son dossier ; ``--env-file`` en désigne un autre, ``--no-env-file`` n'en lit
+``--config`` désigne l'amorce (``./loom-boot.yaml`` par défaut), qui dit où
+lire la config. Avant de la lire, chaque commande pose les variables du
+fichier d'environnement du projet : ``env_file:`` de l'amorce, sinon le
+``.env`` de son dossier ; ``--env-file`` en désigne un autre, ``--no-env-file`` n'en lit
 aucun, et une variable déjà définie l'emporte toujours.
 
 Les codes de sortie : 0 tout va bien, 1 le run a échoué, 2 la
@@ -91,6 +91,7 @@ from loom_ia.config.env_file import DISABLED, EnvFileReport, load_env_file
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.config.loader import PROFILE_ENV, chosen_profile
 from loom_ia.config.models import (
+    BOOT_FILE,
     PERMISSIONS,
     PROFILES,
     BusStorage,
@@ -181,7 +182,7 @@ PROG: Final = "loom"
 """Nom du programme."""
 USER_ENV: Final = "LOOM_USER"
 """Utilisateur des commandes qui agissent, faute de ``--user`` (décision D-10 des utilisateurs et rôles)."""
-DEFAULT_CONFIG: Final = Path("loom.yaml")
+DEFAULT_CONFIG: Final = Path(BOOT_FILE)
 """Fichier de configuration, sans ``--config``."""
 MISSING_EXTRA: Final = "{what} demande l'extra '{extra}' (installer l'extra : loom-ia[{extra}])"
 """Message d'une commande dont l'extra n'est pas installé."""
@@ -702,13 +703,13 @@ def _global_options(parser: argparse.ArgumentParser, *, after: bool = False) -> 
         "--config",
         type=Path,
         default=default(DEFAULT_CONFIG),
-        help=f"fichier de configuration (défaut : {DEFAULT_CONFIG})",
+        help=f"amorce, qui dit où lire la config (défaut : {DEFAULT_CONFIG})",
     )
     parser.add_argument(
         "--profile",
         choices=PROFILES,
         default=default(None),
-        help=f"profil actif ; l'emporte sur {PROFILE_ENV} et sur la config",
+        help=f"profil actif ; l'emporte sur {PROFILE_ENV} et sur l'amorce",
     )
     env = parser.add_mutually_exclusive_group()
     env.add_argument(
@@ -859,7 +860,7 @@ class _Report:
 
     Attributes:
         config: Fichier de configuration, tel que donné.
-        root: Dossier de la config : les chemins du rapport s'y rapportent.
+        root: Dossier de l'amorce : les chemins du rapport s'y rapportent.
         sections: Sections, dans l'ordre d'impression.
         warnings: Avertissements, chacun dit une fois.
         mounted: Agents montés, tous clients confondus.
@@ -953,13 +954,17 @@ def _packed(names: list[str], width: int) -> list[str]:
 
 
 def _configuration(report: _Report, config: LoomConfig, args: argparse.Namespace, printed: set[str]) -> None:
-    """Section CONFIGURATION : profil, fichier d'environnement, modèles et clients.
+    """Section CONFIGURATION : config lue, workpath, profil, fichier d'environnement, modèles et clients.
 
-    Le profil actif et ses surcharges, le fichier d'environnement lu, les
+    Le fichier de config que désigne l'amorce, le dossier de travail, le profil actif et ses surcharges, le fichier d'environnement lu, les
     modèles déclarés et les clients ; avec les avertissements sur les clés
     d'API et les modèles.
     """
     section = report.section("CONFIGURATION")
+    if config.config_file is not None:
+        section.add("Config", report.shown(config.config_file))
+    if config.workpath is not None:
+        section.add("Workpath", report.shown(config.workpath))
     active, declared = _profile_said(config, args.profile)
     section.add("Profil", active)
     section.add("Surcharges", declared)
@@ -1203,9 +1208,10 @@ def _profile_said(config: LoomConfig, given: str | None) -> tuple[str, str]:
     active, source = chosen_profile(given, config.profile)
     declared = _listed(sorted(config.profiles)) if config.profiles else "aucune"
     if active is None:
-        return f"aucun (ni --profile, ni {PROFILE_ENV}, ni 'profile:')", declared
+        return f"aucun (ni --profile, ni {PROFILE_ENV}, ni 'profile:' dans l'amorce)", declared
     effet = "les avertissements sont des erreurs" if active == "prod" else "assoupli"
-    return f"{active} (par {source}) — {effet}", declared
+    shown = "l'amorce" if source == "amorce" else source
+    return f"{active} (par {shown}) — {effet}", declared
 
 
 def _profile_line(config: LoomConfig, given: str | None) -> str:

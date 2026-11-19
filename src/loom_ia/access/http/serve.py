@@ -22,12 +22,14 @@ chaque changement :
 Les deux process partagent la socket : une requête qui arrive pendant la
 relève attend dans sa file, elle n'est pas refusée.
 
-Ce qui est surveillé : tout le dossier de la config (et ``agents_dir``,
-``resources_dir`` s'ils sont ailleurs), **sauf** ce que la config écrit —
-journal, fichiers, bases SQLite, ceux de chaque client — et le bruit d'usage
-(``__pycache__``, ``.git``, ``.venv``, fichiers temporaires d'éditeur). Le
-fichier d'environnement en fait partie : voisin de la config, il est dans son
-dossier ; ailleurs (``env_file:``, ``--env-file``), il est surveillé seul.
+Ce qui est surveillé (décision A-9) : tout le dossier de la config (et
+``agents_dir``, ``resources_dir`` s'ils sont ailleurs), les modules Python
+(``.py``) de ``workpath`` s'il est ailleurs, et l'amorce, **sauf** ce que la
+config écrit — journal, fichiers, bases SQLite, ceux de chaque client — et le
+bruit d'usage (``__pycache__``, ``.git``, ``.venv``, fichiers temporaires
+d'éditeur). Dans ``workpath``, seuls les ``.py`` comptent : les outils y
+écrivent leurs données, qui ne doivent pas relancer le service. L'amorce et
+le fichier d'environnement, hors des dossiers surveillés, le sont seuls.
 Chaque process neuf le relit : une clé changée y est prise, une variable du
 shell reste celle du shell.
 
@@ -163,19 +165,25 @@ class Watched:
     """Ce que le rechargement surveille, et ce qu'il écarte parce que loom l'écrit.
 
     Attributes:
-        roots: Dossiers surveillés, sous-dossiers compris.
+        roots: Dossiers surveillés, sous-dossiers compris : celui de la
+            config, et ceux des agents et des ressources s'ils sont ailleurs.
         dirs: Dossiers écrits par loom : journaux JSONL, fichiers des runs.
         files: Fichiers écrits par loom : bases SQLite (leurs ``-wal``,
             ``-shm`` et ``-journal`` avec elles).
-        extra: Fichiers surveillés seuls, hors des dossiers : le fichier
-            d'environnement rangé ailleurs. Le guetteur ne les voit pas ; leur
-            état se relève à chaque réveil du superviseur (``moved``).
+        extra: Fichiers surveillés seuls, hors des dossiers : l'amorce et le
+            fichier d'environnement rangés ailleurs. Le guetteur ne les voit
+            pas ; leur état se relève à chaque réveil du superviseur
+            (``moved``).
+        code: Dossiers où seuls les modules Python (``.py``) comptent :
+            ``workpath`` quand il n'est pas sous un dossier de ``roots``
+            (décision A-9).
     """
 
     roots: tuple[Path, ...]
     dirs: tuple[Path, ...]
     files: tuple[Path, ...]
     extra: tuple[Path, ...] = ()
+    code: tuple[Path, ...] = ()
 
     def counts(self, path: Path) -> bool:
         """Vrai si un changement de ce fichier doit relancer le serveur."""
@@ -183,7 +191,10 @@ class Watched:
             return True
         root = next((r for r in self.roots if path.is_relative_to(r)), None)
         if root is None:
-            return False
+            # Dans workpath, seul le code compte : les données des outils n'y relancent rien.
+            root = next((r for r in self.code if path.is_relative_to(r)), None)
+            if root is None or path.suffix != ".py":
+                return False
         parts = path.relative_to(root).parts
         if any(part in NOISE_DIRS for part in parts[:-1]):
             return False
@@ -204,7 +215,7 @@ class Watched:
     def state(self) -> dict[Path, FileState]:
         """Les fichiers qui comptent, et l'état de chacun (date, taille, inode)."""
         found: dict[Path, FileState] = {}
-        for root in self.roots:
+        for root in (*self.roots, *self.code):
             for folder, subdirs, names in os.walk(root):
                 here = Path(folder)
                 subdirs[:] = [name for name in subdirs if name not in NOISE_DIRS and not any((here / name).is_relative_to(d) for d in self.dirs)]
@@ -243,10 +254,10 @@ class Watched:
         def covered(path: Path) -> bool:
             return any(path != d and path.is_relative_to(d) for d in self.dirs)
 
-        roots = ", ".join(str(root) for root in (*self.roots, *self.extra))
+        roots = ", ".join([*(str(root) for root in (*self.roots, *self.extra)), *(f"{root} (.py)" for root in self.code)])
         excluded = [
-            *(shown(d, folder=True) for d in self.dirs if _under(d, self.roots) and not covered(d)),
-            *(shown(f, folder=False) for f in self.files if _under(f, self.roots) and not covered(f)),
+            *(shown(d, folder=True) for d in self.dirs if _under(d, (*self.roots, *self.code)) and not covered(d)),
+            *(shown(f, folder=False) for f in self.files if _under(f, (*self.roots, *self.code)) and not covered(f)),
         ]
         return f"{roots} (sauf {', '.join(excluded)})" if excluded else roots
 
@@ -254,16 +265,21 @@ class Watched:
 def watched(config: LoomConfig, env_file: Path | None = None) -> Watched:
     """Ce que le rechargement surveille pour cette config.
 
-    ``env_file`` est le fichier d'environnement lu : hors des dossiers
-    surveillés, il l'est seul. Lève ``ConfigError`` si un dossier que loom
-    écrit contient un dossier surveillé : le rechargement ne saurait pas
-    distinguer ses écritures de celles du développeur.
+    Le dossier de la config (et ceux des agents et des ressources s'ils sont
+    ailleurs) en entier, les ``.py`` de ``workpath`` s'il n'est pas dessous,
+    l'amorce seule si elle est ailleurs. ``env_file`` est le fichier
+    d'environnement lu : hors des dossiers surveillés, il l'est seul. Lève
+    ``ConfigError`` si un dossier que loom écrit contient un dossier
+    surveillé : le rechargement ne saurait pas distinguer ses écritures de
+    celles du développeur.
     """
     base = config.base_dir if config.base_dir is not None else Path.cwd()
-    roots = [base]
+    home = config.config_file.parent if config.config_file is not None else base
+    roots = [home]
     for extra in (config.agents_dir, config.resources_dir):
-        if not extra.is_relative_to(base) and extra not in roots:
+        if not _under(extra, roots) and extra not in roots:
             roots.append(extra)
+    code = [] if _under(base, roots) else [base]
     storages = [config.storage, *(t.storage for t in config.tenants if t.storage is not None)]
     dirs: list[Path] = []
     files: list[Path] = []
@@ -276,13 +292,13 @@ def watched(config: LoomConfig, env_file: Path | None = None) -> Watched:
         # Le fichier des refus (décision D-9 des utilisateurs et rôles) : un refus écrit ne doit pas relancer le service.
         files.append(audit.path)
     for folder in dirs:
-        for root in roots:
+        for root in (*roots, *code):
             if root.is_relative_to(folder):
                 raise ConfigError(
                     f"--reload : {folder} est écrit par loom (journal ou fichiers) et contient {root}, surveillé — mettre les données dans un sous-dossier"
                 )
-    extra = (env_file,) if env_file is not None and not _under(env_file, roots) else ()
-    return Watched(roots=tuple(roots), dirs=tuple(dirs), files=tuple(files), extra=extra)
+    alone = [path for path in (config.boot_file, env_file) if path is not None and not _under(path, roots)]
+    return Watched(roots=tuple(roots), dirs=tuple(dirs), files=tuple(files), extra=tuple(dict.fromkeys(alone)), code=tuple(code))
 
 
 def _file_state(path: Path) -> FileState | None:
@@ -408,6 +424,7 @@ def serve_reloading(
             # seul l'état des fichiers dit ce qui a changé.
             guard = watch(
                 *spec.roots,
+                *spec.code,
                 watch_filter=spec.filter,
                 stop_event=stopping,
                 raise_interrupt=False,

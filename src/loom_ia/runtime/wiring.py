@@ -932,7 +932,7 @@ def build_policies(
     Args:
         spec: L'agent.
         registry: Registre des politiques enregistrées.
-        base_dir: Dossier de la config, pour les références ``module:attr``.
+        base_dir: Dossier de travail (``workpath``), pour les références ``module:attr``.
         contracts: Brancher le guard des contrats ; déduit de l'agent si
             ``None``.
         judges: Les guards des juges.
@@ -1191,7 +1191,7 @@ def judge_definition(
         judged: Nom du juge, rôle jugé (``None`` pour la réponse finale) et
             définition.
         registry: Registre, pour résoudre ``when.condition``.
-        base_dir: Dossier de la config.
+        base_dir: Dossier de travail (``workpath``).
         profile: Profil courant, pour ``when.profiles``.
 
     Raises:
@@ -2079,7 +2079,7 @@ def _builtin_tool(declared: PythonTool, context: BuiltinContext) -> Tool:
     """Outil fourni par loom-ia (préfixe ``loom.``) : son module n'est importé qu'ici.
 
     Un outil à paramètres reçoit ceux de sa référence, validés par son modèle,
-    et le contexte du montage : le dossier de la config et les chemins de loom
+    et le contexte du montage : le dossier de travail et les chemins de loom
     qu'il ne doit pas exposer.
     """
     reference = declared.python
@@ -2138,18 +2138,26 @@ def _protected_dsns(config: LoomConfig) -> tuple[str, ...]:
 def _protected_paths(config: LoomConfig) -> tuple[Protected, ...]:
     """Ce qu'un outil fourni ne doit jamais exposer au modèle.
 
-    La config et ce qui la compose (agents, prompts), le code que loom charge
-    ou lance depuis son dossier (modules, serveurs MCP), le fichier
-    d'environnement, et le stockage de la racine et de **tous** les clients :
-    un modèle qui y accéderait lirait des secrets ou les journaux d'un autre
-    client, ou réécrirait le code qui le fait tourner.
+    L'amorce, la config et ce qui la compose (agents, prompts), le code que
+    loom charge ou lance depuis ``workpath`` (modules, serveurs MCP), le
+    fichier d'environnement, et le stockage de la racine et de **tous** les
+    clients : un modèle qui y accéderait lirait des secrets ou les journaux
+    d'un autre client, ou réécrirait le code qui le fait tourner.
     """
     found: list[Protected] = []
     base = config.base_dir
     names = _code_names(config)
-    if base is not None:
+    if config.boot_file is not None:
+        found.append(Protected(config.boot_file, "l'amorce"))
+        found.append(Protected(config.boot_file.parent / ENV_FILE_DEFAULT, "le fichier d'environnement"))
+    if config.config_file is not None:
+        found.append(Protected(config.config_file, "le fichier de config"))
         # Le dossier de la config : on peut en exposer un sous-dossier, pas lui.
-        found.append(Protected(base, "le dossier de la config"))
+        found.append(Protected(config.config_file.parent, "le dossier de la config"))
+    if base is not None:
+        # Le dossier de travail, où cohabitent code et données (décision A-5) :
+        # on peut en exposer un sous-dossier, pas lui.
+        found.append(Protected(base, "le dossier de travail (workpath)"))
         found.append(Protected(base / ENV_FILE_DEFAULT, "le fichier d'environnement"))
         for top in sorted(names):
             found.append(Protected(base / f"{top}.py", f"le module Python {top!r}"))

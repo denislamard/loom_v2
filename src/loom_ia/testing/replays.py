@@ -2,7 +2,7 @@
 """Non-régression depuis les traces, dans un test (fonctions O2 et O3, jalon J6.3b).
 
     async def test_la_relance_se_rejoue() -> None:
-        await assert_replays("loom.yaml", *Path("journaux").glob("*.jsonl"))
+        await assert_replays("loom-boot.yaml", *Path("journaux").glob("*.jsonl"))
 
 Chaque run fini de chaque journal est rejoué **à l'identique** avec la config
 donnée : le monde — modèles, outils, approbations — est servi par le journal,
@@ -38,7 +38,7 @@ async def assert_replays(
     serait éprouvé : c'est aussi un échec.
 
     Args:
-        config: La config chargée, ou le chemin de ``loom.yaml``.
+        config: La config chargée, ou le chemin de l'amorce (``loom-boot.yaml``).
         *journals: Les journaux JSONL (``loom sessions export``,
             ``Bench.export``).
         register: Objets Python référençables par leur nom.
