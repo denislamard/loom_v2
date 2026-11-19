@@ -2,6 +2,8 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.23 - publiée
+
 ## 2.0.22 - publiée
 
 ### Configuration : l'amorce `loom-boot.yaml` et `workpath` (`docs/analyse-source-config.md`)
