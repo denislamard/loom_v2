@@ -25,10 +25,12 @@ from loom_ia.agents import (
     UnknownAgent,
 )
 from loom_ia.config import (
+    BootConfig,
     ConfigError,
     LoomConfig,
     Registry,
     agent_json_schema,
+    boot_json_schema,
     config_json_schema,
     import_modules,
     load_config,
@@ -528,6 +530,71 @@ def test_json_schema_describes_the_files() -> None:
     agent = agent_json_schema()
     assert {"name", "main", "tools"} <= agent["properties"].keys()
     assert agent["required"] == ["name", "main"]
+
+
+def test_the_boot_file_says_where_the_config_is() -> None:
+    boot = BootConfig.model_validate({"version": 1, "profile": "prod", "env_file": ".env", "config": {"source": "file", "path": "config"}})
+    assert boot.profile == "prod"
+    assert boot.env_file == Path(".env")
+    assert boot.config.path == Path("config")
+    assert boot.config.file == "loom.yaml"
+
+
+def test_the_config_file_is_next_to_the_boot_file_by_default() -> None:
+    boot = BootConfig.model_validate({"version": 1, "config": {"source": "file"}})
+    assert boot.config.path == Path()
+    assert boot.config.file == "loom.yaml"
+    assert boot.profile is None
+    assert boot.env_file is None
+
+
+def test_the_boot_file_needs_its_config_block() -> None:
+    with pytest.raises(ValidationError, match="config"):
+        BootConfig.model_validate({"version": 1})
+
+
+@pytest.mark.parametrize("key", ["models", "workpath", "agents_dir", "storage"])
+def test_the_boot_file_refuses_the_keys_of_the_config(key: str) -> None:
+    with pytest.raises(ValidationError, match=key):
+        BootConfig.model_validate({"version": 1, "config": {"source": "file"}, key: "x"})
+
+
+def test_a_remote_source_is_refused_by_name() -> None:
+    with pytest.raises(ValidationError) as caught:
+        BootConfig.model_validate({"version": 1, "config": {"source": "postgres", "dsn_env": "LOOM_CONFIG_DSN"}})
+    message = str(caught.value)
+    assert "source 'postgres' non disponible : seule la source 'file' l'est pour l'instant" in message
+    # La source indisponible est dite seule : pas d'erreur sur ses paramètres.
+    assert "dsn_env" not in message
+
+
+@pytest.mark.parametrize("name", ["config/loom.yaml", "../loom.yaml", "a\\loom.yaml", "", ".", ".."])
+def test_the_config_file_is_a_bare_name(name: str) -> None:
+    with pytest.raises(ValidationError, match="un nom de fichier est attendu, sans dossier"):
+        BootConfig.model_validate({"version": 1, "config": {"source": "file", "file": name}})
+
+
+def test_the_config_file_name_is_free() -> None:
+    boot = BootConfig.model_validate({"version": 1, "config": {"source": "file", "file": "prod.yaml"}})
+    assert boot.config.file == "prod.yaml"
+
+
+def test_an_unknown_boot_version_is_refused() -> None:
+    with pytest.raises(ValidationError, match="Version d'amorce 2 non prise en charge"):
+        BootConfig.model_validate({"version": 2, "config": {"source": "file"}})
+
+
+def test_an_unknown_profile_is_refused_in_the_boot_file() -> None:
+    with pytest.raises(ValidationError, match="profile"):
+        BootConfig.model_validate({"version": 1, "profile": "staging", "config": {"source": "file"}})
+
+
+def test_json_schema_describes_the_boot_file() -> None:
+    boot = boot_json_schema()
+    assert boot["additionalProperties"] is False
+    assert boot["properties"].keys() == {"version", "profile", "env_file", "config"}
+    assert sorted(boot["required"]) == ["config", "version"]
+    assert "workpath" in config_json_schema()["properties"]
 
 
 def test_registry_rejects_duplicates_and_iterates() -> None:

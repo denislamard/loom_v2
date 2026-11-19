@@ -1232,6 +1232,122 @@ type Profile = Literal["dev", "prod"]
 PROFILES: Final[tuple[Profile, ...]] = ("dev", "prod")
 """Les profils connus."""
 
+BOOT_FILE: Final = "loom-boot.yaml"
+"""Nom de l'amorce que la ligne de commande cherche par défaut (décision A-1)."""
+CONFIG_FILE: Final = "loom.yaml"
+"""Nom du fichier de config cherché dans ``config.path`` quand l'amorce n'en donne pas (décision A-2)."""
+CONFIG_SOURCES: Final = ("file",)
+"""Sources de config disponibles : les fichiers seulement pour l'instant (décision A-7).
+
+Une source distante (base de données, URL) pourra s'ajouter sans changer le
+format de l'amorce : elle prendra sa place dans le bloc ``config``, sous sa
+propre valeur de ``source``.
+"""
+
+
+class FileConfigSource(DomainModel):
+    """Config de loom lue dans un fichier local : le bloc ``config`` de l'amorce (``source: file``).
+
+    Exemple ::
+
+        config:
+          source: file
+          path: ./config
+          file: loom.yaml
+
+    Le dossier ``path`` est la racine des documents de la config :
+    ``agents_dir``, ``resources_dir`` et les ``schema_file`` s'y rapportent.
+    Les chemins de travail, eux, se rapportent à ``workpath`` (décisions A-5
+    et A-6).
+
+    Attributes:
+        source: ``file``, seule source disponible pour l'instant (décision
+            A-7) ; une autre valeur est refusée en la nommant.
+        path: Dossier de la config, relatif au dossier de l'amorce ; par
+            défaut, celui de l'amorce.
+        file: Nom du fichier de config dans ``path``, sans dossier ;
+            ``loom.yaml`` par défaut.
+    """
+
+    source: Literal["file"]
+    path: Path = Path()
+    file: str = CONFIG_FILE
+
+    @model_validator(mode="before")
+    @classmethod
+    def _available(cls, data: object) -> object:
+        """Refuse une source indisponible avant tout autre contrôle.
+
+        Sans lui, ``source: postgres`` avec ses paramètres donnerait une
+        erreur par clé inconnue avant celle qui compte.
+
+        Raises:
+            ValueError: ``source`` n'est pas une source disponible.
+        """
+        if not isinstance(data, dict):
+            return data
+        fields = cast("dict[str, object]", data)
+        source = fields.get("source")
+        if source is not None and source not in CONFIG_SOURCES:
+            available = ", ".join(repr(name) for name in CONFIG_SOURCES)
+            raise ValueError(f"source {source!r} non disponible : seule la source {available} l'est pour l'instant")
+        return fields
+
+    @model_validator(mode="after")
+    def _bare_name(self) -> Self:
+        """Le nom du fichier, sans dossier : le dossier se donne par ``path``.
+
+        Raises:
+            ValueError: ``file`` vide, ``.``, ``..`` ou contenant un dossier.
+        """
+        name = self.file
+        if name in {"", ".", ".."} or Path(name).name != name or "\\" in name:
+            raise ValueError(f"'file' : un nom de fichier est attendu, sans dossier ({name!r}) — le dossier se donne par 'path'")
+        return self
+
+
+class BootConfig(DomainModel):
+    """L'amorce (``loom-boot.yaml``) : le premier fichier que loom lit, toujours local (décisions A-1 et A-2).
+
+    Elle dit où trouver la config de loom, et porte ce qui doit être connu
+    avant de la lire : le profil, choisi sur l'hôte, et le fichier
+    d'environnement. Toutes les autres clés sont dans la config.
+
+    Exemple ::
+
+        version: 1
+        profile: prod
+        env_file: .env
+        config:
+          source: file
+          path: ./config
+          file: loom.yaml
+
+    Attributes:
+        version: Version du schéma ; 1.
+        profile: Profil actif (``dev`` ou ``prod``) ; l'option
+            ``--profile`` et ``LOOM_PROFILE`` l'emportent.
+        env_file: Fichier d'environnement du projet, relatif au dossier de
+            l'amorce ; à défaut, le ``.env`` de ce dossier.
+        config: Où lire la config de loom.
+    """
+
+    version: int
+    profile: Profile | None = None
+    env_file: Path | None = None
+    config: FileConfigSource
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        """Version du schéma connue.
+
+        Raises:
+            ValueError: Version inconnue.
+        """
+        if self.version != SCHEMA_VERSION:
+            raise ValueError(f"Version d'amorce {self.version!r} non prise en charge (attendue : {SCHEMA_VERSION})")
+        return self
+
 
 class ToolSourceSpec(DomainModel):
     """Une source d'outils fournie par un paquet installé (``tool_sources`` ; jalon J6.4b, conception §7.3).
@@ -1286,6 +1402,13 @@ class LoomConfig(DomainModel):
             la variable d'environnement l'emportent sur le fichier.
         profiles: Surcharges partielles par profil, fusionnées au chargement :
             les objets en profondeur, les listes remplacées.
+        workpath: Dossier de travail de l'instance (décisions A-4 et A-5),
+            obligatoire dans la config lue par l'amorce, quelle que soit la
+            source : le journal, les artefacts, l'audit, les données des
+            outils, le ``cwd`` des serveurs MCP et les modules Python voisins
+            (``imports``, ``module:attr``) s'y rapportent. Un chemin relatif
+            se rapporte au dossier de l'amorce ; en conteneur, un chemin
+            absolu monté depuis l'hôte (``/loom-data``).
         base_dir: Dossier du fichier de config, posé au chargement : les
             modules voisins sont importables et les chemins relatifs s'y
             rapportent. Hors du schéma publié (``loom schema``) : on ne l'écrit
@@ -1325,6 +1448,7 @@ class LoomConfig(DomainModel):
     version: int
     profile: Profile | None = None
     profiles: dict[Profile, dict[str, JsonValue]] = Field(default_factory=dict[Profile, dict[str, JsonValue]])
+    workpath: Path | None = None
     base_dir: SkipJsonSchema[Path | None] = None
     env_file: Path | None = None
     imports: tuple[str, ...] = ()
