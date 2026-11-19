@@ -40,6 +40,9 @@ l'éditeur.
 - `MINIMAL_SECURITY = f'security:\n roles:\n - id: owner\n permissions: [run, answer, cancel, approve, self_approve, amend, read, read_conten…` : Ce que le message d'une config sans rôle ni utilisateur donne à recopier (décision D-1 des utilisateurs et rôles).
 - `Profile = Literal['dev', 'prod']` : Profil de la config : `dev` assouplit, `prod` durcit.
 - `PROFILES = ('dev', 'prod')` : Les profils connus.
+- `BOOT_FILE = 'loom-boot.yaml'` : Nom de l'amorce que la ligne de commande cherche par défaut (décision A-1).
+- `CONFIG_FILE = 'loom.yaml'` : Nom du fichier de config cherché dans `config.path` quand l'amorce n'en donne pas (décision A-2).
+- `CONFIG_SOURCES = ('file',)` : Sources de config disponibles : les fichiers seulement pour l'instant (décision A-7).  Une source distante (base de données, URL) pourra s'ajouter sans changer le format de l'amorce : elle prendra sa place dans le bloc `config`, sous sa propre valeur de `source`.
 
 ## Classe `loom_ia.config.models.PostgresPoolSettings`
 
@@ -832,6 +835,108 @@ def templates(self) -> tuple[str, ...]
 
 Les gabarits à analyser au chargement.
 
+## Classe `loom_ia.config.models.FileConfigSource`
+
+```python
+class FileConfigSource(DomainModel)
+```
+
+Config de loom lue dans un fichier local : le bloc `config` de l'amorce (`source: file`).
+
+Exemple :
+
+```
+config:
+  source: file
+  path: ./config
+  file: loom.yaml
+```
+
+Le dossier `path` est la racine des documents de la config :
+`agents_dir`, `resources_dir` et les `schema_file` s'y rapportent.
+Les chemins de travail, eux, se rapportent à `workpath` (décisions A-5
+et A-6).
+
+**Attributs :**
+
+- `source` : `file`, seule source disponible pour l'instant (décision A-7) ; une autre valeur est refusée en la nommant.
+- `path` : Dossier de la config, relatif au dossier de l'amorce ; par défaut, celui de l'amorce.
+- `file` : Nom du fichier de config dans `path`, sans dossier ; `loom.yaml` par défaut.
+
+### Méthode `loom_ia.config.models.FileConfigSource._available`
+
+```python
+@model_validator(mode='before')
+@classmethod
+def _available(cls, data: object) -> object
+```
+
+Refuse une source indisponible avant tout autre contrôle.
+
+Sans lui, `source: postgres` avec ses paramètres donnerait une
+erreur par clé inconnue avant celle qui compte.
+
+**Lève :**
+
+- `ValueError` : `source` n'est pas une source disponible.
+
+### Méthode `loom_ia.config.models.FileConfigSource._bare_name`
+
+```python
+@model_validator(mode='after')
+def _bare_name(self) -> Self
+```
+
+Le nom du fichier, sans dossier : le dossier se donne par `path`.
+
+**Lève :**
+
+- `ValueError` : `file` vide, `.`, `..` ou contenant un dossier.
+
+## Classe `loom_ia.config.models.BootConfig`
+
+```python
+class BootConfig(DomainModel)
+```
+
+L'amorce (`loom-boot.yaml`) : le premier fichier que loom lit, toujours local (décisions A-1 et A-2).
+
+Elle dit où trouver la config de loom, et porte ce qui doit être connu
+avant de la lire : le profil, choisi sur l'hôte, et le fichier
+d'environnement. Toutes les autres clés sont dans la config.
+
+Exemple :
+
+```
+version: 1
+profile: prod
+env_file: .env
+config:
+  source: file
+  path: ./config
+  file: loom.yaml
+```
+
+**Attributs :**
+
+- `version` : Version du schéma ; 1.
+- `profile` : Profil actif (`dev` ou `prod`) ; l'option `--profile` et `LOOM_PROFILE` l'emportent.
+- `env_file` : Fichier d'environnement du projet, relatif au dossier de l'amorce ; à défaut, le `.env` de ce dossier.
+- `config` : Où lire la config de loom.
+
+### Méthode `loom_ia.config.models.BootConfig._check`
+
+```python
+@model_validator(mode='after')
+def _check(self) -> Self
+```
+
+Version du schéma connue.
+
+**Lève :**
+
+- `ValueError` : Version inconnue.
+
 ## Classe `loom_ia.config.models.ToolSourceSpec`
 
 ```python
@@ -885,10 +990,12 @@ security:
 **Attributs :**
 
 - `version` : Version du schéma ; 1.
-- `profile` : Profil actif (fonction M4) : `dev` assouplit, `prod` durcit, absent ne change rien. Posé au chargement, où l'option et la variable d'environnement l'emportent sur le fichier.
+- `profile` : Profil actif (fonction M4) : `dev` assouplit, `prod` durcit, absent ne change rien. Posé au chargement d'après l'amorce, où l'option et la variable d'environnement l'emportent (décision A-2) ; refusé dans le fichier de config. Hors du schéma publié.
 - `profiles` : Surcharges partielles par profil, fusionnées au chargement : les objets en profondeur, les listes remplacées.
-- `base_dir` : Dossier du fichier de config, posé au chargement : les modules voisins sont importables et les chemins relatifs s'y rapportent. Hors du schéma publié (`loom schema`) : on ne l'écrit pas (essai de la fonction M1, 21/10).
-- `env_file` : Fichier d'environnement du projet, relatif au dossier de la config : lu par `loom` avant la config elle-même (`config/env_file.py`), au lieu du `.env` voisin. À la racine seulement, car il peut donner le profil.
+- `workpath` : Dossier de travail de l'instance (décisions A-4 et A-5), obligatoire dans la config lue par l'amorce, quelle que soit la source : le journal, les artefacts, l'audit, les données des outils, le `cwd` des serveurs MCP et les modules Python voisins (`imports`, `module:attr`) s'y rapportent. Un chemin relatif se rapporte au dossier de l'amorce ; en conteneur, un chemin absolu monté depuis l'hôte (`/loom-data`). Rendu absolu au chargement. Facultatif pour une config construite en Python : le dossier courant.
+- `boot_file` : L'amorce lue (`loom-boot.yaml`), posée au chargement ; `None` pour une config construite en Python. Hors du schéma publié.
+- `config_file` : Le fichier de config que l'amorce désigne, posé au chargement : son dossier est la racine des documents (`agents_dir`, `resources_dir`, `schema_file`). Hors du schéma publié.
+- `env_file` : Fichier d'environnement du projet, posé au chargement d'après l'amorce (décision A-2) ; refusé dans le fichier de config. Hors du schéma publié.
 - `imports` : Modules chargés au démarrage, qui enregistrent leurs outils et politiques (point 50).
 - `agents_dir` : Dossier des fichiers d'agents (`agents` par défaut), un `<nom>.yaml` par agent.
 - `resources_dir` : Dossier des prompts et skills (`prompts` par défaut), base des `system_file` et `skill_file`.
@@ -905,6 +1012,20 @@ security:
 - `server` : Serveurs HTTP et MCP.
 - `triggers` : Portes d'entrée déclarées (fonction H6) : ce qu'un appel extérieur ouvre.
 - `agents` : Les agents : remplis depuis `agents_dir` au chargement, ou donnés directement en Python.
+
+### Méthode `loom_ia.config.models.LoomConfig.base_dir`
+
+```python
+@property
+def base_dir(self) -> Path | None
+```
+
+Le dossier de travail (`workpath`) : nom d'usage dans le code de montage.
+
+Les modules voisins y sont importables, et les chemins de travail
+relatifs (outils, stockage, serveurs MCP) s'y rapportent. `None`
+pour une config construite en Python sans `workpath` : le dossier
+courant.
 
 ### Méthode `loom_ia.config.models.LoomConfig.strict`
 

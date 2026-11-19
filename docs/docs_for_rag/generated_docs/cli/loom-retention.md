@@ -18,7 +18,7 @@ Arguments et options de `loom retention` :
 - `--tenant` : un seul client (défaut : tous les clients déclarés)
 - `--yes` : supprime pour de bon ; sans cette option, rien n'est touché
 - `--json` : affiche le rapport en JSON
-- `--config` : fichier de configuration (défaut : loom.yaml)
-- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur la config
-- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)
+- `--config` : amorce, qui dit où lire la config (défaut : loom-boot.yaml)
+- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur l'amorce
+- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)
 - `--no-env-file` : ne lit aucun fichier de variables

@@ -80,7 +80,7 @@ Les exemples du dossier `examples/` et la sandbox Firecracker ne font pas partie
 git clone https://github.com/denislamard/loom_v2.git
 cd loom_v2
 uv sync --all-extras
-uv run loom --config examples/j1/demo/loom.yaml run demo "Combien font 12 × 7 + 3 ?"
+uv run loom --config examples/j1/demo/loom-boot.yaml run demo "Combien font 12 × 7 + 3 ?"
 ```
 
 La dernière commande lance un agent de démonstration sur un modèle simulé, ce qui permet de vérifier l'installation sans clé d'API.
@@ -91,6 +91,7 @@ Prenons un petit agent qui répond aux questions de prix d'un artisan. Pour calc
 
 ```
 mon-agent/
+├── loom-boot.yaml     l'amorce : où lire la config, profil, fichier d'environnement
 ├── loom.yaml          modèles, stockage, modules à importer
 ├── outils.py          vos outils Python
 ├── agents/devis.yaml  un fichier par agent
@@ -130,10 +131,21 @@ Tu es l'assistant d'un artisan. Tu réponds en français, en une ou deux phrases
 Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer toi-même.
 ```
 
-Reste la configuration racine, `loom.yaml`. Le modèle `SIMULE` y joue un script : au premier tour il appelle `prix_ttc`, au second il répond.
+Reste la configuration. Loom-IA lit d'abord l'amorce, `loom-boot.yaml`, qui dit où trouver la config ; c'est elle que désigne `--config` (`./loom-boot.yaml` par défaut) :
 
 ```yaml
 version: 1
+config:
+  source: file
+  path: .            # le dossier de loom.yaml
+  file: loom.yaml
+```
+
+Puis la configuration racine, `loom.yaml`. `workpath` est le dossier de travail : le journal, les données des outils et les modules Python (`outils.py`) s'y trouvent. Le modèle `SIMULE` joue un script : au premier tour il appelle `prix_ttc`, au second il répond.
+
+```yaml
+version: 1
+workpath: .                    # le dossier de travail, relatif à l'amorce
 imports: [outils]
 agents_dir: agents/
 resources_dir: prompts/
@@ -170,7 +182,7 @@ Pour 1 250 € HT avec une TVA à 10 %, votre client paiera 1 375 € TTC.
 
 `loom inspect`, suivi de l'identifiant du run, affiche ensuite son arbre avec chaque appel de modèle et d'outil, sa durée et son coût.
 
-Passer à un vrai modèle demande trois changements. On déclare le modèle dans `models` avec `sdk: anthropic` et le nom de la variable qui porte la clé, on écrit cette clé dans un fichier `.env` à côté de `loom.yaml`, puis on change le `model:` de l'agent. Pour aller plus loin avec les conversations, la validation humaine, les rôles et les juges, le plus simple est de suivre [la formation](https://denislamard.github.io/docs_loom_v2/module-01.html).
+Passer à un vrai modèle demande trois changements. On déclare le modèle dans `models` avec `sdk: anthropic` et le nom de la variable qui porte la clé, on écrit cette clé dans un fichier `.env` à côté de `loom-boot.yaml`, puis on change le `model:` de l'agent. Pour aller plus loin avec les conversations, la validation humaine, les rôles et les juges, le plus simple est de suivre [la formation](https://denislamard.github.io/docs_loom_v2/module-01.html).
 
 ## Ce que Loom-IA sait faire
 
@@ -219,7 +231,7 @@ Cette section rassemble les tables qu'on vient chercher le plus souvent. La réf
 | `loom storage sql` | Imprimer le SQL du stockage Postgres |
 | `loom schema` | Imprimer le JSON Schema de la configuration |
 
-Quatre options sont communes à toutes les commandes : `--config`, qui vaut `loom.yaml` par défaut, `--profile`, `--env-file` et `--no-env-file`. Elles se placent indifféremment avant ou après la commande.
+Quatre options sont communes à toutes les commandes : `--config`, l'amorce, qui vaut `loom-boot.yaml` par défaut, `--profile`, `--env-file` et `--no-env-file`. Elles se placent indifféremment avant ou après la commande.
 
 ### API Python
 
@@ -227,7 +239,7 @@ Toutes ces méthodes appartiennent à la classe `Loom`, que l'on importe depuis 
 
 | Méthode | Rôle |
 |---|---|
-| `Loom.from_config(chemin)`, `Loom(config)` | Charger une configuration |
+| `Loom.from_config(amorce)`, `Loom(config)` | Charger une configuration, par son amorce `loom-boot.yaml` |
 | `run()`, `stream()`, `submit()` | Lancer un run et attendre sa fin, le suivre en direct, ou le mettre en arrière-plan |
 | `result()`, `state()`, `events()`, `follow()` | Relire un run, suivre son journal |
 | `cancel()`, `resume()`, `recover()` | Arrêter, reprendre, remettre en file les runs restés en plan |
@@ -239,7 +251,7 @@ Toutes ces méthodes appartiennent à la classe `Loom`, que l'on importe depuis 
 | `trigger()` | Ouvrir un run par une porte déclarée |
 | `register()` | Rendre un objet Python référençable depuis la configuration |
 
-Contrairement à la commande `loom`, la librairie ne lit aucun fichier `.env`. Pour retrouver le même comportement, appelez `load_env_file("loom.yaml")`, fourni par `loom_ia.config`, avant `Loom.from_config`.
+Contrairement à la commande `loom`, la librairie ne lit aucun fichier `.env`. Pour retrouver le même comportement, appelez `load_env_file("loom-boot.yaml")`, fourni par `loom_ia.config`, avant `Loom.from_config`.
 
 ### API REST
 
@@ -271,7 +283,7 @@ Une requête présente sa clé dans `Authorization: Bearer lk_…` ou dans `X-AP
 Pour brancher vos agents sur Claude Code :
 
 ```bash
-claude mcp add loom -- loom --config /chemin/vers/mon-agent/loom.yaml mcp
+claude mcp add loom -- loom --config /chemin/vers/mon-agent/loom-boot.yaml mcp
 ```
 
 ### Stockages
@@ -302,7 +314,7 @@ Le noyau ne fait aucune entrée-sortie. Il définit les types du domaine et des 
 
 Pour apprendre, commencez par [la formation](https://denislamard.github.io/docs_loom_v2/). Ses quinze modules construisent un seul agent, de l'installation jusqu'à la sandbox. Elle comprend aussi une [référence de la CLI et de la configuration](https://denislamard.github.io/docs_loom_v2/reference.html) et une page consacrée aux [pièges et au dépannage](https://denislamard.github.io/docs_loom_v2/pieges.html).
 
-Dans le dépôt, [`docs/configuration.md`](docs/configuration.md) détaille chaque clé de `loom.yaml` et des fichiers d'agent. [`CHANGELOG.md`](CHANGELOG.md) retrace les changements d'une version à l'autre, et [`SECURITY.md`](SECURITY.md) explique comment signaler une vulnérabilité.
+Dans le dépôt, [`docs/configuration.md`](docs/configuration.md) détaille chaque clé de l'amorce `loom-boot.yaml`, de `loom.yaml` et des fichiers d'agent. [`CHANGELOG.md`](CHANGELOG.md) retrace les changements d'une version à l'autre, et [`SECURITY.md`](SECURITY.md) explique comment signaler une vulnérabilité.
 
 ## Développer et tester
 

@@ -4,7 +4,7 @@ Module `loom_ia.testing.bench` de loom_v2 (fichier `src/loom_ia/testing/bench.py
 
 Un agent au banc d'essai : sa config, des faux modèles, des faux outils (fonction O2, jalon J6.3c).
 
-    async with Bench("loom.yaml", models={"M3_MAIN": ScriptedModel(...)},
+    async with Bench("loom-boot.yaml", models={"M3_MAIN": ScriptedModel(...)},
                      tools={"envoyer_email": faux_envoi}) as banc:
         result = await banc.run("relance", "Relance le client du devis D-2026-042.")
         banc.expect(result, status="completed", called=[{"name": "envoyer_email"}])
@@ -101,7 +101,7 @@ Charge la config et retient les faux.
 
 **Arguments :**
 
-- `config` : La config chargée, ou le chemin de `loom.yaml`.
+- `config` : La config chargée, ou le chemin de l'amorce (`loom-boot.yaml`).
 - `models` : Faux modèles, par identifiant de modèle de la config.
 - `tools` : Faux outils, par nom d'outil : fonctions ``(arguments) -> résultat``.
 - `register` : Objets Python référençables par leur nom (`Loom.register`).

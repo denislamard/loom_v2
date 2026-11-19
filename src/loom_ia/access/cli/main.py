@@ -716,7 +716,7 @@ def _global_options(parser: argparse.ArgumentParser, *, after: bool = False) -> 
         "--env-file",
         type=Path,
         default=default(None),
-        help="fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)",
+        help="fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)",
     )
     env.add_argument(
         "--no-env-file",
@@ -856,7 +856,7 @@ class _Section:
 
 @dataclass(slots=True)
 class _Report:
-    """Ce que ``loom validate`` imprime ; ``root`` est le dossier de la config.
+    """Ce que ``loom validate`` imprime ; ``root`` est le dossier de l'amorce.
 
     Attributes:
         config: Fichier de configuration, tel que donné.

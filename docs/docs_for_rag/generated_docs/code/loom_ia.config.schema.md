@@ -21,6 +21,18 @@ Schéma du fichier racine `loom.yaml`.
 
 Le JSON Schema de `LoomConfig`, en mode validation.
 
+## Fonction `loom_ia.config.schema.boot_json_schema`
+
+```python
+def boot_json_schema() -> dict[str, Any]
+```
+
+Schéma de l'amorce `loom-boot.yaml`.
+
+**Renvoie :**
+
+Le JSON Schema de `BootConfig`, en mode validation.
+
 ## Fonction `loom_ia.config.schema.agent_json_schema`
 
 ```python

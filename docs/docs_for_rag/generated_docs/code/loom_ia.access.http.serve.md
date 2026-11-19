@@ -25,12 +25,14 @@ chaque changement :
 Les deux process partagent la socket : une requête qui arrive pendant la
 relève attend dans sa file, elle n'est pas refusée.
 
-Ce qui est surveillé : tout le dossier de la config (et `agents_dir`,
-`resources_dir` s'ils sont ailleurs), **sauf** ce que la config écrit —
-journal, fichiers, bases SQLite, ceux de chaque client — et le bruit d'usage
-(`__pycache__`, `.git`, `.venv`, fichiers temporaires d'éditeur). Le
-fichier d'environnement en fait partie : voisin de la config, il est dans son
-dossier ; ailleurs (`env_file:`, `--env-file`), il est surveillé seul.
+Ce qui est surveillé (décision A-9) : tout le dossier de la config (et
+`agents_dir`, `resources_dir` s'ils sont ailleurs), les modules Python
+(`.py`) de `workpath` s'il est ailleurs, et l'amorce, **sauf** ce que la
+config écrit — journal, fichiers, bases SQLite, ceux de chaque client — et le
+bruit d'usage (`__pycache__`, `.git`, `.venv`, fichiers temporaires
+d'éditeur). Dans `workpath`, seuls les `.py` comptent : les outils y
+écrivent leurs données, qui ne doivent pas relancer le service. L'amorce et
+le fichier d'environnement, hors des dossiers surveillés, le sont seuls.
 Chaque process neuf le relit : une clé changée y est prise, une variable du
 shell reste celle du shell.
 
@@ -82,10 +84,11 @@ Ce que le rechargement surveille, et ce qu'il écarte parce que loom l'écrit.
 
 **Attributs :**
 
-- `roots` : Dossiers surveillés, sous-dossiers compris.
+- `roots` : Dossiers surveillés, sous-dossiers compris : celui de la config, et ceux des agents et des ressources s'ils sont ailleurs.
 - `dirs` : Dossiers écrits par loom : journaux JSONL, fichiers des runs.
 - `files` : Fichiers écrits par loom : bases SQLite (leurs `-wal`, `-shm` et `-journal` avec elles).
-- `extra` : Fichiers surveillés seuls, hors des dossiers : le fichier d'environnement rangé ailleurs. Le guetteur ne les voit pas ; leur état se relève à chaque réveil du superviseur (`moved`).
+- `extra` : Fichiers surveillés seuls, hors des dossiers : l'amorce et le fichier d'environnement rangés ailleurs. Le guetteur ne les voit pas ; leur état se relève à chaque réveil du superviseur (`moved`).
+- `code` : Dossiers où seuls les modules Python (`.py`) comptent : `workpath` quand il n'est pas sous un dossier de `roots` (décision A-9).
 
 ### Méthode `loom_ia.access.http.serve.Watched.counts`
 
@@ -146,10 +149,13 @@ def watched(config: LoomConfig, env_file: Path | None=None) -> Watched
 
 Ce que le rechargement surveille pour cette config.
 
-`env_file` est le fichier d'environnement lu : hors des dossiers
-surveillés, il l'est seul. Lève `ConfigError` si un dossier que loom
-écrit contient un dossier surveillé : le rechargement ne saurait pas
-distinguer ses écritures de celles du développeur.
+Le dossier de la config (et ceux des agents et des ressources s'ils sont
+ailleurs) en entier, les `.py` de `workpath` s'il n'est pas dessous,
+l'amorce seule si elle est ailleurs. `env_file` est le fichier
+d'environnement lu : hors des dossiers surveillés, il l'est seul. Lève
+`ConfigError` si un dossier que loom écrit contient un dossier
+surveillé : le rechargement ne saurait pas distinguer ses écritures de
+celles du développeur.
 
 ## Fonction `loom_ia.access.http.serve._file_state`
 

@@ -28,7 +28,7 @@ Arguments et options de `loom resume` :
 - `run_id` : (sans aide)
 - `--json` : affiche le résultat en JSON
 - `--session` : journal du run
-- `--config` : fichier de configuration (défaut : loom.yaml)
-- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur la config
-- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)
+- `--config` : amorce, qui dit où lire la config (défaut : loom-boot.yaml)
+- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur l'amorce
+- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)
 - `--no-env-file` : ne lit aucun fichier de variables

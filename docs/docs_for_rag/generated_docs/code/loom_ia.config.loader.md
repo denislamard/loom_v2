@@ -2,15 +2,24 @@
 
 Module `loom_ia.config.loader` de loom_v2 (fichier `src/loom_ia/config/loader.py`).
 
-Lecture de `loom.yaml` et des agents (fonction M1, point 35).
+Lecture de l'amorce, de `loom.yaml` et des agents (fonction M1, point 35).
 
-`safe_load` (sans clé en double, `yaml_source`) puis validation stricte
-par les modèles Pydantic. Les chemins (`agents_dir`, `resources_dir`,
-journal, artefacts, `cwd` des serveurs MCP, `schema_file` des contrats de
-sortie) sont relatifs au fichier de config et deviennent absolus au
-chargement ; un schéma de sortie donné par fichier (JSON ou YAML) est lu et
-vérifié à ce moment-là.
-Un serveur MCP stdio sans `cwd` se lance depuis le dossier de la config. Un
+L'amorce (`loom-boot.yaml`) est lue d'abord : elle donne le profil, le
+fichier d'environnement et l'endroit où lire la config (décisions A-1 et
+A-2). `safe_load` (sans clé en double, `yaml_source`) puis validation
+stricte par les modèles Pydantic.
+
+Deux racines pour les chemins relatifs (décisions A-5 et A-6) :
+
+- le dossier de la config pour les documents : `agents_dir`,
+  `resources_dir`, `schema_file` des contrats de sortie ;
+- `workpath`, lui-même relatif au dossier de l'amorce, pour le travail :
+  journal, artefacts, idempotence, audit, `cwd` des serveurs MCP,
+  `file_roots`, stockage des clients, modules Python voisins.
+
+Tous deviennent absolus au chargement ; un schéma de sortie donné par
+fichier (JSON ou YAML) est lu et vérifié à ce moment-là.
+Un serveur MCP stdio sans `cwd` se lance depuis `workpath`. Un
 `system_file` manquant, un modèle inconnu ou un agent en double arrêtent
 le démarrage. Un `system_file` ou un `skill_file` doit rester dans
 `resources_dir` : ailleurs, un dossier ouvert à un outil laisserait l'agent
@@ -20,6 +29,10 @@ réécrire son propre prompt.
 
 - `AGENT_SUFFIXES = ('.yaml', '.yml')` : Extensions des fichiers d'agents lus dans `agents_dir`.
 - `_AGENT_NAMED = re.compile("Agent '([^']+)'")` : Début du message d'un contrôle qui porte sur un agent (`LoomConfig.check`).
+- `BOOT_KEYS = ('profile', ENV_FILE_KEY)` : Clés de l'amorce refusées dans la config : elles sont lues avant elle (décision A-2).
+- `WORKPATH_KEY = 'workpath'` : Clé du dossier de travail, obligatoire dans la config (décision A-4).
+- `CONFIG_KEYS = frozenset({'models', 'agents', 'agents_dir', 'resources_dir', 'security', 'storage', 'mcp_servers', WORKPATH_KEY})` : Clés qui disent qu'un fichier est une config et non une amorce.
+- `BOOT_EXAMPLE = f' version: 1\n config:\n source: file\n path: .\n file: {CONFIG_FILE}'` : L'amorce minimale, donnée dans les messages qui la réclament.
 - `PROFILE_ENV = 'LOOM_PROFILE'` : Variable qui l'emporte sur le fichier : ce qu'un conteneur sait poser.
 - `WHOLE = frozenset({'params', 'llm'})` : Blocs remplacés en entier par une surcharge de profil, jamais fusionnés : ils sont transmis tels quels au fournisseur, et une moitié de l'un n'a pas de sens (décision de conception, conception §17.9).
 - `_COLON = 'mapping values are not allowed here'` : Le message de PyYAML devant un texte qui contient « : » sans guillemets.
@@ -30,30 +43,57 @@ réécrire son propre prompt.
 def load_config(path: str | Path, *, profile: str | None=None) -> LoomConfig
 ```
 
-Config complète : fichier racine, surcharges du profil, puis les agents.
+Config complète : l'amorce, la config qu'elle désigne, les surcharges du profil, puis les agents.
 
 Le profil se choisit à trois endroits, du plus fort au plus faible :
-l'argument (`--profile`), `LOOM_PROFILE`, puis `profile:` dans le
-fichier. `chosen_profile` rend le même arbitrage avec sa provenance,
+l'argument (`--profile`), `LOOM_PROFILE`, puis `profile:` dans
+l'amorce. `chosen_profile` rend le même arbitrage avec sa provenance,
 pour qui veut l'afficher.
 
-Étapes : lecture YAML (sans clé en double), surcharges du profil, chemins
+Étapes : lecture de l'amorce, puis de la config qu'elle désigne (YAML
+sans clé en double), surcharges du profil, `workpath` exigé, chemins
 rendus absolus, agents de `agents_dir` lus et préparés (prompts,
 skills, schémas de sortie, modèles et styles de documents), puis
 validation de l'ensemble et contrôle des variables des prompts.
 
 **Arguments :**
 
-- `path` : Chemin de `loom.yaml`.
+- `path` : Chemin de l'amorce (`loom-boot.yaml`).
 - `profile` : Profil donné par l'appelant (`--profile`).
 
 **Renvoie :**
 
-La configuration validée, `base_dir` posé.
+La configuration validée, `workpath`, `boot_file` et
+`config_file` posés.
 
 **Lève :**
 
-- `ConfigError` : Fichier illisible, YAML invalide, clé en double, champ inconnu ou invalide, fichier cité absent ou hors de `resources_dir`, agent en double, incohérence (modèle, serveur, agent non déclarés…). Le message nomme le fichier et le chemin dans le YAML.
+- `ConfigError` : Amorce absente ou invalide, config absente, fichier illisible, YAML invalide, clé en double, `profile` ou `env_file` dans la config, `workpath` absent, champ inconnu ou invalide, fichier cité absent ou hors de `resources_dir`, agent en double, incohérence (modèle, serveur, agent non déclarés…). Le message nomme le fichier et le chemin dans le YAML.
+
+## Fonction `loom_ia.config.loader.read_boot`
+
+```python
+def read_boot(path: Path) -> BootConfig
+```
+
+L'amorce (`loom-boot.yaml`), lue et validée.
+
+Un projet sans amorce est refusé (décision A-3) : le message donne
+l'amorce minimale à écrire. Un fichier de config donné à la place de
+l'amorce (`--config loom.yaml`) est reconnu à ses clés, et le message
+le dit.
+
+**Arguments :**
+
+- `path` : Chemin de l'amorce.
+
+**Renvoie :**
+
+L'amorce validée.
+
+**Lève :**
+
+- `ConfigError` : Amorce absente, illisible, invalide, ou fichier de config donné à sa place.
 
 ## Fonction `loom_ia.config.loader.chosen_profile`
 
@@ -61,7 +101,7 @@ La configuration validée, `base_dir` posé.
 def chosen_profile(given: str | None, in_file: object=None) -> tuple[Profile | None, str]
 ```
 
-Le profil actif et d'où il vient : option, environnement, fichier, ou rien.
+Le profil actif et d'où il vient : option, environnement, amorce, ou rien.
 
 Un profil qu'on ne voit pas est un profil qu'on oublie : la provenance est
 rendue avec lui pour que `loom validate` et `loom serve` la disent.
@@ -69,7 +109,7 @@ rendue avec lui pour que `loom validate` et `loom serve` la disent.
 **Arguments :**
 
 - `given` : Profil donné par l'appelant.
-- `in_file` : Valeur de `profile:` dans le fichier.
+- `in_file` : Valeur de `profile:` dans l'amorce.
 
 **Renvoie :**
 
@@ -79,17 +119,34 @@ Le profil (`dev`, `prod` ou `None`) et sa provenance.
 
 - `ConfigError` : Profil inconnu.
 
-## Fonction `loom_ia.config.loader._check_env_file_at_root`
+## Fonction `loom_ia.config.loader._check_boot_keys`
 
 ```python
-def _check_env_file_at_root(data: dict[str, Any], *, source: Path) -> None
+def _check_boot_keys(data: dict[str, Any], *, source: Path) -> None
 ```
 
-Refuse `env_file` dans `profiles` : il est lu avant le choix du profil.
+Refuse `profile` et `env_file` dans la config : ils appartiennent à l'amorce (décision A-2).
 
-Accepté là, il passerait la validation et ne serait jamais lu — le fichier
-qu'il désigne peut lui-même donner `LOOM_PROFILE`. Tous les profils sont
-vérifiés, pas seulement l'actif : l'erreur ne doit pas attendre la prod.
+Lus avant la config, ils n'y seraient jamais pris en compte : le fichier
+d'environnement peut donner `LOOM_PROFILE`, et le profil choisit les
+surcharges. Les surcharges de chaque profil sont vérifiées aussi, pas
+seulement celles de l'actif : l'erreur ne doit pas attendre la prod.
+
+## Fonction `loom_ia.config.loader._workpath`
+
+```python
+def _workpath(data: dict[str, Any], boot_dir: Path, *, source: Path) -> Path
+```
+
+Le dossier de travail, exigé et rendu absolu (décision A-4).
+
+Lu après les surcharges du profil : un profil peut le changer
+(`profiles.prod.workpath: /loom-data`). Un chemin relatif se rapporte
+au dossier de l'amorce.
+
+**Lève :**
+
+- `ConfigError` : `workpath` absent, vide ou qui n'est pas un chemin.
 
 ## Fonction `loom_ia.config.loader._merged`
 

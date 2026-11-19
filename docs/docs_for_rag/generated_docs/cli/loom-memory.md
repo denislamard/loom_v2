@@ -10,9 +10,9 @@ usage: loom memory [-h] [--config CONFIG] [--profile {dev,prod}] [--env-file ENV
 
 Arguments et options de `loom memory` :
 
-- `--config` : fichier de configuration (défaut : loom.yaml)
-- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur la config
-- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)
+- `--config` : amorce, qui dit où lire la config (défaut : loom-boot.yaml)
+- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur l'amorce
+- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)
 - `--no-env-file` : ne lit aucun fichier de variables
 
 ## Commande `loom memory export`
@@ -32,9 +32,9 @@ Arguments et options de `loom memory export` :
 - `--tenant` : client au nom duquel agir (défaut : celui de la config, sinon 'default')
 - `agent` : (sans aide)
 - `file` : fichier à créer (jamais écrasé)
-- `--config` : fichier de configuration (défaut : loom.yaml)
-- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur la config
-- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)
+- `--config` : amorce, qui dit où lire la config (défaut : loom-boot.yaml)
+- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur l'amorce
+- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)
 - `--no-env-file` : ne lit aucun fichier de variables
 
 ## Commande `loom memory import`
@@ -54,9 +54,9 @@ Arguments et options de `loom memory import` :
 - `--tenant` : client au nom duquel agir (défaut : celui de la config, sinon 'default')
 - `agent` : (sans aide)
 - `file` : (sans aide)
-- `--config` : fichier de configuration (défaut : loom.yaml)
-- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur la config
-- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)
+- `--config` : amorce, qui dit où lire la config (défaut : loom-boot.yaml)
+- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur l'amorce
+- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)
 - `--no-env-file` : ne lit aucun fichier de variables
 
 ## Commande `loom memory reindex`
@@ -75,9 +75,9 @@ Arguments et options de `loom memory reindex` :
 
 - `--tenant` : client au nom duquel agir (défaut : celui de la config, sinon 'default')
 - `agent` : (sans aide)
-- `--config` : fichier de configuration (défaut : loom.yaml)
-- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur la config
-- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)
+- `--config` : amorce, qui dit où lire la config (défaut : loom-boot.yaml)
+- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur l'amorce
+- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)
 - `--no-env-file` : ne lit aucun fichier de variables
 
 ## Commande `loom memory eval`
@@ -99,7 +99,7 @@ Arguments et options de `loom memory eval` :
 - `file` : jeu doré JSONL : {query, doc_id, project?} ; doc_id null : question hors sujet
 - `--k` (choix : 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50 ; défaut : 10) : (sans aide)
 - `--json` : rapport complet en JSON
-- `--config` : fichier de configuration (défaut : loom.yaml)
-- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur la config
-- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)
+- `--config` : amorce, qui dit où lire la config (défaut : loom-boot.yaml)
+- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur l'amorce
+- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)
 - `--no-env-file` : ne lit aucun fichier de variables
