@@ -1,0 +1,68 @@
+[project]
+name = "loom-chat"
+version = "2.0.22"
+description = "Console de chat Textual pour essayer loom-ia en quelques minutes."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.14"
+authors = [{ name = "Denis Lamard", email = "lamard.denis@gmail.com" }]
+keywords = ["loom-ia", "agents", "llm", "chat", "textual", "tui"]
+classifiers = [
+    "Environment :: Console",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Natural Language :: French",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# loom-chat importe des modules internes de loom-ia et suit ses versions : la même, exactement.
+# tests/test_package.py vérifie que les deux numéros restent égaux.
+dependencies = ["loom-ia[anthropic]==2.0.22", "pyyaml>=6", "rich>=15", "textual>=8.2,<9"]
+
+[project.urls]
+Repository = "https://github.com/denislamard/loom_v2"
+Issues = "https://github.com/denislamard/loom_v2/issues"
+
+[project.scripts]
+loom-chat = "loom_chat.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.13.8,<0.14.0"]
+build-backend = "uv_build"
+
+# Développement local : loom-ia depuis les sources du dépôt parent.
+# Sans effet sur le paquet publié (vérifié en CI par `uv build --no-sources`).
+[tool.uv.sources]
+loom-ia = { path = "..", editable = true }
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=9.2",
+    "pytest-asyncio>=1.5",
+    "ruff>=0.16.8",
+]
+
+# Les règles du dépôt, avec les chemins de loom-chat.
+[tool.ruff]
+extend = "../pyproject.toml"
+src = ["src"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D100", "D101", "D102", "D103", "D104"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = ["--strict-markers", "--strict-config"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

@@ -65,6 +65,42 @@ jobs:
     - name: Contrats d'import
       run: uv run --locked lint-imports
 
+  loom-chat:
+    name: loom-chat (ruff, pyright, tests, paquet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: loom-chat
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        version: ${{ env.UV_VERSION }}
+        enable-cache: true
+        cache-suffix: ${{ github.job }}
+
+    # loom-ia vient des sources du dépôt (tool.uv.sources) : la console est éprouvée
+    # contre le loom-ia qu'elle accompagnera.
+    - name: Installer loom-chat
+      run: uv sync --locked
+
+    - name: Ruff (lint)
+      run: uv run --locked ruff check .
+
+    - name: Ruff (format)
+      run: uv run --locked ruff format --check .
+
+    - name: Pyright (strict)
+      run: uv run --locked pyright
+
+    - name: Tests
+      run: uv run --locked pytest
+
+    # Sans les sources locales : ce que PyPI recevra.
+    - name: Le paquet se construit
+      run: uv build --no-sources
+
   tests-noyau:
     name: Tests (noyau seul)
     runs-on: ubuntu-latest
