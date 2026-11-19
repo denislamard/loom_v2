@@ -126,10 +126,44 @@ jobs:
           "$loom" --config cfg/loom-boot.yaml run smoke "bonjour" --user dev 2> /dev/null | tee run.txt
           grep -qx "ok" run.txt
 
+      # loom-chat suit les versions de loom-ia : même étiquette, même numéro, publié juste après.
+      - name: loom-chat porte la version de l'étiquette
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('loom-chat/pyproject.toml', 'rb'))['project']['version'])")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "étiquette $GITHUB_REF_NAME, version $version dans loom-chat/pyproject.toml"
+            exit 1
+          fi
+
+      # Sans les sources locales (tool.uv.sources) : les métadonnées sont celles que PyPI recevra.
+      - name: Construire loom-chat
+        run: uv build --no-sources --directory loom-chat --out-dir "$PWD/dist-chat"
+
+      - name: Vérifier les métadonnées et le README de loom-chat (twine)
+        run: uvx --from twine==7.0.0 twine check --strict dist-chat/*
+
+      - name: Essayer le wheel de loom-chat dans un environnement vierge
+        # Avec le wheel de loom-ia construit plus haut : loom-chat en exige la même version,
+        # qui n'est pas encore sur PyPI au moment de la construction.
+        run: |
+          set -euo pipefail
+          smoke=$(mktemp -d)
+          uv venv "$smoke/venv" --python 3.14
+          uv pip install --python "$smoke/venv/bin/python" --find-links "$PWD/dist" "$(ls "$PWD"/dist-chat/*.whl)"
+          cd "$smoke"
+          "$smoke/venv/bin/python" -I -c "import loom_chat.app, loom_chat; assert 'site-packages' in loom_chat.__file__, loom_chat.__file__"
+          "$smoke/venv/bin/loom-chat" --help > /dev/null
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-chat
+          path: dist-chat/
 
   testpypi:
     name: TestPyPI
@@ -166,5 +200,44 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  testpypi-chat:
+    name: TestPyPI (loom-chat)
+    if: github.event_name == 'workflow_dispatch'
+    needs: [build, testpypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/loom-chat
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist-chat
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  # Après loom-ia : loom-chat s'installe dès sa publication.
+  pypi-chat:
+    name: PyPI (loom-chat)
+    if: github.ref_type == 'tag'
+    needs: [build, pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/loom-chat
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist-chat
           path: dist/
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
