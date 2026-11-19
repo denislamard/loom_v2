@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, QUESTION, ConfigFactory, demo_agent, secured
+from conftest import DEV, QUESTION, ConfigFactory, boot, demo_agent, secured
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -125,7 +125,7 @@ def test_schema_files_are_read_at_load(tmp_path: Path) -> None:
         ],
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    loaded = load_config(tmp_path / "loom.yaml")
+    loaded = load_config(boot(tmp_path / "loom.yaml"))
     spec = loaded.agents[0]
     assert spec.output is not None and spec.output.json_schema == SCHEMA
     assert spec.output.schema_file is None and spec.output.max_chars == 500
@@ -138,7 +138,7 @@ def test_schema_files_are_read_at_load(tmp_path: Path) -> None:
     agent["output"] = {"schema_file": "schemas/faux.json"}
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
     with pytest.raises(ConfigError, match="schema invalide"):
-        load_config(tmp_path / "loom.yaml")
+        load_config(boot(tmp_path / "loom.yaml"))
 
     # Une référence qui ne se résout pas échoue au chargement, pas à la première réponse (GAR-6).
     (tmp_path / "schemas" / "pendant.json").write_text(
@@ -148,7 +148,7 @@ def test_schema_files_are_read_at_load(tmp_path: Path) -> None:
     agent["output"] = {"schema_file": "schemas/pendant.json"}
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
     with pytest.raises(ConfigError, match=r"schema invalide.*#/\$defs/absent"):
-        load_config(tmp_path / "loom.yaml")
+        load_config(boot(tmp_path / "loom.yaml"))
 
 
 def test_contracts_reach_the_tools_and_the_stream_mode() -> None:

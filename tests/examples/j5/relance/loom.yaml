@@ -12,6 +12,7 @@
 # carnet de devis, ses modèles, ses variables de prompt et, pour l'un des deux,
 # son propre journal. Voir clients.py (à côté).
 version: 1
+workpath: .
 
 imports: [outils, politiques]     # modules voisins de ce fichier
 agents_dir: agents/

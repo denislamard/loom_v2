@@ -179,7 +179,7 @@ Une façon de jouer les cas : la config, une autre, ou d'autres modèles par ét
 **Attributs :**
 
 - `name` : Nom de la variante, unique dans la suite ; il sert aussi de nom de fichier (`--export`).
-- `config` : Autre fichier de config, relatif à la suite.
+- `config` : Autre amorce (`loom-boot.yaml`), relative à la suite.
 - `models` : Étape de l'agent (`main`, un rôle, `judge:<nom>`) → modèle déclaré.
 
 ## Classe `loom_ia.replay.evals.EvalJudge`
@@ -208,7 +208,7 @@ Une suite d'évals, telle qu'un fichier YAML la décrit.
 
 - `version` : Version du format ; seule `1` existe.
 - `name` : Nom de la suite ; par défaut, celui de son fichier.
-- `config` : Config de l'agent, relative à la suite ; à défaut, celle de l'instance.
+- `config` : Amorce de la config de l'agent (`loom-boot.yaml`), relative à la suite ; à défaut, celle de l'instance.
 - `agent` : Agent évalué.
 - `tenant` : Client par défaut des cas.
 - `repeat` : Nombre de fois où chaque cas est joué, par variante.

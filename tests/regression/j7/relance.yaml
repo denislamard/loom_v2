@@ -7,7 +7,7 @@
 # contrôlent le state que chaque run laisse.
 # Réenregistrer, après un changement voulu, et relire le diff :
 #   uv run loom eval tests/regression/j7/relance.yaml --export tests/regression/j7/journaux/
-config: ../../examples/j7/relance/loom.yaml
+config: ../../examples/j7/relance/loom-boot.yaml
 agent: relance
 cases:
   # Seule la signature est posée : le ton vaut cordial par défaut, sans être écrit.

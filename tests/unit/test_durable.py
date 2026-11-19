@@ -18,7 +18,7 @@ from typing import Any, Self
 
 import pytest
 import yaml
-from conftest import DEV, demo_agent, secured
+from conftest import DEV, boot, demo_agent, designated, secured
 
 from loom_ia.access.api import Loom, RunResult, StreamItem
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
@@ -88,7 +88,7 @@ def durable(tmp_path: Path) -> ConfigFactory:
             "main": {"model": "FAKE", "system": "Tu calcules."},
         }
         (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return boot(tmp_path / "loom.yaml")
 
     return build
 
@@ -905,9 +905,9 @@ def test_an_approval_after_a_stop_elsewhere_decides_nothing(durable: ConfigFacto
     script = [{"tool_calls": [{"name": "envoyer", "arguments": {"destinataire": "martin"}}]}]
     path = durable(imports=["outils_arret"])
     (tmp_path / "outils_arret.py").write_text(ENVOI, encoding="utf-8")
-    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
     config["models"][0]["params"] = {"script": script}
-    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(config), encoding="utf-8")
     agent = yaml.safe_load((tmp_path / "agents" / "demo.yaml").read_text(encoding="utf-8"))
     agent["tools"] = [{"python": "envoyer", "approval": "always"}]
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")

@@ -68,8 +68,8 @@ class Protected:
         what: Ce que c'est, pour le message : « la config », « le journal »…
         subtree: Vrai pour un dossier dont aucun sous-dossier ne peut être
             exposé non plus ; faux pour un fichier, ou pour le dossier de la
-            config, dont on peut exposer un sous-dossier qui ne contient rien
-            de protégé.
+            config et ``workpath``, dont on peut exposer un sous-dossier qui ne
+            contient rien de protégé.
     """
 
     path: Path
@@ -82,8 +82,8 @@ class BuiltinContext:
     """Ce que reçoit la fabrique d'un outil fourni, avec ses paramètres.
 
     Attributes:
-        base_dir: Dossier du fichier de config : les chemins relatifs des
-            paramètres s'y rapportent.
+        base_dir: Dossier de travail de l'instance (``workpath``) : les
+            chemins relatifs des paramètres s'y rapportent.
         protected: Config, fichier d'environnement, prompts, stockage… du
             client monté : ce que l'outil ne doit jamais exposer.
         secrets: Table des secrets du client pour qui l'agent est monté, en

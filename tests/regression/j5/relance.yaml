@@ -3,7 +3,7 @@
 # (tests/regression/test_regression.py), au nom du client qu'il porte.
 # Réenregistrer, après un changement voulu, et relire le diff :
 #   uv run loom eval tests/regression/j5/relance.yaml --export tests/regression/j5/journaux/
-config: ../../examples/j5/relance/loom.yaml
+config: ../../examples/j5/relance/loom-boot.yaml
 agent: relance
 cases:
   - name: dupont

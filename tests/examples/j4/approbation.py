@@ -63,7 +63,7 @@ from loom_ia.core.model import (
 from loom_ia.runtime import apply_logging, prompt_text
 from loom_ia.tools import tool
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 DEMANDE = "Relance le client du devis D-2026-042, sur un ton cordial."
 CAS = ("accord", "refus", "delai", "en_ligne", "sous_agent")
 ENVOI = "envoyer_email"

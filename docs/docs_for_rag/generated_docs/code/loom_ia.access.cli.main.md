@@ -26,10 +26,10 @@ Ligne de commande `loom` (fonction N4).
                                    export, import, reindex, eval
     loom schema                    JSON Schema du fichier de configuration
 
-`--config` désigne le fichier de configuration (`./loom.yaml` par
-défaut). Avant de le lire, chaque commande pose les variables du fichier
-d'environnement du projet : `env_file:` de la config, sinon le `.env` de
-son dossier ; `--env-file` en désigne un autre, `--no-env-file` n'en lit
+`--config` désigne l'amorce (`./loom-boot.yaml` par défaut), qui dit où
+lire la config. Avant de la lire, chaque commande pose les variables du
+fichier d'environnement du projet : `env_file:` de l'amorce, sinon le
+`.env` de son dossier ; `--env-file` en désigne un autre, `--no-env-file` n'en lit
 aucun, et une variable déjà définie l'emporte toujours.
 
 Les codes de sortie : 0 tout va bien, 1 le run a échoué, 2 la
@@ -42,7 +42,7 @@ quand une réponse était attendue.
 
 - `PROG = 'loom'` : Nom du programme.
 - `USER_ENV = 'LOOM_USER'` : Utilisateur des commandes qui agissent, faute de `--user` (décision D-10 des utilisateurs et rôles).
-- `DEFAULT_CONFIG = Path('loom.yaml')` : Fichier de configuration, sans `--config`.
+- `DEFAULT_CONFIG = Path(BOOT_FILE)` : Fichier de configuration, sans `--config`.
 - `MISSING_EXTRA = "{what} demande l'extra '{extra}' (installer l'extra : loom-ia[{extra}])"` : Message d'une commande dont l'extra n'est pas installé.
 - `OK = 0` : Code de sortie : la commande a abouti.
 - `FAILED = 1` : Code de sortie : la commande a échoué (run en échec, élément inconnu, journal illisible…).
@@ -214,12 +214,12 @@ Une liste, repliée sur plusieurs lignes si elle dépasse la largeur.
 class _Report
 ```
 
-Ce que `loom validate` imprime ; `root` est le dossier de la config.
+Ce que `loom validate` imprime ; `root` est le dossier de l'amorce.
 
 **Attributs :**
 
 - `config` : Fichier de configuration, tel que donné.
-- `root` : Dossier de la config : les chemins du rapport s'y rapportent.
+- `root` : Dossier de l'amorce : les chemins du rapport s'y rapportent.
 - `sections` : Sections, dans l'ordre d'impression.
 - `warnings` : Avertissements, chacun dit une fois.
 - `mounted` : Agents montés, tous clients confondus.
@@ -281,9 +281,9 @@ Un nom n'est jamais coupé ; une liste vide se dit « aucun ».
 def _configuration(report: _Report, config: LoomConfig, args: argparse.Namespace, printed: set[str]) -> None
 ```
 
-Section CONFIGURATION : profil, fichier d'environnement, modèles et clients.
+Section CONFIGURATION : config lue, workpath, profil, fichier d'environnement, modèles et clients.
 
-Le profil actif et ses surcharges, le fichier d'environnement lu, les
+Le fichier de config que désigne l'amorce, le dossier de travail, le profil actif et ses surcharges, le fichier d'environnement lu, les
 modèles déclarés et les clients ; avec les avertissements sur les clés
 d'API et les modèles.
 

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import boot, secured
 from pydantic import ValidationError
 
 from loom_ia.adapters.artifacts import InMemoryArtifactStore, LocalArtifactStore
@@ -339,7 +339,7 @@ def write(tmp_path: Path, root: dict[str, Any]) -> Path:
     (tmp_path / "agents").mkdir(exist_ok=True)
     config = {"version": 1, "models": [{"id": "F", "sdk": "fake", "model": "f"}], **root}
     (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 def test_artifact_store_follows_the_journal(tmp_path: Path) -> None:

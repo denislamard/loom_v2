@@ -30,6 +30,7 @@ Les analyses d'impact sous `docs/` numérotent leurs décisions `D-1`, `D-2`… 
 | `tools_builtin/sql` | loom.sql | `docs/sql_builtin_tool.md` |
 | `tools_builtin/local_files`, droits et approbations | Droits et approbation | `docs/rights_approval.md` |
 | `adapters/firecracker/forge.py` | Fichiers de la forge | `docs/forge-fichiers-analyse.md` |
+| `config/models.py` (`BootConfig`, `FileConfigSource`, `workpath`), `config/loader.py`, `config/references.py`, `access/http/serve.py` (surveillance), `runtime/wiring.py` (`_protected_paths`) — décisions `A-1` à `A-9` | Amorce `loom-boot.yaml` et `workpath` (sources de configuration) | `docs/analyse-source-config.md` |
 
 Si aucune ligne ne s'applique, ou si deux documents définissent le même code sur le même sujet, on demande à Denis. Les identifiants d'exemple (`D-2026-042`, un numéro de devis ; `C-261`, un client) ne sont pas des codes.
 
@@ -126,7 +127,7 @@ Les décisions sans tiret d'une analyse (`D5` dans `tools_builtin/excel/workbook
 | M3 | Configuration | Secrets via l'environnement ou un gestionnaire de secrets. | 6 |
 | M4 | Configuration | `[V2]` Profils (dev, prod) et surcharges. | 9 |
 | M5 | Configuration | Contrôles de cohérence : rôle inconnu, modèle absent, juge corrélé. | 8 |
-| M6 | Configuration | `[V2]` Fichier d'environnement du projet lu au démarrage de la commande `loom` : `--env-file`, sinon `env_file:` de `loom.yaml`, sinon le `.env` voisin de `loom.yaml` ; `--no-env-file` n'en lit aucun ; une variable déjà… |  |
+| M6 | Configuration | `[V2]` Fichier d'environnement du projet lu au démarrage de la commande `loom` : `--env-file`, sinon `env_file:` de l'amorce `loom-boot.yaml`, sinon le `.env` voisin de l'amorce ; `--no-env-file` n'en lit aucun ; une variable déjà… |  |
 | M7 | Configuration | Variables `{{ }}` dans les prompts et les templates ; une variable inconnue est une erreur (point 50). | 1 |
 | N1 | Accès | Librairie Python async et typée. | 3 |
 | N2 | Accès | `[V2]` Serveur HTTP : lancer un run, streamer, reprendre, approuver, gérer les sessions, lire les traces et les coûts. | 11 |
@@ -267,7 +268,7 @@ Citées `§n` ; à qualifier en « (conception §n) ».
 | §16.4 | Utilisateurs et rôles d'accès (2.0.17) |  |
 | §17 | Configuration | 1 |
 | §17.1 | Principes |  |
-| §17.2 | Fichier racine `loom.yaml` |  |
+| §17.2 | L'amorce `loom-boot.yaml` et le fichier racine `loom.yaml` |  |
 | §17.3 | Modèles |  |
 | §17.4 | Agents (`agents/*.yaml`) | 2 |
 | §17.5 | Serveurs MCP | 1 |

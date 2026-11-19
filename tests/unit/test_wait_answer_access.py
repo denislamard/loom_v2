@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
-from conftest import DEV
+from conftest import DEV, designated
 from test_wait_answer import config
 
 from loom_ia.access import Loom
@@ -321,7 +321,7 @@ LECTEUR = new_api_key()
 
 def keyed(tmp_path: Path) -> Path:
     path = config(tmp_path)
-    root = yaml.safe_load(path.read_text(encoding="utf-8"))
+    root = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
     root["security"] = {
         **root["security"],
         "api_keys": [
@@ -336,7 +336,7 @@ def keyed(tmp_path: Path) -> Path:
     }
     # Avec des clés, plus d'utilisateur local : chacun présente la sienne (D-1b).
     del root["server"]["http"]["user"]
-    path.write_text(yaml.safe_dump(root), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(root), encoding="utf-8")
     return path
 
 

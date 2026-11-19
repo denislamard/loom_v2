@@ -60,7 +60,7 @@ from loom_ia.core.ports import MissingKey, SealError
 from loom_ia.runtime import apply_logging, create_keyring, encryption_warnings
 from loom_ia.tenancy import EnvironmentSecrets
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 CAS = ("scelle", "efface", "clients")
 
 DUPONT = TenantId("dupont-plomberie")

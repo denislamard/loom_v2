@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import boot, designated, secured
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.access.cli import main
@@ -74,7 +74,7 @@ def write(
     else:
         (tmp_path / "agents" / "agent.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
     (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 def rewrite_agent(path: Path, **changes: Any) -> None:
@@ -182,9 +182,9 @@ def test_a_system_file_outside_the_resources_dir_is_refused(tmp_path: Path, wher
         rewrite_agent(path, roles=[{**role, **outside}])
         label = r"roles\[rediger\]\.system_file"
     else:
-        root = yaml.safe_load(path.read_text(encoding="utf-8"))
+        root = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
         root["sessions"] = {"compaction": outside}
-        path.write_text(yaml.safe_dump(root), encoding="utf-8")
+        designated(path).write_text(yaml.safe_dump(root), encoding="utf-8")
         label = r"compaction\.system_file"
     with pytest.raises(ConfigError, match=rf"{label} — le fichier doit être dans"):
         load_config(path)
@@ -208,9 +208,9 @@ def test_an_agent_written_in_loom_yaml_follows_the_same_rules(tmp_path: Path) ->
         [{**FILES, "skill_file": "outil.md", "output": {"schema_file": "contrat.json"}}],
         inline=True,
     )
-    root = yaml.safe_load(path.read_text(encoding="utf-8"))
+    root = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
     root["agents"][0]["main"] = {"model": "FAKE", "system_file": "sys.md"}
-    path.write_text(yaml.safe_dump(root), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(root), encoding="utf-8")
     spec = load_config(path).agents[0]
     assert spec.main.system_file == tmp_path / "prompts" / "sys.md"
     declared = spec.python_tools[0]
@@ -218,7 +218,7 @@ def test_an_agent_written_in_loom_yaml_follows_the_same_rules(tmp_path: Path) ->
     assert declared.output is not None and declared.output.json_schema == {"type": "object"}
 
     root["agents"][0]["tools"][0]["skill_file"] = "../workspace/outil.md"
-    path.write_text(yaml.safe_dump(root), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(root), encoding="utf-8")
     with pytest.raises(ConfigError, match="doit être dans le dossier des ressources"):
         load_config(path)
 

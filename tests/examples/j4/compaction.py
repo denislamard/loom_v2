@@ -46,7 +46,7 @@ from loom_ia.runtime import apply_logging
 from loom_ia.sessions import estimate_tokens
 from loom_ia.usage import render
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 # Tours simulés à partir desquels l'historique franchit ``over_tokens`` (config de l'exemple).
 SEUIL_TOURS = 3
 TOURS = [

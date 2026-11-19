@@ -29,7 +29,7 @@ from loom_ia.access import Loom
 from loom_ia.core.events import Event
 from loom_ia.core.model import RunId, TextDelta
 
-CONFIG = Path(__file__).parent / "demo" / "loom.yaml"
+CONFIG = Path(__file__).parent / "demo" / "loom-boot.yaml"
 QUESTION = "Combien font 12 fois 7, plus 3 ?"
 # Les appels vont sur la boucle locale : pas de proxy.
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))

@@ -465,8 +465,8 @@ class ToolSourceFactory(Protocol):
       ``env_from``, ``headers_env``) et celles que le client redirige — une
       variable que la config ne nomme pas s'y nomme par une redirection
       (``secrets: {CARNET_JETON: CARNET_JETON}``) ;
-    - ``base_dir`` : le dossier du fichier de config, auquel se rapportent
-      les chemins relatifs de ``params``.
+    - ``base_dir`` : le dossier de travail de l'instance (``workpath``),
+      auquel se rapportent les chemins relatifs de ``params``.
 
     La fabrique rend la source sans travailler : ``loom validate`` et le
     montage d'essai de ``serve --reload`` l'appellent aussi. Le travail
@@ -494,7 +494,7 @@ class ToolSourceFactory(Protocol):
             name: Nom de la source dans la config.
             params: Ses ``params``, à vérifier ici.
             secrets: Table des secrets du client, en lecture seule.
-            base_dir: Dossier du fichier de config.
+            base_dir: Dossier de travail de l'instance (``workpath``).
 
         Returns:
             La source.

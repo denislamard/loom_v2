@@ -63,7 +63,7 @@ from loom_ia.core.events import Event, ModelExchanged
 from loom_ia.core.model import SessionId, TenantId, new_id
 from loom_ia.runtime import apply_logging
 
-CONFIG = Path(__file__).parent.parent / "j5" / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent.parent / "j5" / "relance" / "loom-boot.yaml"
 CAS = ("otel", "masquage", "clients", "bruts", "logs")
 # Borne des corps bruts dans le cas `bruts` : assez basse pour qu'une requête
 # soit coupée, ce que l'exemple veut montrer.

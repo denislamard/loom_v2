@@ -4,6 +4,16 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.22 - non publiée
 
+### Configuration : l'amorce `loom-boot.yaml` et `workpath` (`docs/analyse-source-config.md`)
+- ⚠ **Deux fichiers, toujours.** loom lit d'abord l'amorce, `loom-boot.yaml`, toujours locale, qui dit où lire la config : `version`, `profile`, `env_file` et le bloc `config` (`source: file`, `path`, le dossier de `loom.yaml`, `.` par défaut, et `file`, `loom.yaml` par défaut). `--config` la désigne (`./loom-boot.yaml` par défaut), comme `Loom.from_config()`, `Bench`, `assert_replays` et le `config` d'une suite d'évals. **Pas de migration** : un projet sans amorce est refusé, et le message donne l'amorce à écrire ; une config donnée à sa place (`--config loom.yaml`) est reconnue et le message le dit.
+- ⚠ **`profile` et `env_file` passent dans l'amorce**, lue avant la config : ils sont refusés dans `loom.yaml` et dans ses `profiles`, avec le message « se déclare dans l'amorce ». Le `.env` par défaut est celui du dossier de l'amorce. La provenance s'affiche « par l'amorce » (`validate`, `serve`), et `chosen_profile` rend `amorce` au lieu de `config`.
+- ⚠ **`workpath`, obligatoire dans `loom.yaml`** : le dossier de travail, relatif au dossier de l'amorce (absolu en conteneur : `workpath: /loom-data`), qu'un profil peut changer. S'y rapportent le journal, les artefacts, l'idempotence, `security.audit.path`, le stockage des clients, les données des outils fournis, le `cwd` des serveurs MCP, `server.mcp.file_roots` et les **modules Python voisins** (`imports: [tools.Wireframe]` se lit `<workpath>/tools/Wireframe`). Les documents de la config (`agents_dir`, `resources_dir`, `schema_file`) se rapportent au dossier de `loom.yaml`. Facultatif pour une config construite en Python : le dossier courant. `LoomConfig.base_dir` n'est plus un champ, mais une propriété qui rend `workpath` ; `boot_file` et `config_file` sont posés au chargement.
+- **Une seule source pour l'instant : `source: file`.** Une autre valeur est refusée en la nommant (« source 'postgres' non disponible ») ; le bloc `config` est prévu pour des sources distantes (base de données, URL), écartées pour des raisons de sécurité. Pas de rechargement à chaud.
+- **Protections des outils fournis** : l'amorce, `loom.yaml`, son dossier et `workpath` (comme racine, avec ses modules Python et son `.env`) ne sont jamais exposés au modèle.
+- **`serve --reload`** surveille aussi l'amorce et, dans un `workpath` placé hors du dossier de la config, les seuls `.py` : les données qu'y écrivent les outils ne relancent rien. `validate` affiche `Config` et `Workpath`.
+- **Le dépôt suit** : `examples/agent_sql`, les exemples et suites de non-régression de `tests/`, et `scripts/bin/create-loom-project` (qui écrit l'amorce et `workpath: .`). `boot_json_schema()` donne le JSON Schema de l'amorce.
+- Essais : `tests/unit/test_config.py` (l'amorce, ses refus, son schéma), tous les essais passent par une amorce (`boot()` et `designated()` dans `tests/unit/conftest.py`), `test_profils.py`, `test_env_file.py`, `test_rechargement.py`, `test_local_files.py`.
+
 ## 2.0.21 - publiée
 
 ### Documents : le format des styles (`docs/style_format.md`)

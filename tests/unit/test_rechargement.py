@@ -20,7 +20,7 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from conftest import ConfigFactory, demo_agent
+from conftest import ConfigFactory, demo_agent, designated
 
 pytest.importorskip("fastapi", reason="extra 'http' absent")
 pytest.importorskip("watchfiles", reason="extra 'http' absent")
@@ -157,6 +157,7 @@ def test_what_is_present_leaves_out_data_and_noise(demo: ConfigFactory) -> None:
     (base / "audit.jsonl").write_text("{}\n", encoding="utf-8")
     spec = watched(load_config(path))
     assert {p.relative_to(base).as_posix() for p in spec.present()} == {
+        "loom-boot.yaml",
         "loom.yaml",
         "agents/demo.yaml",
         "prompts/demo.md",
@@ -295,8 +296,8 @@ def test_the_state_covers_the_folders_of_the_config_that_serves(demo: ConfigFact
     (shared / "demo.md").write_text("Tu calcules, ailleurs.", encoding="utf-8")
 
     def moved() -> None:
-        root = path.read_text(encoding="utf-8")
-        path.write_text(f"resources_dir: {shared}\n{root}", encoding="utf-8")
+        root = designated(path).read_text(encoding="utf-8")
+        designated(path).write_text(f"resources_dir: {shared}\n{root}", encoding="utf-8")
 
     reading = _Reading({1: moved}, after=True)
     monkeypatch.setattr(http_serve, "load_config", reading)
@@ -309,14 +310,14 @@ def test_the_state_covers_the_folders_of_the_config_that_serves(demo: ConfigFact
 
 def test_the_config_is_read_three_times_at_most(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     path = demo()
-    root = path.read_text(encoding="utf-8")
+    root = designated(path).read_text(encoding="utf-8")
     elsewhere = [tmp_path.parent / f"{tmp_path.name}-p{i}" for i in range(4)]
     for folder in elsewhere:
         folder.mkdir()
         (folder / "demo.md").write_text("Tu calcules.", encoding="utf-8")
 
     def move(i: int) -> Callable[[], object]:
-        return lambda: path.write_text(f"resources_dir: {elsewhere[i]}\n{root}", encoding="utf-8")
+        return lambda: designated(path).write_text(f"resources_dir: {elsewhere[i]}\n{root}", encoding="utf-8")
 
     reading = _Reading({i + 1: move(i) for i in range(4)}, after=True)
     monkeypatch.setattr(http_serve, "load_config", reading)

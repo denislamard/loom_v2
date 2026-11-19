@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, secured
+from conftest import DEV, boot, designated, secured
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.access.api import Loom
@@ -441,7 +441,7 @@ def write(tmp_path: Path) -> Path:
     (tmp_path / "agents").mkdir()
     (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 async def test_loom_runs_with_attachments(tmp_path: Path) -> None:
@@ -577,7 +577,7 @@ def test_keep_images_is_declared_in_sessions(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="keep_images"):
         SessionsConfig.model_validate({"media": {"keep_images": "none"}})
     path = write(tmp_path)
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
     raw["sessions"] = {"media": {"keep_images": "last_run"}}
-    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    designated(path).write_text(yaml.safe_dump(raw), encoding="utf-8")
     assert Loom(load_config(path)).context("demo").keep_images == "last_run"

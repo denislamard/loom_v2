@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
-from conftest import DEV, secured
+from conftest import DEV, boot, designated, secured
 from pydantic import JsonValue
 
 from loom_ia.access import AccessDenied
@@ -150,7 +150,7 @@ def atelier(tmp_path: Path) -> ConfigFactory:
             **({"policies": policies} if policies else {}),
         }
         (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return boot(tmp_path / "loom.yaml")
 
     return build
 
@@ -178,12 +178,12 @@ def delegue(atelier: ConfigFactory, tmp_path: Path) -> ConfigFactory:
 
     def build(**kwargs: Any) -> Path:
         path = atelier(**kwargs)
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        config = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
         config["models"] = [
             {"id": "FAKE", "sdk": "fake", "model": "f1", "params": {"script": PATRON}},
             {"id": "FAKE_ENFANT", "sdk": "fake", "model": "f2", "params": {"script": SECRETAIRE}},
         ]
-        path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        designated(path).write_text(yaml.safe_dump(config), encoding="utf-8")
         demo = yaml.safe_load((tmp_path / "agents" / "demo.yaml").read_text(encoding="utf-8"))
         secretaire = {
             **demo,

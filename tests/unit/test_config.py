@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, SECURITY_YAML, secured
+from conftest import DEV, SECURITY_YAML, boot, designated, secured
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
@@ -25,10 +25,12 @@ from loom_ia.agents import (
     UnknownAgent,
 )
 from loom_ia.config import (
+    BootConfig,
     ConfigError,
     LoomConfig,
     Registry,
     agent_json_schema,
+    boot_json_schema,
     config_json_schema,
     import_modules,
     load_config,
@@ -80,7 +82,7 @@ def write(
         (base / "prompts" / name).write_text(text, encoding="utf-8")
     for name, source in (modules or {}).items():
         (base / f"{name}.py").write_text(source, encoding="utf-8")
-    return base / "loom.yaml"
+    return boot(base / "loom.yaml")
 
 
 def test_load_resolves_paths_and_agents(tmp_path: Path) -> None:
@@ -312,7 +314,7 @@ def test_missing_agents_dir(tmp_path: Path) -> None:
 
 
 def test_unreadable_files(tmp_path: Path) -> None:
-    with pytest.raises(ConfigError, match="Fichier illisible"):
+    with pytest.raises(ConfigError, match="Amorce introuvable"):
         load_config(tmp_path / "absent.yaml")
 
     path = write(tmp_path)
@@ -367,7 +369,7 @@ def test_a_merge_key_may_be_overridden_and_the_same_key_may_repeat_elsewhere(
     tmp_path: Path,
 ) -> None:
     path = write(tmp_path)
-    path.write_text(
+    designated(path).write_text(
         "version: 1\nmodels:\n- &base {id: FAKE, sdk: fake, model: fake-1, max_tokens: 100}\n- <<: *base\n  id: AUTRE\n  max_tokens: 200\n" + SECURITY_YAML,
         encoding="utf-8",
     )
@@ -408,7 +410,7 @@ def test_an_error_no_single_agent_causes_stays_with_loom_yaml(tmp_path: Path) ->
     path = write(tmp_path, agents={"a": AGENT, "b": AGENT})
     with pytest.raises(ConfigError, match="Agent déclaré deux fois") as refus:
         load_config(path)
-    assert refus.value.source == path
+    assert refus.value.source == designated(path)
 
 
 def test_an_unresolved_tool_names_its_agent_and_tool(tmp_path: Path) -> None:
@@ -528,6 +530,71 @@ def test_json_schema_describes_the_files() -> None:
     agent = agent_json_schema()
     assert {"name", "main", "tools"} <= agent["properties"].keys()
     assert agent["required"] == ["name", "main"]
+
+
+def test_the_boot_file_says_where_the_config_is() -> None:
+    boot = BootConfig.model_validate({"version": 1, "profile": "prod", "env_file": ".env", "config": {"source": "file", "path": "config"}})
+    assert boot.profile == "prod"
+    assert boot.env_file == Path(".env")
+    assert boot.config.path == Path("config")
+    assert boot.config.file == "loom.yaml"
+
+
+def test_the_config_file_is_next_to_the_boot_file_by_default() -> None:
+    boot = BootConfig.model_validate({"version": 1, "config": {"source": "file"}})
+    assert boot.config.path == Path()
+    assert boot.config.file == "loom.yaml"
+    assert boot.profile is None
+    assert boot.env_file is None
+
+
+def test_the_boot_file_needs_its_config_block() -> None:
+    with pytest.raises(ValidationError, match="config"):
+        BootConfig.model_validate({"version": 1})
+
+
+@pytest.mark.parametrize("key", ["models", "workpath", "agents_dir", "storage"])
+def test_the_boot_file_refuses_the_keys_of_the_config(key: str) -> None:
+    with pytest.raises(ValidationError, match=key):
+        BootConfig.model_validate({"version": 1, "config": {"source": "file"}, key: "x"})
+
+
+def test_a_remote_source_is_refused_by_name() -> None:
+    with pytest.raises(ValidationError) as caught:
+        BootConfig.model_validate({"version": 1, "config": {"source": "postgres", "dsn_env": "LOOM_CONFIG_DSN"}})
+    message = str(caught.value)
+    assert "source 'postgres' non disponible : seule la source 'file' l'est pour l'instant" in message
+    # La source indisponible est dite seule : pas d'erreur sur ses paramètres.
+    assert "dsn_env" not in message
+
+
+@pytest.mark.parametrize("name", ["config/loom.yaml", "../loom.yaml", "a\\loom.yaml", "", ".", ".."])
+def test_the_config_file_is_a_bare_name(name: str) -> None:
+    with pytest.raises(ValidationError, match="un nom de fichier est attendu, sans dossier"):
+        BootConfig.model_validate({"version": 1, "config": {"source": "file", "file": name}})
+
+
+def test_the_config_file_name_is_free() -> None:
+    boot = BootConfig.model_validate({"version": 1, "config": {"source": "file", "file": "prod.yaml"}})
+    assert boot.config.file == "prod.yaml"
+
+
+def test_an_unknown_boot_version_is_refused() -> None:
+    with pytest.raises(ValidationError, match="Version d'amorce 2 non prise en charge"):
+        BootConfig.model_validate({"version": 2, "config": {"source": "file"}})
+
+
+def test_an_unknown_profile_is_refused_in_the_boot_file() -> None:
+    with pytest.raises(ValidationError, match="profile"):
+        BootConfig.model_validate({"version": 1, "profile": "staging", "config": {"source": "file"}})
+
+
+def test_json_schema_describes_the_boot_file() -> None:
+    boot = boot_json_schema()
+    assert boot["additionalProperties"] is False
+    assert boot["properties"].keys() == {"version", "profile", "env_file", "config"}
+    assert sorted(boot["required"]) == ["config", "version"]
+    assert "workpath" in config_json_schema()["properties"]
 
 
 def test_registry_rejects_duplicates_and_iterates() -> None:

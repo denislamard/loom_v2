@@ -12,7 +12,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from loom_ia.agents.spec import AgentSpec
-from loom_ia.config.models import LoomConfig
+from loom_ia.config.models import BootConfig, LoomConfig
 
 
 def config_json_schema() -> dict[str, Any]:
@@ -22,6 +22,15 @@ def config_json_schema() -> dict[str, Any]:
         Le JSON Schema de ``LoomConfig``, en mode validation.
     """
     return TypeAdapter(LoomConfig).json_schema(mode="validation")
+
+
+def boot_json_schema() -> dict[str, Any]:
+    """Schéma de l'amorce ``loom-boot.yaml``.
+
+    Returns:
+        Le JSON Schema de ``BootConfig``, en mode validation.
+    """
+    return TypeAdapter(BootConfig).json_schema(mode="validation")
 
 
 def agent_json_schema() -> dict[str, Any]:

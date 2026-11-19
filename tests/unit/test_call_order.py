@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, secured
+from conftest import DEV, boot, secured
 from pydantic import JsonValue
 
 from loom_ia.access.api import Loom, RunResult
@@ -647,7 +647,7 @@ def atelier(
         "tools": [{"python": "lire"}, ecrire_ref],
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 SESSION_E2E = SessionId("ordre")
@@ -828,7 +828,7 @@ def test_a_journal_written_without_ordering_replays_identically(tmp_path: Path, 
     config["execution"]["tools"]["order"] = "effects"
     (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
 
-    [replayed] = asyncio.run(assert_replays(tmp_path / "loom.yaml", journal))
+    [replayed] = asyncio.run(assert_replays(boot(tmp_path / "loom.yaml"), journal))
 
     assert replayed.identical
 

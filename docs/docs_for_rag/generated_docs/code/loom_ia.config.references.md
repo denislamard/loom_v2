@@ -15,8 +15,10 @@ Le préfixe `loom.` est réservé à ce que fournit loom-ia (outils et politique
 aucun nom enregistré ne le porte (décision D5 de l'analyse des outils fournis,
 `docs/tools-builtin-analyse.md`).
 
-Les modules voisins du fichier de config sont importables : son dossier est
-ajouté à `sys.path` le temps du chargement. Un module voisin est importé
+Les modules voisins sont importables depuis le dossier de travail
+(`workpath`, décision A-5) : il est ajouté à `sys.path` le temps du
+chargement — `imports: [tools.Wireframe]` se lit
+`<workpath>/tools/Wireframe`. Un module voisin est importé
 sous son seul nom ; deux configs d'un même process peuvent pourtant avoir
 chacune le sien sous le même nom (`outils.py`). Un module que loom a importé
 comme voisin d'une config est donc retiré de `sys.modules` quand une autre
@@ -28,7 +30,7 @@ l'application — n'est jamais touché.
 
 ## Constantes de `loom_ia.config.references`
 
-- `_NEIGHBOURS = {}` : Modules voisins importés par loom : nom de premier niveau → dossier de la config pour laquelle ils l'ont été.
+- `_NEIGHBOURS = {}` : Modules voisins importés par loom : nom de premier niveau → dossier de travail de la config pour laquelle ils l'ont été.
 
 ## Classe `loom_ia.config.references.Registry`
 
@@ -99,7 +101,7 @@ Importe les modules de `imports` et enregistre les outils et politiques trouvés
 **Arguments :**
 
 - `names` : Les modules.
-- `base_dir` : Dossier de la config : ses modules voisins sont importables.
+- `base_dir` : Dossier de travail (`workpath`) : ses modules sont importables.
 
 **Renvoie :**
 
@@ -121,7 +123,7 @@ Objet désigné par un nom enregistré ou par `module:attr`.
 
 - `reference` : Le nom, ou `module:attr`.
 - `registry` : Les objets enregistrés.
-- `base_dir` : Dossier de la config.
+- `base_dir` : Dossier de travail (`workpath`).
 
 **Renvoie :**
 

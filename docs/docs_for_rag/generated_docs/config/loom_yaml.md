@@ -5,10 +5,12 @@ La configuration d'une instance : `loom.yaml` et les agents de `agents_dir`.
 Modèle Pydantic : `loom_ia.config.models.LoomConfig`.
 
 - `version` (type `int` ; obligatoire) : Version du schéma ; 1.
-- `profile` (type `Profile | null` ; défaut : `null`) : Profil actif (fonction M4) : `dev` assouplit, `prod` durcit, absent ne change rien. Posé au chargement, où l'option et la variable d'environnement l'emportent sur le fichier.
+- `profile` (type `Profile | null` ; défaut : `null`) : Profil actif (fonction M4) : `dev` assouplit, `prod` durcit, absent ne change rien. Posé au chargement d'après l'amorce, où l'option et la variable d'environnement l'emportent (décision A-2) ; refusé dans le fichier de config. Hors du schéma publié.
 - `profiles` (type `dict[Profile, dict[str, JsonValue]]` ; défaut : `{}`) : Surcharges partielles par profil, fusionnées au chargement : les objets en profondeur, les listes remplacées.
-- `base_dir` (type `Path | null` ; défaut : `null`) : Dossier du fichier de config, posé au chargement : les modules voisins sont importables et les chemins relatifs s'y rapportent. Hors du schéma publié (`loom schema`) : on ne l'écrit pas (essai de la fonction M1, 21/10).
-- `env_file` (type `Path | null` ; défaut : `null`) : Fichier d'environnement du projet, relatif au dossier de la config : lu par `loom` avant la config elle-même (`config/env_file.py`), au lieu du `.env` voisin. À la racine seulement, car il peut donner le profil.
+- `workpath` (type `Path | null` ; défaut : `null`) : Dossier de travail de l'instance (décisions A-4 et A-5), obligatoire dans la config lue par l'amorce, quelle que soit la source : le journal, les artefacts, l'audit, les données des outils, le `cwd` des serveurs MCP et les modules Python voisins (`imports`, `module:attr`) s'y rapportent. Un chemin relatif se rapporte au dossier de l'amorce ; en conteneur, un chemin absolu monté depuis l'hôte (`/loom-data`). Rendu absolu au chargement. Facultatif pour une config construite en Python : le dossier courant.
+- `boot_file` (type `Path | null` ; défaut : `null`) : L'amorce lue (`loom-boot.yaml`), posée au chargement ; `None` pour une config construite en Python. Hors du schéma publié.
+- `config_file` (type `Path | null` ; défaut : `null`) : Le fichier de config que l'amorce désigne, posé au chargement : son dossier est la racine des documents (`agents_dir`, `resources_dir`, `schema_file`). Hors du schéma publié.
+- `env_file` (type `Path | null` ; défaut : `null`) : Fichier d'environnement du projet, posé au chargement d'après l'amorce (décision A-2) ; refusé dans le fichier de config. Hors du schéma publié.
 - `imports` (type `tuple[str, ...]` ; défaut : `[]`) : Modules chargés au démarrage, qui enregistrent leurs outils et politiques (point 50).
 - `agents_dir` (type `Path` ; défaut : `"agents"`) : Dossier des fichiers d'agents (`agents` par défaut), un `<nom>.yaml` par agent.
 - `resources_dir` (type `Path` ; défaut : `"prompts"`) : Dossier des prompts et skills (`prompts` par défaut), base des `system_file` et `skill_file`.

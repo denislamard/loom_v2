@@ -13,6 +13,7 @@
 # Phase 3.4 : un budget par défaut pour les deux agents (plus bas), et des
 #             tarifs pour tous les modèles simulés, pour voir les coûts.
 version: 1
+workpath: .
 
 imports: [outils, politiques]     # modules voisins de ce fichier
 agents_dir: agents/

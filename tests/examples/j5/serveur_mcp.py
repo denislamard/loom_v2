@@ -53,7 +53,7 @@ from loom_ia.config import (
 from loom_ia.core.model import SessionId, TenantId, new_id
 from loom_ia.runtime import apply_logging
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 CAS = ("clients", "portees", "transport")
 
 DUPONT = TenantId("dupont-plomberie")

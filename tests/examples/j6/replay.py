@@ -72,7 +72,7 @@ from loom_ia.replay import Comparison, ReplayReport, ToolFate, fate_label
 from loom_ia.runtime import apply_logging
 from loom_ia.telemetry import Trace, render_trace
 
-CONFIG = Path(__file__).parent.parent / "j5" / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent.parent / "j5" / "relance" / "loom-boot.yaml"
 CAS = ("identique", "divergence", "variante", "inspect", "j4")
 DUPONT = TenantId("dupont-plomberie")
 DEMANDES = (

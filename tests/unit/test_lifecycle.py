@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import DEV, secured
+from conftest import DEV, boot, secured
 
 from loom_ia.access.api import Loom, UnknownSession
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
@@ -97,7 +97,7 @@ def patient(tmp_path: Path) -> ConfigFactory:
         if timeout is not None:
             agent["timeout"] = timeout
         (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-        return tmp_path / "loom.yaml"
+        return boot(tmp_path / "loom.yaml")
 
     return build
 
@@ -155,7 +155,7 @@ def delegating(tmp_path: Path) -> Path:
     for agent in agents:
         path = tmp_path / "agents" / f"{agent['name']}.yaml"
         path.write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return boot(tmp_path / "loom.yaml")
 
 
 # --- Temps de pilotage cumulé -------------------------------------------------

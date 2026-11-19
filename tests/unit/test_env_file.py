@@ -41,9 +41,9 @@ def write(path: Path, text: str) -> Path:
 
 
 def projet(folder: Path, **root: Any) -> Path:
-    """Un ``loom.yaml`` réduit : ``load_env_file`` n'en lit que ``env_file``."""
-    lines = ["version: 1", *(f"{key}: {value}" for key, value in root.items())]
-    return write(folder / "loom.yaml", "\n".join(lines) + "\n")
+    """Une amorce réduite (``loom-boot.yaml``) : ``load_env_file`` n'en lit que ``env_file``."""
+    lines = ["version: 1", *(f"{key}: {value}" for key, value in root.items()), "config: {source: file}"]
+    return write(folder / "loom-boot.yaml", "\n".join(lines) + "\n")
 
 
 # --- Quel fichier -----------------------------------------------------------------
@@ -78,14 +78,14 @@ def test_neither_the_current_folder_nor_a_parent_is_searched(tmp_path: Path, mon
 
 
 def test_without_a_config_no_env_file_is_looked_for(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Chercher à côté d'un loom.yaml absent, ce serait lire le .env du dossier courant."""
+    """Chercher à côté d'une amorce absente, ce serait lire le .env du dossier courant."""
     write(tmp_path / ".env", "LOOM_ESSAI_A=1\n")
     environ: dict[str, str] = {}
-    assert load_env_file(tmp_path / "loom.yaml", environ=environ).path is None
+    assert load_env_file(tmp_path / "loom-boot.yaml", environ=environ).path is None
     assert environ == {}
-    assert main(["--config", str(tmp_path / "loom.yaml"), "validate"]) == 2
+    assert main(["--config", str(tmp_path / "loom-boot.yaml"), "validate"]) == 2
     assert "LOOM_ESSAI_A" not in os.environ
-    assert "Fichier illisible" in capsys.readouterr().err
+    assert "Amorce introuvable" in capsys.readouterr().err
 
 
 def test_env_file_in_the_config_wins_over_the_neighbour(tmp_path: Path) -> None:
@@ -95,7 +95,7 @@ def test_env_file_in_the_config_wins_over_the_neighbour(tmp_path: Path) -> None:
     environ: dict[str, str] = {}
     report = load_env_file(config, environ=environ)
     assert environ == {"LOOM_ESSAI_A": "config"}
-    assert (report.path, report.source) == ((tmp_path / "secrets" / "loom.env").resolve(), "config")
+    assert (report.path, report.source) == ((tmp_path / "secrets" / "loom.env").resolve(), "amorce")
 
 
 def test_the_file_given_by_the_caller_wins_over_the_config(tmp_path: Path) -> None:

@@ -59,7 +59,7 @@ from loom_ia.core.model import McpServerSpec, SessionId, TenantId, new_id
 from loom_ia.runtime import apply_logging
 from loom_ia.tools import tool
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 SERVEUR_CRM = Path(__file__).parent / "relance" / "serveurs" / "serveur_crm.py"
 CAS = ("isolation", "surcharges", "mcp", "acces")
 

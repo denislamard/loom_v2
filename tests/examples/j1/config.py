@@ -25,7 +25,7 @@ from loom_ia.core.model import DEFAULT_TENANT
 from loom_ia.engine import begin_run, drive
 from loom_ia.runtime import apply_logging, build_agent, create_event_store, load_registry
 
-CONFIG = Path(__file__).parent / "demo" / "loom.yaml"
+CONFIG = Path(__file__).parent / "demo" / "loom-boot.yaml"
 QUESTION = "Combien font 12 fois 7, plus 3 ?"
 
 

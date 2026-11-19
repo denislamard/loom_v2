@@ -55,7 +55,7 @@ Un chemin de loom qu'un outil fourni ne doit jamais exposer au modèle.
 
 - `path` : Le chemin protégé.
 - `what` : Ce que c'est, pour le message : « la config », « le journal »…
-- `subtree` : Vrai pour un dossier dont aucun sous-dossier ne peut être exposé non plus ; faux pour un fichier, ou pour le dossier de la config, dont on peut exposer un sous-dossier qui ne contient rien de protégé.
+- `subtree` : Vrai pour un dossier dont aucun sous-dossier ne peut être exposé non plus ; faux pour un fichier, ou pour le dossier de la config et `workpath`, dont on peut exposer un sous-dossier qui ne contient rien de protégé.
 
 ## Classe `loom_ia.tools_builtin.BuiltinContext`
 
@@ -68,7 +68,7 @@ Ce que reçoit la fabrique d'un outil fourni, avec ses paramètres.
 
 **Attributs :**
 
-- `base_dir` : Dossier du fichier de config : les chemins relatifs des paramètres s'y rapportent.
+- `base_dir` : Dossier de travail de l'instance (`workpath`) : les chemins relatifs des paramètres s'y rapportent.
 - `protected` : Config, fichier d'environnement, prompts, stockage… du client monté : ce que l'outil ne doit jamais exposer.
 - `secrets` : Table des secrets du client pour qui l'agent est monté, en lecture seule — celle que reçoivent les fabriques de `tool_sources` ; `None` : l'environnement.
 - `protected_dsns` : Variables des DSN du stockage de loom (journal, idempotence) : une base qu'un outil fourni expose ne doit pas être celle-là.

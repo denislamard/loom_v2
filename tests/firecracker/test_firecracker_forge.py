@@ -809,6 +809,7 @@ def config_file(base: Path, vm_dir: Path) -> Path:
     ]
     config = {
         "version": 1,
+        "workpath": ".",
         # Qui agit sur loom (D-1) : un rôle et un utilisateur ; où vont les refus (D-9).
         "security": {
             "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
@@ -830,6 +831,7 @@ def config_file(base: Path, vm_dir: Path) -> Path:
         ],
     }
     (base / "loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True))
+    (base / "loom-boot.yaml").write_text("version: 1\nconfig:\n  source: file\n", encoding="utf-8")
     agent = {
         "name": "atelier",
         "main": {"model": "FAKE", "system": "Tu forges."},
@@ -837,7 +839,7 @@ def config_file(base: Path, vm_dir: Path) -> Path:
         "tools": [{"source": "forge"}],
     }
     (base / "agents" / "atelier.yaml").write_text(yaml.safe_dump(agent))
-    return base / "loom.yaml"
+    return base / "loom-boot.yaml"
 
 
 async def test_loom_mounts_the_source_and_the_vm_lives_with_it(tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1223,9 +1225,9 @@ FILE_SCRIPT: list[dict[str, Any]] = [
 async def test_loom_stores_the_file_and_journals_its_uri(tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     path = config_file(tmp_path / "config", make_vm())
-    config = yaml.safe_load(path.read_text())
+    config = yaml.safe_load(path.with_name("loom.yaml").read_text())
     config["models"][0]["params"]["script"] = FILE_SCRIPT
-    path.write_text(yaml.safe_dump(config, allow_unicode=True))
+    path.with_name("loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True))
     async with Loom(load_config(path)) as loom:
         run = await loom.run("atelier", "Dessine un graphe.", user="dev")
         assert run.status == RunStatus.COMPLETED
@@ -1276,6 +1278,7 @@ async def test_a_forged_file_goes_from_the_vm_to_a_folder_through_a_subagent(
     ]
     config = {
         "version": 1,
+        "workpath": ".",
         # Qui agit sur loom (D-1) : un rôle et un utilisateur ; où vont les refus (D-9).
         "security": {
             "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
@@ -1320,9 +1323,10 @@ async def test_a_forged_file_goes_from_the_vm_to_a_folder_through_a_subagent(
         "tools": [{"source": "forge"}],
     }
     (base / "loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True))
+    (base / "loom-boot.yaml").write_text("version: 1\nconfig:\n  source: file\n", encoding="utf-8")
     for agent in (chef, forgeron):
         (base / "agents" / f"{agent['name']}.yaml").write_text(yaml.safe_dump(agent, allow_unicode=True))
-    async with Loom(load_config(base / "loom.yaml")) as loom:
+    async with Loom(load_config(base / "loom-boot.yaml")) as loom:
         run = await loom.run("chef", "Dessine un graphe et range-le.", user="dev")
         events = await loom.events(run.run_id)
     assert run.status == RunStatus.COMPLETED, run

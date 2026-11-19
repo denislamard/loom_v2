@@ -1,12 +1,13 @@
-# loom_v2 — Clés de configuration : `loom.yaml` et `agent.yaml`
+# loom_v2 — Clés de configuration : `loom-boot.yaml`, `loom.yaml` et `agent.yaml`
 
-Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.py`, `agents/spec.py`, `core/model/*`), identique au paquet publié sur PyPI. Les rubriques [`security`](#security), [`server`](#server) (`http.user`), [`access`](#access) et [`approval`](#approval) sont relevées en 2.0.17, qui ajoute les utilisateurs et les rôles d'accès (conception : `docs/loom_role_user.md`).
+Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.py`, `agents/spec.py`, `core/model/*`), identique au paquet publié sur PyPI. Les rubriques [`security`](#security), [`server`](#server) (`http.user`), [`access`](#access) et [`approval`](#approval) sont relevées en 2.0.17, qui ajoute les utilisateurs et les rôles d'accès (conception : `docs/loom_role_user.md`). L'amorce [`loom-boot.yaml`](#fichier-loom-bootyaml) et la clé [`workpath`](#workpath) sont relevées en 2.0.22 (analyse : `docs/analyse-source-config.md`).
 
 **Règles générales**
 
 - Une clé inconnue est **refusée** au chargement (`loom validate`, code 2), avec le chemin de la clé.
 - Une clé **écrite deux fois** dans le même objet est refusée de même, avec ses deux lignes : YAML garderait la seconde en silence. Surcharger une clé fusionnée (`<<: *ancre`) reste permis.
-- Les chemins sont relatifs au **dossier de `loom.yaml`** ; un `system_file`, un `skill_file`, un modèle de document (`templates` de `loom.word` et `loom.pdf`) ou un fichier de style (`style` de `loom.word`, d'un modèle, et ses logos) est relatif à `resources_dir`, et doit rester dans ce dossier.
+- **Deux fichiers, toujours.** L'amorce `loom-boot.yaml` est le premier fichier lu : elle porte le profil, le fichier d'environnement et l'endroit où lire la config (`loom.yaml`). `--config` désigne l'amorce (`./loom-boot.yaml` par défaut), `Loom.from_config()` aussi. Un projet sans amorce est refusé, et le message donne l'amorce à écrire.
+- **Deux racines pour les chemins relatifs.** Les **documents** de la config se rapportent au dossier de `loom.yaml` : `agents_dir`, `resources_dir`, `schema_file` ; un `system_file`, un `skill_file`, un modèle de document (`templates` de `loom.word` et `loom.pdf`) ou un fichier de style (`style` de `loom.word`, d'un modèle, et ses logos) est relatif à `resources_dir`, et doit rester dans ce dossier. Le **travail** se rapporte à [`workpath`](#workpath), lui-même relatif au dossier de l'amorce : journal, artefacts, idempotence, audit, données des outils, `cwd` des serveurs MCP, `file_roots`, modules Python voisins. Quand l'amorce, `loom.yaml` et `workpath` (`workpath: .`) sont dans le même dossier, tout se rapporte à lui.
 - La config ne porte **jamais un secret** : les clés `*_env` nomment la variable d'environnement qui le contient.
 - « **obligatoire** » dans la colonne *Défaut* : la clé doit être écrite, sinon le chargement s'arrête.
 - `null` dans la colonne *Défaut* : la fonction est inactive tant que la clé n'est pas donnée.
@@ -14,14 +15,22 @@ Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.p
 
 ## Rubriques
 
+### `loom-boot.yaml` (l'amorce)
+
+| Rubrique | Objet |
+|---|---|
+| [`version`](#version-de-lamorce) | Version du schéma de l'amorce |
+| [`profile`](#profile) | Profil actif (`dev`, `prod`) |
+| [`env_file`](#env_file) | Fichier d'environnement du projet |
+| [`config`](#config) | Où lire la config de loom |
+
 ### `loom.yaml`
 
 | Rubrique | Objet |
 |---|---|
 | [`version`](#version) | Version du schéma de config |
-| [`profile`](#profile) | Profil actif (`dev`, `prod`) |
+| [`workpath`](#workpath) | Dossier de travail de l'instance (obligatoire) |
 | [`profiles`](#profiles) | Surcharges par profil |
-| [`env_file`](#env_file) | Fichier d'environnement du projet |
 | [`imports`](#imports) | Modules Python chargés au démarrage |
 | [`agents_dir`](#agents_dir) | Dossier des fichiers d'agents |
 | [`resources_dir`](#resources_dir) | Dossier des ressources : prompts, skills, modèles de document, styles et logos |
@@ -38,7 +47,6 @@ Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.p
 | [`server`](#server) | Serveurs HTTP et MCP |
 | [`triggers`](#triggers) | Déclencheurs (webhooks) |
 | [`agents`](#agents-en-ligne) | Agents écrits directement dans `loom.yaml` |
-| [`base_dir`](#base_dir) | Posé par le chargeur, à ne pas écrire |
 
 ### `agent.yaml` (un fichier par agent dans `agents_dir`)
 
@@ -68,6 +76,48 @@ Blocs partagés, décrits une fois : [contrat de sortie](#bloc-contrat-de-sortie
 
 ---
 
+# Fichier `loom-boot.yaml`
+
+L'amorce : le premier fichier que loom lit, toujours local. Elle dit où trouver la config, et porte ce qui doit être connu avant de la lire. Toute autre clé y est refusée ; une config donnée à sa place (`--config loom.yaml`) est reconnue, et le message donne l'amorce à écrire.
+
+```yaml
+version: 1
+profile: prod
+env_file: .env
+config:
+  source: file
+  path: ./config      # dossier de loom.yaml, relatif à celui de l'amorce
+  file: loom.yaml     # défaut
+```
+
+## `version` (de l'amorce)
+
+| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
+|---|---|---|---|---|
+| `version` | Version du schéma de l'amorce. Toute autre valeur arrête le chargement. | `1` | **obligatoire** | `version: 1` |
+
+## `profile`
+
+| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
+|---|---|---|---|---|
+| `profile` | Profil actif. `prod` change les avertissements en erreurs (approbation sans journal durable, budget en dollars sur un modèle sans tarif, juge corrélé, juge bloquant échantillonné…), refuse `serve --reload`, `judges: skip` et `server.http.user`, et avertit si des variables viennent du `.env`. `dev` change en avertissements certains refus (approbation avec un journal en mémoire). L'option `--profile` puis la variable `LOOM_PROFILE` l'emportent sur l'amorce. Refusé dans `loom.yaml` (et dans ses `profiles`) : il est lu avant la config. | `dev`, `prod` | `null` : aucun profil, rien n'est durci ni assoupli | `profile: dev` |
+
+## `env_file`
+
+| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
+|---|---|---|---|---|
+| `env_file` | Fichier de variables lu par la commande `loom` **avant** la config (clés d'API, DSN, `LOOM_PROFILE`). Une variable déjà définie, même vide, l'emporte. Fichier absent : erreur, code 2. Lu sans interpolation. `--env-file` l'emporte, `--no-env-file` n'en lit aucun. La librairie ne lit rien seule (`load_env_file()`). Refusé dans `loom.yaml` (et dans ses `profiles`) : il est lu avant la config. | chemin relatif au dossier de l'amorce | `null` : le `.env` voisin de l'amorce est lu s'il existe | `env_file: secrets/dev.env` |
+
+## `config`
+
+| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
+|---|---|---|---|---|
+| `config.source` | D'où vient la config. Seule `file` est disponible ; une autre valeur est refusée en la nommant (« source 'postgres' non disponible »). Le bloc est prévu pour d'autres sources (base de données, URL), qui s'y ajouteront sans changer le format. | `file` | **obligatoire** | `source: file` |
+| `config.path` | Dossier de `loom.yaml`, relatif au dossier de l'amorce : la racine des documents (`agents_dir`, `resources_dir`, `schema_file`). | chemin | `.` : le dossier de l'amorce | `path: ./config` |
+| `config.file` | Nom du fichier de config dans `path`, sans dossier (un `/`, `..` ou un nom vide est refusé). Fichier absent : erreur qui nomme `config.path` et `config.file`. | nom de fichier | `loom.yaml` | `file: prod.yaml` |
+
+---
+
 # Fichier `loom.yaml`
 
 ## `version`
@@ -76,17 +126,17 @@ Blocs partagés, décrits une fois : [contrat de sortie](#bloc-contrat-de-sortie
 |---|---|---|---|---|
 | `version` | Version du schéma de config. Toute autre valeur arrête le chargement. | `1` | **obligatoire** | `version: 1` |
 
-## `profile`
+## `workpath`
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `profile` | Profil actif. `prod` change les avertissements en erreurs (approbation sans journal durable, budget en dollars sur un modèle sans tarif, juge corrélé, juge bloquant échantillonné…), refuse `serve --reload`, `judges: skip` et `server.http.user`, et avertit si des variables viennent du `.env`. `dev` change en avertissements certains refus (approbation avec un journal en mémoire). L'option `--profile` puis la variable `LOOM_PROFILE` l'emportent sur le fichier. | `dev`, `prod` | `null` : aucun profil, rien n'est durci ni assoupli | `profile: dev` |
+| `workpath` | Dossier de travail de l'instance. S'y rapportent le journal, les artefacts, l'idempotence, `security.audit.path`, le stockage des clients, les données des outils fournis (`loom.sql`, `loom.excel`, `loom.memory`, `loom.local_files`, `forge`), le `cwd` des serveurs MCP, `server.mcp.file_roots`, et les modules Python voisins (`imports`, `python: module:attr`) : `imports: [tools.Wireframe]` se lit `<workpath>/tools/Wireframe`. Relatif au dossier de l'amorce ; en conteneur, un chemin absolu monté depuis l'hôte. Un profil peut le changer (`profiles.prod.workpath`). Il est protégé des outils fournis (on peut en exposer un sous-dossier, pas lui) ; `serve --reload` n'y surveille que les `.py`, s'il n'est pas sous le dossier de la config. Facultatif pour une config construite en Python : le dossier courant. | chemin | **obligatoire** | `workpath: .` ; `workpath: /loom-data` |
 
 ## `profiles`
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `profiles` | Surcharges partielles de `loom.yaml`, appliquées quand le profil est actif. Les objets fusionnent en profondeur, les **listes sont remplacées**, `params` et `llm` sont remplacés en bloc. `env_file` y est refusé. | `{dev: {…}, prod: {…}}`, chaque valeur reprenant des clés de `loom.yaml` | `{}` | voir ci-dessous |
+| `profiles` | Surcharges partielles de `loom.yaml`, appliquées quand le profil est actif. Les objets fusionnent en profondeur, les **listes sont remplacées**, `params` et `llm` sont remplacés en bloc. `profile` et `env_file` y sont refusés. | `{dev: {…}, prod: {…}}`, chaque valeur reprenant des clés de `loom.yaml` | `{}` | voir ci-dessous |
 
 ```yaml
 profiles:
@@ -95,17 +145,11 @@ profiles:
     storage: {events: {backend: postgres, dsn_env: LOOM_DSN}, artifacts: {backend: local, path: /var/loom/fichiers}}
 ```
 
-## `env_file`
-
-| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
-|---|---|---|---|---|
-| `env_file` | Fichier de variables lu par la commande `loom` **avant** la config (clés d'API, DSN, `LOOM_PROFILE`). Une variable déjà définie, même vide, l'emporte. Fichier absent : erreur, code 2. Lu sans interpolation. `--env-file` l'emporte, `--no-env-file` n'en lit aucun. La librairie ne lit rien seule (`load_env_file()`). | chemin relatif au dossier de `loom.yaml` | `null` : le `.env` voisin de `loom.yaml` est lu s'il existe | `env_file: secrets/dev.env` |
-
 ## `imports`
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `imports` | Modules Python importés au démarrage, qui enregistrent leurs outils (`@tool`) et leurs politiques. Le dossier de `loom.yaml` est importable : un `outils.py` voisin s'écrit `outils`. | liste de noms de modules | `[]` | `imports: [outils, politiques]` |
+| `imports` | Modules Python importés au démarrage, qui enregistrent leurs outils (`@tool`) et leurs politiques. Le dossier de travail ([`workpath`](#workpath)) est importable : un `outils.py` qui s'y trouve s'écrit `outils`, un module d'un sous-dossier `tools/Wireframe.py` s'écrit `tools.Wireframe`. | liste de noms de modules | `[]` | `imports: [outils, politiques]` |
 
 ## `agents_dir`
 
@@ -192,7 +236,7 @@ Serveurs MCP, déclarés une fois et référencés par les agents (`tools: [{mcp
 | `args` | Arguments du programme (stdio). | liste de textes | `[]` | `args: [run, serveur_crm.py]` |
 | `env` | Variables passées en clair au programme (stdio). | `{VAR: valeur}` | `{}` | `env: {LOG: info}` |
 | `env_from` | Variables du serveur lues dans l'environnement de loom (stdio). | `{VAR_DU_SERVEUR: VAR_DE_LOOM}` | `{}` | `env_from: {CRM_TOKEN: MARTIN_CRM}` |
-| `cwd` | Dossier de lancement (stdio). | chemin | dossier de `loom.yaml` | `cwd: serveurs/` |
+| `cwd` | Dossier de lancement (stdio), relatif à `workpath`. | chemin | `workpath` | `cwd: serveurs/` |
 | `url` | Point d'accès (http) ; obligatoire en http, refusé en stdio. | URL | `null` | `url: https://crm.exemple.fr/mcp` |
 | `headers_env` | En-têtes HTTP lus dans l'environnement (http). | `{En-tête: VARIABLE}` | `{}` | `headers_env: {Authorization: CRM_AUTH}` |
 | `scope` | Portée de la connexion : une pour le process, une par client (avec ses secrets), ou une par run (ouverte et fermée avec lui). | `shared`, `tenant`, `run` | `shared` | `scope: tenant` |
@@ -412,7 +456,7 @@ security:
 | `api_keys[].agents` | Agents accessibles à cette clé ; restreint aussi. | liste | `[]` : tous | `agents: [relance]` |
 | `api_keys[].rate_limit.per_minute` | Requêtes par minute (REST et MCP HTTP) ; au-delà, 429. | entier > 0 | bloc absent : aucune limite | `rate_limit: {per_minute: 60}` |
 | `api_keys[].expires` | Fin de validité ; une clé expirée est refusée à l'appel. | date-heure avec fuseau | `null` : ne périme pas | `expires: 2027-01-01T00:00:00Z` |
-| `audit.path` | Fichier où chaque refus d'accès est ajouté, une ligne JSON par refus, par tous les accès (SDK, REST, MCP, CLI) et tous les processus de la config, quel que soit `telemetry.logging.level`. Relatif au fichier de config ; refusé dans le dossier d'un client d'un journal `jsonl`, où il se lirait comme une session. | chemin | **obligatoire** | `audit: {path: data/audit.jsonl}` |
+| `audit.path` | Fichier où chaque refus d'accès est ajouté, une ligne JSON par refus, par tous les accès (SDK, REST, MCP, CLI) et tous les processus de la config, quel que soit `telemetry.logging.level`. Relatif à `workpath` ; refusé dans le dossier d'un client d'un journal `jsonl`, où il se lirait comme une session. | chemin | **obligatoire** | `audit: {path: data/audit.jsonl}` |
 | `audit.retention_days` | Âge au-delà duquel `loom retention --yes` efface les lignes du fichier (un balayage de tous les clients ; `--tenant` n'y touche pas). | entier > 0, `null` | `null` : tout est gardé | `audit: {path: data/audit.jsonl, retention_days: 365}` |
 
 `api_keys[].tenant` n'existe plus (2.0.17) : le client vient de l'utilisateur.
@@ -481,7 +525,7 @@ security:
 | `http.user` | Utilisateur au nom duquel une instance **sans clé** répond à toute requête : un usage local qui nomme quelqu'un au journal. Refusé hors de la boucle locale (`127.0.0.1`, `localhost`, `::1` ; `loom serve --host` est jugé aussi), avec des clés, avec `mcp.http` et en profil `prod`. Sans clé ni `http.user`, `loom serve` refuse de démarrer. | id d'utilisateur | `null` | `http: {user: denis}` |
 | `http.docs` | Sert `/docs`, `/redoc` et `/openapi.json`, qui se lisent **sans clé** et décrivent toutes les routes. `null` : servis, sauf en profil `prod`. | booléen, `null` | `null` | `http: {docs: false}` |
 | `mcp.http` | Monte le serveur MCP dans l'application REST, sous `<base_path>/mcp` ; exige des clés d'API et l'extra `mcp`. L'acteur est l'utilisateur de la clé : un outil MCP ne prend jamais d'utilisateur. | booléen | `false` | `mcp: {http: true}` |
-| `mcp.file_roots` | Dossiers où un lien `file://` joint à un appel MCP peut être lu. | liste de chemins | `[]` : liens `file://` refusés | `file_roots: [partage/]` |
+| `mcp.file_roots` | Dossiers où un lien `file://` joint à un appel MCP peut être lu, relatifs à `workpath`. | liste de chemins | `[]` : liens `file://` refusés | `file_roots: [partage/]` |
 | `mcp.allowed_origins` | Origines acceptées par le transport MCP HTTP (protection DNS rebinding) ; une requête sans `Origin` passe. | liste d'origines | `[]` | `allowed_origins: [https://app.exemple.fr]` |
 | `mcp.allowed_hosts` | Hôtes acceptés en plus de l'adresse d'écoute (derrière un domaine ou un proxy). | liste d'hôtes | `[]` | `allowed_hosts: [loom.exemple.fr]` |
 
@@ -502,12 +546,6 @@ Portes d'entrée pour un appelant qui ne connaît pas l'API de loom (CRM, planif
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
 | `agents` | Agents écrits directement dans `loom.yaml`, avec le même schéma qu'un [`agent.yaml`](#fichier-agentyaml) ; ajoutés à ceux d'`agents_dir`. Noms uniques ; `_compaction` réservé. Leurs `system_file`, `skill_file` et `schema_file` se lisent comme ceux d'un fichier d'agent. | liste d'agents | `[]` | `agents: [{name: echo, main: {model: SIMULE}}]` |
-
-## `base_dir`
-
-| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
-|---|---|---|---|---|
-| `base_dir` | Dossier de `loom.yaml`, **posé par le chargeur** (une valeur écrite est remplacée). Utile seulement à une config construite en Python ; absent du schéma publié (`loom schema`). | chemin | posé au chargement | — |
 
 ---
 

@@ -44,7 +44,7 @@ Arguments et options de `loom run` :
 - `--attach` : image jointe à la demande (répétable)
 - `--judges` (choix : auto, force, skip ; défaut : auto) : juges : selon leur 'when' (auto), tous (force) ou aucun (skip)
 - `--state` : state de la session posé à l'ouverture (répétable) : la valeur en JSON (3, true, null qui efface, "texte"), sinon telle quelle
-- `--config` : fichier de configuration (défaut : loom.yaml)
-- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur la config
-- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)
+- `--config` : amorce, qui dit où lire la config (défaut : loom-boot.yaml)
+- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur l'amorce
+- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)
 - `--no-env-file` : ne lit aucun fichier de variables

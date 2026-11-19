@@ -47,7 +47,7 @@ from loom_ia.core.events import Event, ModelResponded
 from loom_ia.core.model import DEFAULT_TENANT, ModelSpec
 from loom_ia.runtime import apply_logging
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 QUESTION = "Relance le client du devis D-2026-042, sur un ton cordial."
 
 EMAIL = {

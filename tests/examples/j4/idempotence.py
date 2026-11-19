@@ -95,7 +95,7 @@ from loom_ia.policies import policy
 from loom_ia.runtime import apply_logging, create_idempotency_store, prompt_text
 from loom_ia.tools import idempotent, tool
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 DEMANDE = "Relance le client du devis D-2026-042, sur un ton cordial."
 CAS = ("rejoue", "etat_inconnu", "humain", "deux_appels", "cle_metier", "effet_inconnu")
 ENVOI = "envoyer_relance"

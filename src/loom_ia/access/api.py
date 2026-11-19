@@ -6,7 +6,7 @@ configuration, les agents, le journal, les clients de modèle. Les deux autres
 accès du jalon J1.6 — l'API REST et le serveur MCP — passent par elle, si
 bien qu'un run donne le même journal quel que soit le chemin emprunté.
 
-    async with Loom.from_config("loom.yaml") as loom:
+    async with Loom.from_config("loom-boot.yaml") as loom:
         result = await loom.run("demo", "Bonjour")
         print(result.text)
 
@@ -1716,10 +1716,11 @@ class Loom:
         environ: Mapping[str, str] | None = None,
         profile: str | None = None,
     ) -> Self:
-        """Charge un fichier de configuration et ouvre l'instance.
+        """Charge la config que désigne l'amorce, et ouvre l'instance.
 
-        ``profile`` l'emporte sur ``LOOM_PROFILE`` et sur ``profile:`` du
-        fichier (fonction M4).
+        ``path`` est l'amorce (``loom-boot.yaml``), qui dit où lire la config
+        (décision A-1). ``profile`` l'emporte sur ``LOOM_PROFILE`` et sur
+        ``profile:`` de l'amorce (fonction M4).
         """
         return cls(load_config(Path(path), profile=profile), environ=environ)
 

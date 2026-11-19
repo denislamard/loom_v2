@@ -49,7 +49,7 @@ from loom_ia.core.model import DEFAULT_TENANT, Budgets, ModelSpec
 from loom_ia.runtime import apply_logging
 from loom_ia.usage import render
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 QUESTION = "Relance le client du devis D-2026-042, sur un ton cordial."
 CONSIGNES = "Aucune réduction : elle n'est pas dans le devis."
 

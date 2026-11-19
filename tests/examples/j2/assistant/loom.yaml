@@ -9,6 +9,7 @@
 #                   pour le sous-agent (clé dans TOGETHER_API_KEY).
 # Chacun a son sous-agent vérificateur : verificateur et verificateur_reel.
 version: 1
+workpath: .
 
 agents_dir: agents/
 resources_dir: prompts/

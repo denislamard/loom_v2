@@ -440,7 +440,7 @@ interne de compaction (point 23).
 
 - `spec` : L'agent.
 - `registry` : Registre des politiques enregistrées.
-- `base_dir` : Dossier de la config, pour les références `module:attr`.
+- `base_dir` : Dossier de travail (`workpath`), pour les références `module:attr`.
 - `contracts` : Brancher le guard des contrats ; déduit de l'agent si `None`.
 - `judges` : Les guards des juges.
 - `budget` : La politique de budget.
@@ -596,7 +596,7 @@ Juge tel que le moteur l'exécute : condition résolue, contexte converti.
 - `spec` : L'agent.
 - `judged` : Nom du juge, rôle jugé (`None` pour la réponse finale) et définition.
 - `registry` : Registre, pour résoudre `when.condition`.
-- `base_dir` : Dossier de la config.
+- `base_dir` : Dossier de travail (`workpath`).
 - `profile` : Profil courant, pour `when.profiles`.
 
 **Lève :**
@@ -1078,7 +1078,7 @@ def _builtin_tool(declared: PythonTool, context: BuiltinContext) -> Tool
 Outil fourni par loom-ia (préfixe `loom.`) : son module n'est importé qu'ici.
 
 Un outil à paramètres reçoit ceux de sa référence, validés par son modèle,
-et le contexte du montage : le dossier de la config et les chemins de loom
+et le contexte du montage : le dossier de travail et les chemins de loom
 qu'il ne doit pas exposer.
 
 ## Fonction `loom_ia.runtime.wiring._builtin_closables`
@@ -1108,11 +1108,11 @@ def _protected_paths(config: LoomConfig) -> tuple[Protected, ...]
 
 Ce qu'un outil fourni ne doit jamais exposer au modèle.
 
-La config et ce qui la compose (agents, prompts), le code que loom charge
-ou lance depuis son dossier (modules, serveurs MCP), le fichier
-d'environnement, et le stockage de la racine et de **tous** les clients :
-un modèle qui y accéderait lirait des secrets ou les journaux d'un autre
-client, ou réécrirait le code qui le fait tourner.
+L'amorce, la config et ce qui la compose (agents, prompts), le code que
+loom charge ou lance depuis `workpath` (modules, serveurs MCP), le
+fichier d'environnement, et le stockage de la racine et de **tous** les
+clients : un modèle qui y accéderait lirait des secrets ou les journaux
+d'un autre client, ou réécrirait le code qui le fait tourner.
 
 ## Fonction `loom_ia.runtime.wiring._code_names`
 

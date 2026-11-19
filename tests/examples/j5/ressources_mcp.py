@@ -59,7 +59,7 @@ from loom_ia.core.events import Event
 from loom_ia.core.model import Attachment, RunId, SessionId, TenantId, new_id
 from loom_ia.runtime import apply_logging
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 CAS = ("index", "fichiers", "arret")
 
 DUPONT = TenantId("dupont-plomberie")

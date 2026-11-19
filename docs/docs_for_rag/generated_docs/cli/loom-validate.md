@@ -26,7 +26,7 @@ partiel s'imprime avec un verdict d'échec, avant l'erreur.
 Arguments et options de `loom validate` :
 
 - `--no-keys, --sans-cles` : monte les agents sans créer leurs clients de modèle : une clé d'API (ou un SDK) absente ne fait pas échouer
-- `--config` : fichier de configuration (défaut : loom.yaml)
-- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur la config
-- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de la config ou du .env voisin de la config (une variable déjà définie l'emporte)
+- `--config` : amorce, qui dit où lire la config (défaut : loom-boot.yaml)
+- `--profile` (choix : dev, prod) : profil actif ; l'emporte sur LOOM_PROFILE et sur l'amorce
+- `--env-file` : fichier de variables à lire, au lieu de 'env_file:' de l'amorce ou du .env voisin de l'amorce (une variable déjà définie l'emporte)
 - `--no-env-file` : ne lit aucun fichier de variables

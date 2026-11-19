@@ -17,7 +17,8 @@ Catégories :
 ## U. Usage et configuration
 
 **U01. Quelles sont les clés de premier niveau de `loom.yaml` ?**
-Réponse : `version` (obligatoire), `profile`, `profiles`, `base_dir`, `env_file`, `imports`, `agents_dir` (défaut `agents`), `resources_dir` (défaut `prompts`), `models`, `mcp_servers`, `tool_sources`, `storage`, `sessions`, `execution`, `budgets`, `telemetry`, `tenants`, `security`, `server`, `triggers`, `agents`.
+Réponse : `version` et `workpath` (obligatoires), `profiles`, `imports`, `agents_dir` (défaut `agents`), `resources_dir` (défaut `prompts`), `models`, `mcp_servers`, `tool_sources`, `storage`, `sessions`, `execution`, `budgets`, `telemetry`, `tenants`, `security`, `server`, `triggers`, `agents`.
+`profile` et `env_file` n'y sont pas : ils se déclarent dans l'amorce `loom-boot.yaml` (voir U14), et sont refusés dans `loom.yaml`.
 Sources : `config/models.py` (`LoomConfig`).
 
 **U02. Quelles clés peut contenir la définition d'un agent ?**
@@ -25,7 +26,7 @@ Réponse : `name` et `main` (obligatoires), `description`, `expose` (REST et MCP
 Sources : `agents/spec.py` (`AgentSpec`).
 
 **U03. Comment loom trouve-t-il le fichier `.env` ?**
-Réponse : du plus fort au plus faible : `--env-file`, puis `env_file:` à la racine de `loom.yaml` (relatif à son dossier), puis `.env` du dossier de `loom.yaml`. Un fichier demandé et absent est une erreur ; le `.env` par défaut absent n'en est pas une. Jamais le dossier courant ni un parent. Une variable déjà définie, même vide, l'emporte. Pas d'interpolation. `--no-env-file` n'en lit aucun. La librairie ne lit rien d'elle-même : il faut appeler `load_env_file("loom.yaml")`.
+Réponse : du plus fort au plus faible : `--env-file`, puis `env_file:` de l'amorce `loom-boot.yaml` (relatif à son dossier), puis `.env` du dossier de l'amorce. Un fichier demandé et absent est une erreur ; le `.env` par défaut absent n'en est pas une. Jamais le dossier courant ni un parent. Une variable déjà définie, même vide, l'emporte. Pas d'interpolation. `--no-env-file` n'en lit aucun. La librairie ne lit rien d'elle-même : il faut appeler `load_env_file("loom-boot.yaml")`.
 Sources : `config/env_file.py`.
 
 **U04. Quel délai a un outil par défaut, et comment le changer ?**
@@ -67,6 +68,14 @@ Sources : `config/models.py` (`HttpServer`, `LOOPBACK_HOSTS`).
 **U13. Comment déclarer un modèle de secours ?**
 Réponse : sur l'emplacement (`main`, un rôle, un juge) : `model: <id>` et `fallbacks: [<id>, …]`, dans l'ordre.
 Sources : `engine/fallback.py`.
+
+**U14. Qu'est-ce que l'amorce `loom-boot.yaml`, et que contient-elle ?**
+Réponse : le premier fichier que loom lit, toujours local ; `--config` et `Loom.from_config()` la désignent (`./loom-boot.yaml` par défaut). Elle porte `version` (1), `profile` (`dev` ou `prod` ; `--profile` et `LOOM_PROFILE` l'emportent), `env_file` (relatif à son dossier) et le bloc `config`, obligatoire, qui dit où lire la config : `source: file` (seule source disponible ; une autre est refusée), `path` (dossier de `loom.yaml`, relatif à l'amorce, `.` par défaut) et `file` (nom du fichier, `loom.yaml` par défaut). Toute autre clé y est refusée. Un projet sans amorce est refusé, et le message donne l'amorce à écrire.
+Sources : `config/models.py` (`BootConfig`, `FileConfigSource`), `config/loader.py` (`read_boot`).
+
+**U15. Qu'est-ce que `workpath`, et à quoi se rapportent les chemins relatifs ?**
+Réponse : le dossier de travail de l'instance, obligatoire dans `loom.yaml`, relatif au dossier de l'amorce (absolu en conteneur : `workpath: /loom-data`). S'y rapportent le journal, les artefacts, l'idempotence, `security.audit.path`, le stockage des clients, les données des outils fournis, le `cwd` des serveurs MCP, `server.mcp.file_roots` et les modules Python voisins (`imports: [tools.Wireframe]` se lit `<workpath>/tools/Wireframe`). Les documents de la config, eux, se rapportent au dossier de `loom.yaml` : `agents_dir`, `resources_dir`, `schema_file`.
+Sources : `config/loader.py` (`load_config`, `_workpath`), `config/models.py` (`LoomConfig.workpath`).
 
 ## O. Outils fournis
 
@@ -183,7 +192,7 @@ Réponse : `validate`, `run`, `state`, `resume`, `replay`, `inspect`, `eval`, `a
 Sources : `access/cli/main.py` (`build_parser`).
 
 **A02. Quelles options communes ont toutes les commandes `loom` ?**
-Réponse : `--config`, `--profile`, `--env-file`, `--no-env-file`.
+Réponse : `--config` (l'amorce, `./loom-boot.yaml` par défaut), `--profile`, `--env-file`, `--no-env-file`.
 Sources : `access/cli/main.py` (`_global_options`).
 
 **A03. Comment approuver un appel en attente depuis la ligne de commande ?**

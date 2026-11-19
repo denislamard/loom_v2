@@ -8,11 +8,11 @@ les y pose, sans ``export`` ni ``uv run --env-file``.
 Le fichier lu, du plus fort au plus faible :
 
 1. celui que donne l'appelant (``--env-file``) ;
-2. ``env_file:`` à la racine de ``loom.yaml``, relatif à son dossier ;
-3. ``.env`` dans le dossier de ``loom.yaml``, s'il existe.
+2. ``env_file:`` de l'amorce (``loom-boot.yaml``), relatif à son dossier ;
+3. ``.env`` dans le dossier de l'amorce, s'il existe.
 
 Un fichier demandé (1 ou 2) et absent est une erreur ; le ``.env`` par défaut
-absent n'en est pas une, et il n'est cherché que si ``loom.yaml`` existe.
+absent n'en est pas une, et il n'est cherché que si l'amorce existe.
 Jamais le dossier courant, jamais un dossier parent : un projet rangé sous un
 dépôt n'hérite pas des clés de sa racine.
 
@@ -22,7 +22,7 @@ fichier est lu tel quel, sans interpolation (``${A}`` reste ``${A}``). Les
 valeurs ne sortent jamais d'ici : ni message d'erreur, ni rapport, seulement
 les noms.
 
-La librairie ne lit rien d'elle-même : ``load_env_file("loom.yaml")`` le fait
+La librairie ne lit rien d'elle-même : ``load_env_file("loom-boot.yaml")`` le fait
 à la demande, avant ``Loom.from_config``.
 
 Fonction M6. Options de la CLI : ``--env-file`` et ``--no-env-file``.
@@ -42,13 +42,13 @@ from loom_ia.config.errors import ConfigError
 from loom_ia.config.yaml_source import load_yaml
 
 DEFAULT_NAME: Final = ".env"
-"""Le fichier cherché à côté de loom.yaml quand rien d'autre n'est désigné."""
+"""Le fichier cherché à côté de l'amorce quand rien d'autre n'est désigné."""
 ENV_FILE_KEY: Final = "env_file"
-"""La clé de loom.yaml qui désigne le fichier : à la racine seulement, car il
-est lu avant le choix du profil.
+"""La clé de l'amorce qui désigne le fichier : dans l'amorce seulement, car il
+est lu avant la config et avant le choix du profil (décision A-2).
 """
 
-type EnvSource = Literal["option", "config", "défaut", "désactivé"]
+type EnvSource = Literal["option", "amorce", "défaut", "désactivé"]
 """D'où vient le fichier lu : ``--env-file``, ``env_file:``, le ``.env`` voisin, ou ``--no-env-file``."""
 
 
@@ -58,7 +58,7 @@ class EnvFileReport:
 
     Attributes:
         path: Fichier retenu ; ``None`` quand rien n'est à lire (lecture
-            désactivée, ou pas de loom.yaml à côté duquel chercher).
+            désactivée, ou pas d'amorce à côté de laquelle chercher).
         source: D'où vient le fichier.
         found: Vrai si le fichier existait et a été lu.
         loaded: Variables posées depuis le fichier, dans son ordre.
@@ -75,7 +75,7 @@ class EnvFileReport:
         """Une ligne pour ``loom validate`` et le bandeau de ``loom serve``.
 
         ``shown`` remplace le chemin du fichier à l'affichage (``loom validate``
-        l'écrit relatif au dossier de la config).
+        l'écrit relatif au dossier de l'amorce).
         """
         if self.source == "désactivé":
             return "non lu (--no-env-file)"
@@ -89,7 +89,8 @@ class EnvFileReport:
             details.append(f"lues : {', '.join(self.loaded)}")
         if self.kept:
             details.append(f"déjà définies, gardées : {', '.join(self.kept)}")
-        return f"{path} (par {self.source}) — {' ; '.join(details) or 'aucune variable'}"
+        source = "l'amorce" if self.source == "amorce" else self.source
+        return f"{path} (par {source}) — {' ; '.join(details) or 'aucune variable'}"
 
     def prod_warning(self) -> str | None:
         """L'avertissement du profil prod quand des variables viennent du fichier, sinon None.
@@ -114,12 +115,12 @@ def load_env_file(
 ) -> EnvFileReport:
     """Pose dans ``environ`` (par défaut ``os.environ``) les variables du fichier d'environnement.
 
-    ``config`` est le chemin de ``loom.yaml`` : il dit où chercher. ``env_file``
+    ``config`` est le chemin de l'amorce (``loom-boot.yaml``) : il dit où chercher. ``env_file``
     désigne un autre fichier, qui l'emporte sur ``env_file:`` de la config et
     sur le ``.env`` voisin. Une variable déjà définie n'est jamais remplacée.
 
     Args:
-        config: Chemin de ``loom.yaml``.
+        config: Chemin de l'amorce (``loom-boot.yaml``).
         env_file: Fichier désigné par l'appelant (``--env-file``).
         environ: Environnement à compléter ; ``os.environ`` par défaut.
 
@@ -148,7 +149,7 @@ def reload_env_file(
     shell avait défini reste, comme à la première lecture.
 
     Args:
-        config: Chemin de ``loom.yaml``.
+        config: Chemin de l'amorce (``loom-boot.yaml``).
         previous: Le rapport de la lecture précédente.
         environ: Environnement à compléter ; ``os.environ`` par défaut.
 
@@ -167,10 +168,10 @@ def reload_env_file(
 
 
 def env_file_path(config: str | Path, given: str | Path | None = None) -> tuple[Path | None, EnvSource]:
-    """Le fichier à lire et d'où il vient ; ``None`` sans loom.yaml à côté duquel chercher.
+    """Le fichier à lire et d'où il vient ; ``None`` sans amorce à côté de laquelle chercher.
 
     Args:
-        config: Chemin de ``loom.yaml``.
+        config: Chemin de l'amorce (``loom-boot.yaml``).
         given: Fichier désigné par l'appelant, qui l'emporte.
 
     Raises:
@@ -185,19 +186,19 @@ def env_file_path(config: str | Path, given: str | Path | None = None) -> tuple[
         return None, "défaut"
     declared = declared_env_file(root)
     if declared is not None:
-        return declared, "config"
+        return declared, "amorce"
     return root.parent / DEFAULT_NAME, "défaut"
 
 
 def declared_env_file(config: Path) -> Path | None:
-    """``env_file:`` de ``loom.yaml``, lu avant la config elle-même, en chemin absolu.
+    """``env_file:`` de l'amorce (``loom-boot.yaml``), lu avant la config elle-même, en chemin absolu.
 
     Lu à part parce que le fichier qu'il désigne peut donner ``LOOM_PROFILE`` :
-    il doit l'être avant que le profil ne soit choisi. Un ``loom.yaml``
+    il doit l'être avant que le profil ne soit choisi. Une amorce
     illisible rend ``None`` — ``load_config`` le dira, avec ses mots.
 
     Args:
-        config: Chemin de ``loom.yaml``.
+        config: Chemin de l'amorce (``loom-boot.yaml``).
 
     Raises:
         ConfigError: ``env_file:`` n'est pas un chemin non vide.

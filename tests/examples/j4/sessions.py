@@ -49,7 +49,7 @@ from loom_ia.core.model import SessionId, new_id
 from loom_ia.core.projections import history
 from loom_ia.runtime import apply_logging
 
-CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+CONFIG = Path(__file__).parent / "relance" / "loom-boot.yaml"
 PREMIERE = "Relance le client du devis D-2026-042, sur un ton cordial."
 SECONDE = "Rends-la plus brève, trois phrases au plus."
 

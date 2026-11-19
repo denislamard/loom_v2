@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Initialise un projet Loom-IA : environnement uv, loom.yaml, un agent et son prompt.
+# Initialise un projet Loom-IA : environnement uv, amorce loom-boot.yaml, loom.yaml,
+# un agent et son prompt.
 #
 # Usage :
 #   create-loom-project <projet> <agent> <prompt> [--anthropic]
@@ -17,7 +18,7 @@
 set -euo pipefail
 
 usage() {
-    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 }
 
@@ -55,10 +56,20 @@ cd "$projet"
 uv add "loom-ia[anthropic,openai,http,mcp,sqlite]"
 mkdir agents prompts
 
+# L'amorce : le premier fichier que loom lit ; elle dit où lire la config.
+cat > loom-boot.yaml <<EOF
+version: 1
+config:
+  source: file
+  path: .
+  file: loom.yaml
+EOF
+
 if [[ $fournisseur == anthropic ]]; then
     modele_id=HAIKU
     cat > loom.yaml <<EOF
 version: 1
+workpath: .
 
 agents_dir: agents/
 resources_dir: prompts/
@@ -94,6 +105,7 @@ else
     modele_id=SIMULE
     cat > loom.yaml <<EOF
 version: 1
+workpath: .
 
 agents_dir: agents/
 resources_dir: prompts/
@@ -132,6 +144,7 @@ printf 'Tu es un assistant et tu réponds en français.\n' > "prompts/${prompt}.
 
 echo
 echo "Projet '$projet' créé :"
+echo "  loom-boot.yaml"
 echo "  loom.yaml"
 echo "  agents/${agent}.yaml"
 echo "  prompts/${prompt}.md"

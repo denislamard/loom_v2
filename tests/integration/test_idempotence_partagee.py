@@ -107,6 +107,7 @@ def atelier(tmp_path: Path) -> Path:
     (tmp_path / "pilote.py").write_text(pilote, encoding="utf-8")
     config: dict[str, Any] = {
         "version": 1,
+        "workpath": ".",
         # Qui agit sur loom (D-1) : un rôle et un utilisateur ; où vont les refus (D-9).
         "security": {
             "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
@@ -142,6 +143,7 @@ def atelier(tmp_path: Path) -> Path:
         "telemetry": {"logging": {"level": "CRITICAL"}},
     }
     (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom-boot.yaml").write_text("version: 1\nconfig:\n  source: file\n", encoding="utf-8")
     agent: dict[str, Any] = {
         "name": "demo",
         "description": "Relance les clients.",
@@ -149,7 +151,7 @@ def atelier(tmp_path: Path) -> Path:
         "tools": [{"python": "envoyer_relance"}],
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-    return tmp_path / "loom.yaml"
+    return tmp_path / "loom-boot.yaml"
 
 
 def test_two_processes_send_the_reminder_once(atelier: Path, tmp_path: Path) -> None:

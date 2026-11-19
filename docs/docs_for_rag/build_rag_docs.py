@@ -1092,12 +1092,14 @@ def write_jsonl(repo: Path, pages: Sequence[Page]) -> int:
 
 
 def all_pages(repo: Path) -> list[Page]:
-    """Toutes les pages : code, configuration, outils, CLI, REST, puis documents existants."""
+    """Toutes les pages : code, configuration (agent, amorce, loom.yaml), outils, CLI, REST, puis documents existants."""
     ref = Reference(seen={})
     loom_config = cast(type[BaseModel], importlib.import_module("loom_ia.config.models").LoomConfig)
+    boot_config = cast(type[BaseModel], importlib.import_module("loom_ia.config.models").BootConfig)
     agent_spec = cast(type[BaseModel], importlib.import_module("loom_ia.agents.spec").AgentSpec)
     pages = code_pages(repo)
     pages += config_pages("agent.yaml", agent_spec, ref, "agent_yaml")
+    pages += config_pages("loom-boot.yaml", boot_config, ref, "loom_boot_yaml")
     pages += config_pages("loom.yaml", loom_config, ref, "loom_yaml")
     pages += tool_pages(ref)
     pages += cli_pages()

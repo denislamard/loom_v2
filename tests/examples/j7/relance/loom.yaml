@@ -11,6 +11,7 @@
 #
 # Modèles simulés (sdk: fake), sans clé ni réseau.
 version: 1
+workpath: .
 
 imports: [outils]                 # module voisin de ce fichier
 agents_dir: agents/
