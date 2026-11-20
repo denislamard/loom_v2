@@ -4,6 +4,9 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.23 - non publiée
 
+
+## 2.0.23 - publiée
+
 ### Console d'administration : le côté loom (`docs/analyse-exortateur-loom.md`)
 - **Un canal vers une console d'administration**, nouvelle section `console` de `loom.yaml` (extra `console`, `websockets`) : une seule connexion WSS sortante, ouverte par loom (TLS 1.2 au moins, certificat toujours vérifié, `tls.ca_file`, mTLS avec une clé privée lue dans l'environnement et jamais écrite sur le disque), clé de l'instance dans `Authorization: Bearer`, poignée de main `hello` / `welcome` sur le contrat 1 (46 schémas JSON dans `console/schemas/v1/`, figés par un essai). `enable: false` ne monte rien. `ws://` n'est permis que vers la boucle locale, en profil `dev` ; en `prod`, une clé absente refuse le démarrage. `loom validate` a une section `CONSOLE`, avec le retard d'acquittement.
 - **Où le canal s'ouvre** : `loom serve`, `loom worker` et `loom mcp` pour toute leur vie ; `loom run`, `resume`, `approve`, `reject`, `answer`, `sessions delete` et `retention` le temps de la commande, plus 5 s pour finir d'envoyer ; loom-chat ; en librairie, par `await loom.start_console()`.
