@@ -21,7 +21,7 @@ Hors périmètre, comme dans la conception : la configuration poussée par la co
 | D-3 | **Acquittement par lot** (identifiant du lot) ; loom avance alors le curseur de chaque session du lot. Ordre garanti dans une session, pas entre sessions. Dédoublonnage côté console par `(tenant, session, seq)`. |
 | D-4 | **Saturation** (révisé le 20/11) : jamais de perte, quel que soit le journal — le journal en mémoire se relit lui aussi tant que le process vit. File pleine : la session est marquée « à relire » et relue dans le journal. `on_overflow` et le message `gap` sont retirés. |
 | D-5 | **Contenu exporté** : `console.export.mode` — `on_demand` (métadonnées en continu, contenu lu à la demande par `events.query`) ou `push` (contenu poussé, masqué par `telemetry.redaction`). Absente, elle suit `capture.exports` du client (`metadata` → `on_demand`, `content` → `push`), qui reste ainsi seul maître de l'export OpenTelemetry. Plus `exclude_events`. `redact_fields` est abandonné. |
-| D-6 | Le canal démarre avec **`loom serve`** ; en mode librairie, par un appel explicite (`Loom.start_console()`). |
+| D-6 | **Révisée le 20/11 : dès qu'un run s'exécute, la console doit le savoir.** Le canal s'ouvre dans tout process qui exécute des runs ou efface des sessions : `loom serve`, `loom worker`, `loom mcp` (pour leur durée) ; `loom run`, `resume`, `approve`, `reject`, `answer`, `sessions delete`, `retention` (pour la durée de la commande, avec au plus 5 s d'attente des acquittements à la fin, `CONSOLE_GRACE`) ; loom-chat. En librairie : `Loom.start_console()`, appelé par l'application. |
 | D-7 | **Une connexion par process** ; le `hello` porte l'identifiant d'instance (déclaré, ou créé et gardé sous `workpath` — à déclarer dans `console.instance_id` quand plusieurs machines servent la même instance) et le `worker_id`. |
 | D-8 | **Tâche asyncio**, pas de thread. Bibliothèque `websockets`, dans un nouvel extra `console`. |
 | D-9 | `ws://` accepté **sur `localhost` en profil `dev` seulement** ; mTLS recommandé (avertissement) en `prod`, pas exigé. |
@@ -331,7 +331,7 @@ Règles vérifiées au chargement (`config/console.py`, `ConsoleConfig`) :
 ### 8.2 Fonctionnel
 
 - Sans section `console`, ou avec `enable: false`, **rien ne change** : aucun abonné, aucun import de `websockets`, aucune connexion.
-- `loom run`, `loom mcp` et loom-chat : pas de canal (D-6). loom-chat pourra appeler `start_console()` plus tard ; hors de ce chantier.
+- `loom validate`, `sessions list|show|export`, `report`, `schema`… : pas de canal ; ils n'exécutent aucun run. Les commandes qui en exécutent l'ouvrent (D-6 révisée). Une console injoignable ne retient une commande courte que 5 s au plus ; ce qui n'est pas parti est rattrapé à la prochaine connexion.
 
 ### 8.3 Technique
 

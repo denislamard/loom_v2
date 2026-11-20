@@ -1504,6 +1504,7 @@ def create_console(
     *,
     on_message: MessageHandler | None = None,
     on_connected: ConnectedHandler | None = None,
+    retry_level: int = logging.WARNING,
 ) -> ConsoleChannel | None:
     """Le canal vers la console, prêt à tourner ; ``None`` sans section activée ou sans clé.
 
@@ -1516,6 +1517,7 @@ def create_console(
         environ: Environnement où lire la clé et celle du certificat client.
         on_message: Ce qui traite chaque message reçu (acquittements, commandes).
         on_connected: Ce qui apprend chaque connexion ouverte (l'exportateur).
+        retry_level: Niveau de log d'une tentative de connexion manquée.
 
     Returns:
         Le canal, pas encore lancé (``ConsoleChannel.run``).
@@ -1542,7 +1544,9 @@ def create_console(
         context = tls_context(console, variables)
     except (OSError, ValueError, ssl.SSLError) as exc:
         raise ConfigError(f"Console : TLS impossible à préparer ({exc})") from exc
-    return ConsoleChannel(ChannelSettings(url=console.url, key=key, hello=hello, ssl_context=context), on_message=on_message, on_connected=on_connected)
+    return ConsoleChannel(
+        ChannelSettings(url=console.url, key=key, hello=hello, ssl_context=context), on_message=on_message, on_connected=on_connected, retry_level=retry_level
+    )
 
 
 def console_storage(config: LoomConfig) -> StorageConfig:

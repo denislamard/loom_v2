@@ -195,6 +195,9 @@ DEFAULT_CONFIG: Final = Path(BOOT_FILE)
 """Fichier de configuration, sans ``--config``."""
 MISSING_EXTRA: Final = "{what} demande l'extra '{extra}' (installer l'extra : loom-ia[{extra}])"
 """Message d'une commande dont l'extra n'est pas installé."""
+CONSOLE_GRACE: Final = 5.0
+"""Attente, à la fin d'une commande courte (``run``, ``approve``…), des acquittements de la console : ce qui
+n'est pas acquitté à temps sera rattrapé plus tard, le journal l'a (docs/analyse-exortateur-loom.md, D-6 révisée)."""
 
 OK: Final = 0
 """Code de sortie : la commande a abouti."""
@@ -1951,6 +1954,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     async def go() -> tuple[RunResult, list[SessionCompacted], list[BudgetExceeded]]:
         async with Loom(config) as loom:
+            await loom.start_console(grace=CONSOLE_GRACE)
             if args.stream:
                 live = _Live()
                 followed = run_id
@@ -2084,6 +2088,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
     async def go() -> RunResult | RunStatus:
         async with Loom(config) as loom:
+            await loom.start_console(grace=CONSOLE_GRACE)
             run_id = RunId(args.run_id)
             state = await loom.state(run_id, session_id=session, tenant_id=tenant)
             if state.finished:
@@ -2400,6 +2405,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
     async def go() -> tuple[tuple[str, ...], RunResult | None]:
         loom = Loom(config)
         try:
+            await loom.start_console(grace=CONSOLE_GRACE)
             if args.verdict == "approve":
                 calls = await loom.approve(
                     run_id,
@@ -2475,6 +2481,7 @@ def cmd_answer(args: argparse.Namespace) -> int:
     async def go() -> tuple[str, RunResult | None]:
         loom = Loom(config)
         try:
+            await loom.start_console(grace=CONSOLE_GRACE)
             target = await _target(loom, run_id, args.call, session, tenant)
             sent = answers
             if target is not None:
@@ -3033,6 +3040,7 @@ def cmd_sessions_delete(args: argparse.Namespace) -> int:
 
     async def go() -> SessionDeletion:
         async with Loom(config) as loom:
+            await loom.start_console(grace=CONSOLE_GRACE)
             return await loom.delete_session(session, tenant_id=_tenant(args))
 
     removed = asyncio.run(go())
@@ -3055,6 +3063,7 @@ def cmd_retention(args: argparse.Namespace) -> int:
 
     async def go() -> RetentionReport:
         async with Loom(config) as loom:
+            await loom.start_console(grace=CONSOLE_GRACE)
             return await loom.apply_retention(tenant_id=_tenant(args), dry_run=not args.yes)
 
     report = asyncio.run(go())
@@ -3202,6 +3211,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     async def go() -> None:
         # Rien ne doit aller sur stdout : le protocole y passe.
         async with Loom(config) as loom:
+            await loom.start_console()
             await run_stdio(loom, user=actor.user)
 
     asyncio.run(go())
@@ -3318,6 +3328,7 @@ async def _worker(args: argparse.Namespace) -> int:
     # deux pilotes, mais le réglage est à faire chez lui.
     print("Délai    : un travail plus long que le consumer_timeout du courtier (30 min par défaut) lui est redélivré — le régler au-delà du run le plus long")
     async with Loom(config) as loom:
+        await loom.start_console()
         repris = [run for tenant in config.tenant_ids for run in await loom.recover(tenant_id=tenant)]
         print(f"Reprise  : {len(repris)} run(s) remis en file")
         stop = _on_signals(loom)

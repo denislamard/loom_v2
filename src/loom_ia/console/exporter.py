@@ -159,6 +159,7 @@ class ConsoleExporter:
         if session is not None:
             self._deleted.discard(session)
             await self._cursor.forget(self._tenant, (session,))
+            self._space.set()
 
     async def session_deleted(self, tenant: TenantId, session: SessionId) -> None:
         """Une session vient d'être effacée dans ce process : la console doit effacer sa copie (Q-10)."""
@@ -216,17 +217,27 @@ class ConsoleExporter:
             async with asyncio.timeout(grace):
                 await self._finished.wait()
         except TimeoutError:
-            logger.warning("Console : %d lot(s) non acquittés à l'arrêt, renvoyés au prochain démarrage", len(self._in_flight))
+            if self._in_flight:
+                logger.warning("Console : %d lot(s) non acquittés à l'arrêt, renvoyés au prochain démarrage", len(self._in_flight))
+            else:
+                logger.warning("Console injoignable à l'arrêt : %d événement(s) non envoyés, rattrapés à la prochaine connexion", len(self._queue))
         try:
             await self._flush(force=True)
         except Exception as error:
             logger.warning("Console : curseur non écrit à l'arrêt (%s)", error)
 
     async def _finish(self) -> None:
-        """Le dernier tour : envoyer, attendre les acquittements, écrire le curseur."""
+        """Le dernier tour : attendre une connexion encore en cours, envoyer, attendre les acquittements, écrire le curseur.
+
+        Une commande courte (``loom run``) finit souvent avant que la connexion ne
+        soit ouverte : on l'attend, dans le délai d'``aclose``. Une console qui a
+        refusé la clé ou le contrat ne fait rien attendre.
+        """
+        if not self._channel.connected and self._channel.state in ("idle", "connecting"):
+            await self._channel.wait_connected()
         if self._channel.connected:
             await self._step()
-        while self._in_flight and self._channel.connected:
+        while (self._in_flight or self._deletions) and self._channel.connected:
             if not await self._wait_for_space():
                 break
         await self._flush(force=True)

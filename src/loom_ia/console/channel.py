@@ -175,10 +175,20 @@ class ConsoleChannel:
             reste est ignoré.
         on_connected: Appelé à chaque connexion ouverte : l'exportateur y
             apprend qu'il doit rattraper ce que la console n'a pas acquitté.
+        retry_level: Niveau de log d'une tentative manquée ; une commande
+            courte le baisse à ``INFO`` : seul son message final avertit.
     """
 
-    def __init__(self, settings: ChannelSettings, *, on_message: MessageHandler | None = None, on_connected: ConnectedHandler | None = None) -> None:
+    def __init__(
+        self,
+        settings: ChannelSettings,
+        *,
+        on_message: MessageHandler | None = None,
+        on_connected: ConnectedHandler | None = None,
+        retry_level: int = logging.WARNING,
+    ) -> None:
         self._settings = settings
+        self._retry_level = retry_level
         self._on_message = on_message
         self._on_connected = on_connected
         self._connection: ClientConnection | None = None
@@ -228,7 +238,7 @@ class ConsoleChannel:
             except (OSError, TimeoutError, WebSocketException, ContractError) as error:
                 failures += 1
                 delay = retry_delay(failures)
-                logger.warning("Console %s injoignable (%s) ; nouvelle tentative dans %.1f s", self._settings.url, _said(error), delay)
+                logger.log(self._retry_level, "Console %s injoignable (%s) ; nouvelle tentative dans %.1f s", self._settings.url, _said(error), delay)
             except asyncio.CancelledError:
                 raise
             except Exception:

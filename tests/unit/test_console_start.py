@@ -3,6 +3,8 @@
 
 import argparse
 import asyncio
+import sys
+import time
 from typing import Any
 
 import pytest
@@ -214,3 +216,27 @@ def test_validate_says_a_memory_journal_has_no_backlog(demo: ConfigFactory, caps
     monkeypatch.setenv("LOOM_CONSOLE_KEY", KEY)
     assert main(["--config", str(demo(profile="dev", console=section("ws://127.0.0.1:8766/loom"))), "validate"]) == 0
     assert "  Retard       sans objet : journal en mémoire\n" in capsys.readouterr().out
+
+
+async def test_loom_run_tells_the_console_even_when_it_ends_first(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un run court finit avant que la connexion ne soit ouverte : la commande l'attend, puis envoie (D-6 révisée)."""
+    monkeypatch.setenv("LOOM_CONSOLE_KEY", KEY)
+    async with FakeConsole(key=KEY) as fake:
+        config = demo(profile="dev", storage=JOURNAL, console=section(fake.url))
+        assert await asyncio.to_thread(main, ["--config", str(config), "run", "demo", QUESTION, "--session", "cli"]) == 0
+        async with asyncio.timeout(5):
+            await fake.wait_for("bye")
+    kinds = [kind for session, kind in sent(fake) if session == "cli"]
+    assert kinds[0] == "run.started" and kinds[-1] == "run.completed"
+    capsys.readouterr()
+
+
+async def test_a_command_waits_no_longer_than_its_grace_for_an_absent_console(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOOM_CONSOLE_KEY", KEY)
+    monkeypatch.setattr(sys.modules["loom_ia.access.cli.main"], "CONSOLE_GRACE", 0.5)
+    config = demo(profile="dev", storage=JOURNAL, console=section("ws://127.0.0.1:9/loom"))
+    began = time.monotonic()
+    assert await asyncio.to_thread(main, ["--config", str(config), "run", "demo", QUESTION, "--session", "cli"]) == 0
+    assert time.monotonic() - began < 5, "une console injoignable ne retient pas la commande au-delà de son délai"

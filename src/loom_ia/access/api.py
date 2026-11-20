@@ -1656,6 +1656,7 @@ class Loom:
         self._console_exporter: ConsoleExporter | None = None
         self._console_cursor: ConsoleCursor | None = None
         self._console_listening = ExitStack()
+        self._console_grace = config.execution.shutdown_timeout
         self._console_tasks: list[asyncio.Task[None]] = []
         if self._exporter is not None:
             self._exporting.enter_context(self._store.listen(self._exporter, own=True))
@@ -1778,7 +1779,7 @@ class Loom:
         """Le canal vers la console, une fois ouvert par ``start_console`` ; ``None`` sinon."""
         return self._console
 
-    async def start_console(self) -> bool:
+    async def start_console(self, *, grace: float | None = None) -> bool:
         """Ouvre le canal vers la console d'administration, si la config en déclare un actif (``console.enable: true``).
 
         ``loom serve`` l'appelle à son démarrage ; une application qui se sert
@@ -1789,6 +1790,15 @@ class Loom:
 
         La clé de l'instance absente : un avertissement, et rien n'est ouvert ;
         en profil ``prod``, ``ConfigError`` (Q-5).
+
+        Args:
+            grace: Délai laissé à la fermeture pour envoyer ce qui reste et
+                recevoir les acquittements, en secondes ; à défaut,
+                ``execution.shutdown_timeout``. Une commande courte le
+                raccourcit (``loom run`` : 5 s) : ce qui n'est pas acquitté à
+                temps sera rattrapé plus tard, le journal l'a. Donné, c'est une
+                commande courte : ses tentatives de connexion manquées se
+                journalisent en ``INFO``, et seul le message final avertit.
 
         Returns:
             Vrai si le canal est lancé (ou l'était déjà) ; faux sans section
@@ -1816,7 +1826,14 @@ class Loom:
             commands=console.commands.user is not None,
             export_mode=console_export_mode(self._config),
         )
-        channel = create_console(self._config, hello, self._environ, on_message=self._console_message, on_connected=self._console_connected)
+        channel = create_console(
+            self._config,
+            hello,
+            self._environ,
+            on_message=self._console_message,
+            on_connected=self._console_connected,
+            retry_level=logging.WARNING if grace is None else logging.INFO,
+        )
         if channel is None:
             return False
         from loom_ia.console.exporter import ConsoleExporter
@@ -1835,6 +1852,7 @@ class Loom:
             batch_delay=console.export.batch_delay,
         )
         self._console, self._console_exporter, self._console_cursor = channel, exporter, cursor
+        self._console_grace = self._config.execution.shutdown_timeout if grace is None else grace
         # Chaque process exporte ce qu'il écrit (``own``), comme l'export OpenTelemetry.
         self._console_listening.enter_context(self._store.listen(exporter.offer, own=True))
         self._console_tasks = [
@@ -3125,17 +3143,20 @@ class Loom:
         if exporter is not None:
             # Détaché après son arrêt : les acquittements des derniers lots lui reviennent encore.
             with closing:
-                await exporter.aclose(self._config.execution.shutdown_timeout)
+                await exporter.aclose(self._console_grace)
             self._console_exporter = None
         console, self._console = self._console, None
         if console is not None:
             with closing:
                 await console.aclose()
         tasks, self._console_tasks = self._console_tasks, []
+        # Le délai est passé (``exporter.aclose``) : ce qui attend encore, une
+        # connexion qui ne vient pas, est arrêté.
         for task in tasks:
-            with closing:
-                async with asyncio.timeout(self._config.execution.shutdown_timeout):
-                    await task
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.wait(tasks)
         cursor, self._console_cursor = self._console_cursor, None
         if cursor is not None:
             with closing:
