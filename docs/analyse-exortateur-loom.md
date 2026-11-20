@@ -19,7 +19,7 @@ Hors périmètre, comme dans la conception : la configuration poussée par la co
 | D-1 | Les commandes passent par un **utilisateur loom déclaré**, la passerelle, dont un rôle a `act_as` et `act_as_roles` (mécanisme existant). La section ne porte que son nom (`commands.user`) ; sans lui, toute commande est refusée. |
 | D-2 | **Curseur** : (client, session) → dernier `seq` acquitté, rangé **avec le journal**, dans le stockage de `storage.events` (révisé le 19/11 : d'abord prévu en fichier sous `workpath`). Reprise par `sessions()` et `read(after_seq)`. |
 | D-3 | **Acquittement par lot** (identifiant du lot) ; loom avance alors le curseur de chaque session du lot. Ordre garanti dans une session, pas entre sessions. Dédoublonnage côté console par `(tenant, session, seq)`. |
-| D-4 | **Saturation** : journal durable → pas de perte (on vide la file, on relit depuis le curseur). Journal en mémoire → `drop_oldest` par défaut. La perte est un message du canal (`gap`), jamais un événement du journal. |
+| D-4 | **Saturation** (révisé le 20/11) : jamais de perte, quel que soit le journal — le journal en mémoire se relit lui aussi tant que le process vit. File pleine : la session est marquée « à relire » et relue dans le journal. `on_overflow` et le message `gap` sont retirés. |
 | D-5 | **Contenu exporté** : `console.export.mode` — `on_demand` (métadonnées en continu, contenu lu à la demande par `events.query`) ou `push` (contenu poussé, masqué par `telemetry.redaction`). Absente, elle suit `capture.exports` du client (`metadata` → `on_demand`, `content` → `push`), qui reste ainsi seul maître de l'export OpenTelemetry. Plus `exclude_events`. `redact_fields` est abandonné. |
 | D-6 | Le canal démarre avec **`loom serve`** ; en mode librairie, par un appel explicite (`Loom.start_console()`). |
 | D-7 | **Une connexion par process** ; le `hello` porte l'identifiant d'instance (déclaré, ou créé et gardé sous `workpath` — à déclarer dans `console.instance_id` quand plusieurs machines servent la même instance) et le `worker_id`. |
@@ -101,7 +101,7 @@ Chaque message est un objet JSON, un message par trame texte :
 
 | Champ | Rôle |
 |---|---|
-| `type` | `hello`, `welcome`, `events`, `ack`, `gap`, `session.deleted`, `command`, `command.result`, `file.data`, `error`, `bye` |
+| `type` | `hello`, `welcome`, `events`, `ack`, `session.deleted`, `command`, `command.result`, `file.data`, `error`, `bye` |
 | `id` | Identifiant unique du message (UUIDv7, comme les identifiants de loom) |
 | `contract` | Contrat négocié ; absent du `hello`, qui propose |
 | `payload` | Contenu propre au type |
@@ -119,7 +119,6 @@ Taille maximale d'une trame : `max_size` de `websockets`, borné dans la config 
 
 - **`events`** : `{batch_id, events: [...]}`. Chaque événement est au format du REST : `event_id`, `seq`, `ts`, `schema_version`, `tenant_id`, `session_id`, `run_id`, `root_run_id`, `span_id`, `parent_span_id`, `type`, `category`, `status`, `agent`, `role`, `facets`, `payload`. En mode métadonnées, la charge est privée de ses `content_fields` et porte `redacted`, la liste des chemins retirés (`core/events/redaction.py`, comme le REST sans `read_content`) ; en mode contenu, elle est complète, masquée par les motifs de `telemetry.redaction`.
 - **`ack`** (console → loom) : `{batch_id}` une fois le lot enregistré de façon durable.
-- **`gap`** : `{tenant, lost, first_ts, last_ts, reason}` ; seulement avec un journal en mémoire (D-4).
 - **`bye`** : arrêt propre (arrêt de loom, fin de process `--reload`, clé révoquée côté console).
 
 ### 5.4 Descendant
@@ -204,8 +203,7 @@ Pendant le rattrapage, le direct s'accumule dans la file ; un événement déjà
 ### 6.4 File bornée et saturation
 
 - `export.buffer_size` (défaut 10 000).
-- **Journal durable** : à saturation, la file est vidée et la session est marquée « à relire » ; le rattrapage (§ 6.3) la reprend. Aucune perte.
-- **Journal en mémoire** : `on_overflow` (`drop_oldest` par défaut, ou `drop_newest`), comptage des pertes, `gap` envoyé dès que la connexion le permet.
+- **File pleine** : l'événement n'y entre pas ; sa session est marquée « à relire » et relue dans le journal après son dernier `seq` envoyé. Aucune perte, pour tous les journaux : le journal en mémoire garde aussi ses événements tant que le process vit (D-4, révisé).
 - Jamais de run suspendu ni ralenti (objectif 1).
 
 ### 6.5 Connexion
@@ -281,7 +279,6 @@ console:
     mode: on_demand               # ou push ; absente : suit capture.exports du client
     exclude_events: []
     buffer_size: 10000
-    on_overflow: drop_oldest
     batch_size: 200
     batch_delay: 0.2              # secondes
   files:
@@ -377,7 +374,7 @@ Quatre lots, chacun testable avec l'écouteur (`loom console listen`) et livrabl
 | Lot | Contenu | Essais |
 |---|---|---|
 | 1 — Socle et connexion | Extra `console` ; `ConsoleConfig` (`enable`, toutes les clés, contrôles, règles du profil `prod`) ; `contract.py`, `translate.py`, schémas `v1` générés et figés par la CI ; `channel.py` (TLS, CA, mTLS, clé, `hello` / `welcome`, refus de contrat, reconnexion, `bye`) ; `FakeConsole` et `loom console listen` (affichage, `--raw`) ; section `CONSOLE` de `loom validate` ; ouverture du canal (connexion seule) par `Loom.start_console()` et `loom serve`, fermeture par `aclose` (`bye`) | Config valide et refusée, `enable: false` ; traduction et masquage ; schémas ; faux serveur : connexion, clé refusée, contrat refusé, `ws://` hors `localhost` refusé, reconnexion ; `loom validate` en `dev` et `prod` |
-| 2 — Export des événements | `cursor.py` (mémoire, JSONL, SQLite, Postgres : table, migration, droits, `loom storage sql`) ; `exporter.py` (abonnement, file bornée, lots, `ack`, rattrapage, premier démarrage, saturation, `gap`) ; `session.deleted` ; montage dans `Loom` et `loom serve`, `start_console()`, `--reload`, arrêt propre ; retard d'acquittement dans `loom validate` | Coupure au milieu d'un lot, reprise sans perte ni doublon, pour chaque stockage ; console injoignable au démarrage : les runs tournent ; saturation en mémoire et en durable ; deux process sur un même curseur ; effacement d'une session ; rechargement pendant un export ; mesure du coût sur un run bavard |
+| 2 — Export des événements | `cursor.py` (mémoire, JSONL, SQLite, Postgres : table, migration, droits, `loom storage sql`) ; `exporter.py` (abonnement, file bornée, lots, `ack`, rattrapage, premier démarrage, saturation sans perte) ; `session.deleted` ; montage dans `Loom` et `loom serve`, `start_console()`, `--reload`, arrêt propre ; retard d'acquittement dans `loom validate` | Coupure au milieu d'un lot, reprise sans perte ni doublon, pour chaque stockage ; console injoignable au démarrage : les runs tournent ; saturation en mémoire et en durable ; deux process sur un même curseur ; effacement d'une session ; rechargement pendant un export ; mesure du coût sur un run bavard |
 | 3 — Commandes et lecture | `commands.py` (contrôles, endossement `act_as`, expiration, idempotence, débit, audit) ; `run.start`, `question.answer`, `approval.decide`, `run.cancel`, `events.query`, `approval.get`, `file.get` et le transport `file.data` ; méthodes de `Loom` et routes REST du détail ; `listen` sait envoyer des commandes | Commande valide, expirée, rejouée, hors droits, inconnue ; deux réponses à une question ; `run.start` rejoué ; lecture sans `read_content` masquée ; fichier d'une autre session refusé ; fichier de 25 Mo sans bloquer les événements |
 | 4 — Fichiers des approbations et finitions | Protocoles `referenced_files` et `preview` dans `local_files`, `DocumentTool` (Word, PDF) et `excel` ; `approval.file` et `approval.preview`, avec leurs méthodes et routes REST ; `examples/console/` (simulé, sans clé d'API) ; CHANGELOG | Chemin non cité refusé ; lien qui sort du dossier refusé ; outil sans les protocoles ; aperçu Word, PDF et Excel identique au fichier écrit après approbation (hors horodatages), rien d'écrit, délai dépassé ; aperçu qui lit une image d'un dossier en approbation (autorisé, Q-8) ; exemple exécuté ; aucune clé dans les logs ni les sorties |
 

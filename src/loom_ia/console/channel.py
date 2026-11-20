@@ -77,6 +77,9 @@ type ChannelState = Literal["idle", "connecting", "connected", "refused", "close
 type MessageHandler = Callable[[Envelope, Payload], Awaitable[None]]
 """Ce que le canal appelle pour chaque message reçu après la poignée de main."""
 
+type ConnectedHandler = Callable[[], None]
+"""Ce que le canal appelle à chaque connexion ouverte, poignée de main faite ; il ne doit rien attendre."""
+
 
 class ChannelRefused(Exception):
     """La console refuse la connexion : clé refusée ou aucun contrat commun."""
@@ -170,11 +173,14 @@ class ConsoleChannel:
         on_message: Appelé pour chaque message reçu après la poignée de main ;
             sans lui, une commande est refusée (``commands_disabled``) et le
             reste est ignoré.
+        on_connected: Appelé à chaque connexion ouverte : l'exportateur y
+            apprend qu'il doit rattraper ce que la console n'a pas acquitté.
     """
 
-    def __init__(self, settings: ChannelSettings, *, on_message: MessageHandler | None = None) -> None:
+    def __init__(self, settings: ChannelSettings, *, on_message: MessageHandler | None = None, on_connected: ConnectedHandler | None = None) -> None:
         self._settings = settings
         self._on_message = on_message
+        self._on_connected = on_connected
         self._connection: ClientConnection | None = None
         self._state: ChannelState = "idle"
         self._contract: int | None = None
@@ -244,11 +250,18 @@ class ConsoleChannel:
                 pass
         self._state = "closed"
 
-    async def send(self, payload: Payload) -> bool:
+    @property
+    def connected(self) -> bool:
+        """Vrai si la connexion est ouverte, poignée de main faite."""
+        return self._state == "connected" and self._connection is not None
+
+    async def send(self, payload: Payload, *, message_id: str | None = None) -> bool:
         """Envoie un message sur la connexion ouverte.
 
         Args:
             payload: La charge.
+            message_id: Identifiant du message, quand l'appelant en attend
+                l'acquittement (``session.deleted``) ; à défaut, un nouveau.
 
         Returns:
             Vrai si le message est parti ; faux sans connexion ouverte ou si elle
@@ -258,7 +271,7 @@ class ConsoleChannel:
         if connection is None or self._state != "connected":
             return False
         try:
-            await connection.send(encode(payload, contract=self._contract))
+            await connection.send(encode(payload, contract=self._contract, message_id=message_id))
         except ConnectionClosed:
             return False
         return True
@@ -305,6 +318,11 @@ class ConsoleChannel:
             self._state = "connected"
             self._connected.set()
             logger.info("Console %s : connectée, contrat %d", settings.url, self._contract)
+            if self._on_connected is not None:
+                try:
+                    self._on_connected()
+                except Exception:
+                    logger.exception("Console %s : l'abonné de la connexion a échoué", settings.url)
             async for frame in connection:
                 await self._received(connection, frame)
 

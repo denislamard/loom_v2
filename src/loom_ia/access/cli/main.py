@@ -163,6 +163,8 @@ from loom_ia.runtime import (
     apply_logging,
     console_advice,
     console_export_mode,
+    console_lag,
+    console_storage,
     console_warnings,
     create_keyring,
     declared_skills,
@@ -810,7 +812,9 @@ async def _validate(args: argparse.Namespace, *, root: Path) -> int:
     _extensions(report, config, registry)
     _execution(report, config, printed)
     _access(report, config)
-    _console_section(report, config)
+    console = _console_section(report, config)
+    if console is not None:
+        await _console_backlog(console, config)
     try:
         await _mount(report, config, registry, no_keys=args.no_keys)
     except BaseException:
@@ -1174,7 +1178,7 @@ def _access(report: _Report, config: LoomConfig) -> None:
         section.add("Portes", first, [*more, *doors])
 
 
-def _console_section(report: _Report, config: LoomConfig) -> None:
+def _console_section(report: _Report, config: LoomConfig) -> _Section | None:
     """Section CONSOLE : le canal vers la console d'administration (docs/analyse-exortateur-loom.md).
 
     Absente sans section ``console`` ; « désactivée » en ``enable: false``. Sinon :
@@ -1183,11 +1187,11 @@ def _console_section(report: _Report, config: LoomConfig) -> None:
     """
     console = config.console
     if console is None:
-        return
+        return None
     section = report.section("CONSOLE")
     if not console.enable:
         section.add("État", "désactivée (console.enable: false)")
-        return
+        return None
     section.add("Adresse", str(console.url))
     section.add("Client", console.tenant)
     if console.instance_id is not None:
@@ -1223,7 +1227,7 @@ def _console_section(report: _Report, config: LoomConfig) -> None:
     mode = console_export_mode(config)
     origin = "" if export.mode is not None else " (hérité de capture.exports)"
     lines = [
-        f"file de {export.buffer_size} événements, débordement : {export.on_overflow}",
+        f"file de {export.buffer_size} événements, relue dans le journal quand elle est pleine",
         f"lots de {export.batch_size} au plus, toutes les {export.batch_delay:g} s",
     ]
     if export.exclude_events:
@@ -1235,6 +1239,24 @@ def _console_section(report: _Report, config: LoomConfig) -> None:
         report.warn("Console", MISSING_EXTRA.format(what="le canal", extra="console"))
     for warning in console_advice(config):
         report.warn_said(warning)
+    return section
+
+
+async def _console_backlog(section: _Section, config: LoomConfig) -> None:
+    """Le retard d'acquittement : sessions et événements écrits mais pas encore acquittés par la console, lus sans s'y connecter."""
+    if console_storage(config).events.backend == "memory":
+        section.add("Retard", "sans objet : journal en mémoire")
+        return
+    try:
+        lag = await console_lag(config)
+    except Exception as error:
+        section.add("Retard", f"illisible ({error})")
+        return
+    if lag is None:
+        section.add("Retard", "aucun envoi encore (le curseur se pose au premier démarrage du canal)")
+        return
+    sessions, events = lag
+    section.add("Retard", "aucun : tout est acquitté" if not events else f"{events} événement(s) en attente, dans {sessions} session(s)")
 
 
 def _octets(size: int) -> str:

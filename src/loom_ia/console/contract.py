@@ -47,7 +47,6 @@ type MessageType = Literal[
     "welcome",
     "events",
     "ack",
-    "gap",
     "session.deleted",
     "command",
     "command.result",
@@ -139,31 +138,14 @@ class EventsPayload(DomainModel):
 
 
 class AckPayload(DomainModel):
-    """``ack`` (console → loom) : le lot est enregistré de façon durable.
+    """``ack`` (console → loom) : le lot est enregistré de façon durable, ou la session effacée.
 
     Attributes:
-        batch_id: Le lot acquitté.
+        batch_id: Le lot acquitté, ou l'identifiant du message ``session.deleted``
+            dont l'effacement est fait.
     """
 
     batch_id: str
-
-
-class GapPayload(DomainModel):
-    """``gap`` (loom → console) : des événements perdus, avec un journal en mémoire saturé (décision D-4).
-
-    Attributes:
-        tenant: Le client.
-        lost: Nombre d'événements perdus.
-        first_ts: Horodatage du premier perdu.
-        last_ts: Horodatage du dernier perdu.
-        reason: Pourquoi (``overflow``).
-    """
-
-    tenant: str
-    lost: PositiveInt
-    first_ts: AwareDatetime
-    last_ts: AwareDatetime
-    reason: Literal["overflow"] = "overflow"
 
 
 class SessionDeletedPayload(DomainModel):
@@ -268,7 +250,6 @@ type Payload = (
     | WelcomePayload
     | EventsPayload
     | AckPayload
-    | GapPayload
     | SessionDeletedPayload
     | CommandPayload
     | CommandResultPayload
@@ -283,7 +264,6 @@ PAYLOADS: Final[Mapping[MessageType, type[Payload]]] = {
     "welcome": WelcomePayload,
     "events": EventsPayload,
     "ack": AckPayload,
-    "gap": GapPayload,
     "session.deleted": SessionDeletedPayload,
     "command": CommandPayload,
     "command.result": CommandResultPayload,

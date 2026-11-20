@@ -87,7 +87,8 @@ from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.models import Permission, TriggerSpec
 from loom_ia.config.references import Registry
-from loom_ia.console.contract import CONTRACTS, HelloPayload
+from loom_ia.console.contract import CONTRACTS, AckPayload, CommandPayload, CommandResultPayload, Envelope, HelloPayload
+from loom_ia.console.contract import Payload as ConsolePayload
 from loom_ia.core import tool_threads
 from loom_ia.core.closing import Closing
 from loom_ia.core.events import (
@@ -227,6 +228,7 @@ from loom_ia.runtime import (
     create_artifact_store,
     create_bus,
     create_console,
+    create_console_cursor,
     create_event_store,
     create_idempotency_store,
     create_keyring,
@@ -257,6 +259,8 @@ from loom_ia.usage import UsageReport, usage_report
 
 if TYPE_CHECKING:
     from loom_ia.console.channel import ConsoleChannel
+    from loom_ia.console.cursor import ConsoleCursor
+    from loom_ia.console.exporter import ConsoleExporter
 
 logger = logging.getLogger(__name__)
 
@@ -1649,7 +1653,10 @@ class Loom:
         # Canal vers la console d'administration (docs/analyse-exortateur-loom.md) : ouvert
         # par ``start_console`` — ``loom serve`` l'appelle, une librairie le fait elle-même.
         self._console: ConsoleChannel | None = None
-        self._console_task: asyncio.Task[None] | None = None
+        self._console_exporter: ConsoleExporter | None = None
+        self._console_cursor: ConsoleCursor | None = None
+        self._console_listening = ExitStack()
+        self._console_tasks: list[asyncio.Task[None]] = []
         if self._exporter is not None:
             self._exporting.enter_context(self._store.listen(self._exporter, own=True))
         # Profil prod : ce qui avertit ailleurs refuse ici (fonction M4, jalon J5.5a).
@@ -1809,12 +1816,48 @@ class Loom:
             commands=console.commands.user is not None,
             export_mode=console_export_mode(self._config),
         )
-        channel = create_console(self._config, hello, self._environ)
+        channel = create_console(self._config, hello, self._environ, on_message=self._console_message, on_connected=self._console_connected)
         if channel is None:
             return False
-        self._console = channel
-        self._console_task = asyncio.create_task(channel.run(), name="loom-console")
+        from loom_ia.console.exporter import ConsoleExporter
+
+        cursor = create_console_cursor(self._config)
+        exporter = ConsoleExporter(
+            self._store,
+            cursor,
+            channel,
+            tenant=console.tenant,
+            mode=hello.export_mode,
+            redactor=self._config.telemetry.redaction.redactor(),
+            exclude=console.export.exclude_events,
+            buffer_size=console.export.buffer_size,
+            batch_size=console.export.batch_size,
+            batch_delay=console.export.batch_delay,
+        )
+        self._console, self._console_exporter, self._console_cursor = channel, exporter, cursor
+        # Chaque process exporte ce qu'il écrit (``own``), comme l'export OpenTelemetry.
+        self._console_listening.enter_context(self._store.listen(exporter.offer, own=True))
+        self._console_tasks = [
+            asyncio.create_task(exporter.run(), name="loom-console-export"),
+            asyncio.create_task(channel.run(), name="loom-console"),
+        ]
         return True
+
+    def _console_connected(self) -> None:
+        """Une connexion neuve vers la console : l'exportateur rattrape ce qui n'est pas acquitté."""
+        if self._console_exporter is not None:
+            self._console_exporter.connected()
+
+    async def _console_message(self, envelope: Envelope, payload: ConsolePayload) -> None:
+        """Ce que la console envoie : acquittements à l'exportateur ; les commandes sont refusées jusqu'au lot 3."""
+        if isinstance(payload, AckPayload):
+            if self._console_exporter is not None:
+                await self._console_exporter.received(payload)
+            return
+        if isinstance(payload, CommandPayload) and self._console is not None:
+            await self._console.send(CommandResultPayload(command_id=payload.command_id, outcome="refused", reason="commands_disabled"))
+            return
+        logger.debug("Console : message %s ignoré", envelope.type)
 
     @property
     def artifacts(self) -> ArtifactStore:
@@ -2947,6 +2990,9 @@ class Loom:
         artifacts = await self._artifacts.delete(tenant, session_id)
         events = await self._store.delete(tenant, session_id)
         self._writers.forget(tenant, session_id)
+        if self._console_exporter is not None:
+            # La console efface sa copie (Q-10) ; ailleurs, l'exportateur le constate.
+            await self._console_exporter.session_deleted(tenant, session_id)
         return SessionDeletion(session_id=session_id, events=events, artifacts=artifacts, keys=keys)
 
     async def apply_retention(
@@ -3071,16 +3117,29 @@ class Loom:
         if self._exporter is not None:
             with closing:
                 await self._exporter.aclose(self._config.execution.shutdown_timeout)
-        # Le canal vers la console : ``bye``, fermeture, fin de sa tâche.
+        # La console : plus rien de neuf à exporter ; ce qui reste part, dans le délai,
+        # et ce qui n'est pas acquitté sera relu au prochain démarrage. Puis ``bye``.
+        with closing:
+            self._console_listening.close()
+        exporter = self._console_exporter
+        if exporter is not None:
+            # Détaché après son arrêt : les acquittements des derniers lots lui reviennent encore.
+            with closing:
+                await exporter.aclose(self._config.execution.shutdown_timeout)
+            self._console_exporter = None
         console, self._console = self._console, None
         if console is not None:
             with closing:
                 await console.aclose()
-        task, self._console_task = self._console_task, None
-        if task is not None:
+        tasks, self._console_tasks = self._console_tasks, []
+        for task in tasks:
             with closing:
                 async with asyncio.timeout(self._config.execution.shutdown_timeout):
                     await task
+        cursor, self._console_cursor = self._console_cursor, None
+        if cursor is not None:
+            with closing:
+                await cursor.aclose()
         for built in self._built.values():
             with closing:
                 await built.aclose()

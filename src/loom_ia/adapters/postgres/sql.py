@@ -44,6 +44,8 @@ son propre schéma déclare son propre ``dsn_env``, dont le rôle a son
 """
 IDEMPOTENCY_TABLE: Final = "loom_idempotency"
 """Table du magasin d'idempotence partagé."""
+CONSOLE_CURSOR_TABLE: Final = "loom_console_cursor"
+"""Curseur de la console d'administration : jusqu'où chaque session est acquittée (docs/analyse-exortateur-loom.md, § 6.2)."""
 SCHEMA_TABLE: Final = "loom_schema"
 """Version du schéma de chaque composant (``events``), pour que le DDL sache ce
 qui est déjà appliqué. Elle appartient au propriétaire ; le rôle applicatif
@@ -57,6 +59,9 @@ TENANT_SETTING: Final = "loom.tenant_id"
 
 POLICY: Final = "loom_events_tenant"
 """Nom de la politique de lignes de la table des événements."""
+
+CONSOLE_CURSOR_POLICY: Final = "loom_console_cursor_tenant"
+"""Nom de la politique de lignes de la table du curseur de la console."""
 
 DEFAULT_ROLE: Final = "loom_app"
 """Rôle applicatif par défaut : celui que crée le DDL et que prend chaque
@@ -244,6 +249,36 @@ version 1.
 """
 
 
+CONSOLE_CURSOR_SCHEMA_VERSION: Final = 1
+"""Version du schéma du curseur de la console que ce loom attend."""
+
+CONSOLE_CURSOR_DDL: Final = f"""\
+CREATE TABLE IF NOT EXISTS {CONSOLE_CURSOR_TABLE} (
+    tenant_id  text        NOT NULL,
+    session_id text        NOT NULL,
+    acked      bigint      NOT NULL DEFAULT 0,
+    deleted    boolean     NOT NULL DEFAULT false,
+    flushed_at timestamptz,
+    PRIMARY KEY (tenant_id, session_id)
+);
+ALTER TABLE {CONSOLE_CURSOR_TABLE} ENABLE ROW LEVEL SECURITY;
+ALTER TABLE {CONSOLE_CURSOR_TABLE} FORCE ROW LEVEL SECURITY;
+DO $$ BEGIN
+    CREATE POLICY {CONSOLE_CURSOR_POLICY} ON {CONSOLE_CURSOR_TABLE}
+        USING (tenant_id = current_setting('{TENANT_SETTING}', true))
+        WITH CHECK (tenant_id = current_setting('{TENANT_SETTING}', true));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+{SCHEMA_DDL}
+INSERT INTO {SCHEMA_TABLE} (component, version) VALUES ('console_cursor', {CONSOLE_CURSOR_SCHEMA_VERSION}) ON CONFLICT (component) DO NOTHING;"""
+"""Le curseur de la console : une ligne par session (``acked``, ``deleted``), et
+une ligne par client à ``session_id`` vide pour ``flushed_at`` — une session n'a
+jamais d'identifiant vide (``UnusableId``). Sous la même politique de lignes que
+le journal, qu'il suit. Il se modifie (``UPDATE``) : c'est une position, pas un
+événement.
+"""
+
+
 def role_ddl(role: str) -> str:
     """Création du rôle applicatif, sans erreur s'il est déjà là."""
     check_name(role)
@@ -277,11 +312,13 @@ def membership_ddl(role: str) -> str:
     return f"GRANT {role} TO CURRENT_USER;"
 
 
-def ddl(*, role: str | None = DEFAULT_ROLE, events: bool = True, idempotency: bool = True) -> str:
+def ddl(*, role: str | None = DEFAULT_ROLE, events: bool = True, idempotency: bool = True, console_cursor: bool = False) -> str:
     """Le DDL complet, dans l'ordre où il s'applique.
 
     ``role=None`` laisse les droits au seul propriétaire : les tables et les
     politiques sont créées, mais rien n'est accordé à un rôle applicatif.
+    ``console_cursor`` ajoute le curseur de la console, qui n'existe que si la
+    config déclare une console active sur un journal Postgres.
     """
     blocks: list[str] = [HEADER]
     if role is not None:
@@ -294,7 +331,11 @@ def ddl(*, role: str | None = DEFAULT_ROLE, events: bool = True, idempotency: bo
         blocks.append(IDEMPOTENCY_DDL)
         if role is not None:
             blocks.append(grants_ddl(role, table=IDEMPOTENCY_TABLE, update=True))
-    if role is not None and (events or idempotency):
+    if console_cursor:
+        blocks.append(CONSOLE_CURSOR_DDL)
+        if role is not None:
+            blocks.append(grants_ddl(role, table=CONSOLE_CURSOR_TABLE, update=True))
+    if role is not None and (events or idempotency or console_cursor):
         # Lecture seule : de quoi vérifier la version sans pouvoir migrer.
         blocks.append(f"GRANT SELECT ON {SCHEMA_TABLE} TO {role};")
     return "\n".join(blocks) + "\n"

@@ -32,6 +32,7 @@ from loom_ia.console.contract import (
     EventsPayload,
     HelloPayload,
     Payload,
+    SessionDeletedPayload,
     WelcomePayload,
     decode,
     encode,
@@ -72,7 +73,7 @@ class FakeConsole:
         host: Adresse d'écoute.
         port: Port d'écoute ; 0 en tire un libre.
         ssl_context: Contexte TLS serveur, pour éprouver ``wss://`` et le mTLS.
-        auto_ack: Acquitte chaque lot d'événements reçu.
+        auto_ack: Acquitte chaque lot d'événements et chaque ``session.deleted`` reçus.
         watcher: Appelé pour chaque chose reçue.
     """
 
@@ -138,6 +139,11 @@ class FakeConsole:
         async with self._arrived:
             await self._arrived.wait_for(lambda: len(self.of(kind)) >= count)
         return self.of(kind)
+
+    async def wait_until(self, check: Callable[[], bool]) -> None:
+        """Attend que ``check`` soit vrai, réévalué à chaque chose reçue (à borner par ``asyncio.timeout``)."""
+        async with self._arrived:
+            await self._arrived.wait_for(check)
 
     async def send(self, payload: Payload, *, contract: int = 1) -> None:
         """Envoie un message à chaque instance connectée."""
@@ -211,9 +217,21 @@ class FakeConsole:
             await connection.send(encode(ErrorPayload(code=error.code, message=str(error)), contract=contract))
             return
         self._note(Received(envelope.type, envelope, payload, peer))
-        if self.auto_ack and isinstance(payload, EventsPayload):
-            await connection.send(encode(AckPayload(batch_id=payload.batch_id), contract=contract))
-            self._note(Received("ack", peer=peer, detail=payload.batch_id))
+        if not self.auto_ack:
+            return
+        if isinstance(payload, EventsPayload):
+            await self.ack(payload.batch_id)
+        elif isinstance(payload, SessionDeletedPayload):
+            await self.ack(envelope.id)
+
+    async def ack(self, batch_id: str) -> None:
+        """Acquitte un lot (ou un ``session.deleted``, par son identifiant de message), comme la console une fois enregistré."""
+        for connection in tuple(self._connections):
+            try:
+                await connection.send(encode(AckPayload(batch_id=batch_id)))
+            except ConnectionClosed:
+                continue
+        self._note(Received("ack", detail=batch_id))
 
     def _note(self, item: Received) -> None:
         """Garde ce qui arrive, puis prévient ceux qui l'attendent et le veilleur, dans l'ordre d'arrivée."""

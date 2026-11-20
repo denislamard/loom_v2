@@ -194,7 +194,8 @@ from loom_ia.usage import BudgetGuard
 
 if TYPE_CHECKING:
     from loom_ia.adapters.mcp import McpPool
-    from loom_ia.console.channel import ConsoleChannel
+    from loom_ia.console.channel import ConnectedHandler, ConsoleChannel, MessageHandler
+    from loom_ia.console.cursor import ConsoleCursor
 
 logger = logging.getLogger(__name__)
 
@@ -546,6 +547,9 @@ def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
         ),
         (storage.idempotency, sql.IDEMPOTENCY_TABLE, sql.IDEMPOTENCY_DDL, True),
     )
+    if isinstance(config, LoomConfig) and console_enabled(config) is not None and console_storage(config) is storage:
+        # Le curseur de la console suit le journal de son client (docs/analyse-exortateur-loom.md, § 6.2).
+        declared = (*declared, (storage.events, sql.CONSOLE_CURSOR_TABLE, sql.CONSOLE_CURSOR_DDL, True))
     used = [d for d in declared if d[0].backend == "postgres"]
     if not used:
         return sql.ddl()
@@ -1493,7 +1497,14 @@ def console_instance_id(config: LoomConfig) -> str:
     return created
 
 
-def create_console(config: LoomConfig, hello: HelloPayload, environ: Mapping[str, str] | None = None) -> ConsoleChannel | None:
+def create_console(
+    config: LoomConfig,
+    hello: HelloPayload,
+    environ: Mapping[str, str] | None = None,
+    *,
+    on_message: MessageHandler | None = None,
+    on_connected: ConnectedHandler | None = None,
+) -> ConsoleChannel | None:
     """Le canal vers la console, prêt à tourner ; ``None`` sans section activée ou sans clé.
 
     La clé absente est dite par ``console_warnings`` (refusée en profil ``prod``) :
@@ -1503,6 +1514,8 @@ def create_console(config: LoomConfig, hello: HelloPayload, environ: Mapping[str
         config: La configuration chargée.
         hello: Ce que loom présente à chaque connexion.
         environ: Environnement où lire la clé et celle du certificat client.
+        on_message: Ce qui traite chaque message reçu (acquittements, commandes).
+        on_connected: Ce qui apprend chaque connexion ouverte (l'exportateur).
 
     Returns:
         Le canal, pas encore lancé (``ConsoleChannel.run``).
@@ -1529,7 +1542,72 @@ def create_console(config: LoomConfig, hello: HelloPayload, environ: Mapping[str
         context = tls_context(console, variables)
     except (OSError, ValueError, ssl.SSLError) as exc:
         raise ConfigError(f"Console : TLS impossible à préparer ({exc})") from exc
-    return ConsoleChannel(ChannelSettings(url=console.url, key=key, hello=hello, ssl_context=context))
+    return ConsoleChannel(ChannelSettings(url=console.url, key=key, hello=hello, ssl_context=context), on_message=on_message, on_connected=on_connected)
+
+
+def console_storage(config: LoomConfig) -> StorageConfig:
+    """Le stockage du client de la console : le sien s'il en déclare un, sinon celui de la racine — là où vont son journal et son curseur."""
+    console = config.console
+    spec = None if console is None else config.tenant_spec(console.tenant)
+    return spec.storage if spec is not None and spec.storage is not None else config.storage
+
+
+def create_console_cursor(config: LoomConfig) -> ConsoleCursor:
+    """Le curseur de la console, rangé avec le journal de son client (docs/analyse-exortateur-loom.md, § 6.2).
+
+    Args:
+        config: La configuration, avec une section ``console``.
+
+    Returns:
+        Le curseur : en mémoire, en fichier à côté des journaux JSONL, en table
+        dans le fichier SQLite ou dans la base Postgres.
+
+    Raises:
+        ConfigError: Variable du DSN absente, ou pilote non installé.
+    """
+    from loom_ia.console.cursor import InMemoryCursor, JsonlCursor, PostgresCursor, SqliteCursor
+
+    events = console_storage(config).events
+    if events.backend == "postgres":
+        try:
+            from loom_ia.adapters.postgres.pool import PoolLimits
+        except ImportError as exc:
+            raise _missing_asyncpg("Curseur de la console") from exc
+        return PostgresCursor(_dsn(events, "Curseur de la console"), role=events.role, limits=PoolLimits(**events.pool.model_dump()))
+    if events.path is not None and events.backend == "jsonl":
+        return JsonlCursor(events.path)
+    if events.path is not None and events.backend == "sqlite":
+        if importlib.util.find_spec("aiosqlite") is None:
+            raise ConfigError("Curseur de la console 'sqlite' : le paquet 'aiosqlite' n'est pas installé (installer l'extra : loom-ia[sqlite])")
+        return SqliteCursor(events.path)
+    return InMemoryCursor()
+
+
+async def console_lag(config: LoomConfig) -> tuple[int, int] | None:
+    """Le retard d'acquittement de la console : (sessions, événements) écrits mais pas encore acquittés.
+
+    Lu dans le curseur et le journal, sans se connecter à la console. ``None``
+    avec un journal en mémoire (rien ne survit d'un process à l'autre) ou
+    avant le premier démarrage du canal.
+
+    Args:
+        config: La configuration, avec une section ``console`` activée.
+    """
+    console = console_enabled(config)
+    if console is None or console_storage(config).events.backend == "memory":
+        return None
+    cursor = create_console_cursor(config)
+    store = create_event_store(console_storage(config))
+    try:
+        state = await cursor.load(console.tenant)
+        if state is None:
+            return None
+        behind = [record.last_seq - state.acked.get(record.session_id, 0) for record in await store.sessions(console.tenant)]
+    finally:
+        await cursor.aclose()
+        await store.aclose()
+    late = [count for count in behind if count > 0]
+    return len(late), sum(late)
 
 
 def _unmounted(variable: str) -> str:

@@ -46,7 +46,7 @@ DEFAULT_PORT: Final = 8766
 DEFAULT_KEY_ENV: Final = "LOOM_CONSOLE_KEY"
 """Variable lue par défaut pour la clé attendue."""
 
-_KIND: Final = 11
+_KIND: Final = 18
 """Largeur de la colonne du type, dans l'affichage."""
 
 
@@ -161,8 +161,6 @@ class _Printer:
                 return [self._event(event) for event in events]
             case "ack":
                 return [self._line(now, "ack", f"lot {item.detail[:8]}…")]
-            case "gap":
-                return [self._line(now, "perte", f"{data['lost']} événement(s) perdus ({data['reason']})")]
             case "session.deleted":
                 return [self._line(now, "effacée", f"session {data['session']}")]
             case "command.result":
@@ -189,7 +187,7 @@ class _Printer:
         except ValueError:
             shown = stamp[:8]
         facets = cast("dict[str, JsonValue]", event.get("facets") or {})
-        details = " ".join(f"{name}={value}" for name, value in facets.items() if value is not None)
+        details = " ".join(f"{name}={_shown(value)}" for name, value in facets.items() if value is not None)
         run = str(event.get("run_id", ""))[:8]
         parts = [str(event.get("agent") or "-"), str(event.get("status", "")), f"run {run}…", f"{event.get('session_id')}#{event.get('seq')}"]
         return self._line(shown, str(event.get("type", "")), "  ".join(parts) + (f"  {details}" if details else ""))
@@ -197,3 +195,10 @@ class _Printer:
     @staticmethod
     def _line(stamp: str, kind: str, text: str) -> str:
         return f"{stamp:<8}  {kind:<{_KIND}} {text}".rstrip()
+
+
+def _shown(value: JsonValue) -> str:
+    """Une facette lisible : un nombre à virgule arrondi au dixième."""
+    if isinstance(value, float):
+        return f"{value:.1f}"
+    return str(value)

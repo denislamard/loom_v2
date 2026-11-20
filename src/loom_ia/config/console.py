@@ -40,9 +40,6 @@ from loom_ia.core.model import DEFAULT_TENANT, DomainModel, TenantId
 type ExportMode = Literal["push", "on_demand"]
 """Ce qui part vers la console : ``push``, le contenu aussi ; ``on_demand``, les métadonnées, le contenu se lisant à la demande."""
 
-type OverflowPolicy = Literal["drop_oldest", "drop_newest"]
-"""Ce que la file abandonne quand elle déborde avec un journal en mémoire (décision D-4)."""
-
 CONSOLE_SCHEMES: Final = ("wss", "ws")
 """Schémas d'adresse acceptés ; ``ws`` ne vaut que vers la boucle locale, en profil ``dev``."""
 
@@ -100,9 +97,9 @@ class ConsoleExport(DomainModel):
         mode: ``on_demand`` ou ``push`` ; absent : suit ``capture.exports`` du
             client (``metadata`` → ``on_demand``, ``content`` → ``push``).
         exclude_events: Types d'événements qui ne partent pas.
-        buffer_size: Taille de la file d'envoi, en événements.
-        on_overflow: Ce que la file abandonne quand elle déborde avec un
-            journal en mémoire ; un journal durable ne perd rien.
+        buffer_size: Taille de la file d'envoi, en événements. Pleine, la
+            file ne perd rien : la session est relue plus tard dans le journal
+            (décision D-4).
         batch_size: Événements par lot, au plus.
         batch_delay: Attente maximale avant d'envoyer un lot incomplet, en
             secondes.
@@ -111,7 +108,6 @@ class ConsoleExport(DomainModel):
     mode: ExportMode | None = None
     exclude_events: tuple[str, ...] = ()
     buffer_size: PositiveInt = 10_000
-    on_overflow: OverflowPolicy = "drop_oldest"
     batch_size: PositiveInt = 200
     batch_delay: PositiveFloat = 0.2
 

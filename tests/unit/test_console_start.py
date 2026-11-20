@@ -9,13 +9,14 @@ import pytest
 
 pytest.importorskip("websockets", reason="extra 'console' absent")
 
-from conftest import DEV, OWNER, ConfigFactory
+from conftest import DEV, OWNER, QUESTION, ConfigFactory
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import console as console_cli
 from loom_ia.access.cli.main import main
 from loom_ia.config import ConfigError
-from loom_ia.console.contract import ByePayload, EventsPayload, HelloPayload
+from loom_ia.console.contract import ByePayload, EventsPayload, HelloPayload, SessionDeletedPayload
+from loom_ia.core.model import SessionId
 from loom_ia.testing.console_server import FakeConsole, Received
 
 KEY = "s3cret"
@@ -126,7 +127,7 @@ def test_listen_shows_one_line_per_thing() -> None:
     printer = console_cli._Printer(raw=False)  # pyright: ignore[reportPrivateUsage]
     hello = HelloPayload(instance_id="atelier", worker_id="worker-1", loom_version="2.0.23", contracts=(1,), tenant="default", agents=("demo",), commands=True)
     lines = printer.lines(Received("hello", payload=hello))
-    assert lines[0].endswith("hello       atelier / worker-1  loom 2.0.23  contrats [1]")
+    assert lines[0].endswith("hello              atelier / worker-1  loom 2.0.23  contrats [1]")
     assert lines[1].strip() == "client default · agents : demo · commandes : oui · export : on_demand"
     event: dict[str, Any] = {
         "ts": "2026-11-20T06:55:04+00:00",
@@ -140,4 +141,76 @@ def test_listen_shows_one_line_per_thing() -> None:
     }
     (line,) = printer.lines(Received("events", payload=EventsPayload(batch_id="b", events=(event,))))
     assert "approval.requested demo  warning  run 0193f2a0…  s1#17  tool_name=loom.word" in line
-    assert printer.lines(Received("refused", peer="127.0.0.1:5", detail="clé refusée"))[0].endswith("refus       127.0.0.1:5 : clé refusée")
+    assert printer.lines(Received("refused", peer="127.0.0.1:5", detail="clé refusée"))[0].endswith("refus              127.0.0.1:5 : clé refusée")
+
+
+JOURNAL: dict[str, Any] = {"events": {"backend": "jsonl", "path": "data/journal"}}
+
+
+def sent(fake: FakeConsole) -> list[tuple[str, str]]:
+    """(session, type) de chaque événement reçu, dans l'ordre."""
+    return [
+        (str(event["session_id"]), str(event["type"])) for item in fake.of("events") if isinstance(item.payload, EventsPayload) for event in item.payload.events
+    ]
+
+
+async def test_a_run_reaches_the_console_and_a_restart_resends_nothing(demo: ConfigFactory) -> None:
+    async with FakeConsole(key=KEY) as fake:
+        config = demo(profile="dev", storage=JOURNAL, console=section(fake.url))
+        async with Loom.from_config(config, environ=ENV) as loom:
+            assert await loom.start_console()
+            assert loom.console is not None
+            async with asyncio.timeout(5):
+                await loom.console.wait_connected()
+            result = await loom.run("demo", QUESTION, session_id=SessionId("atelier"), user=DEV)
+            assert result.ok
+            async with asyncio.timeout(5):
+                await fake.wait_until(lambda: any(kind == "run.completed" for _, kind in sent(fake)))
+        first = sent(fake)
+        assert first[0] == ("atelier", "run.started")
+        async with Loom.from_config(config, environ=ENV) as loom:
+            assert await loom.start_console()
+            async with asyncio.timeout(5):
+                await fake.wait_for("hello", 2)
+            await asyncio.sleep(0.2)
+        assert sent(fake) == first, "tout était acquitté : rien n'est renvoyé"
+
+
+async def test_deleting_a_session_tells_the_console(demo: ConfigFactory) -> None:
+    async with FakeConsole(key=KEY) as fake:
+        async with Loom.from_config(demo(profile="dev", storage=JOURNAL, console=section(fake.url)), environ=ENV) as loom:
+            assert await loom.start_console()
+            assert loom.console is not None
+            async with asyncio.timeout(5):
+                await loom.console.wait_connected()
+            await loom.run("demo", QUESTION, session_id=SessionId("atelier"), user=DEV)
+            await loom.delete_session(SessionId("atelier"))
+            async with asyncio.timeout(5):
+                deleted = await fake.wait_for("session.deleted")
+        assert deleted[0].payload == SessionDeletedPayload(tenant="default", session="atelier")
+
+
+async def test_validate_shows_the_backlog(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOOM_CONSOLE_KEY", KEY)
+    async with FakeConsole(key=KEY) as fake:
+        config = demo(profile="dev", storage=JOURNAL, console=section(fake.url))
+        assert await asyncio.to_thread(main, ["--config", str(config), "validate"]) == 0
+        assert "  Retard       aucun envoi encore (le curseur se pose au premier démarrage du canal)\n" in capsys.readouterr().out
+        async with Loom.from_config(config, environ=ENV) as loom:
+            assert await loom.start_console()
+            assert loom.console is not None
+            async with asyncio.timeout(5):
+                await loom.console.wait_connected()
+            await loom.run("demo", QUESTION, session_id=SessionId("atelier"), user=DEV)
+        assert await asyncio.to_thread(main, ["--config", str(config), "validate"]) == 0
+        assert "  Retard       aucun : tout est acquitté\n" in capsys.readouterr().out
+    async with Loom.from_config(config, environ={}) as loom:
+        await loom.run("demo", QUESTION, session_id=SessionId("atelier"), user=DEV)
+    assert await asyncio.to_thread(main, ["--config", str(config), "validate"]) == 0
+    assert "événement(s) en attente, dans 1 session(s)" in capsys.readouterr().out
+
+
+def test_validate_says_a_memory_journal_has_no_backlog(demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOOM_CONSOLE_KEY", KEY)
+    assert main(["--config", str(demo(profile="dev", console=section("ws://127.0.0.1:8766/loom"))), "validate"]) == 0
+    assert "  Retard       sans objet : journal en mémoire\n" in capsys.readouterr().out

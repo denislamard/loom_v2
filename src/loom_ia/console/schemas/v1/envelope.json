@@ -7,7 +7,6 @@
         "welcome",
         "events",
         "ack",
-        "gap",
         "session.deleted",
         "command",
         "command.result",
