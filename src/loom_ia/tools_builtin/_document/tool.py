@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
-from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
+from loom_ia.core.ports import CallAssessment, Preview, ToolContext, ToolError
 from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools import to_output
 from loom_ia.tools_builtin import Settings
@@ -292,6 +292,7 @@ class DocumentTool(ABC):
             les élargit.
         SUFFIX: Le suffixe écrit (« .docx »).
         LABEL: Le nom du fichier pour le modèle (« document Word »).
+        MEDIA_TYPE: Le type MIME du fichier écrit.
         MAX_SOURCE: Taille au plus d'un fichier lu, en octets.
     """
 
@@ -299,6 +300,7 @@ class DocumentTool(ABC):
     CALL: ClassVar[type[DocumentCall]]
     SUFFIX: ClassVar[str]
     LABEL: ClassVar[str]
+    MEDIA_TYPE: ClassVar[str]
     MAX_SOURCE: ClassVar[int] = MAX_SOURCE_BYTES
 
     def __init__(
@@ -413,6 +415,38 @@ class DocumentTool(ABC):
             + f" — {Folders.rule(asking)}",
         )
 
+    def referenced_files(self, arguments: Mapping[str, JsonValue]) -> list[str]:
+        """Les fichiers que l'appel désigne (``CitingTool``) : le fichier lu ; le document remplacé et les images lues."""
+        try:
+            request = parse(self._call, arguments)
+        except ToolError:
+            return []
+        if isinstance(request, TemplateArguments):
+            return []
+        if isinstance(request, ReadArguments):
+            return [request.path]
+        return list(dict.fromkeys([*([request.path] if request.overwrite else []), *_image_paths(request)]))
+
+    def read_referenced(self, arguments: Mapping[str, JsonValue], path: str, *, max_bytes: int) -> bytes:
+        """Les octets d'un fichier que l'appel désigne, pour son approbateur (``CitingTool``)."""
+        return self._space.read_cited(self.referenced_files(arguments), path, max_bytes)
+
+    def preview(self, arguments: Mapping[str, JsonValue]) -> Preview | None:
+        """Le document qu'un ``write`` écrirait, rendu avec ses arguments exacts, sans rien écrire (``PreviewingTool``).
+
+        Le rendu est celui de l'exécution, arrêté avant l'écriture : les images
+        sont lues comme elles le seront. Rien pour une lecture ou un modèle.
+
+        Raises:
+            ToolError: Arguments, chemin, droits ou document refusés.
+        """
+        request = parse(self._call, arguments)
+        if not isinstance(request, WriteArguments):
+            return None
+        located = self._output(request)
+        data, _, warnings, prepared = self._rendered(request)
+        return Preview(name=located.lexical.name, media_type=self.MEDIA_TYPE, data=data, warnings=(*prepared.warnings, *warnings))
+
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
         """Mène l'action : lire un modèle (``template``), lire un fichier (``read``), ou écrire un document (``write``, hors de la boucle asyncio).
 
@@ -461,18 +495,7 @@ class DocumentTool(ABC):
         Validé, rendu, borné à ``MAX_OUTPUT_BYTES``, puis écrit dans son dossier ; rend
         le chemin, ce que le document contient et les avertissements.
         """
-        followed = self._templates[request.template] if request.template is not None and request.template != NO_TEMPLATE else None
-        prepared = prepare(
-            request,
-            self._zone,
-            self._pictures(request),
-            followed,
-            self._labels(request.template),
-            self._allowed(request.template),
-        )
-        data, facts, warnings = self._render(prepared)
-        if len(data) > MAX_OUTPUT_BYTES:
-            raise ToolError(f"Fichier de {len(data)} octets, au-delà de {MAX_OUTPUT_BYTES}.")
+        data, facts, warnings, prepared = self._rendered(request)
         try:
             outcome = write_bytes(self._space.resolved(located), located, data, request.overwrite)
         except OSError as exc:
@@ -488,6 +511,22 @@ class DocumentTool(ABC):
             **({"template": request.template} if self._templates else {}),
             "warnings": list[JsonValue]([*prepared.warnings, *warnings]),
         }
+
+    def _rendered(self, request: WriteArguments) -> tuple[bytes, dict[str, JsonValue], list[str], Prepared]:
+        """Le document validé et rendu, borné à ``MAX_OUTPUT_BYTES`` : ce qu'écrit ``write``, ce que montre ``preview``."""
+        followed = self._templates[request.template] if request.template is not None and request.template != NO_TEMPLATE else None
+        prepared = prepare(
+            request,
+            self._zone,
+            self._pictures(request),
+            followed,
+            self._labels(request.template),
+            self._allowed(request.template),
+        )
+        data, facts, warnings = self._render(prepared)
+        if len(data) > MAX_OUTPUT_BYTES:
+            raise ToolError(f"Fichier de {len(data)} octets, au-delà de {MAX_OUTPUT_BYTES}.")
+        return data, facts, warnings, prepared
 
     def _template(self, name: str) -> dict[str, JsonValue]:
         """Un modèle déclaré, tel que le modèle de langage le remplit.

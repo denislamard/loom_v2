@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "ArtifactOrigin": {
+      "enum": [
+        "attachment",
+        "tool_output",
+        "offload"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v1/event.artifact.stored.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Fichier rangé dans le stockage d'artefacts (fonction G2, point 16).\n\nLes fichiers ne sont jamais dans le journal : cet événement annonce qu'un\nfichier a été rangé, et les messages ne portent que sa référence. Trois\norigines : pièce jointe de la demande (écrit avant ``message.user``),\nfichier produit par un outil, ou résultat déporté (écrits avant le\n``tool.completed`` de l'appel, dans son span).\n\nCatégorie ``artifact``. Facettes : ``origin``, ``media_type`` et\n``size``. Contenu : ``name``.\n\nAttributes:\n    type: ``artifact.stored``.\n    uri: Référence du fichier dans le stockage (``artifact://…``).\n    media_type: Type MIME du fichier.\n    size: Taille, en octets.\n    name: Nom du fichier, tel que donné par l'utilisateur ou l'outil.\n    origin: ``attachment``, ``tool_output`` ou ``offload``.\n    call_id: Appel d'outil qui l'a produit (sortie ou déport).",
+  "properties": {
+    "call_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Call Id"
+    },
+    "media_type": {
+      "title": "Media Type",
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "origin": {
+      "$ref": "#/$defs/ArtifactOrigin"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "size": {
+      "minimum": 0,
+      "title": "Size",
+      "type": "integer"
+    },
+    "type": {
+      "const": "artifact.stored",
+      "default": "artifact.stored",
+      "title": "Type",
+      "type": "string"
+    },
+    "uri": {
+      "title": "Uri",
+      "type": "string"
+    }
+  },
+  "required": [
+    "uri",
+    "media_type",
+    "size",
+    "origin"
+  ],
+  "title": "ArtifactStored",
+  "type": "object"
+}

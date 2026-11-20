@@ -1,0 +1,12 @@
+name: devis
+description: Met à jour un devis, en texte et en Word ; chaque écriture attend une approbation.
+main:
+  model: SIMULE
+  system: Tu mets à jour les devis.
+tools:
+- python: loom.local_files
+  folders:
+  - { name: documents, path: documents, rights: [read, write, overwrite], approval: { write: always, overwrite: always } }
+- python: loom.word
+  folders:
+  - { name: documents, path: documents, rights: [read, write], approval: { write: always } }

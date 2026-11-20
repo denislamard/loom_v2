@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "Question": {
+      "additionalProperties": false,
+      "description": "Une question : son texte, un intitulé court, et des choix s'il y en a.\n\nAttributes:\n    question: Texte de la question, de 1 à 2 000 caractères.\n    header: Intitulé court, 24 caractères au plus.\n    options: Choix proposés, 6 au plus ; aucun : réponse libre.\n    multiple: Vrai si plusieurs choix sont permis. Défaut : faux.",
+      "properties": {
+        "header": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Header"
+        },
+        "multiple": {
+          "default": false,
+          "title": "Multiple",
+          "type": "boolean"
+        },
+        "options": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "maxItems": 6,
+          "title": "Options",
+          "type": "array"
+        },
+        "question": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "title": "Question",
+      "type": "object"
+    },
+    "QuestionOption": {
+      "additionalProperties": false,
+      "description": "Un choix proposé ; l'utilisateur peut toujours répondre autre chose.\n\nAttributes:\n    label: Libellé du choix, de 1 à 200 caractères ; c'est lui qui revient\n        dans la réponse.\n    description: Précision montrée avec le choix, 500 caractères au plus.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "QuestionOption",
+      "type": "object"
+    }
+  },
+  "$id": "loom-console/v1/event.question.asked.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Le modèle pose une question à l'utilisateur (outil ``loom.ask``) : le run attend sa réponse.\n\nÉcrite par l'exécuteur après les appels du lot, comme une demande\nd'approbation : le run passe alors en ``PAUSED``. ``expire_at`` fait foi.\n\nCatégorie ``question``. Facette : ``tool_name``. Contenu : ``questions``.\nStatut ``warning``.\n\nAttributes:\n    type: ``question.asked``.\n    call_id: Appel de ``loom.ask`` qui pose la question.\n    tool_name: Nom de l'outil (``ask``).\n    questions: Les questions, une ou plusieurs : texte, titre court,\n        options proposées, choix multiple ou non.\n    expire_at: Échéance (``expires_in`` de ``loom.ask``) ; ``None`` : la\n        question attend indéfiniment.",
+  "properties": {
+    "call_id": {
+      "title": "Call Id",
+      "type": "string"
+    },
+    "expire_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expire At"
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/Question"
+      },
+      "title": "Questions",
+      "type": "array"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tool_name": {
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "type": {
+      "const": "question.asked",
+      "default": "question.asked",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "call_id",
+    "tool_name"
+  ],
+  "title": "QuestionAsked",
+  "type": "object"
+}

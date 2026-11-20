@@ -1,0 +1,56 @@
+{
+  "$defs": {
+    "CommandName": {
+      "enum": [
+        "run.start",
+        "question.answer",
+        "approval.decide",
+        "run.cancel",
+        "events.query",
+        "approval.get",
+        "file.get",
+        "approval.file",
+        "approval.preview"
+      ],
+      "type": "string"
+    },
+    "JsonValue": {}
+  },
+  "$id": "loom-console/v1/message.command.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``command`` (console → loom) : une action, au nom d'un utilisateur loom.\n\nAttributes:\n    command_id: Identifiant unique ; une commande vue deux fois rend le même résultat.\n    expires_at: Échéance ; passée, la commande est refusée.\n    as_user: Utilisateur loom au nom duquel la passerelle agit.\n    name: La commande.\n    args: Ses arguments.",
+  "properties": {
+    "args": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Args",
+      "type": "object"
+    },
+    "as_user": {
+      "title": "As User",
+      "type": "string"
+    },
+    "command_id": {
+      "title": "Command Id",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "name": {
+      "$ref": "#/$defs/CommandName"
+    }
+  },
+  "required": [
+    "command_id",
+    "expires_at",
+    "as_user",
+    "name"
+  ],
+  "title": "CommandPayload",
+  "type": "object"
+}

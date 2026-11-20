@@ -56,16 +56,18 @@ lisible (``error``). Les trois accès rendent ce même résultat.
 
 import asyncio
 import logging
+import mimetypes
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from pathlib import Path
-from typing import Final, Literal, NamedTuple, Self
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Self
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
+from loom_ia import __version__
 from loom_ia.access import audit
 from loom_ia.access.audit import audited, audited_stream
 from loom_ia.access.authz import (
@@ -86,6 +88,8 @@ from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.models import Permission, TriggerSpec
 from loom_ia.config.references import Registry
+from loom_ia.console.contract import CONTRACTS, AckPayload, CommandPayload, Envelope, HelloPayload
+from loom_ia.console.contract import Payload as ConsolePayload
 from loom_ia.core import tool_threads
 from loom_ia.core.closing import Closing
 from loom_ia.core.events import (
@@ -162,6 +166,7 @@ from loom_ia.core.ports import (
     ServedQueue,
     SessionRecord,
     TaskQueue,
+    ToolError,
     UnusableId,
     UsageCounter,
 )
@@ -217,8 +222,15 @@ from loom_ia.runtime import (
     Agent,
     announce,
     build_agent,
+    console_advice,
+    console_enabled,
+    console_export_mode,
+    console_instance_id,
+    console_warnings,
     create_artifact_store,
     create_bus,
+    create_console,
+    create_console_cursor,
     create_event_store,
     create_idempotency_store,
     create_keyring,
@@ -245,7 +257,14 @@ from loom_ia.tenancy import (
     TenantUsage,
     UnknownTenant,
 )
+from loom_ia.tools.configured import cited_bytes, cited_files, previewed, previews
 from loom_ia.usage import UsageReport, usage_report
+
+if TYPE_CHECKING:
+    from loom_ia.console.channel import ConsoleChannel
+    from loom_ia.console.commands import CommandExecutor
+    from loom_ia.console.cursor import ConsoleCursor
+    from loom_ia.console.exporter import ConsoleExporter
 
 logger = logging.getLogger(__name__)
 
@@ -701,6 +720,62 @@ class SessionInfo(DomainModel):
                 ),
             }
         )
+
+
+ApprovalFileCode = Literal["not_cited", "unreadable", "too_large", "no_preview", "preview_failed", "preview_timeout"]
+"""Pourquoi le fichier d'une demande ne peut pas être servi."""
+
+
+class ApprovalFileRefused(ValueError):
+    """Le fichier d'une demande ne peut pas être servi : non désigné, illisible, trop gros, sans aperçu, ou délai dépassé.
+
+    Attributes:
+        code: Le motif, court.
+    """
+
+    def __init__(self, code: ApprovalFileCode, said: str) -> None:
+        super().__init__(f"{code} : {said}")
+        self.code: ApprovalFileCode = code
+
+
+class ApprovalDetail(PendingApproval):
+    """Une demande en attente, telle que la voit qui peut la trancher (§ 6.7 de l'analyse de l'exportateur).
+
+    Ses ``arguments`` et son ``reason`` sont masqués par les motifs de
+    ``telemetry.redaction``.
+
+    Attributes:
+        files: Les fichiers que l'appel lit, remplace ou supprime, que l'outil
+            désigne (``CitingTool``) : ``approval_file`` les sert.
+        preview: Vrai si l'outil sait rendre le fichier que l'appel écrirait
+            (``PreviewingTool``) : ``approval_preview`` le sert.
+    """
+
+    files: tuple[str, ...] = ()
+    preview: bool = False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ApprovalFile:
+    """Un fichier servi à l'approbateur : désigné par une demande, ou son aperçu.
+
+    Attributes:
+        name: Nom du fichier.
+        media_type: Type MIME.
+        data: Les octets.
+        warnings: Ce que le rendu d'un aperçu a signalé.
+    """
+
+    name: str
+    media_type: str
+    data: bytes
+    warnings: tuple[str, ...] = ()
+
+
+APPROVAL_FILE_MAX: Final = 25 * 1024 * 1024
+"""Taille au plus d'un fichier servi à l'approbateur, sans section ``console`` (sinon ``console.files.max_size``)."""
+PREVIEW_TIMEOUT: Final = 30.0
+"""Délai d'un aperçu, en secondes, sans section ``console`` (sinon ``console.files.preview_timeout``)."""
 
 
 class SessionFile(DomainModel):
@@ -1635,6 +1710,15 @@ class Loom:
         self._exporter, said = create_run_exporter(config, self._store, environ)
         announce(config, said)
         self._exporting = ExitStack()
+        # Canal vers la console d'administration (docs/analyse-exortateur-loom.md) : ouvert
+        # par ``start_console`` — ``loom serve`` l'appelle, une librairie le fait elle-même.
+        self._console: ConsoleChannel | None = None
+        self._console_exporter: ConsoleExporter | None = None
+        self._console_commands: CommandExecutor | None = None
+        self._console_cursor: ConsoleCursor | None = None
+        self._console_listening = ExitStack()
+        self._console_grace = config.execution.shutdown_timeout
+        self._console_tasks: list[asyncio.Task[None]] = []
         if self._exporter is not None:
             self._exporting.enter_context(self._store.listen(self._exporter, own=True))
         # Profil prod : ce qui avertit ailleurs refuse ici (fonction M4, jalon J5.5a).
@@ -1750,6 +1834,111 @@ class Loom:
     def exporter(self) -> RunExporter | None:
         """Export des runs terminés ici vers les collecteurs ; ``None`` sans collecteur monté."""
         return self._exporter
+
+    @property
+    def console(self) -> ConsoleChannel | None:
+        """Le canal vers la console, une fois ouvert par ``start_console`` ; ``None`` sinon."""
+        return self._console
+
+    async def start_console(self, *, grace: float | None = None) -> bool:
+        """Ouvre le canal vers la console d'administration, si la config en déclare un actif (``console.enable: true``).
+
+        ``loom serve`` l'appelle à son démarrage ; une application qui se sert
+        de loom en librairie l'appelle elle-même, comme elle lit son ``.env``
+        (décision D-6) : ``Loom(config)`` seul n'ouvre aucune connexion. Le
+        canal tourne dans sa propre tâche, se reconnecte seul, et n'arrête ni
+        ne ralentit jamais un run ; ``aclose`` le ferme (``bye``).
+
+        La clé de l'instance absente : un avertissement, et rien n'est ouvert ;
+        en profil ``prod``, ``ConfigError`` (Q-5).
+
+        Args:
+            grace: Délai laissé à la fermeture pour envoyer ce qui reste et
+                recevoir les acquittements, en secondes ; à défaut,
+                ``execution.shutdown_timeout``. Une commande courte le
+                raccourcit (``loom run`` : 5 s) : ce qui n'est pas acquitté à
+                temps sera rattrapé plus tard, le journal l'a. Donné, c'est une
+                commande courte : ses tentatives de connexion manquées se
+                journalisent en ``INFO``, et seul le message final avertit.
+
+        Returns:
+            Vrai si le canal est lancé (ou l'était déjà) ; faux sans section
+            active ou sans clé.
+
+        Raises:
+            ConfigError: Clé absente en profil ``prod`` ; ``ws://`` hors profil
+                ``dev`` ; extra ``console`` absent ; TLS impossible à préparer.
+        """
+        if self._console is not None:
+            return True
+        console = console_enabled(self._config)
+        if console is None:
+            return False
+        announce(self._config, console_warnings(self._config, self._environ))
+        announce(self._config, console_advice(self._config), refuse=False)
+        tenant = self._tenants.get(console.tenant)
+        hello = HelloPayload(
+            instance_id=console_instance_id(self._config),
+            worker_id=self._worker_id,
+            loom_version=__version__,
+            contracts=CONTRACTS,
+            tenant=console.tenant,
+            agents=tuple(spec.name for spec in self.agents if tenant.allows(spec.name)),
+            commands=console.commands.user is not None,
+            export_mode=console_export_mode(self._config),
+        )
+        channel = create_console(
+            self._config,
+            hello,
+            self._environ,
+            on_message=self._console_message,
+            on_connected=self._console_connected,
+            retry_level=logging.WARNING if grace is None else logging.INFO,
+        )
+        if channel is None:
+            return False
+        from loom_ia.console.commands import CommandExecutor
+        from loom_ia.console.exporter import ConsoleExporter
+
+        cursor = create_console_cursor(self._config)
+        exporter = ConsoleExporter(
+            self._store,
+            cursor,
+            channel,
+            tenant=console.tenant,
+            mode=hello.export_mode,
+            redactor=self._config.telemetry.redaction.redactor(),
+            exclude=console.export.exclude_events,
+            buffer_size=console.export.buffer_size,
+            batch_size=console.export.batch_size,
+            batch_delay=console.export.batch_delay,
+        )
+        self._console, self._console_exporter, self._console_cursor = channel, exporter, cursor
+        self._console_commands = CommandExecutor(self, channel, console)
+        self._console_grace = self._config.execution.shutdown_timeout if grace is None else grace
+        # Chaque process exporte ce qu'il écrit (``own``), comme l'export OpenTelemetry.
+        self._console_listening.enter_context(self._store.listen(exporter.offer, own=True))
+        self._console_tasks = [
+            asyncio.create_task(exporter.run(), name="loom-console-export"),
+            asyncio.create_task(channel.run(), name="loom-console"),
+        ]
+        return True
+
+    def _console_connected(self) -> None:
+        """Une connexion neuve vers la console : l'exportateur rattrape ce qui n'est pas acquitté."""
+        if self._console_exporter is not None:
+            self._console_exporter.connected()
+
+    async def _console_message(self, envelope: Envelope, payload: ConsolePayload) -> None:
+        """Ce que la console envoie : les acquittements à l'exportateur, les commandes à l'exécuteur, chacune dans sa tâche."""
+        if isinstance(payload, AckPayload):
+            if self._console_exporter is not None:
+                await self._console_exporter.received(payload)
+            return
+        if isinstance(payload, CommandPayload) and self._console_commands is not None:
+            self._console_commands.receive(payload)
+            return
+        logger.debug("Console : message %s ignoré", envelope.type)
 
     @property
     def artifacts(self) -> ArtifactStore:
@@ -2834,6 +3023,163 @@ class Loom:
                 return described, await self._artifacts.get(described.uri)
         raise ArtifactNotFound(f"{session_id}/{file}")
 
+    # --- Ce que l'approbateur examine (§ 6.7 de l'analyse de l'exportateur) ---------------
+
+    @audited
+    async def approval_details(
+        self,
+        run_id: RunId,
+        *,
+        call_id: str | None = None,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+        user: str | Actor,
+    ) -> tuple[ApprovalDetail, ...]:
+        """Les demandes en attente du run et de ses sous-runs que ``user`` peut trancher, en détail.
+
+        Chacune avec ses arguments et son motif (masqués par les motifs de
+        ``telemetry.redaction``), les fichiers que l'appel désigne, et si un
+        aperçu existe. Vide si rien n'attend. Il faut ``read_content`` sur
+        l'agent de chaque demande, et pouvoir la trancher (les mêmes règles
+        qu'``approve``) : ``AccessDenied`` sinon, si aucune ne reste.
+        """
+        actor = self._actor(user)
+        tenant = tenant_id or actor.tenant
+        redactor = self.config.telemetry.redaction.redactor()
+        details: list[ApprovalDetail] = []
+        for owner, request in await self._examined(run_id, call_id, session_id=session_id, tenant=tenant, actor=actor):
+            tool = self._approval_tool(owner.agent, tenant, request.tool_name)
+            details.append(
+                ApprovalDetail.model_validate(
+                    {
+                        **request.model_dump(),
+                        "arguments": redactor.json(request.arguments),
+                        "reason": redactor.text(request.reason),
+                        "run_id": owner.run_id,
+                        "agent": owner.agent,
+                        "files": cited_files(tool, request.arguments),
+                        "preview": previews(tool),
+                    }
+                )
+            )
+        return tuple(details)
+
+    @audited
+    async def approval_file(
+        self,
+        run_id: RunId,
+        call_id: str,
+        path: str,
+        *,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+        user: str | Actor,
+        max_bytes: int | None = None,
+    ) -> ApprovalFile:
+        """Un fichier qu'une demande en attente désigne (cas 2), lu dans son dossier ; rien n'est écrit.
+
+        Seul un chemin que l'outil désigne pour cet appel est servi, rapporté à
+        son dossier déclaré ; un lien qui en sort est refusé. Droits comme
+        ``approval_details`` ; ``UnknownApproval`` si l'appel n'attend pas ;
+        ``ApprovalFileRefused`` si le fichier ne peut pas être servi.
+        """
+        actor = self._actor(user)
+        tenant = tenant_id or actor.tenant
+        ((owner, request),) = await self._examined(run_id, call_id, session_id=session_id, tenant=tenant, actor=actor, one=True)
+        tool = self._approval_tool(owner.agent, tenant, request.tool_name)
+        if path not in cited_files(tool, request.arguments):
+            raise ApprovalFileRefused("not_cited", f"{path} n'est pas un fichier que l'appel {call_id} désigne")
+        bound = max_bytes or self._approval_max()
+        try:
+            data = await asyncio.to_thread(cited_bytes, tool, request.arguments, path, max_bytes=bound)
+        except ToolError as error:
+            code: ApprovalFileCode = "too_large" if "dépasse" in str(error) else "unreadable"
+            raise ApprovalFileRefused(code, str(error).rstrip(".")) from None
+        name = PurePosixPath(path).name
+        return ApprovalFile(name=name, media_type=mimetypes.guess_type(name)[0] or "application/octet-stream", data=data)
+
+    @audited
+    async def approval_preview(
+        self,
+        run_id: RunId,
+        call_id: str,
+        *,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+        user: str | Actor,
+        max_bytes: int | None = None,
+        within: float | None = None,
+    ) -> ApprovalFile:
+        """Le fichier qu'un appel en attente écrirait (cas 3), rendu en mémoire avec ses arguments exacts.
+
+        Rien n'est écrit, ni sur le disque, ni au journal : l'aperçu ne vaut pas
+        exécution, et l'appel approuvé est rendu de nouveau. Il lit ce que l'appel
+        lirait (images, sources) : la demande que l'approbateur examine les
+        couvre. Borné par ``within`` (secondes) et ``max_bytes`` (``console.files`` par
+        défaut) ; au-delà du délai, le rendu en cours finit dans son fil, et son
+        résultat est perdu. Droits comme ``approval_details``.
+        """
+        actor = self._actor(user)
+        tenant = tenant_id or actor.tenant
+        ((owner, request),) = await self._examined(run_id, call_id, session_id=session_id, tenant=tenant, actor=actor, one=True)
+        tool = self._approval_tool(owner.agent, tenant, request.tool_name)
+        if not previews(tool):
+            raise ApprovalFileRefused("no_preview", f"l'outil {request.tool_name} ne sait pas rendre d'aperçu")
+        console = self.config.console
+        delay = within or (console.files.preview_timeout if console is not None else PREVIEW_TIMEOUT)
+        try:
+            async with asyncio.timeout(delay):
+                rendered = await asyncio.to_thread(previewed, tool, request.arguments)
+        except TimeoutError:
+            raise ApprovalFileRefused("preview_timeout", f"aperçu non rendu en {delay:g} s") from None
+        except ToolError as error:
+            raise ApprovalFileRefused("preview_failed", str(error).rstrip(".")) from None
+        if rendered is None:
+            raise ApprovalFileRefused("no_preview", f"l'appel {call_id} n'écrit pas de fichier")
+        bound = max_bytes or self._approval_max()
+        if len(rendered.data) > bound:
+            raise ApprovalFileRefused("too_large", f"aperçu de {len(rendered.data)} octets, {bound} au plus")
+        return ApprovalFile(name=rendered.name, media_type=rendered.media_type, data=rendered.data, warnings=rendered.warnings)
+
+    async def _examined(
+        self,
+        run_id: RunId,
+        call_id: str | None,
+        *,
+        session_id: SessionId | None,
+        tenant: TenantId,
+        actor: Actor,
+        one: bool = False,
+    ) -> list[tuple[RunState, PendingApproval]]:
+        """Les demandes en attente que l'acteur peut trancher et lire, dans l'arbre du run.
+
+        ``one`` : la demande ``call_id``, seule ; ``UnknownApproval`` si elle n'attend pas.
+        """
+        events = await self._store.read(tenant, session_id or SessionId(run_id))
+        tree = RunTree(run_id).select(events)
+        if not tree:
+            raise UnknownRun(run_id)
+        asked = [(owner, request) for owner in _awaiting_runs(tree) for request in owner.awaiting if call_id is None or request.call_id == call_id]
+        if not asked:
+            if one:
+                raise UnknownApproval(run_id, call_id or "")
+            return []
+        kept = _decidable(actor, asked, tree, tenant, amend=False).kept
+        for agent in dict.fromkeys(owner.agent for owner, _ in kept):
+            spec = self._agents.get(agent) if agent in self._agents.names else None
+            require(actor, "read_content", agent=spec, tenant=tenant)
+        return kept
+
+    def _approval_tool(self, agent: str, tenant: TenantId, tool_name: str) -> object:
+        """L'outil d'une demande, tel que l'agent du client le monte ; ``None`` s'il n'y est plus (un outil MCP, ouvert par run)."""
+        if agent not in self._agents.names:
+            return None
+        return self.context(agent, tenant).tools.get(tool_name)
+
+    def _approval_max(self) -> int:
+        console = self.config.console
+        return console.files.max_size if console is not None else APPROVAL_FILE_MAX
+
     async def export_session(self, session_id: SessionId, *, tenant_id: TenantId | None = None) -> list[Event]:
         """Tous les événements d'une session, dans l'ordre du journal.
 
@@ -2882,6 +3228,9 @@ class Loom:
         artifacts = await self._artifacts.delete(tenant, session_id)
         events = await self._store.delete(tenant, session_id)
         self._writers.forget(tenant, session_id)
+        if self._console_exporter is not None:
+            # La console efface sa copie (Q-10) ; ailleurs, l'exportateur le constate.
+            await self._console_exporter.session_deleted(tenant, session_id)
         return SessionDeletion(session_id=session_id, events=events, artifacts=artifacts, keys=keys)
 
     async def apply_retention(
@@ -3006,6 +3355,36 @@ class Loom:
         if self._exporter is not None:
             with closing:
                 await self._exporter.aclose(self._config.execution.shutdown_timeout)
+        # La console : plus de commande en cours ; plus rien de neuf à exporter ; ce qui reste part, dans le délai,
+        # et ce qui n'est pas acquitté sera relu au prochain démarrage. Puis ``bye``.
+        commands, self._console_commands = self._console_commands, None
+        if commands is not None:
+            with closing:
+                await commands.aclose()
+        with closing:
+            self._console_listening.close()
+        exporter = self._console_exporter
+        if exporter is not None:
+            # Détaché après son arrêt : les acquittements des derniers lots lui reviennent encore.
+            with closing:
+                await exporter.aclose(self._console_grace)
+            self._console_exporter = None
+        console, self._console = self._console, None
+        if console is not None:
+            with closing:
+                await console.aclose()
+        tasks, self._console_tasks = self._console_tasks, []
+        # Le délai est passé (``exporter.aclose``) : ce qui attend encore, une
+        # connexion qui ne vient pas, est arrêté.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.wait(tasks)
+        cursor, self._console_cursor = self._console_cursor, None
+        if cursor is not None:
+            with closing:
+                await cursor.aclose()
         for built in self._built.values():
             with closing:
                 await built.aclose()

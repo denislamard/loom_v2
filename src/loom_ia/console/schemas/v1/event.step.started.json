@@ -1,0 +1,65 @@
+{
+  "$defs": {
+    "Effect": {
+      "enum": [
+        "model_call",
+        "tool_batch",
+        "finalize",
+        "wait_child"
+      ],
+      "type": "string"
+    },
+    "RunStatus": {
+      "description": "Statut d'un run dans la machine à états de la boucle (point 3).\n\nValeurs : ``ready_for_model`` (prochain pas : appeler l'orchestrateur),\n``awaiting_tools`` (des appels d'outils attendent), ``waiting_child`` (un\nsous-agent tourne), ``paused`` (une approbation ou une question attend un\nhumain), ``finalizing`` (réponse forcée sans outils : ``max_iterations``,\nbudget, ``Stop``), puis les états finals ``completed``, ``failed`` et\n``cancelled``. Chaque changement écrit un ``run.transitioned``.",
+      "enum": [
+        "ready_for_model",
+        "awaiting_tools",
+        "waiting_child",
+        "paused",
+        "finalizing",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v1/event.step.started.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Début d'une étape de la boucle d'un run : un appel de modèle, un lot d'outils, une clôture ou une attente.\n\nCatégorie ``run``. Facette : ``effect``. Aucun contenu. Chaque étape ouvre\nun span ; ``step.completed`` le ferme.\n\nAttributes:\n    type: ``step.started``.\n    step_no: Numéro de l'étape dans le run, à partir de 1.\n    state: Statut du run au début de l'étape (``ready_for_model``,\n        ``awaiting_tools``, ``finalizing``, ``waiting_child``…).\n    effect: Ce que fait l'étape : ``model_call`` (appel de\n        l'orchestrateur), ``tool_batch`` (lot d'appels d'outils),\n        ``finalize`` (réponse forcée, sans outils) ou ``wait_child``\n        (attente d'un sous-run).",
+  "properties": {
+    "effect": {
+      "$ref": "#/$defs/Effect"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "state": {
+      "$ref": "#/$defs/RunStatus"
+    },
+    "step_no": {
+      "exclusiveMinimum": 0,
+      "title": "Step No",
+      "type": "integer"
+    },
+    "type": {
+      "const": "step.started",
+      "default": "step.started",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "step_no",
+    "state",
+    "effect"
+  ],
+  "title": "StepStarted",
+  "type": "object"
+}

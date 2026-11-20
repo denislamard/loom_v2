@@ -220,6 +220,35 @@ class Folders:
                     f"Chemin refusé : {located.address} passe par un lien vers le dossier {other}, qui a ses propres droits ; y accéder par « {other}/… »."
                 )
 
+    def read_cited(self, cited: Iterable[str], path: str, max_bytes: int) -> bytes:
+        """Les octets d'un fichier qu'un appel désigne, pour son approbateur ; rien n'est écrit.
+
+        Le chemin doit être l'un de ceux que l'appel désigne (``cited``),
+        tel qu'écrit. Il est rapporté à son dossier puis résolu : un lien qui sort
+        du dossier qui le gouverne est refusé, comme à l'exécution. Le droit
+        ``read`` n'est pas exigé : le fichier fait partie de la demande que
+        l'approbateur examine (un fichier qu'elle écraserait, par exemple).
+
+        Raises:
+            ToolError: Chemin non désigné, hors des dossiers, introuvable, ou
+                au-delà de ``max_bytes``.
+        """
+        if path not in set(cited):
+            raise ToolError(f"{path} n'est pas un fichier que cet appel désigne.")
+        located = self.locate(path)
+        target = self.resolved(located)
+        if not target.is_file():
+            raise ToolError(f"{located.address} : fichier introuvable.")
+        try:
+            with target.open("rb") as handle:
+                # Un fichier qui grossit entre-temps reste borné.
+                data = handle.read(max_bytes + 1)
+        except OSError as exc:
+            raise ToolError(f"{located.address} : {exc.strerror or type(exc).__name__}.") from exc
+        if len(data) > max_bytes:
+            raise ToolError(f"{located.address} dépasse {max_bytes} octets.")
+        return data
+
     def outside(self, real: Path, folder: Folder) -> Folder | Literal["outside", "hidden"] | None:
         """Pourquoi un chemin réel sort de ``folder`` : hors de tout, caché, ou un autre dossier."""
         governing = next((f for f in self._deepest if real.is_relative_to(f.root)), None)

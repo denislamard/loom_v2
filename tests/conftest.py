@@ -30,7 +30,7 @@ from typing import Any, Final, NoReturn
 
 import pytest
 
-from loom_ia.adapters.postgres.sql import EVENTS_TABLE, IDEMPOTENCY_TABLE, SCHEMA_TABLE
+from loom_ia.adapters.postgres.sql import CONSOLE_CURSOR_TABLE, EVENTS_TABLE, IDEMPOTENCY_TABLE, SCHEMA_TABLE
 
 POSTGRES_ENV = "LOOM_TEST_POSTGRES"
 RABBITMQ_ENV = "LOOM_TEST_RABBITMQ"
@@ -183,7 +183,7 @@ async def _clean(dsn: str) -> None:
                 "niveau des lignes, et ces essais ne prouveraient rien. Utiliser un rôle "
                 "ordinaire, propriétaire de sa base."
             )
-        await connection.execute(f"DROP TABLE IF EXISTS {EVENTS_TABLE}, {IDEMPOTENCY_TABLE}, {SCHEMA_TABLE}")
+        await connection.execute(f"DROP TABLE IF EXISTS {EVENTS_TABLE}, {IDEMPOTENCY_TABLE}, {CONSOLE_CURSOR_TABLE}, {SCHEMA_TABLE}")
     finally:
         await connection.close()
 

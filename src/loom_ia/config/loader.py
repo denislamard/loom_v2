@@ -33,6 +33,7 @@ import yaml
 from pydantic import ValidationError
 
 from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, PythonTool, SourceTools, system_text
+from loom_ia.config.console import plain_text_refusal
 from loom_ia.config.env_file import ENV_FILE_KEY
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import BOOT_FILE, CONFIG_FILE, PROFILES, BootConfig, LoomConfig, Profile, StorageConfig, TenantSpec
@@ -185,6 +186,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
             "sessions": _absolute_sessions(config, config_dir / config.resources_dir, source=root),
             "server": _absolute_server(config, workpath),
             "security": _absolute_security(config, workpath),
+            "console": _absolute_console(config, workpath),
             "mcp_servers": tuple(_launched_from(server, workpath) for server in servers),
             "tool_sources": sources,
             "tenants": tuple(_absolute_tenant(tenant, workpath) for tenant in config.tenants),
@@ -195,6 +197,10 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
         # D-1b : en production, chaque appelant présente sa clé. Contrôlé ici et
         # non dans ``LoomConfig.check`` : le profil actif n'y est pas encore posé.
         raise ConfigError(f"{root} : 'server.http.user' est refusé en profil 'prod', où chaque appelant présente sa clé (security.api_keys)")
+    # Même raison : le transport en clair dépend du profil, posé ici (décision D-9).
+    refused = plain_text_refusal(loaded.console, loaded.profile)
+    if refused is not None:
+        raise ConfigError(f"{root} : {refused}")
     return loaded
 
 
@@ -811,6 +817,18 @@ def _absolute_security(config: LoomConfig, base_dir: Path) -> object:
     if audit is None:
         return config.security
     return config.security.model_copy(update={"audit": audit.model_copy(update={"path": base_dir / audit.path})})
+
+
+def _absolute_console(config: LoomConfig, base_dir: Path) -> object:
+    """Fichiers TLS de la console (autorité, certificat client), rapportés au dossier de travail."""
+    console = config.console
+    if console is None:
+        return None
+    tls = console.tls
+    update = {name: base_dir / path for name, path in (("ca_file", tls.ca_file), ("client_cert", tls.client_cert)) if path is not None}
+    if not update:
+        return console
+    return console.model_copy(update={"tls": tls.model_copy(update=update)})
 
 
 def _absolute_server(config: LoomConfig, base_dir: Path) -> object:

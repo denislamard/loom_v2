@@ -3,9 +3,10 @@
 import asyncio
 from collections.abc import Coroutine, Iterable
 from dataclasses import dataclass, field, replace
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Final
 
 from loom_ia.access.api import ApprovalStale, Loom, QuestionStale, UnknownQuestion
+from loom_ia.config import ConfigError
 from loom_ia.core.model.question import NoAnswer, QuestionReply
 from loom_ia.core.model.run_state import ApprovalDecision, RunStatus
 from textual import on
@@ -39,6 +40,8 @@ TERMINAL = frozenset({"completed", "failed", "cancelled"})
 NOT_RESUMABLE = TERMINAL | {RunStatus.PAUSED.value}
 # Ce que loom lève quand une demande n'attend plus : tranchée ailleurs, ou expirée.
 CLOSED_ELSEWHERE = (ApprovalStale, QuestionStale, UnknownQuestion)
+# Attente, à la fermeture, des acquittements de la console d'administration : le reste sera rattrapé plus tard.
+CONSOLE_GRACE: Final = 5.0
 
 
 def resumable_runs(runs: Iterable[RunLine], current: str | None) -> list[RunLine]:
@@ -265,6 +268,12 @@ class ChatApp(App[None]):
         """Ouvre loom, liste les sessions et ouvre une nouvelle session."""
         self._loom = Loom(self._settings.config)
         await self._loom.__aenter__()
+        try:
+            # Chaque run de la console de chat part vers la console d'administration,
+            # si la config en déclare une active (docs/analyse-exortateur-loom.md, D-6).
+            await self._loom.start_console(grace=CONSOLE_GRACE)
+        except ConfigError as error:
+            self.notify(f"Console d'administration non ouverte : {error}", severity="warning", timeout=10)
         self._engine = ChatEngine(self._loom, user=self._settings.user)
         await self.refresh_sessions()
         await self.new_session()

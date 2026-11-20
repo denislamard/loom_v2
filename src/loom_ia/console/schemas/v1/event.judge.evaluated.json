@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "CriterionScore": {
+      "additionalProperties": false,
+      "description": "Note d'un critère par le juge, avec son seuil ; écrite dans ``judge.evaluated``.\n\nAttributes:\n    name: Nom du critère.\n    score: Note donnée par le juge, entre 0 et 1.\n    min_score: Seuil du critère.\n    blocking: Vrai si le critère est bloquant.\n    reason: Motif donné par le juge ; du contenu.",
+      "properties": {
+        "blocking": {
+          "title": "Blocking",
+          "type": "boolean"
+        },
+        "min_score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Score",
+          "type": "number"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "score",
+        "min_score",
+        "blocking"
+      ],
+      "title": "CriterionScore",
+      "type": "object"
+    }
+  },
+  "$id": "loom-console/v1/event.judge.evaluated.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Verdict d'un juge sur une sortie : une note par critère (point 21, fonction E3).\n\nL'appel du modèle du juge est journalisé dans le run jugé\n(``model.retried``, ``model.responded`` avec ``judge``, enveloppe au nom\nde ``judge:<nom>``) : son coût s'ajoute au run, pas ses itérations. Le\nverdict est écrit après cet appel, avant le ``guard.checked`` qui en tire\nla suite. ``blocked`` : un critère bloquant est sous son seuil, et la\nsortie est refusée.\n\nCatégorie ``guard``. Facettes : ``judge``, ``target``, ``model_id``,\n``passed`` et ``blocked``, plus ``model`` quand il est connu. Contenu :\n``criteria[].reason``.\n\nAttributes:\n    type: ``judge.evaluated``.\n    judge: Nom du juge.\n    target: Sortie jugée : ``output`` (réponse finale) ou ``role:<nom>``.\n    model_id: Nom, chez le fournisseur, du modèle du juge.\n    model: Identifiant du modèle dans la config (``models[].id``).\n        Absent des journaux antérieurs.\n    criteria: Une note par critère, au moins une : nom, note, seuil,\n        bloquant ou non, justification.\n    passed: Vrai si tous les critères atteignent leur seuil.\n    blocked: Vrai si un critère bloquant est sous son seuil.\n    attempt: Numéro du contrôle de cette sortie, à partir de 1.\n    policy: Politique qui a fait le contrôle.\n    call_id: Appel du rôle jugé, pour une cible ``role:<nom>``.\n\nRaises:\n    ValueError: ``passed`` ou ``blocked`` ne s'accorde pas avec les notes\n        (« judge.evaluated : 'passed' incohérent avec les notes »).",
+  "properties": {
+    "attempt": {
+      "default": 1,
+      "exclusiveMinimum": 0,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "blocked": {
+      "title": "Blocked",
+      "type": "boolean"
+    },
+    "call_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Call Id"
+    },
+    "criteria": {
+      "items": {
+        "$ref": "#/$defs/CriterionScore"
+      },
+      "minItems": 1,
+      "title": "Criteria",
+      "type": "array"
+    },
+    "judge": {
+      "title": "Judge",
+      "type": "string"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "model_id": {
+      "title": "Model Id",
+      "type": "string"
+    },
+    "passed": {
+      "title": "Passed",
+      "type": "boolean"
+    },
+    "policy": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Policy"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "target": {
+      "title": "Target",
+      "type": "string"
+    },
+    "type": {
+      "const": "judge.evaluated",
+      "default": "judge.evaluated",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "judge",
+    "target",
+    "model_id",
+    "criteria",
+    "passed",
+    "blocked"
+  ],
+  "title": "JudgeEvaluated",
+  "type": "object"
+}

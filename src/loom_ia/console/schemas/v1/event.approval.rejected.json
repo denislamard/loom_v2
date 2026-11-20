@@ -1,0 +1,77 @@
+{
+  "$id": "loom-console/v1/event.approval.rejected.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Appel refusé par un approbateur : le motif part au modèle comme résultat d'erreur (point 17).\n\nCatégorie ``approval``. Facettes : ``tool_name`` et ``by``, plus ``via``\nquand une passerelle a porté la décision. Contenu : ``reason``. Statut\n``warning``.\n\nAttributes:\n    type: ``approval.rejected``.\n    call_id: Appel refusé.\n    tool_name: Nom de l'outil.\n    by: Identité de qui a refusé.\n    reason: Motif du refus, rendu au modèle.\n    via: Passerelle qui a porté la décision (``as_user``, décision D-5\n        des utilisateurs et rôles) ; écrite seulement avec une passerelle.\n    roles: Rôles d'accès qui ont permis la décision, figés pour l'audit :\n        la config peut changer ensuite. Écrits seulement s'ils sont connus.\n    self_approved: Vrai si le décideur est celui qui a lancé le run\n        (``self_approve``, décision D-7 des utilisateurs et rôles). Écrit\n        seulement s'il est vrai.",
+  "properties": {
+    "by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "By"
+    },
+    "call_id": {
+      "title": "Call Id",
+      "type": "string"
+    },
+    "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "roles": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Roles",
+      "type": "array"
+    },
+    "self_approved": {
+      "default": false,
+      "title": "Self Approved",
+      "type": "boolean"
+    },
+    "tool_name": {
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "type": {
+      "const": "approval.rejected",
+      "default": "approval.rejected",
+      "title": "Type",
+      "type": "string"
+    },
+    "via": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Via"
+    }
+  },
+  "required": [
+    "call_id",
+    "tool_name"
+  ],
+  "title": "ApprovalRejected",
+  "type": "object"
+}

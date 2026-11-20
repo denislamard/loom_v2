@@ -1,0 +1,82 @@
+{
+  "$id": "loom-console/v1/message.file.data.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``file.data`` (loom → console) : un morceau d'un fichier demandé par une commande.\n\nLe premier morceau (``part`` 0) porte aussi ``name``, ``media_type``,\n``size`` et ``sha256``.\n\nAttributes:\n    command_id: La commande qui l'a demandé.\n    part: Rang du morceau, à partir de 0.\n    last: Vrai pour le dernier morceau.\n    data: Les octets du morceau, en base64.\n    name: Nom du fichier.\n    media_type: Type MIME.\n    size: Taille totale, en octets.\n    sha256: Empreinte SHA-256 du fichier entier, en hexadécimal.",
+  "properties": {
+    "command_id": {
+      "title": "Command Id",
+      "type": "string"
+    },
+    "data": {
+      "title": "Data",
+      "type": "string"
+    },
+    "last": {
+      "title": "Last",
+      "type": "boolean"
+    },
+    "media_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Media Type"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "part": {
+      "minimum": 0,
+      "title": "Part",
+      "type": "integer"
+    },
+    "sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sha256"
+    },
+    "size": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Size"
+    }
+  },
+  "required": [
+    "command_id",
+    "part",
+    "last",
+    "data"
+  ],
+  "title": "FileDataPayload",
+  "type": "object"
+}

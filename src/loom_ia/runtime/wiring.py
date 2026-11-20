@@ -48,6 +48,7 @@ et les referme avec lui.
 import importlib.util
 import logging
 import os
+import ssl
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,6 +93,7 @@ from loom_ia.agents.spec import (
 from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.agents.spec import RoleContextItem as DeclaredRoleContext
 from loom_ia.config.compaction import COMPACTION_AGENT
+from loom_ia.config.console import ConsoleConfig, ExportMode, plain_text_refusal
 from loom_ia.config.env_file import DEFAULT_NAME as ENV_FILE_DEFAULT
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import (
@@ -104,6 +106,7 @@ from loom_ia.config.models import (
     StorageConfig,
 )
 from loom_ia.config.references import Registry, import_modules, resolve
+from loom_ia.console.contract import HelloPayload
 from loom_ia.core import SETUP
 from loom_ia.core.closing import Closing
 from loom_ia.core.model import (
@@ -119,6 +122,7 @@ from loom_ia.core.model import (
     StreamOutput,
     TenantId,
     ToolOverrides,
+    new_id,
 )
 from loom_ia.core.ports import (
     ArtifactStore,
@@ -190,6 +194,8 @@ from loom_ia.usage import BudgetGuard
 
 if TYPE_CHECKING:
     from loom_ia.adapters.mcp import McpPool
+    from loom_ia.console.channel import ConnectedHandler, ConsoleChannel, MessageHandler
+    from loom_ia.console.cursor import ConsoleCursor
 
 logger = logging.getLogger(__name__)
 
@@ -541,6 +547,9 @@ def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
         ),
         (storage.idempotency, sql.IDEMPOTENCY_TABLE, sql.IDEMPOTENCY_DDL, True),
     )
+    if isinstance(config, LoomConfig) and console_enabled(config) is not None and console_storage(config) is storage:
+        # Le curseur de la console suit le journal de son client (docs/analyse-exortateur-loom.md, § 6.2).
+        declared = (*declared, (storage.events, sql.CONSOLE_CURSOR_TABLE, sql.CONSOLE_CURSOR_DDL, True))
     used = [d for d in declared if d[0].backend == "postgres"]
     if not used:
         return sql.ddl()
@@ -1396,6 +1405,213 @@ def exporter_warnings(config: LoomConfig, environ: Mapping[str, str] | None = No
     """
     variables = os.environ if environ is None else environ
     return [_unmounted(exporter.endpoint_env) for exporter in config.telemetry.exporters if not variables.get(exporter.endpoint_env, "")]
+
+
+# --- Console d'administration (docs/analyse-exortateur-loom.md) ---------------------
+
+CONSOLE_DIR: Final = Path(".loom") / "console"
+"""Dossier, sous ``workpath``, de ce que le canal garde sur disque : l'identifiant d'instance."""
+
+
+def console_enabled(config: LoomConfig) -> ConsoleConfig | None:
+    """La section ``console`` si elle est activée (``enable: true``) ; ``None`` sinon."""
+    console = config.console
+    return console if console is not None and console.enable else None
+
+
+def console_export_mode(config: LoomConfig) -> ExportMode:
+    """Ce qui part vers la console : ``console.export.mode``, ou ce que dit ``capture.exports`` du client (décision D-5).
+
+    Args:
+        config: La configuration, avec une section ``console``.
+    """
+    console = config.console
+    if console is not None and console.export.mode is not None:
+        return console.export.mode
+    tenant = console.tenant if console is not None else DEFAULT_TENANT
+    return "push" if config.capture_for(tenant).exports == "content" else "on_demand"
+
+
+def console_warnings(config: LoomConfig, environ: Mapping[str, str] | None = None) -> list[str]:
+    """Ce qui empêche le canal de partir : la clé de l'instance absente. Refusé en profil ``prod`` (Q-5).
+
+    Args:
+        config: La configuration chargée.
+        environ: Environnement où lire la clé.
+    """
+    console = console_enabled(config)
+    if console is None or console.key_env is None:
+        return []
+    variables = os.environ if environ is None else environ
+    if variables.get(console.key_env, ""):
+        return []
+    return [f"Console : variable {console.key_env} absente — canal non monté"]
+
+
+def console_advice(config: LoomConfig) -> list[str]:
+    """Ce qui est recommandé sans être exigé : le mTLS en profil ``prod`` (décision D-9), le contenu poussé (``push``).
+
+    Des avertissements, en profil ``prod`` aussi.
+
+    Args:
+        config: La configuration chargée.
+    """
+    console = console_enabled(config)
+    if console is None:
+        return []
+    advice: list[str] = []
+    if config.strict and console.tls.client_cert is None:
+        advice.append("Console : pas de certificat client (console.tls.client_cert) — le mTLS est recommandé en production")
+    if console_export_mode(config) == "push":
+        advice.append("Console : export en mode push — le contenu des sessions est copié vers la console")
+    return advice
+
+
+def console_instance_id(config: LoomConfig) -> str:
+    """L'identifiant de l'instance : celui de ``console.instance_id``, ou celui créé au premier démarrage et gardé sous ``workpath``.
+
+    Plusieurs machines qui servent une même instance doivent le déclarer : chacune
+    créerait sinon le sien.
+
+    Args:
+        config: La configuration, avec une section ``console``.
+
+    Returns:
+        L'identifiant.
+    """
+    console = config.console
+    if console is not None and console.instance_id is not None:
+        return console.instance_id
+    path = (config.workpath or Path.cwd()) / CONSOLE_DIR / "instance_id"
+    try:
+        kept = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        kept = ""
+    if kept:
+        return kept
+    created = f"loom-{new_id()[-12:]}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{new_id()}")
+    temporary.write_text(created + "\n", encoding="utf-8")
+    temporary.replace(path)
+    return created
+
+
+def create_console(
+    config: LoomConfig,
+    hello: HelloPayload,
+    environ: Mapping[str, str] | None = None,
+    *,
+    on_message: MessageHandler | None = None,
+    on_connected: ConnectedHandler | None = None,
+    retry_level: int = logging.WARNING,
+) -> ConsoleChannel | None:
+    """Le canal vers la console, prêt à tourner ; ``None`` sans section activée ou sans clé.
+
+    La clé absente est dite par ``console_warnings`` (refusée en profil ``prod``) :
+    ici, elle laisse simplement le canal non monté.
+
+    Args:
+        config: La configuration chargée.
+        hello: Ce que loom présente à chaque connexion.
+        environ: Environnement où lire la clé et celle du certificat client.
+        on_message: Ce qui traite chaque message reçu (acquittements, commandes).
+        on_connected: Ce qui apprend chaque connexion ouverte (l'exportateur).
+        retry_level: Niveau de log d'une tentative de connexion manquée.
+
+    Returns:
+        Le canal, pas encore lancé (``ConsoleChannel.run``).
+
+    Raises:
+        ConfigError: ``ws://`` hors profil ``dev`` ; extra ``console`` absent ;
+            fichiers TLS illisibles ou invalides.
+    """
+    console = console_enabled(config)
+    if console is None or console.url is None or console.key_env is None:
+        return None
+    refused = plain_text_refusal(console, config.profile)
+    if refused is not None:
+        raise ConfigError(refused)
+    variables = os.environ if environ is None else environ
+    key = variables.get(console.key_env, "")
+    if not key:
+        return None
+    try:
+        from loom_ia.console.channel import ChannelSettings, ConsoleChannel, tls_context
+    except ImportError as exc:
+        raise ConfigError("Console : la section 'console' demande websockets, qui n'est pas installé (installer l'extra : loom-ia[console])") from exc
+    try:
+        context = tls_context(console, variables)
+    except (OSError, ValueError, ssl.SSLError) as exc:
+        raise ConfigError(f"Console : TLS impossible à préparer ({exc})") from exc
+    return ConsoleChannel(
+        ChannelSettings(url=console.url, key=key, hello=hello, ssl_context=context), on_message=on_message, on_connected=on_connected, retry_level=retry_level
+    )
+
+
+def console_storage(config: LoomConfig) -> StorageConfig:
+    """Le stockage du client de la console : le sien s'il en déclare un, sinon celui de la racine — là où vont son journal et son curseur."""
+    console = config.console
+    spec = None if console is None else config.tenant_spec(console.tenant)
+    return spec.storage if spec is not None and spec.storage is not None else config.storage
+
+
+def create_console_cursor(config: LoomConfig) -> ConsoleCursor:
+    """Le curseur de la console, rangé avec le journal de son client (docs/analyse-exortateur-loom.md, § 6.2).
+
+    Args:
+        config: La configuration, avec une section ``console``.
+
+    Returns:
+        Le curseur : en mémoire, en fichier à côté des journaux JSONL, en table
+        dans le fichier SQLite ou dans la base Postgres.
+
+    Raises:
+        ConfigError: Variable du DSN absente, ou pilote non installé.
+    """
+    from loom_ia.console.cursor import InMemoryCursor, JsonlCursor, PostgresCursor, SqliteCursor
+
+    events = console_storage(config).events
+    if events.backend == "postgres":
+        try:
+            from loom_ia.adapters.postgres.pool import PoolLimits
+        except ImportError as exc:
+            raise _missing_asyncpg("Curseur de la console") from exc
+        return PostgresCursor(_dsn(events, "Curseur de la console"), role=events.role, limits=PoolLimits(**events.pool.model_dump()))
+    if events.path is not None and events.backend == "jsonl":
+        return JsonlCursor(events.path)
+    if events.path is not None and events.backend == "sqlite":
+        if importlib.util.find_spec("aiosqlite") is None:
+            raise ConfigError("Curseur de la console 'sqlite' : le paquet 'aiosqlite' n'est pas installé (installer l'extra : loom-ia[sqlite])")
+        return SqliteCursor(events.path)
+    return InMemoryCursor()
+
+
+async def console_lag(config: LoomConfig) -> tuple[int, int] | None:
+    """Le retard d'acquittement de la console : (sessions, événements) écrits mais pas encore acquittés.
+
+    Lu dans le curseur et le journal, sans se connecter à la console. ``None``
+    avec un journal en mémoire (rien ne survit d'un process à l'autre) ou
+    avant le premier démarrage du canal.
+
+    Args:
+        config: La configuration, avec une section ``console`` activée.
+    """
+    console = console_enabled(config)
+    if console is None or console_storage(config).events.backend == "memory":
+        return None
+    cursor = create_console_cursor(config)
+    store = create_event_store(console_storage(config))
+    try:
+        state = await cursor.load(console.tenant)
+        if state is None:
+            return None
+        behind = [record.last_seq - state.acked.get(record.session_id, 0) for record in await store.sessions(console.tenant)]
+    finally:
+        await cursor.aclose()
+        await store.aclose()
+    late = [count for count in behind if count > 0]
+    return len(late), sum(late)
 
 
 def _unmounted(variable: str) -> str:

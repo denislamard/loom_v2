@@ -27,7 +27,7 @@ from loom_ia.core.model import (
     ToolSpec,
     checked_skill,
 )
-from loom_ia.core.ports import CallAssessment, Tool, ToolContext, assessed
+from loom_ia.core.ports import CallAssessment, CitingTool, Preview, PreviewingTool, Tool, ToolContext, ToolError, assessed
 
 ASSESSED: Final = frozenset({"approval", "side_effects", "idempotent"})
 """Déclarations qu'une évaluation par appel peut donner, et que la config peut fixer."""
@@ -78,6 +78,43 @@ def innermost(tool: object) -> object:
     while isinstance(tool, ConfiguredTool):
         tool = tool.tool
     return tool
+
+
+def cited_files(tool: object, arguments: Mapping[str, JsonValue]) -> tuple[str, ...]:
+    """Les fichiers que l'appel désigne (``CitingTool``), sous les enveloppes de config.
+
+    Vide si l'outil ne le sait pas, ou si sa réponse échoue : rien n'est servi
+    de ce qu'il n'a pas désigné.
+    """
+    inner = innermost(tool)
+    if not isinstance(inner, CitingTool):
+        return ()
+    try:
+        found = inner.referenced_files(arguments)
+    except Exception:
+        return ()
+    return tuple(dict.fromkeys(found or ()))
+
+
+def cited_bytes(tool: object, arguments: Mapping[str, JsonValue], path: str, *, max_bytes: int) -> bytes:
+    """Les octets d'un fichier que l'appel désigne ; ``ToolError`` si l'outil ne le désigne pas. Bloquant."""
+    inner = innermost(tool)
+    if not isinstance(inner, CitingTool) or path not in cited_files(inner, arguments):
+        raise ToolError(f"{path} n'est pas un fichier que cet appel désigne.")
+    return inner.read_referenced(arguments, path, max_bytes=max_bytes)
+
+
+def previews(tool: object) -> bool:
+    """Vrai si l'outil sait rendre un aperçu (``PreviewingTool``)."""
+    return isinstance(innermost(tool), PreviewingTool)
+
+
+def previewed(tool: object, arguments: Mapping[str, JsonValue]) -> Preview | None:
+    """L'aperçu de l'appel ; ``None`` si l'outil n'en fait pas, ou si l'appel n'écrit rien. Bloquant."""
+    inner = innermost(tool)
+    if not isinstance(inner, PreviewingTool):
+        return None
+    return inner.preview(arguments)
 
 
 def configure(

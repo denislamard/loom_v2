@@ -1,0 +1,46 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "enum": [
+        "unauthorized",
+        "no_common_contract",
+        "unknown_type",
+        "invalid_message",
+        "too_large",
+        "internal"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v1/message.error.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``error`` (dans les deux sens) : un message refusé, ou une connexion refusée.\n\nAttributes:\n    code: Le code.\n    message: Ce qu'il en est, en clair.\n    about: Identifiant du message en cause, s'il y en a un.",
+  "properties": {
+    "about": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "About"
+    },
+    "code": {
+      "$ref": "#/$defs/ErrorCode"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "ErrorPayload",
+  "type": "object"
+}

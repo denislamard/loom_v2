@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "Usage": {
+      "additionalProperties": false,
+      "description": "Tokens consommés par un appel de modèle, ou cumulés sur un run (fonction J1).\n\nDeux ``Usage`` s'additionnent avec ``+``.\n\nAttributes:\n    input_tokens: Tokens d'entrée hors cache.\n    output_tokens: Tokens de sortie, raisonnement compris.\n    cache_read_tokens: Tokens d'entrée lus dans le cache de prompt.\n    cache_write_tokens: Tokens d'entrée écrits dans le cache de prompt.\n    reasoning_tokens: Tokens de raisonnement, quand le fournisseur les\n        distingue ; déjà comptés dans ``output_tokens``.",
+      "properties": {
+        "cache_read_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Read Tokens",
+          "type": "integer"
+        },
+        "cache_write_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Write Tokens",
+          "type": "integer"
+        },
+        "input_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "$id": "loom-console/v1/event.run.failed.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Run terminé en échec : événement terminal d'un run qui n'a pas abouti.\n\nCatégorie ``run``. Facette : ``error_type``. Contenu : ``error``. Statut\n``error``.\n\nAttributes:\n    type: ``run.failed``.\n    error_type: Nature de l'échec, pour filtrer : ``timeout`` (délai du\n        run dépassé), ``Interrupted``, le type de l'événement en cause, le\n        genre ou le nom d'une erreur.\n    error: Message de l'erreur.\n    iterations: Appels de l'orchestrateur faits avant l'échec.\n    usage: Consommation du run jusqu'à l'échec.\n    cost_usd: Coût du run jusqu'à l'échec, en dollars.",
+  "properties": {
+    "cost_usd": {
+      "default": 0.0,
+      "minimum": 0,
+      "title": "Cost Usd",
+      "type": "number"
+    },
+    "error": {
+      "title": "Error",
+      "type": "string"
+    },
+    "error_type": {
+      "title": "Error Type",
+      "type": "string"
+    },
+    "iterations": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Iterations",
+      "type": "integer"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "type": {
+      "const": "run.failed",
+      "default": "run.failed",
+      "title": "Type",
+      "type": "string"
+    },
+    "usage": {
+      "$ref": "#/$defs/Usage",
+      "default": {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0
+      }
+    }
+  },
+  "required": [
+    "error_type"
+  ],
+  "title": "RunFailed",
+  "type": "object"
+}
