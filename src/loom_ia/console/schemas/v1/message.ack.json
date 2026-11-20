@@ -1,0 +1,17 @@
+{
+  "$id": "loom-console/v1/message.ack.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``ack`` (console → loom) : le lot est enregistré de façon durable.\n\nAttributes:\n    batch_id: Le lot acquitté.",
+  "properties": {
+    "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "batch_id"
+  ],
+  "title": "AckPayload",
+  "type": "object"
+}

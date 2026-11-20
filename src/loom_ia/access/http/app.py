@@ -336,6 +336,9 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             # du serveur : sans elle, un flux SSE ne voit pas ce qu'écrit un autre
             # process, et attend jusqu'au délai du client (essai de la fonction I4, 21/10).
             await loom.__aenter__()
+            # Le canal vers la console (docs/analyse-exortateur-loom.md) : ``loom serve``
+            # l'ouvre, dans la boucle du serveur ; sans section active, rien ne part.
+            await loom.start_console()
         if served is None:
             yield
         else:

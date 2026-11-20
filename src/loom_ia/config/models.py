@@ -32,6 +32,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from loom_ia.agents.spec import AGENT_NAME_PATTERN, AgentSpec
 from loom_ia.config.compaction import COMPACTION_AGENT, CompactionConfig, compaction_agent
+from loom_ia.config.console import ConsoleConfig
 from loom_ia.config.keys import ALGORITHM, FINGERPRINT, matches
 from loom_ia.config.telemetry import (
     CaptureConfig,
@@ -39,6 +40,7 @@ from loom_ia.config.telemetry import (
     RedactionConfig,
     TenantTelemetry,
 )
+from loom_ia.core.events import DURABLE_PAYLOADS
 from loom_ia.core.model import (
     DEFAULT_LEASE,
     DEFAULT_TENANT,
@@ -1445,6 +1447,8 @@ class LoomConfig(DomainModel):
             inconnu est refusé.
         security: Rôles d'accès, utilisateurs, clés d'API, fichier des refus.
         server: Serveurs HTTP et MCP.
+        console: Canal vers la console d'administration ; ``None`` : aucun
+            (docs/analyse-exortateur-loom.md).
         triggers: Portes d'entrée déclarées (fonction H6) : ce qu'un appel
             extérieur ouvre.
         agents: Les agents : remplis depuis ``agents_dir`` au chargement, ou
@@ -1472,6 +1476,7 @@ class LoomConfig(DomainModel):
     tenants: tuple[TenantSpec, ...] = ()
     security: SecurityConfig = SecurityConfig()
     server: ServerConfig = ServerConfig()
+    console: ConsoleConfig | None = None
     triggers: tuple[TriggerSpec, ...] = ()
     agents: tuple[AgentSpec, ...] = ()
 
@@ -1542,6 +1547,7 @@ class LoomConfig(DomainModel):
             # clé, mais c'est le process qui l'a lancé qui décide.
             raise ValueError("'server.mcp.http' expose les agents comme outils : déclarer au moins une clé dans 'security.api_keys' (loom keys create)")
         self._check_tenants()
+        self._check_console()
         servers = [server.name for server in self.mcp_servers]
         _reject_doubles("Serveur MCP", servers)
         for agent in self.agents:
@@ -1755,6 +1761,41 @@ class LoomConfig(DomainModel):
                     Template.parse(source)
                 except TemplateError as exc:
                     raise ValueError(f"{label} : {exc}") from exc
+
+    def _check_console(self) -> None:
+        """Section ``console`` activée : un client, une passerelle et des types qui existent (docs/analyse-exortateur-loom.md).
+
+        Une section en ``enable: false`` n'est contrôlée que dans sa forme
+        (``ConsoleConfig``). Le profil, lui, n'est posé qu'après la validation :
+        c'est le chargeur qui refuse ``ws://`` hors profil ``dev``
+        (``console.plain_text_refusal``).
+        """
+        console = self.console
+        if console is None or not console.enable:
+            return
+        if console.scheme == "ws" and console.host not in LOOPBACK_HOSTS:
+            raise ValueError(
+                f"console.url : ws:// n'est accepté que vers la boucle locale ({', '.join(sorted(LOOPBACK_HOSTS))}), en profil dev ; ici {console.host}"
+            )
+        declared = {tenant.id for tenant in self.tenants} or {DEFAULT_TENANT}
+        if console.tenant not in declared:
+            raise ValueError(f"console.tenant {console.tenant!r} : client non déclaré (clients : {', '.join(sorted(declared))})")
+        known = {payload.model_fields["type"].default for payload in DURABLE_PAYLOADS}
+        unknown = [name for name in console.export.exclude_events if name not in known]
+        if unknown:
+            raise ValueError(f"console.export.exclude_events : type(s) inconnu(s) : {', '.join(unknown)} (types : {', '.join(sorted(known))})")
+        _reject_doubles("console.export.exclude_events : type", list(console.export.exclude_events))
+        gateway = console.commands.user
+        if gateway is None:
+            return
+        label = f"console.commands.user ({gateway!r})"
+        users = {user.id: user for user in self.security.users}
+        if gateway not in users:
+            raise ValueError(f"{label} : utilisateur non déclaré dans security.users (utilisateurs : {', '.join(sorted(users)) or 'aucun'})")
+        if users[gateway].tenant != console.tenant:
+            raise ValueError(f"{label} : il est chez le client {users[gateway].tenant!r}, la console sert {console.tenant!r}")
+        if not any("act_as" in role.permissions for role in self.security.roles_of(gateway)):
+            raise ValueError(f"{label} : aucun de ses rôles n'a 'act_as' — la passerelle agit au nom des utilisateurs de la console (act_as_roles)")
 
     def _check_tenants(self) -> None:
         """Clients déclarés une fois, sur des agents et des modèles qui existent (fonctions L1 et M5).

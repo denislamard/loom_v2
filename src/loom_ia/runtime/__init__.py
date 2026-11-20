@@ -11,14 +11,21 @@ La façade ``Loom`` (``access/api.py``) assemble une instance à partir d'ici.
 """
 
 from loom_ia.runtime.wiring import (
+    CONSOLE_DIR,
     Agent,
     announce,
     apply_logging,
     budget_warnings,
     build_agent,
     build_policies,
+    console_advice,
+    console_enabled,
+    console_export_mode,
+    console_instance_id,
+    console_warnings,
     create_artifact_store,
     create_bus,
+    create_console,
     create_event_store,
     create_idempotency_store,
     create_journal_codec,
@@ -46,14 +53,21 @@ from loom_ia.runtime.wiring import (
 )
 
 __all__ = [
+    "CONSOLE_DIR",
     "Agent",
     "announce",
     "apply_logging",
     "budget_warnings",
     "build_agent",
     "build_policies",
+    "console_advice",
+    "console_enabled",
+    "console_export_mode",
+    "console_instance_id",
+    "console_warnings",
     "create_artifact_store",
     "create_bus",
+    "create_console",
     "create_event_store",
     "create_idempotency_store",
     "create_journal_codec",

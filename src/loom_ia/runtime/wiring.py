@@ -48,6 +48,7 @@ et les referme avec lui.
 import importlib.util
 import logging
 import os
+import ssl
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,6 +93,7 @@ from loom_ia.agents.spec import (
 from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.agents.spec import RoleContextItem as DeclaredRoleContext
 from loom_ia.config.compaction import COMPACTION_AGENT
+from loom_ia.config.console import ConsoleConfig, ExportMode, plain_text_refusal
 from loom_ia.config.env_file import DEFAULT_NAME as ENV_FILE_DEFAULT
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import (
@@ -104,6 +106,7 @@ from loom_ia.config.models import (
     StorageConfig,
 )
 from loom_ia.config.references import Registry, import_modules, resolve
+from loom_ia.console.contract import HelloPayload
 from loom_ia.core import SETUP
 from loom_ia.core.closing import Closing
 from loom_ia.core.model import (
@@ -119,6 +122,7 @@ from loom_ia.core.model import (
     StreamOutput,
     TenantId,
     ToolOverrides,
+    new_id,
 )
 from loom_ia.core.ports import (
     ArtifactStore,
@@ -190,6 +194,7 @@ from loom_ia.usage import BudgetGuard
 
 if TYPE_CHECKING:
     from loom_ia.adapters.mcp import McpPool
+    from loom_ia.console.channel import ConsoleChannel
 
 logger = logging.getLogger(__name__)
 
@@ -1396,6 +1401,135 @@ def exporter_warnings(config: LoomConfig, environ: Mapping[str, str] | None = No
     """
     variables = os.environ if environ is None else environ
     return [_unmounted(exporter.endpoint_env) for exporter in config.telemetry.exporters if not variables.get(exporter.endpoint_env, "")]
+
+
+# --- Console d'administration (docs/analyse-exortateur-loom.md) ---------------------
+
+CONSOLE_DIR: Final = Path(".loom") / "console"
+"""Dossier, sous ``workpath``, de ce que le canal garde sur disque : l'identifiant d'instance."""
+
+
+def console_enabled(config: LoomConfig) -> ConsoleConfig | None:
+    """La section ``console`` si elle est activée (``enable: true``) ; ``None`` sinon."""
+    console = config.console
+    return console if console is not None and console.enable else None
+
+
+def console_export_mode(config: LoomConfig) -> ExportMode:
+    """Ce qui part vers la console : ``console.export.mode``, ou ce que dit ``capture.exports`` du client (décision D-5).
+
+    Args:
+        config: La configuration, avec une section ``console``.
+    """
+    console = config.console
+    if console is not None and console.export.mode is not None:
+        return console.export.mode
+    tenant = console.tenant if console is not None else DEFAULT_TENANT
+    return "push" if config.capture_for(tenant).exports == "content" else "on_demand"
+
+
+def console_warnings(config: LoomConfig, environ: Mapping[str, str] | None = None) -> list[str]:
+    """Ce qui empêche le canal de partir : la clé de l'instance absente. Refusé en profil ``prod`` (Q-5).
+
+    Args:
+        config: La configuration chargée.
+        environ: Environnement où lire la clé.
+    """
+    console = console_enabled(config)
+    if console is None or console.key_env is None:
+        return []
+    variables = os.environ if environ is None else environ
+    if variables.get(console.key_env, ""):
+        return []
+    return [f"Console : variable {console.key_env} absente — canal non monté"]
+
+
+def console_advice(config: LoomConfig) -> list[str]:
+    """Ce qui est recommandé sans être exigé : le mTLS en profil ``prod`` (décision D-9), le contenu poussé (``push``).
+
+    Des avertissements, en profil ``prod`` aussi.
+
+    Args:
+        config: La configuration chargée.
+    """
+    console = console_enabled(config)
+    if console is None:
+        return []
+    advice: list[str] = []
+    if config.strict and console.tls.client_cert is None:
+        advice.append("Console : pas de certificat client (console.tls.client_cert) — le mTLS est recommandé en production")
+    if console_export_mode(config) == "push":
+        advice.append("Console : export en mode push — le contenu des sessions est copié vers la console")
+    return advice
+
+
+def console_instance_id(config: LoomConfig) -> str:
+    """L'identifiant de l'instance : celui de ``console.instance_id``, ou celui créé au premier démarrage et gardé sous ``workpath``.
+
+    Plusieurs machines qui servent une même instance doivent le déclarer : chacune
+    créerait sinon le sien.
+
+    Args:
+        config: La configuration, avec une section ``console``.
+
+    Returns:
+        L'identifiant.
+    """
+    console = config.console
+    if console is not None and console.instance_id is not None:
+        return console.instance_id
+    path = (config.workpath or Path.cwd()) / CONSOLE_DIR / "instance_id"
+    try:
+        kept = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        kept = ""
+    if kept:
+        return kept
+    created = f"loom-{new_id()[-12:]}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{new_id()}")
+    temporary.write_text(created + "\n", encoding="utf-8")
+    temporary.replace(path)
+    return created
+
+
+def create_console(config: LoomConfig, hello: HelloPayload, environ: Mapping[str, str] | None = None) -> ConsoleChannel | None:
+    """Le canal vers la console, prêt à tourner ; ``None`` sans section activée ou sans clé.
+
+    La clé absente est dite par ``console_warnings`` (refusée en profil ``prod``) :
+    ici, elle laisse simplement le canal non monté.
+
+    Args:
+        config: La configuration chargée.
+        hello: Ce que loom présente à chaque connexion.
+        environ: Environnement où lire la clé et celle du certificat client.
+
+    Returns:
+        Le canal, pas encore lancé (``ConsoleChannel.run``).
+
+    Raises:
+        ConfigError: ``ws://`` hors profil ``dev`` ; extra ``console`` absent ;
+            fichiers TLS illisibles ou invalides.
+    """
+    console = console_enabled(config)
+    if console is None or console.url is None or console.key_env is None:
+        return None
+    refused = plain_text_refusal(console, config.profile)
+    if refused is not None:
+        raise ConfigError(refused)
+    variables = os.environ if environ is None else environ
+    key = variables.get(console.key_env, "")
+    if not key:
+        return None
+    try:
+        from loom_ia.console.channel import ChannelSettings, ConsoleChannel, tls_context
+    except ImportError as exc:
+        raise ConfigError("Console : la section 'console' demande websockets, qui n'est pas installé (installer l'extra : loom-ia[console])") from exc
+    try:
+        context = tls_context(console, variables)
+    except (OSError, ValueError, ssl.SSLError) as exc:
+        raise ConfigError(f"Console : TLS impossible à préparer ({exc})") from exc
+    return ConsoleChannel(ChannelSettings(url=console.url, key=key, hello=hello, ssl_context=context))
 
 
 def _unmounted(variable: str) -> str:

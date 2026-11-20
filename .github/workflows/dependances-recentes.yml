@@ -21,7 +21,7 @@ env:
   # plusieurs Go (version CUDA de PyPI) et n'est pas nécessaire : les essais de loom.memory
   # tournent sur des modèles factices, et ceux de bge_m3 sur des torch et transformers
   # factices. tests/unit/test_dependances.py vérifie que la liste suit pyproject.toml.
-  EXTRAS: "--extra anthropic --extra openai --extra mcp --extra http --extra sqlite --extra postgres --extra rabbitmq --extra redis --extra otel --extra crypto --extra office --extra pdf --extra sql --extra memory-web"
+  EXTRAS: "--extra anthropic --extra openai --extra mcp --extra http --extra sqlite --extra postgres --extra rabbitmq --extra redis --extra otel --extra crypto --extra office --extra pdf --extra sql --extra console --extra memory-web"
 
 defaults:
   run:

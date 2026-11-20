@@ -1,0 +1,53 @@
+{
+  "$id": "loom-console/v1/event.step.completed.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Fin d'une étape de la boucle d'un run, avec sa durée et son issue.\n\nCatégorie ``run``. Facettes : ``outcome`` et ``duration_ms``. Aucun\ncontenu. Statut ``ok`` si l'étape a réussi, ``error`` sinon (erreur ou\nannulation).\n\nAttributes:\n    type: ``step.completed``.\n    step_no: Numéro de l'étape, celui de son ``step.started``.\n    duration_ms: Durée de l'étape, en millisecondes.\n    events_emitted: Événements écrits pendant l'étape. Défaut : 0.\n    outcome: ``ok``, ``error`` ou ``cancelled``. Défaut : ``ok``.",
+  "properties": {
+    "duration_ms": {
+      "minimum": 0,
+      "title": "Duration Ms",
+      "type": "number"
+    },
+    "events_emitted": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Events Emitted",
+      "type": "integer"
+    },
+    "outcome": {
+      "default": "ok",
+      "enum": [
+        "ok",
+        "error",
+        "cancelled"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "step_no": {
+      "exclusiveMinimum": 0,
+      "title": "Step No",
+      "type": "integer"
+    },
+    "type": {
+      "const": "step.completed",
+      "default": "step.completed",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "step_no",
+    "duration_ms"
+  ],
+  "title": "StepCompleted",
+  "type": "object"
+}

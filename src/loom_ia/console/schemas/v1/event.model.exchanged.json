@@ -1,0 +1,178 @@
+{
+  "$id": "loom-console/v1/event.model.exchanged.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Une requête HTTP au fournisseur et sa réponse, brutes (point 31, phase 6.1b).\n\nÉcrit en opt-in (``telemetry.capture.raw_exchanges``), une fois par\ntentative d'appel — réussie ou non —, avant le ``model.retried`` ou le\n``model.responded`` qu'elle précède, dans le même span. Les corps sont du\ntexte tel qu'il a circulé, à trois retouches près, toutes dites :\n\n- les en-têtes d'authentification et les paramètres d'adresse qui portent\n  un secret sont remplacés par ``[retiré]`` avant toute écriture ;\n- les octets d'un fichier (image en base64) sont remplacés par leur taille\n  et leur empreinte : le journal ne porte pas d'octets de fichier ;\n- un corps plus long que ``capture.raw_max_bytes`` est coupé, et\n  ``*_truncated`` le dit ; ``*_bytes`` et ``*_sha256`` décrivent alors le\n  corps entier (après les deux premières retouches).\n\nNi les corps ni les en-têtes ne partent vers un collecteur, même en\ncapture ``content`` (``export_content``) : seulement le statut, la durée\net les tailles.\n\nCatégorie ``model``. Facettes : ``model_id``, ``provider``, ``attempt``,\n``status_code``, ``duration_ms``, ``request_bytes`` et\n``response_bytes``, plus ``model``, ``synthetic`` et ``judge`` quand ils\ndisent quelque chose. Contenu : en-têtes, corps et ``error``. Statut\n``warning`` sans réponse ou avec un statut HTTP de 400 ou plus, ``ok``\nsinon.\n\nAttributes:\n    type: ``model.exchanged``.\n    model_id: Nom du modèle chez le fournisseur (``claude-…``,\n        ``gpt-…``).\n    model: Identifiant du modèle dans la config (``models[].id``) :\n        ``model_id`` est un nom de fournisseur, que deux déclarations\n        peuvent partager. Absent des journaux antérieurs.\n    provider: Fournisseur qui a servi l'appel.\n    attempt: Tentative de l'appel à laquelle appartient cet échange.\n    method: Méthode HTTP (``POST``).\n    url: Adresse appelée, paramètres secrets retirés.\n    status_code: Statut HTTP ; absent si aucune réponse n'est arrivée\n        (réseau, délai), et ``error`` dit pourquoi.\n    duration_ms: Durée de l'échange, en millisecondes.\n    request_headers: En-têtes de la requête, authentification retirée.\n    request_body: Corps de la requête, retouché comme dit plus haut.\n    request_bytes: Taille du corps entier de la requête, en octets.\n    request_sha256: Empreinte SHA-256 du corps entier de la requête.\n    request_truncated: Vrai si ``request_body`` est coupé.\n    response_headers: En-têtes de la réponse.\n    response_body: Corps de la réponse, retouché comme dit plus haut.\n    response_bytes: Taille du corps entier de la réponse, en octets.\n    response_sha256: Empreinte SHA-256 du corps entier de la réponse.\n    response_truncated: Vrai si ``response_body`` est coupé.\n    error: Erreur de transport, quand il n'y a pas eu de réponse.\n    synthetic: Vrai pour l'échange d'un modèle simulé (``sdk: fake``),\n        qui n'a pas fait d'HTTP.\n    call_id: Appel d'outil servi par cet appel de modèle (rôle délégué).\n    judge: Juge qui a fait cet appel (point 21).",
+  "properties": {
+    "attempt": {
+      "exclusiveMinimum": 0,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "call_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Call Id"
+    },
+    "duration_ms": {
+      "default": 0.0,
+      "minimum": 0,
+      "title": "Duration Ms",
+      "type": "number"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "judge": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Judge"
+    },
+    "method": {
+      "title": "Method",
+      "type": "string"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "model_id": {
+      "title": "Model Id",
+      "type": "string"
+    },
+    "provider": {
+      "title": "Provider",
+      "type": "string"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "request_body": {
+      "default": "",
+      "title": "Request Body",
+      "type": "string"
+    },
+    "request_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Request Bytes",
+      "type": "integer"
+    },
+    "request_headers": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Request Headers",
+      "type": "object"
+    },
+    "request_sha256": {
+      "default": "",
+      "title": "Request Sha256",
+      "type": "string"
+    },
+    "request_truncated": {
+      "default": false,
+      "title": "Request Truncated",
+      "type": "boolean"
+    },
+    "response_body": {
+      "default": "",
+      "title": "Response Body",
+      "type": "string"
+    },
+    "response_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Response Bytes",
+      "type": "integer"
+    },
+    "response_headers": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Response Headers",
+      "type": "object"
+    },
+    "response_sha256": {
+      "default": "",
+      "title": "Response Sha256",
+      "type": "string"
+    },
+    "response_truncated": {
+      "default": false,
+      "title": "Response Truncated",
+      "type": "boolean"
+    },
+    "status_code": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Status Code"
+    },
+    "synthetic": {
+      "default": false,
+      "title": "Synthetic",
+      "type": "boolean"
+    },
+    "type": {
+      "const": "model.exchanged",
+      "default": "model.exchanged",
+      "title": "Type",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "model_id",
+    "provider",
+    "attempt",
+    "method",
+    "url"
+  ],
+  "title": "ModelExchanged",
+  "type": "object"
+}

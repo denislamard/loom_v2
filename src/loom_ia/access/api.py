@@ -62,10 +62,11 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Final, Literal, NamedTuple, Self
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Self
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
+from loom_ia import __version__
 from loom_ia.access import audit
 from loom_ia.access.audit import audited, audited_stream
 from loom_ia.access.authz import (
@@ -86,6 +87,7 @@ from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.models import Permission, TriggerSpec
 from loom_ia.config.references import Registry
+from loom_ia.console.contract import CONTRACTS, HelloPayload
 from loom_ia.core import tool_threads
 from loom_ia.core.closing import Closing
 from loom_ia.core.events import (
@@ -217,8 +219,14 @@ from loom_ia.runtime import (
     Agent,
     announce,
     build_agent,
+    console_advice,
+    console_enabled,
+    console_export_mode,
+    console_instance_id,
+    console_warnings,
     create_artifact_store,
     create_bus,
+    create_console,
     create_event_store,
     create_idempotency_store,
     create_keyring,
@@ -246,6 +254,9 @@ from loom_ia.tenancy import (
     UnknownTenant,
 )
 from loom_ia.usage import UsageReport, usage_report
+
+if TYPE_CHECKING:
+    from loom_ia.console.channel import ConsoleChannel
 
 logger = logging.getLogger(__name__)
 
@@ -1635,6 +1646,10 @@ class Loom:
         self._exporter, said = create_run_exporter(config, self._store, environ)
         announce(config, said)
         self._exporting = ExitStack()
+        # Canal vers la console d'administration (docs/analyse-exortateur-loom.md) : ouvert
+        # par ``start_console`` — ``loom serve`` l'appelle, une librairie le fait elle-même.
+        self._console: ConsoleChannel | None = None
+        self._console_task: asyncio.Task[None] | None = None
         if self._exporter is not None:
             self._exporting.enter_context(self._store.listen(self._exporter, own=True))
         # Profil prod : ce qui avertit ailleurs refuse ici (fonction M4, jalon J5.5a).
@@ -1750,6 +1765,56 @@ class Loom:
     def exporter(self) -> RunExporter | None:
         """Export des runs terminés ici vers les collecteurs ; ``None`` sans collecteur monté."""
         return self._exporter
+
+    @property
+    def console(self) -> ConsoleChannel | None:
+        """Le canal vers la console, une fois ouvert par ``start_console`` ; ``None`` sinon."""
+        return self._console
+
+    async def start_console(self) -> bool:
+        """Ouvre le canal vers la console d'administration, si la config en déclare un actif (``console.enable: true``).
+
+        ``loom serve`` l'appelle à son démarrage ; une application qui se sert
+        de loom en librairie l'appelle elle-même, comme elle lit son ``.env``
+        (décision D-6) : ``Loom(config)`` seul n'ouvre aucune connexion. Le
+        canal tourne dans sa propre tâche, se reconnecte seul, et n'arrête ni
+        ne ralentit jamais un run ; ``aclose`` le ferme (``bye``).
+
+        La clé de l'instance absente : un avertissement, et rien n'est ouvert ;
+        en profil ``prod``, ``ConfigError`` (Q-5).
+
+        Returns:
+            Vrai si le canal est lancé (ou l'était déjà) ; faux sans section
+            active ou sans clé.
+
+        Raises:
+            ConfigError: Clé absente en profil ``prod`` ; ``ws://`` hors profil
+                ``dev`` ; extra ``console`` absent ; TLS impossible à préparer.
+        """
+        if self._console is not None:
+            return True
+        console = console_enabled(self._config)
+        if console is None:
+            return False
+        announce(self._config, console_warnings(self._config, self._environ))
+        announce(self._config, console_advice(self._config), refuse=False)
+        tenant = self._tenants.get(console.tenant)
+        hello = HelloPayload(
+            instance_id=console_instance_id(self._config),
+            worker_id=self._worker_id,
+            loom_version=__version__,
+            contracts=CONTRACTS,
+            tenant=console.tenant,
+            agents=tuple(spec.name for spec in self.agents if tenant.allows(spec.name)),
+            commands=console.commands.user is not None,
+            export_mode=console_export_mode(self._config),
+        )
+        channel = create_console(self._config, hello, self._environ)
+        if channel is None:
+            return False
+        self._console = channel
+        self._console_task = asyncio.create_task(channel.run(), name="loom-console")
+        return True
 
     @property
     def artifacts(self) -> ArtifactStore:
@@ -3006,6 +3071,16 @@ class Loom:
         if self._exporter is not None:
             with closing:
                 await self._exporter.aclose(self._config.execution.shutdown_timeout)
+        # Le canal vers la console : ``bye``, fermeture, fin de sa tâche.
+        console, self._console = self._console, None
+        if console is not None:
+            with closing:
+                await console.aclose()
+        task, self._console_task = self._console_task, None
+        if task is not None:
+            with closing:
+                async with asyncio.timeout(self._config.execution.shutdown_timeout):
+                    await task
         for built in self._built.values():
             with closing:
                 await built.aclose()

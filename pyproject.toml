@@ -96,6 +96,10 @@ otel = [
     "opentelemetry-exporter-otlp>=1.44.0,<2",
     "opentelemetry-sdk>=1.44.0,<2",
 ]
+# console/ (canal vers la console d'administration, docs/analyse-exortateur-loom.md) : la
+# connexion WSS sortante de loom, et l'écouteur `loom console listen`. Sans cet extra, loom ne
+# contient aucun code du canal qui s'exécute ; une section `console` activée dit lequel installer.
+console = ["websockets>=17.4,<18"]
 # tools_builtin/memory (outil fourni loom.memory) : BGE-M3 et son reranker sur transformers,
 # CPU ou GPU. Importés au premier calcul (ou au préchargement), jamais au montage ; sans cet
 # extra, l'outil tourne avec ses modèles factices (models.kind: fake). Le torch de PyPI est
@@ -107,7 +111,7 @@ memory = ["torch>=2.9.0,<3", "transformers>=4.56.0,<6"]
 memory-web = ["beautifulsoup4>=4.13.0,<5", "markdownify>=1.1.0,<2"]
 # Ni memory ni memory-web : torch pèse plusieurs Go, et la mémoire se choisit.
 all = [
-    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto,office,pdf,sql]",
+    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto,office,pdf,sql,console]",
 ]
 
 [project.urls]

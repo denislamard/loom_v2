@@ -1,0 +1,42 @@
+{
+  "$id": "loom-console/v1/event.session.trimmed.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Tours les plus anciens retirés faute de résumé (filet de sécurité, point 23).\n\nÉcrit quand l'historique dépasse la fenêtre du modèle et que la\ncompaction n'a pas pu résumer : l'historique repart après ``up_to_seq``,\nsans rien à la place.\n\nCatégorie ``session``. Facettes : ``up_to_seq`` et ``dropped``. Aucun\ncontenu. Statut ``warning``.\n\nAttributes:\n    type: ``session.trimmed``.\n    up_to_seq: Dernier ``seq`` retiré de l'historique.\n    dropped: Messages d'historique retirés.\n    reason: Pourquoi le résumé n'a pas pu se faire.",
+  "properties": {
+    "dropped": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Dropped",
+      "type": "integer"
+    },
+    "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "type": {
+      "const": "session.trimmed",
+      "default": "session.trimmed",
+      "title": "Type",
+      "type": "string"
+    },
+    "up_to_seq": {
+      "minimum": 0,
+      "title": "Up To Seq",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "up_to_seq"
+  ],
+  "title": "SessionTrimmed",
+  "type": "object"
+}

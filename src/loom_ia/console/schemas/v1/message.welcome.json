@@ -1,0 +1,18 @@
+{
+  "$id": "loom-console/v1/message.welcome.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``welcome`` (console → loom) : la console accepte, avec ce contrat.\n\nAttributes:\n    contract: Contrat retenu, parmi ceux du ``hello``.",
+  "properties": {
+    "contract": {
+      "exclusiveMinimum": 0,
+      "title": "Contract",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "contract"
+  ],
+  "title": "WelcomePayload",
+  "type": "object"
+}

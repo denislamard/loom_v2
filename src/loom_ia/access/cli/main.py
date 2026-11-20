@@ -21,6 +21,7 @@
     loom storage sql               SQL du stockage Postgres déclaré
     loom memory export <agent> F   entretient la mémoire d'un agent (loom.memory) :
                                    export, import, reindex, eval
+    loom console listen            fausse console : affiche ce que loom lui envoie
     loom schema                    JSON Schema du fichier de configuration
 
 ``--config`` désigne l'amorce (``./loom-boot.yaml`` par défaut), qui dit où
@@ -38,6 +39,7 @@ quand une réponse était attendue.
 
 import argparse
 import asyncio
+import importlib.util
 import json
 import math
 import os
@@ -76,6 +78,7 @@ from loom_ia.access.api import (
     unpiloted,
 )
 from loom_ia.access.authz import AccessDenied, Actor
+from loom_ia.access.cli import console as console_cli
 from loom_ia.access.cli import memory as memory_cli
 from loom_ia.access.evals import evaluate
 from loom_ia.access.progress import SKIP_REASONS, Progress, describe_compaction, notes
@@ -156,7 +159,11 @@ from loom_ia.replay import (
     render_eval,
 )
 from loom_ia.runtime import (
+    CONSOLE_DIR,
     apply_logging,
+    console_advice,
+    console_export_mode,
+    console_warnings,
     create_keyring,
     declared_skills,
     encryption_warnings,
@@ -304,8 +311,8 @@ def build_parser() -> argparse.ArgumentParser:
     ``inspect``, ``eval``, ``approve``, ``reject``, ``answer``, ``serve``,
     ``mcp``, ``keys create``, ``report``, ``sessions`` (``list``, ``show``,
     ``files``, ``export``, ``delete``), ``worker``, ``retention``,
-    ``storage sql``, ``memory`` (``export``, ``import``, ``reindex``, ``eval``)
-    et ``schema``. Les commandes qui agissent prennent ``--user`` (à défaut
+    ``storage sql``, ``memory`` (``export``, ``import``, ``reindex``, ``eval``),
+    ``console listen`` et ``schema``. Les commandes qui agissent prennent ``--user`` (à défaut
     ``LOOM_USER``), celles qui visent un client ``--tenant``. Les options
     globales (``--config``, ``--profile``, ``--env-file``, ``--no-env-file``)
     se lisent avant comme après la sous-commande, où elles l'emportent.
@@ -680,6 +687,9 @@ def build_parser() -> argparse.ArgumentParser:
     memory = commands.add_parser("memory", help="entretient la mémoire d'un agent (loom.memory) : export, import…")
     memory_cli.add_actions(memory, tenanted, cmd_memory)
 
+    console = commands.add_parser("console", help="canal vers la console d'administration : listen (fausse console)")
+    console_cli.add_actions(console, cmd_console)
+
     schema = commands.add_parser("schema", help="JSON Schema du fichier de configuration")
     schema.set_defaults(handler=cmd_schema)
     # À l'essai de la fonction M4 du 23/10, ``loom validate --profile prod`` était refusé : les
@@ -765,7 +775,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
     """``loom validate`` : vérifie la config, monte chaque agent pour chaque client, puis imprime le rapport.
 
     Le verdict passe en tête, puis les sections CONFIGURATION, EXTENSIONS,
-    EXÉCUTION, ACCÈS et CLIENTS (ou AGENTS), et les avertissements.
+    EXÉCUTION, ACCÈS, CONSOLE (si la config en déclare une) et CLIENTS (ou
+    AGENTS), et les avertissements.
     ``--no-keys`` monte les agents sans créer leurs clients de modèle : une clé
     d'API ou un SDK absent ne fait pas échouer. Si un montage échoue, le rapport
     partiel s'imprime avec un verdict d'échec, avant l'erreur.
@@ -799,6 +810,7 @@ async def _validate(args: argparse.Namespace, *, root: Path) -> int:
     _extensions(report, config, registry)
     _execution(report, config, printed)
     _access(report, config)
+    _console_section(report, config)
     try:
         await _mount(report, config, registry, no_keys=args.no_keys)
     except BaseException:
@@ -1160,6 +1172,77 @@ def _access(report: _Report, config: LoomConfig) -> None:
             doors.append(f"  {', '.join(details)}")
         first, *more = _packed([trigger.name for trigger in config.triggers], _LISTED)
         section.add("Portes", first, [*more, *doors])
+
+
+def _console_section(report: _Report, config: LoomConfig) -> None:
+    """Section CONSOLE : le canal vers la console d'administration (docs/analyse-exortateur-loom.md).
+
+    Absente sans section ``console`` ; « désactivée » en ``enable: false``. Sinon :
+    adresse, client, instance, clé (sa présence, jamais sa valeur), TLS,
+    commandes et rôles endossables, mode d'export et file, fichiers servis.
+    """
+    console = config.console
+    if console is None:
+        return
+    section = report.section("CONSOLE")
+    if not console.enable:
+        section.add("État", "désactivée (console.enable: false)")
+        return
+    section.add("Adresse", str(console.url))
+    section.add("Client", console.tenant)
+    if console.instance_id is not None:
+        section.add("Instance", console.instance_id)
+    else:
+        kept = (config.workpath or Path.cwd()) / CONSOLE_DIR / "instance_id"
+        section.add("Instance", kept.read_text(encoding="utf-8").strip() if kept.is_file() else f"créée au premier démarrage ({report.shown(kept)})")
+    present = bool(os.environ.get(str(console.key_env), ""))
+    section.add("Clé", f"{console.key_env} : " + ("présente" if present else "absente"))
+    for warning in console_warnings(config):
+        report.warn_said(warning)
+    tls = console.tls
+    if console.scheme == "ws":
+        section.add("TLS", "aucun : ws:// vers la boucle locale (profil dev)")
+    else:
+        details = ["certificat de la console vérifié, TLS 1.2 au moins"]
+        if tls.ca_file is not None:
+            details.append(f"autorité : {report.shown(tls.ca_file)}")
+        details.append(f"mTLS : {report.shown(tls.client_cert)} (clé : {tls.client_key_env})" if tls.client_cert is not None else "mTLS : non")
+        first, *more = details
+        section.add("TLS", first, more)
+    gateway = console.commands.user
+    if gateway is None:
+        section.add("Commandes", "refusées (console.commands.user absent)")
+    else:
+        endorsable = sorted({name for role in config.security.roles_of(gateway) if "act_as" in role.permissions for name in role.act_as_roles})
+        section.add(
+            "Commandes",
+            f"via {gateway}, rôles endossables : {_listed(endorsable)}",
+            [f"{console.commands.rate} par minute au plus, échéance à {console.commands.max_ttl} s au plus"],
+        )
+    export = console.export
+    mode = console_export_mode(config)
+    origin = "" if export.mode is not None else " (hérité de capture.exports)"
+    lines = [
+        f"file de {export.buffer_size} événements, débordement : {export.on_overflow}",
+        f"lots de {export.batch_size} au plus, toutes les {export.batch_delay:g} s",
+    ]
+    if export.exclude_events:
+        lines.insert(0, f"exclus : {_listed(export.exclude_events)}")
+    section.add("Export", f"{mode}{origin}", lines)
+    files = console.files
+    section.add("Fichiers", f"{_octets(files.max_size)} au plus, morceaux de {_octets(files.chunk_size)}, aperçu en {files.preview_timeout:g} s au plus")
+    if importlib.util.find_spec("websockets") is None:
+        report.warn("Console", MISSING_EXTRA.format(what="le canal", extra="console"))
+    for warning in console_advice(config):
+        report.warn_said(warning)
+
+
+def _octets(size: int) -> str:
+    """Une taille lisible : en Mo ou en Ko quand elle tombe juste, en octets sinon."""
+    for unit, scale in (("Mo", 1024 * 1024), ("Ko", 1024)):
+        if size >= scale and size % scale == 0:
+            return f"{size // scale} {unit}"
+    return f"{size} octets"
 
 
 async def _mount(report: _Report, config: LoomConfig, registry: Registry, *, no_keys: bool) -> None:
@@ -3292,6 +3375,11 @@ def cmd_storage_sql(args: argparse.Namespace) -> int:
 def cmd_memory(args: argparse.Namespace) -> int:
     """``loom memory`` : la base de l'agent, hors de tout run (``access/cli/memory.py``)."""
     return memory_cli.run(_config(args), args)
+
+
+def cmd_console(args: argparse.Namespace) -> int:
+    """``loom console listen`` : une fausse console qui affiche ce que loom envoie (``access/cli/console.py``)."""
+    return console_cli.run(args)
 
 
 def cmd_schema(args: argparse.Namespace) -> int:

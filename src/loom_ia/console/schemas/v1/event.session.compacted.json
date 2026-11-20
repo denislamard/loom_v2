@@ -1,0 +1,74 @@
+{
+  "$defs": {
+    "Fidelity": {
+      "enum": [
+        "ok",
+        "warning",
+        "skipped"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v1/event.session.compacted.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Segment ancien de la session remplacé par un résumé (point 23, fonction F3).\n\nLa compaction ne réécrit rien : elle ajoute ce marqueur, et l'historique\nrepart du résumé pour tout ce qui précède ``up_to_seq``. Les ``kept``\nderniers tours, eux, restent intacts et sont rejoués. Le résumé est\nproduit par un run interne (``kind: compaction``) avec le modèle de\n``sessions.compaction``.\n\nCatégorie ``session``. Facettes : ``up_to_seq``, ``kept``,\n``tokens_before``, ``tokens_after`` et ``fidelity``. Contenu :\n``summary``. Statut ``warning`` si le contrôle de fidélité a trouvé des\nrepères manquants, ``ok`` sinon.\n\nAttributes:\n    type: ``session.compacted``.\n    up_to_seq: Dernier ``seq`` remplacé par le résumé.\n    summary: Le résumé, non vide.\n    kept: Tours laissés intacts après le résumé (``keep_last``).\n    tokens_before: Taille estimée de l'historique avant la compaction.\n    tokens_after: Taille estimée après.\n    cost_usd: Coût du résumé, en dollars.\n    fidelity: Contrôle déterministe des repères du segment (références\n        comme ``D-2026-042``, adresses e-mail, nombres d'au moins trois\n        chiffres ; ``guards/fidelity.py``) : ``ok``, ``warning`` s'il en\n        manque encore dans le résumé après une nouvelle tentative, ou\n        ``skipped`` si le contrôle n'a pas été fait.",
+  "properties": {
+    "cost_usd": {
+      "default": 0.0,
+      "minimum": 0,
+      "title": "Cost Usd",
+      "type": "number"
+    },
+    "fidelity": {
+      "$ref": "#/$defs/Fidelity",
+      "default": "ok"
+    },
+    "kept": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Kept",
+      "type": "integer"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "tokens_after": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Tokens After",
+      "type": "integer"
+    },
+    "tokens_before": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Tokens Before",
+      "type": "integer"
+    },
+    "type": {
+      "const": "session.compacted",
+      "default": "session.compacted",
+      "title": "Type",
+      "type": "string"
+    },
+    "up_to_seq": {
+      "minimum": 0,
+      "title": "Up To Seq",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "up_to_seq"
+  ],
+  "title": "SessionCompacted",
+  "type": "object"
+}
