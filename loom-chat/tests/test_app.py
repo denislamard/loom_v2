@@ -13,6 +13,7 @@ import pytest
 from loom_ia.core.model.question import Question, QuestionReply
 from textual.app import App
 from textual.pilot import Pilot
+from textual.screen import Screen
 from textual.widgets import Input, RadioButton, SelectionList
 
 from loom_chat import __main__ as cli
@@ -55,13 +56,18 @@ def _view(app: ChatApp) -> View:
     return view
 
 
+def _shown(app: ChatApp, modal: type[Screen[Any]], selector: str) -> bool:
+    """La fenêtre est à l'écran et ses boutons sont montés : poussée, elle n'a pas encore composé ses enfants."""
+    return isinstance(app.screen, modal) and bool(app.screen.query(selector))
+
+
 async def _to_deferred_question(app: ChatApp, pilot: Pilot[Any]) -> View:
     """Envoie « bonjour », refuse l'approbation, puis remet la question à plus tard."""
     await pilot.press(*"bonjour")
     await pilot.press("enter")
-    await _until(pilot, lambda: isinstance(app.screen, ApprovalModal))
+    await _until(pilot, lambda: _shown(app, ApprovalModal, "#reject"))
     await pilot.click("#reject")
-    await _until(pilot, lambda: isinstance(app.screen, QuestionModal))
+    await _until(pilot, lambda: _shown(app, QuestionModal, "#send"))
     await pilot.press("escape")
     await _until(pilot, lambda: bool(_view(app).questions) and not _view(app).busy)
     return _view(app)
@@ -77,7 +83,7 @@ async def test_page_runs_approval_then_question(tmp_path: Path) -> None:
         # Un texte saisi pendant la question ouvre la fenêtre, pré-rempli : il ne répond jamais en silence.
         await pilot.press(*"court")
         await pilot.press("enter")
-        await _until(pilot, lambda: isinstance(app.screen, QuestionModal))
+        await _until(pilot, lambda: _shown(app, QuestionModal, "#send"))
         assert app.screen.query_one("#free", Input).value == "court"
         # Entrée dans la réponse libre envoie la réponse ; le run repris va au bout, et sa réponse s'affiche.
         await pilot.press("enter")
@@ -93,7 +99,7 @@ async def test_reopened_session_shows_what_was_shown_live(tmp_path: Path) -> Non
     async with app.run_test(size=(140, 45)) as pilot:
         view = await _to_deferred_question(app, pilot)
         await pilot.press("enter")
-        await _until(pilot, lambda: isinstance(app.screen, QuestionModal))
+        await _until(pilot, lambda: _shown(app, QuestionModal, "#send"))
         app.screen.query(RadioButton).first().value = True
         await pilot.click("#send")
         await _until(pilot, lambda: ("loom", FINAL) in view.lines and not view.busy)
@@ -153,7 +159,7 @@ async def test_failed_deferred_answer_keeps_the_question_and_says_why(tmp_path: 
 
         monkeypatch.setattr(app.engine, "answer_later", broken)
         await pilot.press("enter")
-        await _until(pilot, lambda: isinstance(app.screen, QuestionModal))
+        await _until(pilot, lambda: _shown(app, QuestionModal, "#send"))
         app.screen.query(RadioButton).first().value = True
         await pilot.click("#send")
         await _until(pilot, lambda: "erreur" in _roles(view))
@@ -169,7 +175,7 @@ async def test_question_answered_elsewhere_is_not_lost(tmp_path: Path) -> None:
         ask = next(iter(view.questions.values()))
         await app.engine.answer_later(ask.run_id, ask.call_id, QuestionReply(text="ailleurs", by="local"))
         await pilot.press("enter")
-        await _until(pilot, lambda: isinstance(app.screen, QuestionModal))
+        await _until(pilot, lambda: _shown(app, QuestionModal, "#send"))
         app.screen.query(RadioButton).first().value = True
         await pilot.click("#send")
         await _until(pilot, lambda: "système" in _roles(view))
