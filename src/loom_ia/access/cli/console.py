@@ -16,6 +16,13 @@ la console. Dans la config de l'instance à observer, en profil ``dev`` :
 
 ``--certfile`` et ``--keyfile`` la servent en ``wss://`` (certificat du
 serveur, en PEM), pour éprouver le TLS. Elle demande l'extra ``console``.
+
+Une ligne JSON tapée pendant l'écoute part comme une commande vers chaque
+instance connectée ; son identifiant et son échéance (une minute) sont posés
+pour elle :
+
+    {"name": "run.cancel", "as_user": "dev", "args": {"run_id": "01a1…"}}
+    {"name": "events.query", "as_user": "dev", "args": {"session_id": "s1", "limit": 5}}
 """
 
 import argparse
@@ -25,14 +32,17 @@ import os
 import ssl
 import sys
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
+
+from loom_ia.console.contract import CommandPayload
+from loom_ia.core.model import new_id
 
 if TYPE_CHECKING:
-    from loom_ia.testing.console_server import Received
+    from loom_ia.testing.console_server import FakeConsole, Received
 
 OK: Final = 0
 """Code de sortie : l'écoute s'est arrêtée normalement."""
@@ -100,9 +110,12 @@ def run(args: argparse.Namespace, environ: Mapping[str, str] | None = None) -> i
         except OSError as error:
             raise _NotListening(str(error)) from None
         print(f"En écoute sur {fake.url} — clé attendue : {args.key_env} · Ctrl-C pour arrêter", flush=True)
+        print('Commande : une ligne JSON, par exemple {"name": "run.cancel", "as_user": "dev", "args": {"run_id": "…"}}', flush=True)
+        typing = asyncio.create_task(_typed_commands(fake))
         try:
             await fake.serve_forever()
         finally:
+            typing.cancel()
             await fake.aclose()
 
     try:
@@ -113,6 +126,42 @@ def run(args: argparse.Namespace, environ: Mapping[str, str] | None = None) -> i
     except KeyboardInterrupt:
         print("\nÉcoute arrêtée.", flush=True)
     return OK
+
+
+async def _typed_commands(fake: FakeConsole) -> None:
+    """Chaque ligne JSON de l'entrée standard part comme une commande ; une entrée fermée arrête la lecture."""
+    while True:
+        line = await asyncio.to_thread(sys.stdin.readline)
+        if not line:
+            return
+        if not line.strip():
+            continue
+        try:
+            command = command_of(line)
+        except ValueError as error:
+            print(f"commande refusée par l'écouteur : {error}", flush=True)
+            continue
+        await fake.send(command)
+        print(f"{datetime.now().strftime('%H:%M:%S')}  {'commande':<{_KIND}} {command.command_id} {command.name} au nom de {command.as_user}", flush=True)
+
+
+def command_of(line: str) -> CommandPayload:
+    """Une commande tapée : ``name``, ``as_user`` et ``args`` ; l'identifiant et l'échéance (une minute) sont posés ici.
+
+    Raises:
+        ValueError: JSON invalide, ou commande non conforme au contrat.
+    """
+    try:
+        typed = json.loads(line)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"JSON invalide ({error.msg})") from None
+    if not isinstance(typed, dict):
+        raise ValueError("un objet JSON est attendu")
+    fields = cast("dict[str, JsonValue]", typed)
+    try:
+        return CommandPayload.model_validate({"command_id": new_id(), "expires_at": datetime.now(UTC) + timedelta(minutes=1), **fields})
+    except ValidationError as error:
+        raise ValueError("; ".join(f"{'.'.join(map(str, item['loc']))} : {item['msg']}" for item in error.errors())) from None
 
 
 class _NotListening(Exception):

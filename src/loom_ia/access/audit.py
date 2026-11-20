@@ -61,8 +61,8 @@ from loom_ia.core import AUDIT, TOLD
 AUDIT_LOGGER: Final = "loom_ia.access.audit"
 """Logger des refus : à router à part (fichier, collecteur) pour en garder la trace."""
 
-type Access = Literal["sdk", "rest", "mcp", "cli"]
-"""Accès par lequel une requête est arrivée : ``sdk``, ``rest``, ``mcp`` ou ``cli``."""
+type Access = Literal["sdk", "rest", "mcp", "cli", "console"]
+"""Accès par lequel une requête est arrivée : ``sdk``, ``rest``, ``mcp``, ``cli`` ou ``console`` (commande de la console d'administration)."""
 
 logger = logging.getLogger(AUDIT_LOGGER)
 

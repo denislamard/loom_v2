@@ -131,8 +131,8 @@ Taille maximale d'une trame : `max_size` de `websockets`, borné dans la config 
 | `question.answer` | `run_id`, `session_id` ?, `call_id` ?, `answers` ou `text` | `Loom.answer` |
 | `approval.decide` | `run_id`, `session_id` ?, `call_id` ?, `decision` (`approve` / `reject`), `reason` ?, `arguments` ? | `Loom.approve` / `Loom.reject` |
 | `run.cancel` | `run_id`, `session_id` ? | `Loom.cancel` |
-| `events.query` | critères d'`EventQuery` : `session_id` ?, `run_id` ?, `types` ?, `categories` ?, `status` ?, `after` ?, `limit` ? (client imposé : `console.tenant`) | `Loom.query`, comme `GET /v1/events` ; masqué selon `read_content` de l'utilisateur |
-| `approval.get` | `run_id`, `session_id` ?, `call_id` ? | nouvelle : détail des demandes en attente (§ 6.7) |
+| `events.query` | critères d'`EventQuery` : `session_id` ?, `run_id` ?, `types` ?, `categories` ?, `status` ?, `agent` ?, `tool_name` ?, `since` ?, `until` ?, `after` ?, `limit` ? (1 000 au plus, `QUERY_MAX` ; client imposé : `console.tenant`) | `Loom.query`, comme `GET /v1/events` ; masqué selon `read_content` de l'utilisateur |
+| `approval.get` | `run_id`, `session_id` ?, `call_id` ? | `Loom.session` (`pending_approvals` du run et de ses sous-runs), comme `GET /v1/sessions/{id}` ; détail des demandes en attente (§ 6.7) |
 | `file.get` | `session_id`, `file` | `Loom.session_file` (cas 1) |
 | `approval.file` | `run_id`, `call_id`, `path` | nouvelle (cas 2) |
 | `approval.preview` | `run_id`, `call_id` | nouvelle (cas 3) |
@@ -141,7 +141,9 @@ Taille maximale d'une trame : `max_size` de `websockets`, borné dans la config 
 
 Pas de pièce jointe dans `run.start` (D-13) : la console administre, elle ne dépose pas de documents.
 
-`file.data` (montant) : `{command_id, part, last, data}` — `data` en base64, morceaux de `files.chunk_size` ; le premier morceau porte aussi `name`, `media_type`, `size` et `sha256`. Le `command.result` (`accepted`) part avant le premier morceau, ou `refused` sans aucun morceau.
+`file.data` (montant) : `{command_id, part, last, data}` — `data` en base64, morceaux de `files.chunk_size` ; le premier morceau porte aussi `name`, `media_type`, `size` et `sha256`. Le `command.result` (`accepted`) part avant le premier morceau, ou `refused` sans aucun morceau. Son `result` annonce le fichier : `{name, media_type, size, sha256, parts}`.
+
+Arguments : un champ inconnu ou manquant donne `refused` (`invalid_args`). Les lectures (`events.query`, `approval.get`, `file.get`) rejouées se refont : rien n'est gardé pour elles.
 
 ### 5.5 Format des charges
 
@@ -218,7 +220,9 @@ Pendant le rattrapage, le direct s'accumule dans la file ; un événement déjà
 - Exécution par les méthodes de la § 3.4. `AccessDenied`, `UnknownQuestion`, `ApprovalStale`… deviennent `refused` avec leur motif ; toute autre exception devient `error`, est journalisée et contenue.
 - Débit : borné par `commands.rate` (commandes par minute) ; au-delà, `refused` (`rate_limited`).
 - Un `run.start` rejoué avec le même `run_id` (autre process après reconnexion) est refusé par le journal : D-10 tient même sans la table en mémoire.
-- Les refus sont **audités** comme ceux du REST (`access/audit.py`), avec `via` = la passerelle.
+- Les refus sont **audités** comme ceux du REST (`access/audit.py`), avec `access: console` et `via` = la passerelle.
+- Motifs d'un `refused` : un code court, puis l'explication — `commands_disabled`, `rate_limited`, `expired`, `ttl_too_long`, `invalid_args`, `nothing_pending` (aucune demande en attente pour `approval.get`), `too_large` (au-delà de `files.max_size`), `not_available` (`approval.file`, `approval.preview` : lot 4) ; sinon le nom de l'exception de `Loom` (`AccessDenied : …`, `UnknownRun : …`, `RunExists : …`).
+- Chaque commande tourne dans sa propre tâche : une commande longue ne retient ni la réception ni l'export.
 
 ### 6.7 Fichiers et détail des approbations
 
@@ -375,7 +379,7 @@ Quatre lots, chacun testable avec l'écouteur (`loom console listen`) et livrabl
 |---|---|---|
 | 1 — Socle et connexion | Extra `console` ; `ConsoleConfig` (`enable`, toutes les clés, contrôles, règles du profil `prod`) ; `contract.py`, `translate.py`, schémas `v1` générés et figés par la CI ; `channel.py` (TLS, CA, mTLS, clé, `hello` / `welcome`, refus de contrat, reconnexion, `bye`) ; `FakeConsole` et `loom console listen` (affichage, `--raw`) ; section `CONSOLE` de `loom validate` ; ouverture du canal (connexion seule) par `Loom.start_console()` et `loom serve`, fermeture par `aclose` (`bye`) | Config valide et refusée, `enable: false` ; traduction et masquage ; schémas ; faux serveur : connexion, clé refusée, contrat refusé, `ws://` hors `localhost` refusé, reconnexion ; `loom validate` en `dev` et `prod` |
 | 2 — Export des événements | `cursor.py` (mémoire, JSONL, SQLite, Postgres : table, migration, droits, `loom storage sql`) ; `exporter.py` (abonnement, file bornée, lots, `ack`, rattrapage, premier démarrage, saturation sans perte) ; `session.deleted` ; montage dans `Loom` et `loom serve`, `start_console()`, `--reload`, arrêt propre ; retard d'acquittement dans `loom validate` | Coupure au milieu d'un lot, reprise sans perte ni doublon, pour chaque stockage ; console injoignable au démarrage : les runs tournent ; saturation en mémoire et en durable ; deux process sur un même curseur ; effacement d'une session ; rechargement pendant un export ; mesure du coût sur un run bavard |
-| 3 — Commandes et lecture | `commands.py` (contrôles, endossement `act_as`, expiration, idempotence, débit, audit) ; `run.start`, `question.answer`, `approval.decide`, `run.cancel`, `events.query`, `approval.get`, `file.get` et le transport `file.data` ; méthodes de `Loom` et routes REST du détail ; `listen` sait envoyer des commandes | Commande valide, expirée, rejouée, hors droits, inconnue ; deux réponses à une question ; `run.start` rejoué ; lecture sans `read_content` masquée ; fichier d'une autre session refusé ; fichier de 25 Mo sans bloquer les événements |
+| 3 — Commandes et lecture | `commands.py` (contrôles, endossement `act_as`, expiration, idempotence, débit, audit) ; `run.start`, `question.answer`, `approval.decide`, `run.cancel`, `events.query`, `approval.get`, `file.get` et le transport `file.data` ; le détail sert `Loom.session`, déjà lu par `GET /v1/sessions/{id}` (la route dédiée, avec les fichiers cités, vient au lot 4) ; `listen` sait envoyer des commandes (une ligne JSON tapée : `name`, `as_user`, `args` ; identifiant et échéance d'une minute posés par l'écouteur) | Commande valide, expirée, rejouée, hors droits, inconnue ; deux réponses à une question ; `run.start` rejoué ; lecture sans `read_content` masquée ; fichier d'une autre session refusé ; fichier de 25 Mo sans bloquer les événements |
 | 4 — Fichiers des approbations et finitions | Protocoles `referenced_files` et `preview` dans `local_files`, `DocumentTool` (Word, PDF) et `excel` ; `approval.file` et `approval.preview`, avec leurs méthodes et routes REST ; `examples/console/` (simulé, sans clé d'API) ; CHANGELOG | Chemin non cité refusé ; lien qui sort du dossier refusé ; outil sans les protocoles ; aperçu Word, PDF et Excel identique au fichier écrit après approbation (hors horodatages), rien d'écrit, délai dépassé ; aperçu qui lit une image d'un dossier en approbation (autorisé, Q-8) ; exemple exécuté ; aucune clé dans les logs ni les sorties |
 
 Les lots 1 et 2 suffisent à brancher une console bêta en lecture ; l'écouteur montre la poignée de main dès le lot 1, les événements dès le lot 2.

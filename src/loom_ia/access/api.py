@@ -87,7 +87,7 @@ from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.models import Permission, TriggerSpec
 from loom_ia.config.references import Registry
-from loom_ia.console.contract import CONTRACTS, AckPayload, CommandPayload, CommandResultPayload, Envelope, HelloPayload
+from loom_ia.console.contract import CONTRACTS, AckPayload, CommandPayload, Envelope, HelloPayload
 from loom_ia.console.contract import Payload as ConsolePayload
 from loom_ia.core import tool_threads
 from loom_ia.core.closing import Closing
@@ -259,6 +259,7 @@ from loom_ia.usage import UsageReport, usage_report
 
 if TYPE_CHECKING:
     from loom_ia.console.channel import ConsoleChannel
+    from loom_ia.console.commands import CommandExecutor
     from loom_ia.console.cursor import ConsoleCursor
     from loom_ia.console.exporter import ConsoleExporter
 
@@ -1654,6 +1655,7 @@ class Loom:
         # par ``start_console`` — ``loom serve`` l'appelle, une librairie le fait elle-même.
         self._console: ConsoleChannel | None = None
         self._console_exporter: ConsoleExporter | None = None
+        self._console_commands: CommandExecutor | None = None
         self._console_cursor: ConsoleCursor | None = None
         self._console_listening = ExitStack()
         self._console_grace = config.execution.shutdown_timeout
@@ -1836,6 +1838,7 @@ class Loom:
         )
         if channel is None:
             return False
+        from loom_ia.console.commands import CommandExecutor
         from loom_ia.console.exporter import ConsoleExporter
 
         cursor = create_console_cursor(self._config)
@@ -1852,6 +1855,7 @@ class Loom:
             batch_delay=console.export.batch_delay,
         )
         self._console, self._console_exporter, self._console_cursor = channel, exporter, cursor
+        self._console_commands = CommandExecutor(self, channel, console)
         self._console_grace = self._config.execution.shutdown_timeout if grace is None else grace
         # Chaque process exporte ce qu'il écrit (``own``), comme l'export OpenTelemetry.
         self._console_listening.enter_context(self._store.listen(exporter.offer, own=True))
@@ -1867,13 +1871,13 @@ class Loom:
             self._console_exporter.connected()
 
     async def _console_message(self, envelope: Envelope, payload: ConsolePayload) -> None:
-        """Ce que la console envoie : acquittements à l'exportateur ; les commandes sont refusées jusqu'au lot 3."""
+        """Ce que la console envoie : les acquittements à l'exportateur, les commandes à l'exécuteur, chacune dans sa tâche."""
         if isinstance(payload, AckPayload):
             if self._console_exporter is not None:
                 await self._console_exporter.received(payload)
             return
-        if isinstance(payload, CommandPayload) and self._console is not None:
-            await self._console.send(CommandResultPayload(command_id=payload.command_id, outcome="refused", reason="commands_disabled"))
+        if isinstance(payload, CommandPayload) and self._console_commands is not None:
+            self._console_commands.receive(payload)
             return
         logger.debug("Console : message %s ignoré", envelope.type)
 
@@ -3135,8 +3139,12 @@ class Loom:
         if self._exporter is not None:
             with closing:
                 await self._exporter.aclose(self._config.execution.shutdown_timeout)
-        # La console : plus rien de neuf à exporter ; ce qui reste part, dans le délai,
+        # La console : plus de commande en cours ; plus rien de neuf à exporter ; ce qui reste part, dans le délai,
         # et ce qui n'est pas acquitté sera relu au prochain démarrage. Puis ``bye``.
+        commands, self._console_commands = self._console_commands, None
+        if commands is not None:
+            with closing:
+                await commands.aclose()
         with closing:
             self._console_listening.close()
         exporter = self._console_exporter
