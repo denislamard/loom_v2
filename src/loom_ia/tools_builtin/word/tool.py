@@ -47,6 +47,7 @@ class WordTool(DocumentTool):
     CALL: ClassVar[type[DocumentCall]] = WordCall
     SUFFIX: ClassVar[str] = ".docx"
     LABEL: ClassVar[str] = "document Word"
+    MEDIA_TYPE: ClassVar[str] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
     def __init__(
         self,

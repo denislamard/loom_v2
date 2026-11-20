@@ -235,9 +235,10 @@ async def test_a_user_without_the_right_is_refused_and_audited(atelier: Build) -
     assert (line["access"], line["user"], line["via"], line["permission"]) == ("console", READER, GATEWAY, "run")
 
 
-async def test_files_from_lot_4_are_not_available_yet(atelier: Build) -> None:
+async def test_approval_file_needs_its_arguments_and_a_pending_call(atelier: Build) -> None:
     async with mounted(atelier()) as (_, executor, _, clock):
-        refused(await executor.execute(command("approval.file", {"run_id": "r1"}, now=clock.now)), "not_available")
+        refused(await executor.execute(command("approval.file", {"run_id": "r1"}, now=clock.now)), "invalid_args")
+        refused(await executor.execute(command("approval.preview", {"run_id": "r1", "call_id": "c1"}, now=clock.now)), "UnknownRun")
 
 
 # --- Les actions ----------------------------------------------------------------------

@@ -17,6 +17,7 @@ outil forgé, un sous-agent. Le fichier est relu dans le stockage d'artefacts
 par son nom, parmi ceux de la conversation seulement (``ToolContext.files``).
 """
 
+import mimetypes
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Final, Literal, cast
@@ -24,7 +25,7 @@ from typing import Annotated, Final, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
-from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
+from loom_ia.core.ports import CallAssessment, Preview, ToolContext, ToolError
 from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools import to_output
 from loom_ia.tools_builtin import BuiltinContext, Settings
@@ -173,6 +174,44 @@ class LocalFilesTool:
                 + f" — {Folders.rule((located, right) for right in asking)}"
             ),
         )
+
+    def referenced_files(self, arguments: Mapping[str, JsonValue]) -> list[str]:
+        """Le fichier que l'appel lit, supprime ou remplace (``CitingTool``) ; aucun pour un listage ou une création."""
+        try:
+            request = _parse(arguments)
+        except ToolError:
+            return []
+        match request.action:
+            case "read" | "delete":
+                return [request.path]
+            case "write":
+                return [request.path] if request.overwrite else []
+            case "list":
+                return []
+
+    def read_referenced(self, arguments: Mapping[str, JsonValue], path: str, *, max_bytes: int) -> bytes:
+        """Les octets d'un fichier que l'appel désigne, pour son approbateur (``CitingTool``)."""
+        return self._space.read_cited(self.referenced_files(arguments), path, max_bytes)
+
+    def preview(self, arguments: Mapping[str, JsonValue]) -> Preview | None:
+        """Le texte qu'un ``write`` écrirait (``PreviewingTool``) ; rien pour les autres actions, ni pour une copie (``file``).
+
+        Raises:
+            ToolError: Arguments, chemin ou droits refusés, comme à l'exécution.
+        """
+        request = _parse(arguments)
+        if request.action != "write" or request.content is None:
+            return None
+        located = self._locate(request)
+        self._check_rights(request, located)
+        try:
+            data = request.content.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ToolError("'content' contient des caractères qui ne s'écrivent pas en UTF-8.") from exc
+        if len(data) > MAX_WRITE_BYTES:
+            raise ToolError(f"Contenu de {len(data)} octets, au-delà de {MAX_WRITE_BYTES}.")
+        name = located.lexical.name
+        return Preview(name=name, media_type=mimetypes.guess_type(name)[0] or "text/plain", data=data)
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
         """Mène l'action demandée (``list``, ``read``, ``write``, ``delete``) après le contrôle du chemin et des droits, hors de la boucle asyncio.

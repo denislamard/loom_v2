@@ -1,0 +1,6 @@
+version: 1
+profile: dev
+config:
+  source: file
+  path: .
+  file: loom.yaml

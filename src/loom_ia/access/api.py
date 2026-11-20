@@ -56,12 +56,13 @@ lisible (``error``). Les trois accès rendent ce même résultat.
 
 import asyncio
 import logging
+import mimetypes
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Self
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
@@ -165,6 +166,7 @@ from loom_ia.core.ports import (
     ServedQueue,
     SessionRecord,
     TaskQueue,
+    ToolError,
     UnusableId,
     UsageCounter,
 )
@@ -255,6 +257,7 @@ from loom_ia.tenancy import (
     TenantUsage,
     UnknownTenant,
 )
+from loom_ia.tools.configured import cited_bytes, cited_files, previewed, previews
 from loom_ia.usage import UsageReport, usage_report
 
 if TYPE_CHECKING:
@@ -717,6 +720,62 @@ class SessionInfo(DomainModel):
                 ),
             }
         )
+
+
+ApprovalFileCode = Literal["not_cited", "unreadable", "too_large", "no_preview", "preview_failed", "preview_timeout"]
+"""Pourquoi le fichier d'une demande ne peut pas être servi."""
+
+
+class ApprovalFileRefused(ValueError):
+    """Le fichier d'une demande ne peut pas être servi : non désigné, illisible, trop gros, sans aperçu, ou délai dépassé.
+
+    Attributes:
+        code: Le motif, court.
+    """
+
+    def __init__(self, code: ApprovalFileCode, said: str) -> None:
+        super().__init__(f"{code} : {said}")
+        self.code: ApprovalFileCode = code
+
+
+class ApprovalDetail(PendingApproval):
+    """Une demande en attente, telle que la voit qui peut la trancher (§ 6.7 de l'analyse de l'exportateur).
+
+    Ses ``arguments`` et son ``reason`` sont masqués par les motifs de
+    ``telemetry.redaction``.
+
+    Attributes:
+        files: Les fichiers que l'appel lit, remplace ou supprime, que l'outil
+            désigne (``CitingTool``) : ``approval_file`` les sert.
+        preview: Vrai si l'outil sait rendre le fichier que l'appel écrirait
+            (``PreviewingTool``) : ``approval_preview`` le sert.
+    """
+
+    files: tuple[str, ...] = ()
+    preview: bool = False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ApprovalFile:
+    """Un fichier servi à l'approbateur : désigné par une demande, ou son aperçu.
+
+    Attributes:
+        name: Nom du fichier.
+        media_type: Type MIME.
+        data: Les octets.
+        warnings: Ce que le rendu d'un aperçu a signalé.
+    """
+
+    name: str
+    media_type: str
+    data: bytes
+    warnings: tuple[str, ...] = ()
+
+
+APPROVAL_FILE_MAX: Final = 25 * 1024 * 1024
+"""Taille au plus d'un fichier servi à l'approbateur, sans section ``console`` (sinon ``console.files.max_size``)."""
+PREVIEW_TIMEOUT: Final = 30.0
+"""Délai d'un aperçu, en secondes, sans section ``console`` (sinon ``console.files.preview_timeout``)."""
 
 
 class SessionFile(DomainModel):
@@ -2963,6 +3022,163 @@ class Loom:
             if described.file == file:
                 return described, await self._artifacts.get(described.uri)
         raise ArtifactNotFound(f"{session_id}/{file}")
+
+    # --- Ce que l'approbateur examine (§ 6.7 de l'analyse de l'exportateur) ---------------
+
+    @audited
+    async def approval_details(
+        self,
+        run_id: RunId,
+        *,
+        call_id: str | None = None,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+        user: str | Actor,
+    ) -> tuple[ApprovalDetail, ...]:
+        """Les demandes en attente du run et de ses sous-runs que ``user`` peut trancher, en détail.
+
+        Chacune avec ses arguments et son motif (masqués par les motifs de
+        ``telemetry.redaction``), les fichiers que l'appel désigne, et si un
+        aperçu existe. Vide si rien n'attend. Il faut ``read_content`` sur
+        l'agent de chaque demande, et pouvoir la trancher (les mêmes règles
+        qu'``approve``) : ``AccessDenied`` sinon, si aucune ne reste.
+        """
+        actor = self._actor(user)
+        tenant = tenant_id or actor.tenant
+        redactor = self.config.telemetry.redaction.redactor()
+        details: list[ApprovalDetail] = []
+        for owner, request in await self._examined(run_id, call_id, session_id=session_id, tenant=tenant, actor=actor):
+            tool = self._approval_tool(owner.agent, tenant, request.tool_name)
+            details.append(
+                ApprovalDetail.model_validate(
+                    {
+                        **request.model_dump(),
+                        "arguments": redactor.json(request.arguments),
+                        "reason": redactor.text(request.reason),
+                        "run_id": owner.run_id,
+                        "agent": owner.agent,
+                        "files": cited_files(tool, request.arguments),
+                        "preview": previews(tool),
+                    }
+                )
+            )
+        return tuple(details)
+
+    @audited
+    async def approval_file(
+        self,
+        run_id: RunId,
+        call_id: str,
+        path: str,
+        *,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+        user: str | Actor,
+        max_bytes: int | None = None,
+    ) -> ApprovalFile:
+        """Un fichier qu'une demande en attente désigne (cas 2), lu dans son dossier ; rien n'est écrit.
+
+        Seul un chemin que l'outil désigne pour cet appel est servi, rapporté à
+        son dossier déclaré ; un lien qui en sort est refusé. Droits comme
+        ``approval_details`` ; ``UnknownApproval`` si l'appel n'attend pas ;
+        ``ApprovalFileRefused`` si le fichier ne peut pas être servi.
+        """
+        actor = self._actor(user)
+        tenant = tenant_id or actor.tenant
+        ((owner, request),) = await self._examined(run_id, call_id, session_id=session_id, tenant=tenant, actor=actor, one=True)
+        tool = self._approval_tool(owner.agent, tenant, request.tool_name)
+        if path not in cited_files(tool, request.arguments):
+            raise ApprovalFileRefused("not_cited", f"{path} n'est pas un fichier que l'appel {call_id} désigne")
+        bound = max_bytes or self._approval_max()
+        try:
+            data = await asyncio.to_thread(cited_bytes, tool, request.arguments, path, max_bytes=bound)
+        except ToolError as error:
+            code: ApprovalFileCode = "too_large" if "dépasse" in str(error) else "unreadable"
+            raise ApprovalFileRefused(code, str(error).rstrip(".")) from None
+        name = PurePosixPath(path).name
+        return ApprovalFile(name=name, media_type=mimetypes.guess_type(name)[0] or "application/octet-stream", data=data)
+
+    @audited
+    async def approval_preview(
+        self,
+        run_id: RunId,
+        call_id: str,
+        *,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+        user: str | Actor,
+        max_bytes: int | None = None,
+        within: float | None = None,
+    ) -> ApprovalFile:
+        """Le fichier qu'un appel en attente écrirait (cas 3), rendu en mémoire avec ses arguments exacts.
+
+        Rien n'est écrit, ni sur le disque, ni au journal : l'aperçu ne vaut pas
+        exécution, et l'appel approuvé est rendu de nouveau. Il lit ce que l'appel
+        lirait (images, sources) : la demande que l'approbateur examine les
+        couvre. Borné par ``within`` (secondes) et ``max_bytes`` (``console.files`` par
+        défaut) ; au-delà du délai, le rendu en cours finit dans son fil, et son
+        résultat est perdu. Droits comme ``approval_details``.
+        """
+        actor = self._actor(user)
+        tenant = tenant_id or actor.tenant
+        ((owner, request),) = await self._examined(run_id, call_id, session_id=session_id, tenant=tenant, actor=actor, one=True)
+        tool = self._approval_tool(owner.agent, tenant, request.tool_name)
+        if not previews(tool):
+            raise ApprovalFileRefused("no_preview", f"l'outil {request.tool_name} ne sait pas rendre d'aperçu")
+        console = self.config.console
+        delay = within or (console.files.preview_timeout if console is not None else PREVIEW_TIMEOUT)
+        try:
+            async with asyncio.timeout(delay):
+                rendered = await asyncio.to_thread(previewed, tool, request.arguments)
+        except TimeoutError:
+            raise ApprovalFileRefused("preview_timeout", f"aperçu non rendu en {delay:g} s") from None
+        except ToolError as error:
+            raise ApprovalFileRefused("preview_failed", str(error).rstrip(".")) from None
+        if rendered is None:
+            raise ApprovalFileRefused("no_preview", f"l'appel {call_id} n'écrit pas de fichier")
+        bound = max_bytes or self._approval_max()
+        if len(rendered.data) > bound:
+            raise ApprovalFileRefused("too_large", f"aperçu de {len(rendered.data)} octets, {bound} au plus")
+        return ApprovalFile(name=rendered.name, media_type=rendered.media_type, data=rendered.data, warnings=rendered.warnings)
+
+    async def _examined(
+        self,
+        run_id: RunId,
+        call_id: str | None,
+        *,
+        session_id: SessionId | None,
+        tenant: TenantId,
+        actor: Actor,
+        one: bool = False,
+    ) -> list[tuple[RunState, PendingApproval]]:
+        """Les demandes en attente que l'acteur peut trancher et lire, dans l'arbre du run.
+
+        ``one`` : la demande ``call_id``, seule ; ``UnknownApproval`` si elle n'attend pas.
+        """
+        events = await self._store.read(tenant, session_id or SessionId(run_id))
+        tree = RunTree(run_id).select(events)
+        if not tree:
+            raise UnknownRun(run_id)
+        asked = [(owner, request) for owner in _awaiting_runs(tree) for request in owner.awaiting if call_id is None or request.call_id == call_id]
+        if not asked:
+            if one:
+                raise UnknownApproval(run_id, call_id or "")
+            return []
+        kept = _decidable(actor, asked, tree, tenant, amend=False).kept
+        for agent in dict.fromkeys(owner.agent for owner, _ in kept):
+            spec = self._agents.get(agent) if agent in self._agents.names else None
+            require(actor, "read_content", agent=spec, tenant=tenant)
+        return kept
+
+    def _approval_tool(self, agent: str, tenant: TenantId, tool_name: str) -> object:
+        """L'outil d'une demande, tel que l'agent du client le monte ; ``None`` s'il n'y est plus (un outil MCP, ouvert par run)."""
+        if agent not in self._agents.names:
+            return None
+        return self.context(agent, tenant).tools.get(tool_name)
+
+    def _approval_max(self) -> int:
+        console = self.config.console
+        return console.files.max_size if console is not None else APPROVAL_FILE_MAX
 
     async def export_session(self, session_id: SessionId, *, tenant_id: TenantId | None = None) -> list[Event]:
         """Tous les événements d'une session, dans l'ordre du journal.

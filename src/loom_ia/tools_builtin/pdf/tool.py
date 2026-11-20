@@ -46,6 +46,7 @@ class PdfTool(DocumentTool):
     CALL: ClassVar[type[DocumentCall]] = PdfCall
     SUFFIX: ClassVar[str] = ".pdf"
     LABEL: ClassVar[str] = "document PDF"
+    MEDIA_TYPE: ClassVar[str] = "application/pdf"
 
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
         style = self._styles.of(prepared.template)

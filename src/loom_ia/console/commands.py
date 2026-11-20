@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Final, Literal
 from pydantic import AwareDatetime, Field, JsonValue, ValidationError
 
 from loom_ia.access import audit
+from loom_ia.access.api import ApprovalFileRefused
 from loom_ia.access.authz import AccessDenied, Actor
 from loom_ia.access.caller import Caller
 from loom_ia.config.console import ConsoleConfig
@@ -141,6 +142,23 @@ class FileGetArgs(_Args):
     file: str
 
 
+class ApprovalFileArgs(_Args):
+    """``approval.file`` : un fichier qu'une demande en attente désigne (``Loom.approval_file``, cas 2)."""
+
+    run_id: RunId
+    call_id: str
+    path: str
+    session_id: SessionId | None = None
+
+
+class ApprovalPreviewArgs(_Args):
+    """``approval.preview`` : le fichier qu'un appel en attente écrirait (``Loom.approval_preview``, cas 3)."""
+
+    run_id: RunId
+    call_id: str
+    session_id: SessionId | None = None
+
+
 class CommandRefused(Exception):
     """Une commande refusée avant d'atteindre ``Loom`` ; le motif est un code court, puis ce qu'il en est."""
 
@@ -234,6 +252,8 @@ class CommandExecutor:
             except ValidationError as error:
                 said = "; ".join(f"{'.'.join(map(str, item['loc']))} : {item['msg']}" for item in error.errors())
                 return CommandResultPayload(command_id=identifier, outcome="refused", reason=f"invalid_args : {said}")
+            except ApprovalFileRefused as error:
+                return CommandResultPayload(command_id=identifier, outcome="refused", reason=str(error))
             except _REFUSALS as error:
                 if isinstance(error, AccessDenied):
                     audit.refused(error, access="console", action=f"console {command.name}")
@@ -301,8 +321,25 @@ class CommandExecutor:
                 return await self._approvals(ApprovalGetArgs.model_validate(command.args), actor)
             case "file.get":
                 return await self._file(command, FileGetArgs.model_validate(command.args), actor)
-            case "approval.file" | "approval.preview":
-                raise CommandRefused("not_available", f"{command.name} arrive avec le lot 4")
+            case "approval.file":
+                cited = ApprovalFileArgs.model_validate(command.args)
+                found = await loom.approval_file(
+                    cited.run_id, cited.call_id, cited.path, session_id=cited.session_id, tenant_id=tenant, user=actor, max_bytes=self._console.files.max_size
+                )
+                return self._serve_bytes(command, found.name, found.media_type, found.data)
+            case "approval.preview":
+                asked = ApprovalPreviewArgs.model_validate(command.args)
+                rendered = await loom.approval_preview(
+                    asked.run_id,
+                    asked.call_id,
+                    session_id=asked.session_id,
+                    tenant_id=tenant,
+                    user=actor,
+                    max_bytes=self._console.files.max_size,
+                    within=self._console.files.preview_timeout,
+                )
+                served = self._serve_bytes(command, rendered.name, rendered.media_type, rendered.data)
+                return {**served, "warnings": list(rendered.warnings)}
 
     # --- Lectures : les droits que le REST vérifie, au nom de l'utilisateur endossé --------------
 
@@ -320,33 +357,10 @@ class CommandExecutor:
         return {"events": found, "next": events[-1].event_id if len(events) == args.limit else None}
 
     async def _approvals(self, args: ApprovalGetArgs, actor: Actor) -> JsonValue:
-        caller = Caller(actor=actor)
-        _require(caller, "read")
-        session = args.session_id or SessionId(args.run_id)
-        info = await self._loom.session(session, tenant_id=actor.tenant)
-        # Le run et ses sous-runs : une demande d'un sous-agent se tranche sur la racine.
-        tree = {args.run_id}
-        grown = True
-        while grown:
-            children = {run.run_id for run in info.runs if run.parent_run_id in tree} - tree
-            tree |= children
-            grown = bool(children)
-        pending = [
-            approval
-            for approval in info.pending_approvals
-            if approval.outcome is None and (approval.run_id is None or approval.run_id in tree) and (args.call_id is None or approval.call_id == args.call_id)
-        ]
-        if not pending:
+        details = await self._loom.approval_details(args.run_id, call_id=args.call_id, session_id=args.session_id, tenant_id=actor.tenant, user=actor)
+        if not details:
             raise CommandRefused("nothing_pending", f"aucune demande en attente pour le run {args.run_id}")
-        for approval in pending:
-            if approval.agent is not None:
-                _require(caller, "read_content", approval.agent)
-            if not await self._loom.can(actor, "approve", run_id=args.run_id, call_id=approval.call_id, session_id=session, tenant_id=actor.tenant):
-                raise AccessDenied(
-                    f"{actor.signature} ne peut pas trancher la demande {approval.call_id}", actor=actor, permission="approve", agent=approval.agent
-                )
-        redactor = self._loom.config.telemetry.redaction.redactor()
-        return {"approvals": [redactor.json(approval.model_dump(mode="json")) for approval in pending]}
+        return {"approvals": [detail.model_dump(mode="json") for detail in details]}
 
     async def _file(self, command: CommandPayload, args: FileGetArgs, actor: Actor) -> JsonValue:
         caller = Caller(actor=actor)
@@ -354,12 +368,19 @@ class CommandExecutor:
         described, data = await self._loom.session_file(args.session_id, args.file, tenant_id=actor.tenant)
         if described.agent is not None:
             _require(caller, "read_content", described.agent)
+        return self._serve_bytes(command, described.name or described.file, described.media_type, data)
+
+    def _serve_bytes(self, command: CommandPayload, name: str, media_type: str, data: bytes) -> dict[str, JsonValue]:
+        """Annonce un fichier dans le résultat ; ses morceaux (``file.data``) partiront après lui.
+
+        Raises:
+            CommandRefused: ``too_large``, au-delà de ``console.files.max_size``.
+        """
         files = self._console.files
         if len(data) > files.max_size:
             raise CommandRefused("too_large", f"{len(data)} octets, {files.max_size} au plus (console.files.max_size)")
         digest = hashlib.sha256(data).hexdigest()
         parts = max(1, -(-len(data) // files.chunk_size))
-        name = described.name or described.file
 
         async def send_parts() -> None:
             # Après le résultat : ``accepted`` annonce le fichier, puis ses morceaux suivent,
@@ -372,7 +393,7 @@ class CommandExecutor:
                     last=part == parts - 1,
                     data=base64.b64encode(data[part * files.chunk_size : (part + 1) * files.chunk_size]).decode("ascii"),
                     name=name if first else None,
-                    media_type=described.media_type if first else None,
+                    media_type=media_type if first else None,
                     size=len(data) if first else None,
                     sha256=digest if first else None,
                 )
@@ -381,7 +402,7 @@ class CommandExecutor:
                     return
 
         self._after[command.command_id] = send_parts
-        return {"name": name, "media_type": described.media_type, "size": len(data), "sha256": digest, "parts": parts}
+        return {"name": name, "media_type": media_type, "size": len(data), "sha256": digest, "parts": parts}
 
     def _forget_expired(self) -> None:
         now = self._clock()

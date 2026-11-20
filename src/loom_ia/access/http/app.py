@@ -23,6 +23,11 @@ Sous ``/v1``, les agents et leurs runs :
   clé d'API, qu'un ``by`` dans le corps remplace — une passerelle nomme
   ainsi l'humain qui a tranché ;
 - ``POST /runs/{run_id}/cancel`` : arrêt d'un run (fonction A5), portée ``run``.
+- ``GET /runs/{run_id}/approvals`` : le détail des demandes en attente que
+  l'utilisateur peut trancher — arguments, fichiers désignés, aperçu ;
+  ``/approvals/{call_id}/file?path=…`` : un fichier que la demande désigne ;
+  ``/approvals/{call_id}/preview`` : le fichier que l'appel écrirait, rendu
+  sans rien écrire. Portée ``read_content``, et pouvoir trancher la demande.
 
 Et les sessions (fonction F7) :
 
@@ -120,6 +125,9 @@ from loom_ia.access.api import (
     SESSIONS_MAX,
     SESSIONS_READ,
     AgentNotAllowed,
+    ApprovalDetail,
+    ApprovalFile,
+    ApprovalFileRefused,
     ApprovalStale,
     DeliveryRefused,
     InvalidAnswer,
@@ -456,6 +464,21 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
                 audit.refused(exc, action=f"{request.method} {request.url.path}")
         return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_403_FORBIDDEN)
 
+    @app.exception_handler(ApprovalFileRefused)
+    async def _not_served(request: Request, exc: Exception) -> JSONResponse:
+        # Le fichier d'une demande qu'on ne peut pas servir : absent ou non désigné (404),
+        # trop gros (413), rendu refusé par l'outil (422), délai dépassé (504).
+        code = exc.code if isinstance(exc, ApprovalFileRefused) else "unreadable"
+        statuses = {
+            "not_cited": status.HTTP_404_NOT_FOUND,
+            "unreadable": status.HTTP_404_NOT_FOUND,
+            "no_preview": status.HTTP_404_NOT_FOUND,
+            "too_large": status.HTTP_413_CONTENT_TOO_LARGE,
+            "preview_failed": status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "preview_timeout": status.HTTP_504_GATEWAY_TIMEOUT,
+        }
+        return JSONResponse({"detail": str(exc), "code": code}, status_code=statuses[code])
+
     @app.exception_handler(UnusableId)
     async def _unusable(request: Request, exc: Exception) -> JSONResponse:
         # Un identifiant que le journal ne peut pas nommer ne désigne aucun journal
@@ -783,6 +806,52 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         stopped = await loom.cancel(run_id, session_id=session_id, tenant_id=who.tenant, user=actor)
         return Cancelled(run_id=run_id, cancelled=stopped)
 
+    @router.get("/runs/{run_id}/approvals", tags=["runs"], summary="Détail des demandes en attente")
+    async def approvals(
+        who: Who,
+        run_id: RunId,
+        call_id: str | None = None,
+        session_id: SessionId | None = None,
+        as_user: str | None = None,
+    ) -> list[ApprovalDetail]:
+        # Les droits dépendent de chaque demande (trancher, lire son contenu) : le SDK
+        # les vérifie au nom de l'utilisateur, celui de la clé ou celui qu'une passerelle endosse.
+        details = await loom.approval_details(run_id, call_id=call_id, session_id=session_id, tenant_id=who.tenant, user=_acting(loom, who, as_user))
+        return list(details)
+
+    @router.get(
+        "/runs/{run_id}/approvals/{call_id}/file",
+        tags=["runs"],
+        summary="Un fichier que désigne une demande en attente",
+        response_class=Response,
+    )
+    async def approval_file(
+        who: Who,
+        run_id: RunId,
+        call_id: str,
+        path: str,
+        session_id: SessionId | None = None,
+        as_user: str | None = None,
+    ) -> Response:
+        found = await loom.approval_file(run_id, call_id, path, session_id=session_id, tenant_id=who.tenant, user=_acting(loom, who, as_user))
+        return _served(found)
+
+    @router.get(
+        "/runs/{run_id}/approvals/{call_id}/preview",
+        tags=["runs"],
+        summary="Le fichier qu'un appel en attente écrirait, sans rien écrire",
+        response_class=Response,
+    )
+    async def approval_preview(
+        who: Who,
+        run_id: RunId,
+        call_id: str,
+        session_id: SessionId | None = None,
+        as_user: str | None = None,
+    ) -> Response:
+        rendered = await loom.approval_preview(run_id, call_id, session_id=session_id, tenant_id=who.tenant, user=_acting(loom, who, as_user))
+        return _served(rendered)
+
     @router.get("/sessions", tags=["sessions"], summary="Sessions du client, la plus récente d'abord")
     async def sessions(who: Who) -> list[SessionRecord]:
         require(who, "read")
@@ -923,6 +992,14 @@ async def _messages(events: AsyncGenerator[Event], who: Caller) -> AsyncGenerato
                 yield {"event": "error", "data": detail}
                 return
             yield sse(event, masked=who.masks)
+
+
+def _served(found: ApprovalFile) -> Response:
+    """Les octets d'un fichier servi à l'approbateur ; les avertissements d'un aperçu dans ``X-Loom-Warnings`` (JSON)."""
+    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(found.name, safe='')}"}
+    if found.warnings:
+        headers["X-Loom-Warnings"] = json.dumps(list(found.warnings), ensure_ascii=True)
+    return Response(found.data, media_type=found.media_type, headers=headers)
 
 
 def _acting(loom: Loom, who: Caller, as_user: str | None) -> Actor:

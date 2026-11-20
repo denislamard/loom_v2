@@ -12,7 +12,7 @@ from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, JsonValue
 
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
-from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
+from loom_ia.core.ports import CallAssessment, Preview, ToolContext, ToolError
 from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools import to_output
 from loom_ia.tools_builtin import BuiltinContext, Settings
@@ -38,9 +38,12 @@ from loom_ia.tools_builtin.excel.arguments import (
 from loom_ia.tools_builtin.excel.charts import MAX_POINTS
 from loom_ia.tools_builtin.excel.recalc import Recalc, recalculate
 from loom_ia.tools_builtin.excel.sources import read_rows
-from loom_ia.tools_builtin.excel.workbook import build_workbook, prepare, to_bytes
+from loom_ia.tools_builtin.excel.workbook import Written, build_workbook, prepare, to_bytes
 from loom_ia.tools_builtin.excel_params import ExcelParams
 from loom_ia.tools_builtin.local_files_params import Right
+
+MEDIA_TYPE: Final = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+"""Le type MIME d'un classeur écrit."""
 
 
 class ExcelTool:
@@ -154,6 +157,37 @@ class ExcelTool:
             reason=f"lire le classeur {source.address} — {Folders.rule([(source, 'read')])}",
         )
 
+    def referenced_files(self, arguments: Mapping[str, JsonValue]) -> list[str]:
+        """Les fichiers que l'appel désigne (``CitingTool``) : le classeur lu ; le classeur remplacé et les sources lues."""
+        try:
+            request = parse(arguments, self._call)
+        except ToolError:
+            return []
+        if isinstance(request, ReadArguments):
+            return [request.path]
+        return list(dict.fromkeys([*([request.path] if request.overwrite else []), *(data.path for _, data in _with_data(request))]))
+
+    def read_referenced(self, arguments: Mapping[str, JsonValue], path: str, *, max_bytes: int) -> bytes:
+        """Les octets d'un fichier que l'appel désigne, pour son approbateur (``CitingTool``)."""
+        return self._space.read_cited(self.referenced_files(arguments), path, max_bytes)
+
+    def preview(self, arguments: Mapping[str, JsonValue]) -> Preview | None:
+        """Le classeur qu'un ``write`` écrirait, sources lues, sans rien écrire ni recalculer (``PreviewingTool``).
+
+        Le recalcul ne change pas le fichier écrit (il vérifie une copie) : l'aperçu
+        est le classeur de l'exécution. Rien pour une lecture.
+
+        Raises:
+            ToolError: Arguments, chemin, droits, sources ou classeur refusés.
+        """
+        request = parse(arguments, self._call)
+        if isinstance(request, ReadArguments):
+            return None
+        located = self._output(request)
+        sources = {data.path: self._source(data.path) for _, data in _with_data(request)}
+        data, _, warnings = self._built(request, sources)
+        return Preview(name=located.lexical.name, media_type=MEDIA_TYPE, data=data, warnings=tuple(warnings))
+
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
         """Lit un classeur (``read``), ou en écrit un (``write``), hors de la boucle asyncio.
 
@@ -208,21 +242,7 @@ class ExcelTool:
         ; rend le chemin, les onglets et les avertissements.
         """
         try:
-            loaded = {
-                data.path: read_rows(
-                    self._read(sources[data.path]),
-                    Path(data.path).suffix.lower(),
-                    sheet,
-                    sources[data.path].address,
-                    data.sheet,
-                )
-                for sheet, data in _with_data(request)
-            }
-            prepared = prepare(request, loaded, self._zone)
-            workbook, written, warnings = build_workbook(prepared)
-            data = to_bytes(workbook)
-            if len(data) > MAX_OUTPUT_BYTES:
-                raise ToolError(f"Classeur de {len(data)} octets, au-delà de {MAX_OUTPUT_BYTES}.")
+            data, written, warnings = self._built(request, sources)
             formulas = [cell for sheet in written for cell in sheet.formulas]
             report: JsonValue = None
             if self._recalc is not None and formulas:
@@ -249,6 +269,25 @@ class ExcelTool:
         if report is not None:
             summary["recalc"] = report
         return summary
+
+    def _built(self, request: ExcelArguments, sources: Mapping[str, Located]) -> tuple[bytes, list[Written], list[str]]:
+        """Le classeur rendu, sources lues, borné à ``MAX_OUTPUT_BYTES`` : ce qu'écrit ``write``, ce que montre ``preview``."""
+        loaded = {
+            data.path: read_rows(
+                self._read(sources[data.path]),
+                Path(data.path).suffix.lower(),
+                sheet,
+                sources[data.path].address,
+                data.sheet,
+            )
+            for sheet, data in _with_data(request)
+        }
+        prepared = prepare(request, loaded, self._zone)
+        workbook, written, warnings = build_workbook(prepared)
+        data = to_bytes(workbook)
+        if len(data) > MAX_OUTPUT_BYTES:
+            raise ToolError(f"Classeur de {len(data)} octets, au-delà de {MAX_OUTPUT_BYTES}.")
+        return data, list(written), list(warnings)
 
     def _perform_read(self, request: ReadArguments, source: Located) -> dict[str, JsonValue]:
         """Lit un classeur : sans onglet, la liste des onglets et leur aperçu ; avec un onglet, les cellules d'une plage."""

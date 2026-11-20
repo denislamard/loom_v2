@@ -1,0 +1,76 @@
+# Une instance reliée à une console d'administration, sans clé d'API : le modèle est simulé.
+#
+# Dans un terminal, l'écouteur tient lieu de console :
+#   export LOOM_CONSOLE_KEY=demo-console
+#   loom console listen
+# Dans un autre, depuis ce dossier :
+#   export LOOM_CONSOLE_KEY=demo-console
+#   loom run devis "Mets le devis D-042 à jour." --user dev   # le run attend une approbation
+#   loom serve                                      # garde le canal ouvert
+# Puis, dans l'écouteur, une ligne JSON par commande (run_id et call_id : ceux qu'il affiche) :
+#   {"name": "approval.get", "as_user": "dev", "args": {"run_id": "…"}}
+#   {"name": "approval.file", "as_user": "dev", "args": {"run_id": "…", "call_id": "…", "path": "documents/devis-D-042.txt"}}
+#   {"name": "approval.preview", "as_user": "dev", "args": {"run_id": "…", "call_id": "…"}}
+#   {"name": "approval.decide", "as_user": "dev", "args": {"run_id": "…", "decision": "approve"}}
+version: 1
+workpath: .
+
+agents_dir: agents/
+
+models:
+- id: SIMULE
+  sdk: fake
+  model: simule-1
+  params:
+    script:
+    - text: Je remplace le texte du devis.
+      tool_calls:
+      - name: local_files
+        arguments:
+          action: write
+          path: documents/devis-D-042.txt
+          overwrite: true
+          content: "Devis D-042 — Mme Dupont\nPose d'un receveur de douche : 1 250,50 € HT\nValidité : 3 mois.\n"
+    - text: J'écris la version Word.
+      tool_calls:
+      - name: word
+        arguments:
+          action: write
+          path: documents/devis-D-042.docx
+          title: Devis D-042
+          blocks:
+          - {type: paragraph, text: "Madame **Dupont**, voici notre proposition."}
+          - {type: table, columns: [{header: Désignation}, {header: Montant HT, type: amount_eur}], rows: [[Pose d'un receveur, 1250.5]]}
+    - text: Le devis D-042 est à jour, en texte et en Word.
+
+telemetry:
+  logging: { level: WARNING }
+
+storage:
+  events: { backend: jsonl, path: data/journal }
+
+security:
+  roles:
+    - id: owner
+      permissions: [run, answer, cancel, approve, self_approve, amend, read, read_content, admin]
+    # La passerelle de la console : elle agit au nom d'un utilisateur, avec ses seuls rôles endossables.
+    - id: console
+      permissions: [act_as]
+      act_as_roles: [owner]
+  users:
+    - id: dev
+      roles: [owner]
+    - id: console-gateway
+      roles: [console]
+  audit:
+    path: data/audit.jsonl
+
+server:
+  http: { user: dev }
+
+console:
+  enable: true
+  url: ws://127.0.0.1:8766/loom   # ws:// seulement vers la boucle locale, en profil dev
+  key_env: LOOM_CONSOLE_KEY
+  commands: { user: console-gateway }
+  export: { mode: on_demand }      # la console lit le contenu à la demande (events.query, approval.get)

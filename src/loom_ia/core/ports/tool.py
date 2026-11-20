@@ -310,6 +310,81 @@ class AssessedTool(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Preview:
+    """Le fichier qu'un appel produirait, rendu en mémoire sans rien écrire.
+
+    Attributes:
+        name: Nom du fichier (celui que l'appel écrirait).
+        media_type: Type MIME.
+        data: Les octets.
+        warnings: Ce que le rendu a signalé.
+    """
+
+    name: str
+    media_type: str
+    data: bytes
+    warnings: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class CitingTool(Protocol):
+    """Outil qui sait dire quels fichiers un appel désigne ; c'est facultatif.
+
+    Pour l'approbateur : il voit le fichier qu'un appel lirait, écraserait ou
+    supprimerait. Un outil qui ne l'a pas garde ses arguments affichés, et
+    aucun fichier n'est servi : loom ne devine pas qu'une chaîne est un chemin.
+    """
+
+    def referenced_files(self, arguments: Mapping[str, JsonValue]) -> Sequence[str] | None:
+        """Les fichiers que l'appel lit, écrase ou supprime, tels que le modèle les nomme.
+
+        Args:
+            arguments: Les arguments de l'appel.
+
+        Returns:
+            Les chemins, chacun une fois ; ``None`` : l'outil ne le sait pas.
+        """
+        ...
+
+    def read_referenced(self, arguments: Mapping[str, JsonValue], path: str, *, max_bytes: int) -> bytes:
+        """Les octets d'un fichier que l'appel désigne, lus sans rien changer.
+
+        Bloquant : à appeler hors de la boucle asyncio.
+
+        Args:
+            arguments: Les arguments de l'appel.
+            path: Un chemin parmi ``referenced_files``.
+            max_bytes: Taille au plus.
+
+        Raises:
+            ToolError: Chemin non désigné par l'appel, hors des dossiers,
+                introuvable, ou trop gros.
+        """
+        ...
+
+
+@runtime_checkable
+class PreviewingTool(Protocol):
+    """Outil qui sait rendre, sans l'écrire, le fichier qu'un appel produirait ; c'est facultatif."""
+
+    def preview(self, arguments: Mapping[str, JsonValue]) -> Preview | None:
+        """Le fichier que l'appel écrirait, avec ses arguments exacts ; rien n'est écrit.
+
+        Bloquant : à appeler hors de la boucle asyncio.
+
+        Args:
+            arguments: Les arguments de l'appel.
+
+        Returns:
+            Le rendu ; ``None`` : cet appel n'écrit pas de fichier.
+
+        Raises:
+            ToolError: Arguments, chemin ou rendu refusés.
+        """
+        ...
+
+
 class _Declared(Protocol):
     """Tout ce qui a une déclaration ``spec`` : un outil, ou une enveloppe d'outil."""
 
