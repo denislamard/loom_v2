@@ -307,7 +307,7 @@ requires-dist = [
     { name = "httpx2", marker = "extra == 'openai'", specifier = ">=2.7.0,<3" },
     { name = "jsonschema", specifier = ">=4.26.0,<4.27" },
     { name = "jsonschema-specifications", specifier = ">=2023.3.6" },
-    { name = "loom-ia", extras = ["anthropic", "openai", "mcp", "http", "sqlite", "postgres", "rabbitmq", "redis", "otel", "crypto", "office", "pdf", "sql"], marker = "extra == 'all'" },
+    { name = "loom-ia", extras = ["anthropic", "openai", "mcp", "http", "sqlite", "postgres", "rabbitmq", "redis", "otel", "crypto", "office", "pdf", "sql", "console"], marker = "extra == 'all'" },
     { name = "markdownify", marker = "extra == 'memory-web'", specifier = ">=1.1.0,<2" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.30.0,<2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=3.14.1,<4" },
@@ -331,8 +331,9 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'memory'", specifier = ">=4.56.0,<6" },
     { name = "uvicorn", marker = "extra == 'http'", specifier = ">=0.53.0" },
     { name = "watchfiles", marker = "extra == 'http'", specifier = ">=1.3.0" },
+    { name = "websockets", marker = "extra == 'console'", specifier = ">=17.4,<18" },
 ]
-provides-extras = ["anthropic", "openai", "mcp", "http", "sqlite", "crypto", "office", "pdf", "postgres", "sql", "rabbitmq", "redis", "otel", "memory", "memory-web", "all"]
+provides-extras = ["anthropic", "openai", "mcp", "http", "sqlite", "crypto", "office", "pdf", "postgres", "sql", "rabbitmq", "redis", "otel", "console", "memory", "memory-web", "all"]
 
 [package.metadata.requires-dev]
 dev = [
