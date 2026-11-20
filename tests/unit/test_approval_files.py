@@ -87,6 +87,16 @@ TOOLS: dict[str, dict[str, Any]] = {
 
 type Build = Callable[..., Path]
 
+EXTRAS: dict[str, tuple[tuple[str, ...], str]] = {"pdf": (("reportlab", "pypdf"), "pdf"), "excel": (("openpyxl",), "office")}
+"""Les agents dont l'outil demande un extra : ses modules, et son nom."""
+
+
+def needs(agent: str) -> None:
+    """Saute l'essai si l'extra de l'outil de cet agent n'est pas installé (job du noyau seul)."""
+    modules, extra = EXTRAS.get(agent, ((), ""))
+    for module in modules:
+        pytest.importorskip(module, reason=f"extra '{extra}' absent")
+
 
 @pytest.fixture
 def bureau(tmp_path: Path) -> Build:
@@ -219,6 +229,7 @@ async def test_a_link_out_of_the_folder_is_refused(bureau: Build) -> None:
 
 
 async def test_the_image_a_document_reads_is_served(bureau: Build) -> None:
+    needs("pdf")
     async with paused(bureau(), "pdf") as (loom, run_id, call_id):
         found = await loom.approval_file(run_id, call_id, "images/logo.png", session_id=SessionId("pdf"), user=DEV)
     assert (found.name, found.media_type, found.data) == ("logo.png", "image/png", LOGO)
@@ -254,6 +265,7 @@ async def test_a_preview_of_nothing_written_is_refused(bureau: Build) -> None:
     ],
 )
 async def test_the_preview_is_the_file_written_after_approval(bureau: Build, tmp_path: Path, agent: str, written: str, media_type: str) -> None:
+    needs(agent)
     async with paused(bureau(), agent) as (loom, run_id, call_id):
         session = SessionId(agent)
         rendered = await loom.approval_preview(run_id, call_id, session_id=session, user=DEV)
