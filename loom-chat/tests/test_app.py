@@ -400,6 +400,46 @@ def test_several_users_need_a_choice(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "--user" in capsys.readouterr().err
 
 
+SHARED = """security: {source: console}
+
+console:
+  enable: true
+  url: ws://127.0.0.1:9/loom
+  key_env: LOOM_CONSOLE_KEY
+  instance_id: atelier
+"""
+
+
+def test_a_shared_security_takes_its_users_from_the_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """``security.source: console`` : les utilisateurs ne sont pas dans loom.yaml, ils viennent du cache de la sécurité partagée."""
+    pytest.importorskip("websockets", reason="extra 'console' de loom-ia absent")
+    from loom_ia.console.contract import SecurityRole, SecurityUser
+    from loom_ia.console.shared import SecurityCache, make_part
+
+    create_project(tmp_path, "fake")
+    loom = tmp_path / "loom.yaml"
+    text = loom.read_text(encoding="utf-8")
+    loom.write_text(text[: text.index("security:")] + SHARED, encoding="utf-8")
+    (tmp_path / BOOT).write_text((tmp_path / BOOT).read_text(encoding="utf-8") + "profile: dev\n", encoding="utf-8")
+    monkeypatch.setenv("LOOM_CONSOLE_KEY", "s3cret")
+    monkeypatch.setattr("loom_ia.console.shared.FIRST_PART_TIMEOUT", 0.2)
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--user", "jean"]) == 2, "ni cache ni console : personne"
+    assert "Utilisateur 'jean' inconnu" in capsys.readouterr().err
+    part = make_part(
+        version=1,
+        tenant="default",
+        roles=[SecurityRole(id="owner", permissions=("run", "answer", "cancel", "approve", "self_approve", "read"))],
+        users=[SecurityUser(id="jean", roles=("owner",)), SecurityUser(id="paul", roles=("owner",))],
+    )
+    SecurityCache.of(tmp_path, "atelier", "s3cret").write(part)
+    opened: list[ChatSettings] = []
+    _no_screen(monkeypatch, opened)
+    assert cli.main(["--user", "jean"]) == 0
+    assert opened[0].user == "jean"
+    assert [user.id for user in opened[0].config.security.users] == ["jean", "paul"]
+
+
 async def test_agent_is_chosen_in_the_console(tmp_path: Path) -> None:
     """Avec plusieurs agents, la console demande lequel au démarrage ; la session prend cet agent."""
     create_project(tmp_path, "fake")

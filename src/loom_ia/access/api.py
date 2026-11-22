@@ -4606,6 +4606,36 @@ class Loom:
         return await self._piloted(ctx, opened, writer)
 
 
+async def with_shared_security(config: LoomConfig, environ: Mapping[str, str] | None = None, *, grace: float = 5.0) -> LoomConfig:
+    """La config avec la sécurité au nom de laquelle agir : en sécurité partagée, celle du cache, sinon la première part de la console.
+
+    Pour un client qui choisit son utilisateur avant d'ouvrir l'instance (CLI,
+    ``loom-chat``). Sans cache valide, l'instance est ouverte le temps de se
+    connecter à la console et d'attendre sa première part, comme ``loom
+    serve`` (décision RU-4 du référentiel) ; la part reçue est gardée dans le
+    cache pour les suivants. En sécurité locale, la config telle quelle.
+
+    Args:
+        config: La config chargée.
+        environ: Environnement où lire la clé d'instance ; à défaut, celui du process.
+        grace: Délai laissé à la fermeture du canal, en secondes.
+
+    Returns:
+        La config, sa sécurité complétée ; sans utilisateur si rien n'est arrivé, en profil ``dev``.
+
+    Raises:
+        ConfigError: Ni cache ni part dans le délai, en profil ``prod``.
+    """
+    if config.security.source != "console":
+        return config
+    cached = shared_security(config, environ).config
+    if cached.security.received:
+        return cached
+    async with Loom(cached, environ=environ) as loom:
+        await loom.start_console(grace=grace)
+        return loom.config
+
+
 def _caller_cancelled() -> bool:
     """Vrai si asyncio a demandé l'arrêt de la tâche en cours (``task.cancel()``, délai)."""
     task = asyncio.current_task()

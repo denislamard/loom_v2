@@ -76,6 +76,7 @@ from loom_ia.access.api import (
     UnknownSession,
     check_deletable_id,
     unpiloted,
+    with_shared_security,
 )
 from loom_ia.access.authz import AccessDenied, Actor
 from loom_ia.access.cli import console as console_cli
@@ -3538,16 +3539,7 @@ def _shared_security(config: LoomConfig) -> SecurityConfig:
     """
     if config.security.source != "console":
         return config.security
-    cached = shared_security(config).config
-    if cached.security.received:
-        return cached.security
-
-    async def first_part() -> SecurityConfig:
-        async with Loom(cached) as loom:
-            await loom.start_console(grace=CONSOLE_GRACE)
-            return loom.config.security
-
-    return asyncio.run(first_part())
+    return asyncio.run(with_shared_security(config, grace=CONSOLE_GRACE)).security
 
 
 def _acting(args: argparse.Namespace, config: LoomConfig) -> tuple[Actor, TenantId]:

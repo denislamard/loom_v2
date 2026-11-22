@@ -2,6 +2,12 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.26 - non publiée
+
+### Sécurité partagée : clients qui choisissent leur utilisateur avant d'ouvrir l'instance
+- **`with_shared_security(config)`** (`loom_ia.access`) : la config avec la sécurité au nom de laquelle agir. En sécurité partagée, celle du cache ; sans cache valide, l'instance se connecte à la console et attend sa première part (refus en profil `prod` faute de part). En sécurité locale, la config telle quelle. La CLI s'en sert pour `--user`.
+- **loom-chat** : en `security.source: console`, `--user` cherche l'utilisateur dans la sécurité reçue de la console, et non plus dans `loom.yaml`, où il n'y en a pas (« Utilisateur 'jean' inconnu ; déclarés dans la config : » vide).
+
 ## 2.0.25 - publiée
 
 ### Console d'administration : sécurité partagée (référentiel des utilisateurs de Heddlo, lot 1)

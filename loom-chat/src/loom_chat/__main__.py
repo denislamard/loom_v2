@@ -1,6 +1,7 @@
 """Point d'entrée : `loom-chat` (ou `python -m loom_chat`), lancé depuis le dossier de l'agent."""
 
 import argparse
+import asyncio
 import os
 import sys
 from collections.abc import Mapping
@@ -151,8 +152,11 @@ def main(argv: list[str] | None = None) -> int:
         create_project(folder, kind)
         console.print(f"[green]✓[/] Agent créé dans [bold]{_tilde(folder)}[/]\n")
 
+    from loom_ia.access.api import with_shared_security  # import tardif : l'instance n'est chargée qu'ici
+
     try:
-        config = load(folder)
+        # Sécurité partagée (security.source: console) : les utilisateurs viennent du cache, ou de la console.
+        config = asyncio.run(with_shared_security(load(folder)))
         user = pick_user(config, args.user)
     except (ConfigError, ValueError) as exc:
         err.print(f"[red]✗[/] Config inutilisable : {exc}")

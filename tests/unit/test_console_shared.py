@@ -440,3 +440,14 @@ async def test_a_local_instance_never_receives_a_part(demo: ConfigFactory) -> No
         assert isinstance(item.payload, SecurityPayload)
         assert item.payload.version is None
         assert not fake.of("error")
+
+
+async def test_with_shared_security_gives_the_cache_or_leaves_a_local_config(demo: ConfigFactory) -> None:
+    from loom_ia.access import with_shared_security
+
+    local = load_config(demo(profile="dev"))
+    assert await with_shared_security(local) is local
+    path = demo(profile="dev", security=SHARED, console=section("ws://127.0.0.1:9/loom"))
+    SecurityCache.of(path.parent, "atelier", KEY).write(part(4))
+    config = await with_shared_security(load_config(path), ENV)
+    assert [user.id for user in config.security.users] == [DEV, "paul", "console-gateway"]

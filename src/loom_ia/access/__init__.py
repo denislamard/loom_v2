@@ -27,6 +27,7 @@ from loom_ia.access.api import (
     UnknownRun,
     UnknownSession,
     UnknownTrigger,
+    with_shared_security,
 )
 from loom_ia.access.authz import AccessDenied, Actor
 from loom_ia.access.resources import (
@@ -86,4 +87,5 @@ __all__ = [
     "UnknownSession",
     "UnknownTenant",
     "UnknownTrigger",
+    "with_shared_security",
 ]
