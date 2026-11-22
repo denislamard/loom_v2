@@ -38,7 +38,6 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketExce
 from loom_ia.config.console import ConsoleConfig
 from loom_ia.console.contract import (
     CONTRACTS,
-    SECURITY_CONTRACT,
     ByePayload,
     CommandPayload,
     CommandResultPayload,
@@ -96,8 +95,8 @@ class ChannelSettings:
         key: Clé de l'instance ; jamais journalisée.
         hello: Ce que loom dit de lui à chaque connexion.
         ssl_context: Contexte TLS ; ``None`` pour ``ws://``.
-        security: Poussée juste après ``welcome`` quand la console retient un
-            contrat qui la porte (2 et au-delà) ; ``None`` : rien n'est poussé.
+        security: Poussée juste après ``welcome``, à chaque connexion ;
+            ``None`` : rien n'est poussé.
     """
 
     url: str
@@ -330,7 +329,7 @@ class ConsoleChannel:
         async with connection:
             self._connection = connection
             self._contract = await self._handshake(connection)
-            if settings.security is not None and self._contract >= SECURITY_CONTRACT:
+            if settings.security is not None:
                 # Avant tout lot : la console sait qui est qui avant de recevoir quoi que ce soit.
                 await connection.send(encode(settings.security, contract=self._contract))
             self._state = "connected"

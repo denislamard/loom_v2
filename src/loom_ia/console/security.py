@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""La sécurité de l'instance, telle qu'elle part vers la console (contrat 2, docs/analyse-securite-hello.md).
+"""La sécurité de l'instance, telle qu'elle part vers la console (message ``security``, docs/analyse-securite-hello.md).
 
 loom reste le référentiel des utilisateurs et des rôles : la console la lit, et
 n'en renvoie rien. Seul le client que la console sert part — ses utilisateurs,

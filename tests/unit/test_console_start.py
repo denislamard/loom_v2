@@ -72,7 +72,7 @@ async def test_start_console_says_hello_then_bye(demo: ConfigFactory) -> None:
         assert len(fake.of("hello")) == 1
 
 
-async def test_start_console_pushes_the_security_in_contract_2(demo: ConfigFactory) -> None:
+async def test_start_console_pushes_the_security(demo: ConfigFactory) -> None:
     async with FakeConsole(key=KEY) as fake:
         config = demo(profile="dev", security=SECURITY, console=section(fake.url, commands={"user": "console-gateway"}))
         async with Loom.from_config(config, environ=ENV) as loom:
@@ -84,17 +84,6 @@ async def test_start_console_pushes_the_security_in_contract_2(demo: ConfigFacto
         assert sent.users == (SecurityUser(id=DEV, roles=("owner",)), SecurityUser(id="console-gateway", roles=("gateway",)))
         assert sent.gateway == SecurityGateway(user="console-gateway", act_as_roles=("owner",), rate=60, max_ttl=300)
         assert [agent.name for agent in sent.agents] == ["demo"]
-
-
-async def test_a_console_of_contract_1_gets_no_security(demo: ConfigFactory) -> None:
-    async with FakeConsole(key=KEY, contracts=(1,)) as fake:
-        async with Loom.from_config(demo(profile="dev", console=section(fake.url)), environ=ENV) as loom:
-            assert await loom.start_console()
-            assert loom.console is not None
-            async with asyncio.timeout(5):
-                await loom.console.wait_connected()
-            assert loom.console.contract == 1
-        assert fake.of("security") == []
 
 
 async def test_a_disabled_console_opens_nothing(demo: ConfigFactory) -> None:
@@ -151,7 +140,6 @@ def listen_args(**changes: Any) -> argparse.Namespace:
         "raw": False,
         "certfile": None,
         "keyfile": None,
-        "contract": None,
         **changes,
     }
     return argparse.Namespace(**values)
@@ -197,25 +185,6 @@ def test_listen_shows_one_line_per_thing() -> None:
     assert lines[0].endswith("security           client default · empreinte sha256:0123456789ab…")
     assert lines[1].strip() == "utilisateurs : dev (owner), console-gateway (gateway)"
     assert lines[2].strip() == "rôles : aucun · clés : 0 · passerelle : console-gateway (endosse owner)"
-
-
-def test_listen_can_serve_a_single_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    built: list[FakeConsole] = []
-
-    class Stop(Exception):
-        pass
-
-    def fake_console(**kwargs: Any) -> FakeConsole:
-        fake = FakeConsole(**kwargs)
-        built.append(fake)
-        raise Stop
-
-    monkeypatch.setattr("loom_ia.testing.console_server.FakeConsole", fake_console)
-    with pytest.raises(Stop):
-        console_cli.run(listen_args(contract=1), environ=ENV)
-    with pytest.raises(Stop):
-        console_cli.run(listen_args(), environ=ENV)
-    assert [tuple(fake.contracts) for fake in built] == [(1,), (2, 1)]
 
 
 JOURNAL: dict[str, Any] = {"events": {"backend": "jsonl", "path": "data/journal"}}

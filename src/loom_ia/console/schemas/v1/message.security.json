@@ -276,10 +276,10 @@
       "type": "object"
     }
   },
-  "$id": "loom-console/v2/message.security.json",
+  "$id": "loom-console/v1/message.security.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "``security`` (loom → console, contrat 2) : la sécurité de l'instance pour le client de la console, en lecture seule.\n\nloom reste le référentiel : la console la lit et n'en renvoie rien. Aucun\nsecret n'y figure, ni empreinte de clé, ni clé de la console.\n\nAttributes:\n    tenant: Client que la console sert.\n    roles: Les rôles que ses utilisateurs portent, et ceux qu'ils endossent.\n    users: Les utilisateurs du client.\n    api_keys: Leurs clés d'API, sans empreinte.\n    agents: Les agents du client et leur bloc ``access``.\n    gateway: La passerelle des commandes ; absente, les commandes sont refusées.\n    fingerprint: ``sha256:`` et l'empreinte du reste du document (JSON\n        canonique) : deux process de configs différentes en ont deux.",
+  "description": "``security`` (loom → console) : la sécurité de l'instance pour le client de la console, en lecture seule.\n\nloom reste le référentiel : la console la lit et n'en renvoie rien. Aucun\nsecret n'y figure, ni empreinte de clé, ni clé de la console.\n\nAttributes:\n    tenant: Client que la console sert.\n    roles: Les rôles que ses utilisateurs portent, et ceux qu'ils endossent.\n    users: Les utilisateurs du client.\n    api_keys: Leurs clés d'API, sans empreinte.\n    agents: Les agents du client et leur bloc ``access``.\n    gateway: La passerelle des commandes ; absente, les commandes sont refusées.\n    fingerprint: ``sha256:`` et l'empreinte du reste du document (JSON\n        canonique) : deux process de configs différentes en ont deux.",
   "properties": {
     "agents": {
       "default": [],

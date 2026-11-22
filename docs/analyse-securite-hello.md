@@ -1,4 +1,4 @@
-# Canal console — contrat 2 : sécurité, liste des sessions, runs en cours (L-1, L-2, L-4)
+# Canal console — sécurité, liste des sessions, runs en cours (L-1, L-2, L-4)
 
 22 novembre 2026 · Denis Lamard
 
@@ -16,7 +16,9 @@
 
 **Décisions du 22/11 :**
 - Les trois changements sont faits ensemble (L-1 + L-2 + L-4).
-- Le canal passe au **contrat 2**. loom sert les contrats 2 et 1 (`CONTRACTS = (2, 1)`). Une console qui ne connaît que le contrat 1 continue de marcher, sans sécurité ni `sessions.list`.
+- ~~Le canal passe au **contrat 2**~~ — **révisé le 22/11, après les lots** : il n'y a qu'**un contrat, le 1**, défini par loom 2.0.24, la référence tant que la console n'a pas d'utilisateurs. Le message `security` et la commande `sessions.list` en font partie ; `security` part après chaque `welcome`. Sont retirés : le contrat 2, `schemas/v2/`, le refus `unsupported_command`, l'option `--contract` de `loom console listen` et la décision Q-3 (les schémas `v1` sont régénérés). Dans la suite de ce document, « contrat 2 » se lit « contrat 1 de 2.0.24 ».
+- Côté Heddlo, une instance qui n'a pas envoyé sa sécurité (loom 2.0.23) ne donne **aucun droit** (décision du 22/11).
+- Le `hello` se **lit** en ignorant les champs inconnus (`decode`, décision du 22/11) : une évolution future pourra y annoncer de nouvelles capacités sans bloquer les consoles déjà déployées. Le modèle reste strict ; les autres messages aussi.
 - loom reste le référentiel des utilisateurs et des rôles (R-19 de Heddlo) : la sécurité part vers la console en **lecture seule**. Rien n'en revient.
 
 ---

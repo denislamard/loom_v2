@@ -10,11 +10,10 @@ Contrôles, dans l'ordre :
 
 1. une passerelle déclarée (``console.commands.user``), sinon ``commands_disabled`` ;
 2. une commande déjà vue rend **le même résultat**, sans rejouer l'action ;
-3. le contrat de la connexion : une commande qu'il ne porte pas, ``unsupported_command`` ;
-4. le débit (``console.commands.rate`` par minute), sinon ``rate_limited`` ;
-5. l'échéance : passée, ``expired`` ; trop lointaine (``max_ttl``), ``ttl_too_long`` ;
-6. l'endossement de ``as_user`` ;
-7. les arguments de la commande, puis ses droits, vérifiés par ``Loom`` (et
+3. le débit (``console.commands.rate`` par minute), sinon ``rate_limited`` ;
+4. l'échéance : passée, ``expired`` ; trop lointaine (``max_ttl``), ``ttl_too_long`` ;
+5. l'endossement de ``as_user`` ;
+6. les arguments de la commande, puis ses droits, vérifiés par ``Loom`` (et
    pour les lectures, ici, comme le fait le REST).
 
 Un refus de droits est écrit au journal d'audit, par l'accès ``console``. Chaque
@@ -40,7 +39,7 @@ from loom_ia.access.caller import Caller
 from loom_ia.config.console import ConsoleConfig
 from loom_ia.config.models import Permission
 from loom_ia.console.channel import ConsoleChannel
-from loom_ia.console.contract import COMMAND_SINCE, CommandPayload, CommandResultPayload, FileDataPayload
+from loom_ia.console.contract import CommandPayload, CommandResultPayload, FileDataPayload
 from loom_ia.console.translate import public_event
 from loom_ia.core.events import EVENTS_LIMIT, EventCategory, EventQuery, EventStatus
 from loom_ia.core.model import DomainModel, EventId, RunId, SessionId, Unknown
@@ -284,11 +283,6 @@ class CommandExecutor:
         gateway = self._console.commands.user
         if gateway is None:
             raise CommandRefused("commands_disabled", "console.commands.user n'est pas déclaré")
-        since = COMMAND_SINCE.get(command.name)
-        if since is not None:
-            contract = self._channel.contract
-            if contract is None or contract < since:
-                raise CommandRefused("unsupported_command", f"{command.name} demande le contrat {since} ; la connexion est en contrat {contract}")
         now = self._clock()
         window = now - timedelta(minutes=1)
         while self._recent and self._recent[0] < window:

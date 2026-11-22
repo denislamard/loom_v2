@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Contrat du canal entre loom et la console : enveloppe, messages, schémas (contrats 2 et 1).
+"""Contrat du canal entre loom et la console : enveloppe, messages, schémas (contrat 1).
 
 Le numéro de contrat est indépendant de la version du paquet. Il couvre
 l'enveloppe, la poignée de main, le format des événements exportés, les
@@ -14,16 +14,14 @@ Chaque message est un objet JSON, une trame texte : ``{type, id, contract,
 payload}``. ``hello`` n'a pas de ``contract`` : il propose ceux que loom sait
 servir (``contracts``), et ``welcome`` dit celui que la console retient.
 
-Le contrat 2 (docs/analyse-securite-hello.md) ajoute la commande
-``sessions.list`` et le message ``security`` :
-loom le pousse juste après ``welcome``, quand la console retient le contrat 2.
-Il ne peut pas aller dans le ``hello``, qui part avant la négociation et que
-les consoles du contrat 1 valident sans champ inconnu. Les schémas du contrat 1
-(``schemas/v1/``) sont figés ; ceux du contrat 2 sont tirés des modèles.
+Le contrat 1 est celui de loom 2.0.24, la référence tant que la console n'a pas
+d'utilisateurs (docs/analyse-securite-hello.md, décision du 22/11) : il porte la
+commande ``sessions.list`` et le message ``security``, que loom pousse juste
+après ``welcome``, à chaque connexion. loom 2.0.23 parlait un contrat 1 sans eux.
 
 Les événements partent au format des événements du REST (``GET /v1/events``,
-décision D-11) : voir ``translate``. Les schémas JSON publiés du contrat le
-plus récent (``schemas/v2/``) sont tirés de ces modèles par ``contract_schemas`` ; un essai
+décision D-11) : voir ``translate``. Les schémas JSON publiés
+(``schemas/v1/``) sont tirés de ces modèles par ``contract_schemas`` ; un essai
 de la CI vérifie que les fichiers commités sont à jour, si bien qu'un
 changement de charge interne ne passe pas sans qu'on décide de son sort
 (traduire, ou ouvrir le contrat suivant).
@@ -41,20 +39,14 @@ from loom_ia.core.events import DURABLE_PAYLOADS, Event
 from loom_ia.core.events.redaction import MARK
 from loom_ia.core.model import DomainModel, new_id
 
-CONTRACT: Final = 2
+CONTRACT: Final = 1
 """Contrat que loom propose en premier."""
 
-CONTRACTS: Final = (2, 1)
+CONTRACTS: Final = (1,)
 """Contrats que loom sait servir, du plus récent au plus ancien."""
 
 SCHEMAS_DIR: Final = Path(__file__).parent / "schemas" / f"v{CONTRACT}"
-"""Dossier des schémas JSON publiés du contrat le plus récent, tirés des modèles."""
-
-FROZEN_SCHEMAS_DIR: Final = Path(__file__).parent / "schemas" / "v1"
-"""Dossier des schémas du contrat 1, figés : plus rien ne les régénère."""
-
-SECURITY_CONTRACT: Final = 2
-"""Premier contrat qui porte le message ``security``."""
+"""Dossier des schémas JSON publiés du contrat."""
 
 type MessageType = Literal[
     "hello",
@@ -69,7 +61,7 @@ type MessageType = Literal[
     "bye",
     "security",
 ]
-"""Types de message ; ``security`` n'existe qu'à partir du contrat 2."""
+"""Types de message du contrat 1."""
 
 type CommandName = Literal[
     "run.start",
@@ -83,10 +75,7 @@ type CommandName = Literal[
     "approval.preview",
     "sessions.list",
 ]
-"""Commandes de la console ; ``sessions.list`` n'existe qu'à partir du contrat 2."""
-
-COMMAND_SINCE: Final[Mapping[str, int]] = {"sessions.list": 2}
-"""Premier contrat qui porte une commande, pour celles qui n'existent pas en contrat 1 : loom refuse les autres (``unsupported_command``)."""
+"""Commandes du contrat 1."""
 
 type Outcome = Literal["accepted", "refused", "error"]
 """Issue d'une commande : acceptée, refusée avec un motif, ou en erreur."""
@@ -112,6 +101,15 @@ class ContractError(ValueError):
 
 class HelloPayload(DomainModel):
     """``hello`` (loom → console) : qui se connecte, et ce qu'il sait servir.
+
+    Le seul message dont la **lecture** ignore les champs inconnus (``decode``,
+    décision du 22/11) : il part avant la négociation du contrat, si bien qu'un
+    loom plus récent ne pourrait rien y annoncer de neuf sans faire refuser sa
+    connexion par une console qui ne le connaît pas. Un champ ajouté plus tard y
+    est simplement ignoré par les consoles plus anciennes ; un champ connu reste
+    contrôlé comme ailleurs. Le modèle, lui, reste strict : le code qui le
+    construit ne peut pas y glisser une faute de frappe. Tous les autres
+    messages refusent les champs inconnus.
 
     Attributes:
         instance_id: Identifiant stable de l'instance.
@@ -226,7 +224,7 @@ class SecurityGateway(DomainModel):
 
 
 class SecurityPayload(DomainModel):
-    """``security`` (loom → console, contrat 2) : la sécurité de l'instance pour le client de la console, en lecture seule.
+    """``security`` (loom → console) : la sécurité de l'instance pour le client de la console, en lecture seule.
 
     loom reste le référentiel : la console la lit et n'en renvoie rien. Aucun
     secret n'y figure, ni empreinte de clé, ni clé de la console.
@@ -477,7 +475,11 @@ def decode(text: str | bytes) -> tuple[Envelope, Payload]:
         raise ContractError("unknown_type", f"type de message inconnu : {kind!r}")
     try:
         envelope = Envelope.model_validate(data)
-        payload = PAYLOADS[envelope.type].model_validate(envelope.payload)
+        fields = envelope.payload
+        if envelope.type == "hello":
+            # Le hello précède la négociation : un champ qu'un loom plus récent y ajoute est ignoré (HelloPayload).
+            fields = {name: value for name, value in fields.items() if name in HelloPayload.model_fields}
+        payload = PAYLOADS[envelope.type].model_validate(fields)
     except ValidationError as error:
         raise ContractError("invalid_message", f"message {kind!r} non conforme : {error.errors()[0]['msg']}") from None
     return envelope, payload
@@ -487,7 +489,7 @@ def decode(text: str | bytes) -> tuple[Envelope, Payload]:
 
 
 def contract_schemas() -> dict[str, dict[str, Any]]:
-    """Les schémas JSON du contrat, par nom de fichier : ce que ``schemas/v2/`` doit contenir.
+    """Les schémas JSON du contrat, par nom de fichier : ce que ``schemas/v1/`` doit contenir.
 
     - ``envelope.json`` : l'enveloppe commune ;
     - ``message.<type>.json`` : la charge de chaque type de message ;
@@ -501,7 +503,10 @@ def contract_schemas() -> dict[str, dict[str, Any]]:
     """
     schemas: dict[str, dict[str, Any]] = {"envelope.json": _titled(Envelope.model_json_schema(mode="serialization"), "envelope")}
     for kind, model in PAYLOADS.items():
-        schemas[f"message.{kind}.json"] = _titled(model.model_json_schema(mode="serialization"), f"message.{kind}")
+        schema = model.model_json_schema(mode="serialization")
+        if kind == "hello":
+            schema.pop("additionalProperties", None)  # lu en ignorant les champs inconnus (HelloPayload)
+        schemas[f"message.{kind}.json"] = _titled(schema, f"message.{kind}")
     types = sorted(_event_type(payload) for payload in DURABLE_PAYLOADS)
     envelope = Event.model_json_schema(mode="serialization")
     envelope["properties"]["payload"] = {

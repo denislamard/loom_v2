@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""La sécurité poussée vers la console en contrat 2 (docs/analyse-securite-hello.md, lot 1)."""
+"""La sécurité poussée vers la console (docs/analyse-securite-hello.md, lot 1)."""
 
 import json
 from datetime import UTC, datetime

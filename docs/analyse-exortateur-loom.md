@@ -95,7 +95,7 @@ Les fonctions du REST sont des méthodes de `Loom` (`access/api.py`), qui contr�
 
 ## 5. Protocole — contrat 1
 
-> Le contrat 2 (message `security`, commande `sessions.list`) et l'envoi des runs non terminés au premier branchement sont décrits dans `docs/analyse-securite-hello.md`.
+> Le message `security`, la commande `sessions.list` (ajoutés au contrat 1 en 2.0.24) et l'envoi des runs non terminés au premier branchement sont décrits dans `docs/analyse-securite-hello.md`.
 
 ### 5.1 Enveloppe
 

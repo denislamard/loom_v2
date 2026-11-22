@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Contrat du canal : messages, schémas figés, format des événements exportés (docs/analyse-exortateur-loom.md, lot 1)."""
 
-import hashlib
 import json
 from datetime import UTC, datetime
 
@@ -10,7 +9,6 @@ import pytest
 
 from loom_ia.console.contract import (
     CONTRACTS,
-    FROZEN_SCHEMAS_DIR,
     PAYLOADS,
     SCHEMAS_DIR,
     AckPayload,
@@ -79,7 +77,7 @@ def test_a_message_reads_back_as_it_was_written(payload: Payload) -> None:
     envelope, read = decode(text)
     assert read == payload
     assert envelope.id == "m1"
-    assert envelope.contract == (None if isinstance(payload, HelloPayload) else 2)
+    assert envelope.contract == (None if isinstance(payload, HelloPayload) else 1)
 
 
 def test_hello_proposes_rather_than_declares_a_contract() -> None:
@@ -114,14 +112,43 @@ def test_the_published_schemas_are_up_to_date() -> None:
     assert not stale, f"schémas périmés : {', '.join(stale)}"
 
 
-FROZEN_V1_DIGEST = "4199b510db263cb7270d6ccbd18fd83a9b9026bb2f434a010155f7489e63f1c4"
-"""Empreinte des 46 schémas du contrat 1, lus dans l'ordre de leur nom : ils ne changent plus."""
+def test_a_hello_from_a_newer_loom_is_read_without_its_unknown_fields() -> None:
+    """Le hello précède la négociation : un champ ajouté par un loom plus récent n'y bloque pas la connexion."""
+    newer = json.loads(encode(SAMPLES[0]))
+    newer["payload"]["capabilities"] = {"files": True}
+    envelope, read = decode(json.dumps(newer))
+    assert read == SAMPLES[0] and envelope.type == "hello"
+    assert "capabilities" not in read.model_dump()
 
 
-def test_the_schemas_of_contract_1_are_frozen() -> None:
-    files = sorted(FROZEN_SCHEMAS_DIR.glob("*.json"))
-    assert len(files) == 46
-    assert hashlib.sha256(b"".join(path.read_bytes() for path in files)).hexdigest() == FROZEN_V1_DIGEST
+def test_a_known_field_of_the_hello_is_still_checked() -> None:
+    wrong = json.loads(encode(SAMPLES[0]))
+    wrong["payload"]["export_mode"] = "tout"
+    with pytest.raises(ContractError) as refused:
+        decode(json.dumps(wrong))
+    assert refused.value.code == "invalid_message"
+
+
+def test_the_hello_model_stays_strict_for_the_code_that_builds_it() -> None:
+    with pytest.raises(ValueError, match="comands"):
+        HelloPayload.model_validate({**SAMPLES[0].model_dump(), "comands": True})
+
+
+@pytest.mark.parametrize("payload", [sample for sample in SAMPLES if not isinstance(sample, HelloPayload)], ids=lambda payload: type(payload).__name__)
+def test_every_other_message_still_refuses_unknown_fields(payload: Payload) -> None:
+    extended = json.loads(encode(payload))
+    extended["payload"]["surprise"] = 1
+    with pytest.raises(ContractError) as refused:
+        decode(json.dumps(extended))
+    assert refused.value.code == "invalid_message"
+
+
+def test_the_published_hello_schema_accepts_more_fields() -> None:
+    schemas = contract_schemas()
+    assert "additionalProperties" not in schemas["message.hello.json"]
+    assert schemas["message.ack.json"]["additionalProperties"] is False
+    newer = {**SAMPLES[0].model_dump(mode="json"), "capabilities": {"files": True}}
+    jsonschema.validate(newer, schemas["message.hello.json"])
 
 
 def test_a_fingerprint_is_required_in_its_form() -> None:

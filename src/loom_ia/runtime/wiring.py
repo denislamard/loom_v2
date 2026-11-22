@@ -1519,7 +1519,7 @@ def create_console(
         on_message: Ce qui traite chaque message reçu (acquittements, commandes).
         on_connected: Ce qui apprend chaque connexion ouverte (l'exportateur).
         retry_level: Niveau de log d'une tentative de connexion manquée.
-        security: La sécurité poussée après ``welcome`` en contrat 2.
+        security: La sécurité poussée après ``welcome``, à chaque connexion.
 
     Returns:
         Le canal, pas encore lancé (``ConsoleChannel.run``).

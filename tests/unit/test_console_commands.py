@@ -119,9 +119,8 @@ def atelier(tmp_path: Path) -> Build:
 class Sent:
     """Le canal, remplacé : ce que l'exécuteur envoie, dans l'ordre."""
 
-    def __init__(self, contract: int = 2) -> None:
+    def __init__(self) -> None:
         self.payloads: list[Payload] = []
-        self.contract: int | None = contract
 
     async def send(self, payload: Payload, *, message_id: str | None = None) -> bool:
         del message_id
@@ -357,7 +356,7 @@ def test_the_listener_fills_id_and_deadline() -> None:
         console_cli.command_of('{"name": "run.cancel", "args": {}}')
 
 
-# --- sessions.list (contrat 2, docs/analyse-securite-hello.md, lot 2) ----------------------------
+# --- sessions.list (docs/analyse-securite-hello.md, lot 2) ----------------------------
 
 
 async def listed(executor: CommandExecutor, clock: Clock, **args: Any) -> tuple[list[str], str | None]:
@@ -405,14 +404,6 @@ async def test_sessions_list_needs_read_and_is_audited(atelier: Build) -> None:
         assert (await executor.execute(command("sessions.list", {}, as_user=READER, now=clock.now))).outcome == "accepted"
     (line,) = audited(config)
     assert (line["access"], line["user"], line["via"], line["permission"]) == ("console", LAUNCHER, GATEWAY, "read")
-
-
-async def test_sessions_list_is_refused_on_a_connection_of_contract_1(atelier: Build) -> None:
-    async with Loom.from_config(atelier(), environ=ENV) as loom:
-        assert loom.config.console is not None
-        executor = CommandExecutor(loom, cast("ConsoleChannel", Sent(contract=1)), loom.config.console)
-        refused(await executor.execute(command("sessions.list", {})), "unsupported_command")
-        assert (await executor.execute(command("events.query", {}))).outcome == "accepted", "les commandes du contrat 1 restent servies"
 
 
 def test_sessions_list_can_be_typed_in_the_listener() -> None:
