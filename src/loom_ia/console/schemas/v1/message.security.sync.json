@@ -1,0 +1,238 @@
+{
+  "$defs": {
+    "Permission": {
+      "enum": [
+        "run",
+        "answer",
+        "cancel",
+        "approve",
+        "self_approve",
+        "amend",
+        "read",
+        "read_content",
+        "admin",
+        "act_as"
+      ],
+      "type": "string"
+    },
+    "RateLimit": {
+      "additionalProperties": false,
+      "description": "Débit d'une clé d'API, vérifié par l'accès HTTP (point 39) ; au-delà, 429 et ``Retry-After``.\n\nSe pose à la création de la clé (``loom keys create --rate-limit``).\n\nAttributes:\n    per_minute: Requêtes permises par minute à cette clé.",
+      "properties": {
+        "per_minute": {
+          "exclusiveMinimum": 0,
+          "title": "Per Minute",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "per_minute"
+      ],
+      "title": "RateLimit",
+      "type": "object"
+    },
+    "SecurityRole": {
+      "additionalProperties": false,
+      "description": "Un rôle d'accès, tel que ``security.roles`` le déclare.\n\nAttributes:\n    id: Identifiant du rôle.\n    description: Libellé.\n    permissions: Ses permissions.\n    agents: Agents auxquels il est borné ; vide signifie tous.\n    act_as_roles: Rôles qu'une passerelle de ce rôle peut endosser.",
+      "properties": {
+        "act_as_roles": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Act As Roles",
+          "type": "array"
+        },
+        "agents": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Agents",
+          "type": "array"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/Permission"
+          },
+          "title": "Permissions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "permissions"
+      ],
+      "title": "SecurityRole",
+      "type": "object"
+    },
+    "SecuritySyncKey": {
+      "additionalProperties": false,
+      "description": "Une clé d'API de la part d'une instance, **avec son empreinte** : loom en a besoin pour la reconnaître.\n\nAttributes:\n    hash: Empreinte de la clé (``sha256:`` et 64 chiffres hexadécimaux), jamais la clé.\n    rate_limit: Débit de la clé ; absent : aucun.",
+      "properties": {
+        "agents": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Agents",
+          "type": "array"
+        },
+        "expires": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires"
+        },
+        "hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Hash",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "rate_limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateLimit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scopes": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Permission"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scopes"
+        },
+        "user": {
+          "title": "User",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "user",
+        "hash"
+      ],
+      "title": "SecuritySyncKey",
+      "type": "object"
+    },
+    "SecurityUser": {
+      "additionalProperties": false,
+      "description": "Un utilisateur du client de la console.\n\nAttributes:\n    id: Identifiant, écrit au journal.\n    name: Nom affiché ; absent, l'identifiant.\n    roles: Ses rôles d'accès.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Roles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "roles"
+      ],
+      "title": "SecurityUser",
+      "type": "object"
+    }
+  },
+  "$id": "loom-console/v1/message.security.sync.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``security.sync`` (console → loom) : la part de l'instance dans le référentiel de la console.\n\nEnvoyée après ``welcome`` à un process dont le ``hello`` dit\n``security_source: console``, puis à chaque modification du référentiel.\nloom la contrôle comme une section ``security`` de ``loom.yaml``, l'applique\nà chaud, la garde dans son cache et répond ``security`` ; refusée, il\nrépond ``error`` (``about`` : l'identifiant de ce message) et garde la\nprécédente.\n\nAttributes:\n    version: Version du référentiel qui a produit la part.\n    tenant: Client de l'instance : celui que la console sert.\n    roles: Tous les rôles d'accès du référentiel.\n    users: Les utilisateurs rattachés à l'instance.\n    api_keys: Leurs clés d'API, avec leur empreinte.\n    fingerprint: ``sha256:`` et l'empreinte du reste de la part, sans\n        ``version`` (``part_fingerprint``) : deux parts de même contenu ont\n        la même.",
+  "properties": {
+    "api_keys": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SecuritySyncKey"
+      },
+      "title": "Api Keys",
+      "type": "array"
+    },
+    "fingerprint": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Fingerprint",
+      "type": "string"
+    },
+    "roles": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SecurityRole"
+      },
+      "title": "Roles",
+      "type": "array"
+    },
+    "tenant": {
+      "title": "Tenant",
+      "type": "string"
+    },
+    "users": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SecurityUser"
+      },
+      "title": "Users",
+      "type": "array"
+    },
+    "version": {
+      "minimum": 0,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "tenant",
+    "fingerprint"
+  ],
+  "title": "SecuritySyncPayload",
+  "type": "object"
+}

@@ -106,7 +106,7 @@ from loom_ia.config.models import (
     StorageConfig,
 )
 from loom_ia.config.references import Registry, import_modules, resolve
-from loom_ia.console.contract import HelloPayload, SecurityPayload
+from loom_ia.console.contract import HelloPayload, SecurityPayload, SecuritySyncPayload
 from loom_ia.core import SETUP
 from loom_ia.core.closing import Closing
 from loom_ia.core.model import (
@@ -196,6 +196,7 @@ if TYPE_CHECKING:
     from loom_ia.adapters.mcp import McpPool
     from loom_ia.console.channel import ConnectedHandler, ConsoleChannel, MessageHandler
     from loom_ia.console.cursor import ConsoleCursor
+    from loom_ia.console.shared import SecurityCache
 
 logger = logging.getLogger(__name__)
 
@@ -1495,6 +1496,62 @@ def console_instance_id(config: LoomConfig) -> str:
     temporary.write_text(created + "\n", encoding="utf-8")
     temporary.replace(path)
     return created
+
+
+@dataclass(frozen=True, slots=True)
+class SharedSecurity:
+    """La sécurité partagée d'une instance au démarrage : la config, la part de son cache, et ce cache.
+
+    Attributes:
+        config: La config, avec la part du cache si elle est valide.
+        part: La part du cache ; ``None`` sans cache valide.
+        cache: Le cache ; ``None`` en sécurité locale, ou sans clé d'instance.
+    """
+
+    config: LoomConfig
+    part: SecuritySyncPayload | None = None
+    cache: SecurityCache | None = None
+
+
+def shared_security(config: LoomConfig, environ: Mapping[str, str] | None = None) -> SharedSecurity:
+    """La sécurité partagée relue de son cache (``security.source: console``) ; la config telle quelle en sécurité locale.
+
+    Un cache illisible, d'une autre clé, d'une autre instance ou que les
+    contrôles refusent est écarté avec un avertissement : l'instance attendra
+    la part de la console.
+
+    Args:
+        config: La configuration chargée.
+        environ: Environnement où lire la clé d'instance.
+
+    Returns:
+        La config, et ce qui a servi à la compléter.
+
+    Raises:
+        ConfigError: Extra ``console`` absent (``cryptography``).
+    """
+    console = console_enabled(config)
+    if config.security.source != "console" or console is None or console.key_env is None:
+        return SharedSecurity(config)
+    key = (os.environ if environ is None else environ).get(console.key_env, "")
+    if not key:
+        return SharedSecurity(config)
+    try:
+        from loom_ia.console.shared import PartRefused, SecurityCache, applied
+
+        cache = SecurityCache.of(config.workpath or Path.cwd(), console_instance_id(config), key)
+    except ImportError as exc:
+        raise ConfigError("Sécurité partagée : le cache demande cryptography, qui n'est pas installé (installer l'extra : loom-ia[console])") from exc
+    part = cache.read()
+    if part is None:
+        return SharedSecurity(config, cache=cache)
+    try:
+        completed = applied(config, part)
+    except PartRefused as error:
+        logger.warning("Sécurité partagée : cache %s écarté, traité comme absent — %s", cache.path, error)
+        return SharedSecurity(config, cache=cache)
+    logger.info("Sécurité partagée : version %d relue du cache", part.version)
+    return SharedSecurity(completed, part, cache)
 
 
 def create_console(

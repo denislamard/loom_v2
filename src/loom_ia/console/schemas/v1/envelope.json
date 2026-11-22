@@ -13,7 +13,8 @@
         "file.data",
         "error",
         "bye",
-        "security"
+        "security",
+        "security.sync"
       ],
       "type": "string"
     }

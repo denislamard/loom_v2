@@ -84,7 +84,7 @@ def test_an_endorsable_role_nobody_carries_still_leaves() -> None:
 
 def test_the_fingerprint_is_the_digest_of_the_rest() -> None:
     sent = security_payload(security(), (), console())
-    document = sent.model_dump(mode="json", exclude={"fingerprint"})
+    document = sent.model_dump(mode="json", exclude={"fingerprint", "version", "part_fingerprint"})
     assert sent.fingerprint == fingerprint(document)
     canonical = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     assert canonical.startswith('{"agents":[],"api_keys":')
@@ -109,3 +109,9 @@ async def test_the_agents_give_their_access_block(demo: ConfigFactory) -> None:
         name="demo", run=("owner",), approve_default=("owner",), approve_tools={"calculer": ("owner",)}, self_approval=False
     )
     assert by_name["libre"] == SecurityAgent(name="libre")
+
+
+def test_a_shared_instance_confirms_the_part_it_applies() -> None:
+    sent = security_payload(security(), (), console(), version=13, part_fingerprint="sha256:" + "c" * 64)
+    assert (sent.version, sent.part_fingerprint) == (13, "sha256:" + "c" * 64)
+    assert sent.fingerprint == security_payload(security(), (), console()).fingerprint

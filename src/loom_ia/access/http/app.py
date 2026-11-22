@@ -242,7 +242,9 @@ def _who_calls(config: LoomConfig, host: str | None = None) -> None:
     config (``loom serve --host``) : c'est elle qui ouvre l'API, donc elle qui
     est jugée.
     """
-    if config.security.api_keys:
+    if config.security.api_keys or config.security.source == "console":
+        # Sécurité partagée : les clés arrivent avec la part de la console ;
+        # d'ici là, toute requête est refusée (401), personne n'est servi par défaut.
         return
     http = config.server.http
     if http.user is None:

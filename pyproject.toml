@@ -1,6 +1,6 @@
 [project]
 name = "loom-ia"
-version = "2.0.24"
+version = "2.0.25"
 description = "Moteur d'agents IA en Python asynchrone : rôles délégués à des modèles, outils Python et MCP, runs journalisés, rejouables et reprenables, en librairie Python, API REST ou serveur MCP."
 readme = "README.md"
 authors = [{ name = "Denis Lamard", email = "lamard.denis@gmail.com" }]
@@ -99,7 +99,9 @@ otel = [
 # console/ (canal vers la console d'administration, docs/analyse-exortateur-loom.md) : la
 # connexion WSS sortante de loom, et l'écouteur `loom console listen`. Sans cet extra, loom ne
 # contient aucun code du canal qui s'exécute ; une section `console` activée dit lequel installer.
-console = ["websockets>=17.4,<18"]
+# cryptography scelle le cache de la sécurité partagée (security.source: console, décision Q-5
+# du référentiel de Heddlo) : un seul extra à installer pour la console.
+console = ["cryptography>=50.0.1", "websockets>=17.4,<18"]
 # tools_builtin/memory (outil fourni loom.memory) : BGE-M3 et son reranker sur transformers,
 # CPU ou GPU. Importés au premier calcul (ou au préchargement), jamais au montage ; sans cet
 # extra, l'outil tourne avec ses modèles factices (models.kind: fake). Le torch de PyPI est

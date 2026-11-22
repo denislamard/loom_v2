@@ -19,6 +19,15 @@ d'utilisateurs (docs/analyse-securite-hello.md, décision du 22/11) : il porte l
 commande ``sessions.list`` et le message ``security``, que loom pousse juste
 après ``welcome``, à chaque connexion. loom 2.0.23 parlait un contrat 1 sans eux.
 
+loom 2.0.25 y ajoute la sécurité partagée (``security.source: console``,
+analyse_referentiel_utilisateurs.md de Heddlo) : le ``hello`` annonce
+``security_source`` et ``gateway_user`` ; la console envoie alors
+``security.sync``, la part de l'instance dans son référentiel ; loom
+l'applique et répond ``security``, qui porte ``version`` et
+``part_fingerprint``. Chaque ajout ne part que vers un pair qui le connaît :
+les champs du ``hello`` sont ignorés par une console plus ancienne, et ceux de
+``security`` ne sont remplis que pour une console qui a envoyé une part.
+
 Les événements partent au format des événements du REST (``GET /v1/events``,
 décision D-11) : voir ``translate``. Les schémas JSON publiés
 (``schemas/v1/``) sont tirés de ces modèles par ``contract_schemas`` ; un essai
@@ -37,7 +46,7 @@ from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveIn
 from loom_ia.config.models import Permission
 from loom_ia.core.events import DURABLE_PAYLOADS, Event
 from loom_ia.core.events.redaction import MARK
-from loom_ia.core.model import DomainModel, new_id
+from loom_ia.core.model import DomainModel, RateLimit, new_id
 
 CONTRACT: Final = 1
 """Contrat que loom propose en premier."""
@@ -60,6 +69,7 @@ type MessageType = Literal[
     "error",
     "bye",
     "security",
+    "security.sync",
 ]
 """Types de message du contrat 1."""
 
@@ -76,6 +86,9 @@ type CommandName = Literal[
     "sessions.list",
 ]
 """Commandes du contrat 1."""
+
+type SecuritySource = Literal["file", "console"]
+"""D'où vient la sécurité d'une instance : ``loom.yaml`` (``file``) ou la console (``console``)."""
 
 type Outcome = Literal["accepted", "refused", "error"]
 """Issue d'une commande : acceptée, refusée avec un motif, ou en erreur."""
@@ -120,6 +133,10 @@ class HelloPayload(DomainModel):
         agents: Agents de ce client.
         commands: Vrai si loom accepte des commandes (``console.commands.user``).
         export_mode: ``push`` ou ``on_demand``.
+        security_source: ``console`` si la sécurité vient de la console
+            (``security.source: console``) : elle attend alors ``security.sync``.
+        gateway_user: Utilisateur de la passerelle (``console.commands.user``),
+            que la part de l'instance doit contenir ; absent sans passerelle.
     """
 
     instance_id: str
@@ -130,6 +147,8 @@ class HelloPayload(DomainModel):
     agents: tuple[str, ...] = ()
     commands: bool = False
     export_mode: Literal["push", "on_demand"] = "on_demand"
+    security_source: SecuritySource = "file"
+    gateway_user: str | None = None
 
 
 class SecurityRole(DomainModel):
@@ -224,9 +243,11 @@ class SecurityGateway(DomainModel):
 
 
 class SecurityPayload(DomainModel):
-    """``security`` (loom → console) : la sécurité de l'instance pour le client de la console, en lecture seule.
+    """``security`` (loom → console) : la sécurité de l'instance pour le client de la console, telle que loom l'applique.
 
-    loom reste le référentiel : la console la lit et n'en renvoie rien. Aucun
+    En sécurité locale, loom reste le référentiel : la console la lit et n'en
+    renvoie rien. En sécurité partagée, loom l'envoie après chaque part
+    appliquée : ``version`` et ``part_fingerprint`` disent laquelle. Aucun
     secret n'y figure, ni empreinte de clé, ni clé de la console.
 
     Attributes:
@@ -237,7 +258,11 @@ class SecurityPayload(DomainModel):
         agents: Les agents du client et leur bloc ``access``.
         gateway: La passerelle des commandes ; absente, les commandes sont refusées.
         fingerprint: ``sha256:`` et l'empreinte du reste du document (JSON
-            canonique) : deux process de configs différentes en ont deux.
+            canonique), sans ``version`` ni ``part_fingerprint`` : deux process
+            de configs différentes en ont deux.
+        version: Version de la part appliquée ; absente en sécurité locale.
+        part_fingerprint: Empreinte de la part appliquée
+            (``SecuritySyncPayload.fingerprint``) ; absente en sécurité locale.
     """
 
     tenant: str
@@ -246,6 +271,49 @@ class SecurityPayload(DomainModel):
     api_keys: tuple[SecurityKey, ...] = ()
     agents: tuple[SecurityAgent, ...] = ()
     gateway: SecurityGateway | None = None
+    fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    version: NonNegativeInt | None = None
+    part_fingerprint: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class SecuritySyncKey(SecurityKey):
+    """Une clé d'API de la part d'une instance, **avec son empreinte** : loom en a besoin pour la reconnaître.
+
+    Attributes:
+        hash: Empreinte de la clé (``sha256:`` et 64 chiffres hexadécimaux), jamais la clé.
+        rate_limit: Débit de la clé ; absent : aucun.
+    """
+
+    hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    rate_limit: RateLimit | None = None
+
+
+class SecuritySyncPayload(DomainModel):
+    """``security.sync`` (console → loom) : la part de l'instance dans le référentiel de la console.
+
+    Envoyée après ``welcome`` à un process dont le ``hello`` dit
+    ``security_source: console``, puis à chaque modification du référentiel.
+    loom la contrôle comme une section ``security`` de ``loom.yaml``, l'applique
+    à chaud, la garde dans son cache et répond ``security`` ; refusée, il
+    répond ``error`` (``about`` : l'identifiant de ce message) et garde la
+    précédente.
+
+    Attributes:
+        version: Version du référentiel qui a produit la part.
+        tenant: Client de l'instance : celui que la console sert.
+        roles: Tous les rôles d'accès du référentiel.
+        users: Les utilisateurs rattachés à l'instance.
+        api_keys: Leurs clés d'API, avec leur empreinte.
+        fingerprint: ``sha256:`` et l'empreinte du reste de la part, sans
+            ``version`` (``part_fingerprint``) : deux parts de même contenu ont
+            la même.
+    """
+
+    version: NonNegativeInt
+    tenant: str
+    roles: tuple[SecurityRole, ...] = ()
+    users: tuple[SecurityUser, ...] = ()
+    api_keys: tuple[SecuritySyncKey, ...] = ()
     fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
@@ -391,6 +459,7 @@ type Payload = (
     | ErrorPayload
     | ByePayload
     | SecurityPayload
+    | SecuritySyncPayload
 )
 """Une charge de message."""
 
@@ -406,6 +475,7 @@ PAYLOADS: Final[Mapping[MessageType, type[Payload]]] = {
     "error": ErrorPayload,
     "bye": ByePayload,
     "security": SecurityPayload,
+    "security.sync": SecuritySyncPayload,
 }
 """Le modèle de charge de chaque type de message."""
 

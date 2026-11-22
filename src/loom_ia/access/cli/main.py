@@ -102,9 +102,12 @@ from loom_ia.config.models import (
     IdempotencyStorage,
     Permission,
     QueueStorage,
+    SecurityConfig,
 )
 from loom_ia.config.references import Registry, resolve
 from loom_ia.config.telemetry import CaptureConfig, CaptureOverride
+from loom_ia.console.contract import SecuritySyncPayload
+from loom_ia.console.shared import FIRST_PART_TIMEOUT
 from loom_ia.core import REPORTED, SETUP, TOLD
 from loom_ia.core.events import BudgetExceeded, Event, SessionCompacted
 from loom_ia.core.model import (
@@ -174,6 +177,7 @@ from loom_ia.runtime import (
     load_registry,
     model_warnings,
     postgres_ddl,
+    shared_security,
     storage_warnings,
 )
 from loom_ia.runtime.sources import GROUP as SOURCES_GROUP
@@ -803,7 +807,8 @@ async def _validate(args: argparse.Namespace, *, root: Path) -> int:
     même, avec un verdict d'échec, avant que l'erreur ne remonte : on y lit
     où le montage s'est arrêté.
     """
-    config = _config(args)
+    shared = shared_security(_config(args))
+    config = shared.config
     # Ce que la commande imprime à sa place n'est pas redit par le log du
     # montage (lot C du 23/10 : le collecteur non monté se lisait deux fois),
     # ni ce que son rapport reprend (``REPORTED``).
@@ -814,7 +819,7 @@ async def _validate(args: argparse.Namespace, *, root: Path) -> int:
     _configuration(report, config, args, printed)
     _extensions(report, config, registry)
     _execution(report, config, printed)
-    _access(report, config)
+    _access(report, config, shared.part)
     console = _console_section(report, config)
     if console is not None:
         await _console_backlog(console, config)
@@ -1133,14 +1138,25 @@ def _telemetry_lines(config: LoomConfig) -> list[str]:
     return [*lines, raw, *_telemetry_details(config)]
 
 
-def _access(report: _Report, config: LoomConfig) -> None:
-    """Section ACCÈS : rôles, comptes, journal des refus, clés d'API, MCP HTTP et portes (déclencheurs ``POST …/v1/hooks/<nom>``)."""
+def _access(report: _Report, config: LoomConfig, part: SecuritySyncPayload | None = None) -> None:
+    """Section ACCÈS : source de la sécurité, rôles, comptes, journal des refus, clés d'API, MCP HTTP et portes (déclencheurs ``POST …/v1/hooks/<nom>``).
+
+    En sécurité partagée, ``part`` est la part relue du cache : sans elle, il
+    n'y a ni rôle ni compte à montrer, l'instance les attendra de la console.
+    """
     section = report.section("ACCÈS")
     security = config.security
-    first, *more = _role_lines(config, report)
-    section.add("Rôles", first, more)
-    first, *more = _user_lines(config)
-    section.add("Comptes", first, more)
+    shared = security.source == "console"
+    if shared:
+        cached = (
+            f"cache : version {part.version}" if part is not None else f"aucun cache valide : la console est attendue au démarrage ({FIRST_PART_TIMEOUT:g} s)"
+        )
+        section.add("Sécurité", "partagée, reçue de la console (security.source: console)", [cached])
+    if security.received:
+        first, *more = _role_lines(config, report)
+        section.add("Rôles", first, more)
+        first, *more = _user_lines(config)
+        section.add("Comptes", first, more)
     if security.audit is not None:
         kept = security.audit.retention_days
         section.add(
@@ -1153,6 +1169,8 @@ def _access(report: _Report, config: LoomConfig) -> None:
         section.add("Clés d'API", first, [*more, *_key_lines(config, report)])
     elif config.server.http.user is not None:
         section.add("Clés d'API", f"aucune : API REST locale, au nom de {config.server.http.user}")
+    elif shared:
+        section.add("Clés d'API", "aucune reçue de la console")
     else:
         section.add("Clés d'API", "aucune")
         report.warn("Clés d'API", "aucune, ni 'server.http.user' : loom serve refusera de démarrer")
@@ -1219,6 +1237,8 @@ def _console_section(report: _Report, config: LoomConfig) -> _Section | None:
     gateway = console.commands.user
     if gateway is None:
         section.add("Commandes", "refusées (console.commands.user absent)")
+    elif not config.security.received:
+        section.add("Commandes", f"via {gateway}, déclarée par la part de la console", [f"{console.commands.rate} par minute au plus"])
     else:
         endorsable = sorted({name for role in config.security.roles_of(gateway) if "act_as" in role.permissions for name in role.act_as_roles})
         section.add(
@@ -3218,6 +3238,17 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return OK
 
 
+def _shared_keys(args: argparse.Namespace) -> bool:
+    """Vrai si l'amorce de la commande désigne une instance en sécurité partagée ; une amorce absente ou illisible ne dit rien."""
+    path = Path(args.config)
+    if not path.is_file():
+        return False
+    try:
+        return load_config(path, profile=args.profile).security.source == "console"
+    except ConfigError, OSError, ValueError:
+        return False
+
+
 def cmd_keys_create(args: argparse.Namespace) -> int:
     """``loom keys create <id> --user <utilisateur>`` : fabrique une clé d'API et imprime le bloc ``security.api_keys`` à ajouter à la config.
 
@@ -3234,6 +3265,13 @@ def cmd_keys_create(args: argparse.Namespace) -> int:
     Returns:
         0 ; 2 pour un ``--expires`` illisible.
     """
+    if _shared_keys(args):
+        print(
+            "La sécurité de cette instance est partagée (security.source: console) : les clés d'API se créent dans la console, "
+            "qui les envoie à l'instance — loom keys create n'en fabrique pas",
+            file=sys.stderr,
+        )
+        return REFUSED
     key = new_api_key()
     scopes: list[str] | None = args.scope
     agents: list[str] = args.agent or []
@@ -3482,6 +3520,36 @@ def _command(args: argparse.Namespace) -> str:
     return " ".join(name for name in names if isinstance(name, str)) or "loom"
 
 
+def _shared_security(config: LoomConfig) -> SecurityConfig:
+    """La sécurité au nom de laquelle la commande agit : en sécurité partagée, celle du cache, sinon la première part de la console.
+
+    Sans cache valide, la commande se connecte à la console et attend sa
+    première part, comme ``loom serve`` (décision RU-4 du référentiel) :
+    refus en profil ``prod`` si rien n'arrive dans le délai.
+
+    Args:
+        config: La config de la commande.
+
+    Returns:
+        La sécurité ; en sécurité locale, celle de ``loom.yaml``.
+
+    Raises:
+        ConfigError: Aucune part dans le délai, en profil ``prod``.
+    """
+    if config.security.source != "console":
+        return config.security
+    cached = shared_security(config).config
+    if cached.security.received:
+        return cached.security
+
+    async def first_part() -> SecurityConfig:
+        async with Loom(cached) as loom:
+            await loom.start_console(grace=CONSOLE_GRACE)
+            return loom.config.security
+
+    return asyncio.run(first_part())
+
+
 def _acting(args: argparse.Namespace, config: LoomConfig) -> tuple[Actor, TenantId]:
     """L'utilisateur de la commande et son client (décision D-10 des utilisateurs et rôles).
 
@@ -3494,7 +3562,7 @@ def _acting(args: argparse.Namespace, config: LoomConfig) -> tuple[Actor, Tenant
     user = getattr(args, "user", None) or os.environ.get(USER_ENV)
     if not user:
         raise MissingUser(f"Au nom de qui ? Donner --user UTILISATEUR, ou poser {USER_ENV} (dans l'environnement ou le .env du projet)")
-    actor = Actor.of(config.security, user)
+    actor = Actor.of(_shared_security(config), user)
     tenant = _tenant(args)
     if tenant is not None and tenant != actor.tenant:
         raise AccessDenied(f"--tenant {tenant} : {actor.user} agit pour le client {actor.tenant}", actor=actor)

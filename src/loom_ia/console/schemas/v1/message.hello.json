@@ -1,7 +1,16 @@
 {
+  "$defs": {
+    "SecuritySource": {
+      "enum": [
+        "file",
+        "console"
+      ],
+      "type": "string"
+    }
+  },
   "$id": "loom-console/v1/message.hello.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "``hello`` (loom → console) : qui se connecte, et ce qu'il sait servir.\n\nLe seul message dont la **lecture** ignore les champs inconnus (``decode``,\ndécision du 22/11) : il part avant la négociation du contrat, si bien qu'un\nloom plus récent ne pourrait rien y annoncer de neuf sans faire refuser sa\nconnexion par une console qui ne le connaît pas. Un champ ajouté plus tard y\nest simplement ignoré par les consoles plus anciennes ; un champ connu reste\ncontrôlé comme ailleurs. Le modèle, lui, reste strict : le code qui le\nconstruit ne peut pas y glisser une faute de frappe. Tous les autres\nmessages refusent les champs inconnus.\n\nAttributes:\n    instance_id: Identifiant stable de l'instance.\n    worker_id: Process qui ouvre cette connexion (une connexion par process).\n    loom_version: Version du paquet ``loom-ia``.\n    contracts: Contrats que loom sait servir, du plus récent au plus ancien.\n    tenant: Client que cette console sert.\n    agents: Agents de ce client.\n    commands: Vrai si loom accepte des commandes (``console.commands.user``).\n    export_mode: ``push`` ou ``on_demand``.",
+  "description": "``hello`` (loom → console) : qui se connecte, et ce qu'il sait servir.\n\nLe seul message dont la **lecture** ignore les champs inconnus (``decode``,\ndécision du 22/11) : il part avant la négociation du contrat, si bien qu'un\nloom plus récent ne pourrait rien y annoncer de neuf sans faire refuser sa\nconnexion par une console qui ne le connaît pas. Un champ ajouté plus tard y\nest simplement ignoré par les consoles plus anciennes ; un champ connu reste\ncontrôlé comme ailleurs. Le modèle, lui, reste strict : le code qui le\nconstruit ne peut pas y glisser une faute de frappe. Tous les autres\nmessages refusent les champs inconnus.\n\nAttributes:\n    instance_id: Identifiant stable de l'instance.\n    worker_id: Process qui ouvre cette connexion (une connexion par process).\n    loom_version: Version du paquet ``loom-ia``.\n    contracts: Contrats que loom sait servir, du plus récent au plus ancien.\n    tenant: Client que cette console sert.\n    agents: Agents de ce client.\n    commands: Vrai si loom accepte des commandes (``console.commands.user``).\n    export_mode: ``push`` ou ``on_demand``.\n    security_source: ``console`` si la sécurité vient de la console\n        (``security.source: console``) : elle attend alors ``security.sync``.\n    gateway_user: Utilisateur de la passerelle (``console.commands.user``),\n        que la part de l'instance doit contenir ; absent sans passerelle.",
   "properties": {
     "agents": {
       "default": [],
@@ -33,6 +42,18 @@
       "title": "Export Mode",
       "type": "string"
     },
+    "gateway_user": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Gateway User"
+    },
     "instance_id": {
       "title": "Instance Id",
       "type": "string"
@@ -40,6 +61,10 @@
     "loom_version": {
       "title": "Loom Version",
       "type": "string"
+    },
+    "security_source": {
+      "$ref": "#/$defs/SecuritySource",
+      "default": "file"
     },
     "tenant": {
       "title": "Tenant",

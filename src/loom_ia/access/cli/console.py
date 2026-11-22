@@ -16,6 +16,22 @@ la console. Dans la config de l'instance à observer, en profil ``dev`` :
 
 La sécurité de l'instance (``security``) s'affiche juste après ``welcome``.
 
+``--sync part.yaml`` joue la console d'une sécurité partagée
+(``security.source: console``) : la part du fichier part juste après
+``welcome`` vers chaque instance qui l'attend, puis de nouveau à chaque
+modification du fichier. Sans ``version``, elle vaut 1, puis augmente d'un à
+chaque relecture ::
+
+    tenant: default
+    roles:
+      - {id: owner, permissions: [run, answer, cancel, approve, self_approve, read, read_content]}
+      - {id: console, permissions: [act_as], act_as_roles: [owner]}
+    users:
+      - {id: denis, roles: [owner]}
+      - {id: console-gateway, roles: [console]}
+    api_keys:
+      - {id: k-denis, user: denis, hash: "sha256:…"}   # loom keys create donne l'empreinte
+
 ``--certfile`` et ``--keyfile`` la servent en ``wss://`` (certificat du
 serveur, en PEM), pour éprouver le TLS. Elle demande l'extra ``console``.
 
@@ -39,10 +55,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
+import yaml
 from pydantic import JsonValue, ValidationError
 
-from loom_ia.console.contract import CommandPayload
-from loom_ia.core.model import new_id
+from loom_ia.console.contract import CommandPayload, SecurityRole, SecuritySyncKey, SecuritySyncPayload, SecurityUser
+from loom_ia.console.shared import make_part
+from loom_ia.core.model import DEFAULT_TENANT, new_id
 
 if TYPE_CHECKING:
     from loom_ia.testing.console_server import FakeConsole, Received
@@ -62,6 +80,9 @@ DEFAULT_KEY_ENV: Final = "LOOM_CONSOLE_KEY"
 _KIND: Final = 18
 """Largeur de la colonne du type, dans l'affichage."""
 
+SYNC_POLL: Final = 1.0
+"""Intervalle de relecture du fichier de ``--sync``, en secondes."""
+
 
 def add_actions(console: argparse.ArgumentParser, handler: Callable[[argparse.Namespace], int]) -> None:
     """Les actions de la commande ``console``."""
@@ -73,6 +94,7 @@ def add_actions(console: argparse.ArgumentParser, handler: Callable[[argparse.Na
     listen.add_argument("--raw", action="store_true", help="affiche chaque message en JSON complet")
     listen.add_argument("--certfile", type=Path, help="certificat du serveur (PEM) : écoute en wss://")
     listen.add_argument("--keyfile", type=Path, help="clé privée du certificat du serveur (PEM)")
+    listen.add_argument("--sync", type=Path, help="part de sécurité (YAML) envoyée aux instances en security.source: console, renvoyée à chaque modification")
     listen.set_defaults(handler=handler)
 
 
@@ -104,8 +126,15 @@ def run(args: argparse.Namespace, environ: Mapping[str, str] | None = None) -> i
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certfile=args.certfile, keyfile=args.keyfile)
+    part: SecuritySyncPayload | None = None
+    if args.sync is not None:
+        try:
+            part = read_part(args.sync)
+        except (OSError, ValueError) as error:
+            print(f"loom console listen : --sync {args.sync} : {error}", file=sys.stderr)
+            return REFUSED
     printer = _Printer(raw=args.raw)
-    fake = FakeConsole(key=key, host=args.host, port=args.port, ssl_context=context, watcher=printer)
+    fake = FakeConsole(key=key, host=args.host, port=args.port, ssl_context=context, watcher=printer, security=part)
 
     async def listen() -> None:
         try:
@@ -114,11 +143,16 @@ def run(args: argparse.Namespace, environ: Mapping[str, str] | None = None) -> i
             raise _NotListening(str(error)) from None
         print(f"En écoute sur {fake.url} — clé attendue : {args.key_env} · Ctrl-C pour arrêter", flush=True)
         print('Commande : une ligne JSON, par exemple {"name": "run.cancel", "as_user": "dev", "args": {"run_id": "…"}}', flush=True)
+        if part is not None:
+            print(f"Part de sécurité : {args.sync} (version {part.version}), renvoyée à chaque modification", flush=True)
         typing = asyncio.create_task(_typed_commands(fake))
+        watching = None if args.sync is None else asyncio.create_task(_watched_part(fake, args.sync))
         try:
             await fake.serve_forever()
         finally:
             typing.cancel()
+            if watching is not None:
+                watching.cancel()
             await fake.aclose()
 
     try:
@@ -146,6 +180,70 @@ async def _typed_commands(fake: FakeConsole) -> None:
             continue
         await fake.send(command)
         print(f"{datetime.now().strftime('%H:%M:%S')}  {'commande':<{_KIND}} {command.command_id} {command.name} au nom de {command.as_user}", flush=True)
+
+
+def read_part(path: Path, previous: int | None = None) -> SecuritySyncPayload:
+    """La part de sécurité d'un fichier YAML (``--sync``) : ``tenant``, ``roles``, ``users``, ``api_keys`` et, si l'on veut, ``version``.
+
+    Args:
+        path: Le fichier.
+        previous: Version de la part précédente : sans ``version`` dans le
+            fichier, la nouvelle vaut la suivante (1 la première fois).
+
+    Returns:
+        La part, avec son empreinte.
+
+    Raises:
+        OSError: Fichier illisible.
+        ValueError: YAML invalide, ou part non conforme au contrat.
+    """
+    try:
+        loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise ValueError(f"YAML invalide ({error})") from None
+    if not isinstance(loaded, dict):
+        raise ValueError("un objet YAML est attendu : tenant, roles, users, api_keys")
+    data = cast("dict[str, object]", loaded)
+    unknown = sorted(set(data) - {"version", "tenant", "roles", "users", "api_keys"})
+    if unknown:
+        raise ValueError(f"clé(s) inconnue(s) : {', '.join(unknown)}")
+    version = data.get("version", 1 if previous is None else previous + 1)
+    try:
+        return make_part(
+            version=cast("int", version),
+            tenant=cast("str", data.get("tenant", DEFAULT_TENANT)),
+            roles=[SecurityRole.model_validate(role) for role in cast("list[object]", data.get("roles") or [])],
+            users=[SecurityUser.model_validate(user) for user in cast("list[object]", data.get("users") or [])],
+            api_keys=[SecuritySyncKey.model_validate(key) for key in cast("list[object]", data.get("api_keys") or [])],
+        )
+    except ValidationError as error:
+        raise ValueError("; ".join(f"{'.'.join(map(str, item['loc']))} : {item['msg']}" for item in error.errors())) from None
+
+
+async def _watched_part(fake: FakeConsole, path: Path) -> None:
+    """Relit le fichier de ``--sync`` à chaque modification et envoie la nouvelle part ; une part refusée est dite, l'ancienne reste."""
+    seen = _mtime(path)
+    while True:
+        await asyncio.sleep(SYNC_POLL)
+        changed = _mtime(path)
+        if changed == seen:
+            continue
+        seen = changed
+        previous = None if fake.security is None else fake.security.version
+        try:
+            part = read_part(path, previous)
+        except (OSError, ValueError) as error:
+            print(f"{datetime.now().strftime('%H:%M:%S')}  {'part refusée':<{_KIND}} {path} : {error}", flush=True)
+            continue
+        await fake.sync(part)
+
+
+def _mtime(path: Path) -> float | None:
+    """Date de modification du fichier ; ``None`` s'il n'existe plus."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
 
 
 def command_of(line: str) -> CommandPayload:
@@ -226,6 +324,11 @@ class _Printer:
                 return [self._line(now, "bye", str(data.get("reason", "")))]
             case "security":
                 return self._security(now, data)
+            case "sync":
+                users = cast("list[dict[str, JsonValue]]", data.get("users") or [])
+                return [
+                    self._line(now, "part envoyée", f"version {data['version']} · {len(users)} utilisateur(s) · empreinte {str(data['fingerprint'])[:19]}…")
+                ]
             case "error":
                 return [self._line(now, "erreur", f"{data['code']} — {data['message']}")]
             case "invalid":
@@ -241,8 +344,9 @@ class _Printer:
         gateway = cast("dict[str, JsonValue] | None", data.get("gateway"))
         said = [f"{user['id']} ({', '.join(cast('list[str]', user.get('roles') or []))})" for user in users]
         through = "aucune" if gateway is None else f"{gateway['user']} (endosse {', '.join(cast('list[str]', gateway.get('act_as_roles') or []))})"
+        applied = f" · part version {data['version']} appliquée" if data.get("version") is not None else ""
         return [
-            self._line(now, "security", f"client {data['tenant']} · empreinte {str(data['fingerprint'])[:19]}…"),
+            self._line(now, "security", f"client {data['tenant']} · empreinte {str(data['fingerprint'])[:19]}…{applied}"),
             self._line("", "", f"utilisateurs : {', '.join(said) or 'aucun'}"),
             self._line("", "", f"rôles : {', '.join(str(role['id']) for role in roles) or 'aucun'} · clés : {len(keys)} · passerelle : {through}"),
         ]

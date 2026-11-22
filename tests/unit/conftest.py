@@ -138,6 +138,9 @@ def secured(config: dict[str, Any]) -> dict[str, Any]:
     retire : un essai qui charge la config en production la reçoit sans lui.
     """
     security: dict[str, Any] = dict(config.get("security") or {})
+    if security.get("source") == "console":
+        # Sécurité partagée : rien n'est déclaré ici, tout vient de la console.
+        return {"workpath": ".", **config, "security": security}
     security.setdefault("roles", [OWNER])
     security.setdefault("audit", {"path": AUDIT_FILE})
     declared: list[dict[str, Any]] = config.get("tenants") or []

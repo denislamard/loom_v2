@@ -33,6 +33,7 @@ from loom_ia.console.contract import (
     EventsPayload,
     HelloPayload,
     Payload,
+    SecuritySyncPayload,
     SessionDeletedPayload,
     WelcomePayload,
     decode,
@@ -77,6 +78,8 @@ class FakeConsole:
         ssl_context: Contexte TLS serveur, pour éprouver ``wss://`` et le mTLS.
         auto_ack: Acquitte chaque lot d'événements et chaque ``session.deleted`` reçus.
         watcher: Appelé pour chaque chose reçue.
+        security: Part envoyée juste après ``welcome`` à une instance dont le
+            ``hello`` dit ``security_source: console`` (``sync`` la change).
     """
 
     key: str | None = None
@@ -86,9 +89,11 @@ class FakeConsole:
     ssl_context: ssl.SSLContext | None = None
     auto_ack: bool = True
     watcher: Watcher | None = None
+    security: SecuritySyncPayload | None = None
     received: list[Received] = field(default_factory=list[Received])
     _server: Server | None = None
     _connections: dict[ServerConnection, int] = field(default_factory=dict[ServerConnection, int])
+    _shared: set[ServerConnection] = field(default_factory=set[ServerConnection])
     _arrived: asyncio.Condition = field(default_factory=asyncio.Condition)
     _tasks: set[asyncio.Task[None]] = field(default_factory=set[asyncio.Task[None]])
 
@@ -155,6 +160,23 @@ class FakeConsole:
             except ConnectionClosed:
                 continue
 
+    async def sync(self, part: SecuritySyncPayload) -> None:
+        """Retient la part et l'envoie à chaque instance connectée en sécurité partagée, comme la console à chaque modification.
+
+        Args:
+            part: La part (``console.shared.make_part``).
+        """
+        self.security = part
+        for connection in tuple(self._shared):
+            contract = self._connections.get(connection)
+            if contract is None:
+                continue
+            try:
+                await connection.send(encode(part, contract=contract))
+            except ConnectionClosed:
+                continue
+        self._note(Received("sync", payload=part, detail=f"version {part.version}"))
+
     async def drop(self) -> None:
         """Coupe chaque connexion sans ``bye`` : éprouve la reconnexion de loom."""
         for connection in tuple(self._connections):
@@ -179,11 +201,14 @@ class FakeConsole:
             if contract is None:
                 return
             self._connections[connection] = contract
+            if connection in self._shared and self.security is not None:
+                await connection.send(encode(self.security, contract=contract))
             async for frame in connection:
                 await self._received(connection, frame, peer, contract)
         except ConnectionClosed:
             pass
         finally:
+            self._shared.discard(connection)
             if connection in self._connections:
                 del self._connections[connection]
                 self._note(Received("closed", peer=peer, detail=connection.close_reason or ""))
@@ -199,6 +224,8 @@ class FakeConsole:
             await connection.send(encode(ErrorPayload(code="invalid_message", message="hello attendu"), contract=None))
             return None
         self._note(Received("hello", envelope, payload, peer))
+        if payload.security_source == "console":
+            self._shared.add(connection)
         common = sorted(set(payload.contracts) & set(self.contracts), reverse=True)
         if not common:
             message = f"la console sert {sorted(self.contracts)}, loom propose {sorted(payload.contracts)}"

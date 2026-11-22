@@ -26,6 +26,8 @@ from loom_ia.console.contract import (
     SecurityKey,
     SecurityPayload,
     SecurityRole,
+    SecuritySyncKey,
+    SecuritySyncPayload,
     SecurityUser,
     SessionDeletedPayload,
     WelcomePayload,
@@ -38,7 +40,7 @@ from loom_ia.console.translate import public_event
 from loom_ia.core.events import Event
 from loom_ia.core.events.payloads import ApprovalRequested, ModelExchanged
 from loom_ia.core.events.redaction import redacted
-from loom_ia.core.model import Message, TextBlock, ToolOutput
+from loom_ia.core.model import Message, RateLimit, TextBlock, ToolOutput
 from loom_ia.telemetry.redaction import Redactor
 from loom_ia.testing import RunJournal, tool_call_message
 
@@ -63,6 +65,14 @@ SAMPLES: list[Payload] = [
         agents=(SecurityAgent(name="devis", approve_default=("owner",), approve_tools={"envoyer": ("owner",)}, self_approval=False),),
         gateway=SecurityGateway(user="console-gateway", act_as_roles=("owner",), rate=60, max_ttl=300),
         fingerprint="sha256:" + "a" * 64,
+    ),
+    SecuritySyncPayload(
+        version=13,
+        tenant="default",
+        roles=(SecurityRole(id="owner", permissions=("run", "read")), SecurityRole(id="console", permissions=("act_as",), act_as_roles=("owner",))),
+        users=(SecurityUser(id="dev", roles=("owner",)), SecurityUser(id="console-gateway", roles=("console",))),
+        api_keys=(SecuritySyncKey(id="k1", user="dev", hash="sha256:" + "b" * 64, scopes=("read",), rate_limit=RateLimit(per_minute=60)),),
+        fingerprint="sha256:" + "c" * 64,
     ),
 ]
 
@@ -207,3 +217,47 @@ def test_every_message_matches_its_published_schema() -> None:
         envelope = json.loads(encode(payload))
         jsonschema.validate(envelope, schemas["envelope.json"])
         jsonschema.validate(envelope["payload"], schemas[f"message.{envelope['type']}.json"])
+
+
+def test_a_sync_key_carries_a_well_formed_hash() -> None:
+    with pytest.raises(ValueError, match="pattern"):
+        SecuritySyncKey(id="k1", user="dev", hash="sha256:court")
+
+
+def test_the_hello_of_a_shared_instance_says_so_and_names_its_gateway() -> None:
+    hello = HelloPayload(
+        instance_id="atelier",
+        worker_id="w1",
+        loom_version="2.0.25",
+        contracts=CONTRACTS,
+        tenant="default",
+        security_source="console",
+        gateway_user="console-gateway",
+    )
+    _, read = decode(encode(hello, contract=None))
+    assert isinstance(read, HelloPayload)
+    assert (read.security_source, read.gateway_user) == ("console", "console-gateway")
+
+
+def test_a_console_of_2_0_24_reads_the_hello_of_a_shared_instance() -> None:
+    """Les champs ajoutés au ``hello`` sont ignorés par une lecture qui ne les connaît pas (2.0.24)."""
+    frame = json.loads(
+        encode(
+            HelloPayload(instance_id="a", worker_id="w", loom_version="2.0.25", contracts=CONTRACTS, tenant="default", security_source="console"), contract=None
+        )
+    )
+    known = {"instance_id", "worker_id", "loom_version", "contracts", "tenant", "agents", "commands", "export_mode"}
+    frame["payload"] = {name: value for name, value in frame["payload"].items() if name in known} | {"nouveau": 1}
+    _, read = decode(json.dumps(frame))
+    assert isinstance(read, HelloPayload)
+    assert read.security_source == "file"
+
+
+def test_security_carries_the_applied_part_only_when_given() -> None:
+    local = SAMPLES[10]
+    assert isinstance(local, SecurityPayload)
+    assert "version" not in json.loads(encode(local))["payload"]
+    shared = local.model_copy(update={"version": 13, "part_fingerprint": "sha256:" + "c" * 64})
+    _, read = decode(encode(shared))
+    assert isinstance(read, SecurityPayload)
+    assert (read.version, read.part_fingerprint) == (13, "sha256:" + "c" * 64)

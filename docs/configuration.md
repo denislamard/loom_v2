@@ -461,6 +461,29 @@ security:
 
 `api_keys[].tenant` n'existe plus (2.0.17) : le client vient de l'utilisateur.
 
+**Sécurité partagée** (2.0.25, `security.source: console`) : les rôles, les utilisateurs et les clés d'API viennent de la console d'administration (Heddlo), qui les tient dans son référentiel et envoie à l'instance sa part par le canal (message `security.sync`), avec la clé d'instance de `console.key_env`. loom contrôle la part comme cette section, l'applique à chaud (sans redémarrage) et la garde dans `<workpath>/.loom/security.json`, scellé en AES-256-GCM par une clé tirée de la clé d'instance : le cache ne se lit ni ne se falsifie sans elle.
+
+```yaml
+security:
+  source: console          # roles, users et api_keys sont refusés ici
+
+console:
+  enable: true
+  url: wss://heddlo.exemple.fr/loom
+  key_env: LOOM_CONSOLE_KEY
+  commands: {user: console-gateway}   # la passerelle est déclarée dans la console
+```
+
+| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
+|---|---|---|---|---|
+| `source` | `console` : sécurité partagée, reçue de la console. Exige `console.enable: true` ; refuse `roles`, `users`, `api_keys`, `server.http.user`, et plus d'un client dans `tenants`. | `console` | absent : sécurité locale | `source: console` |
+| `audit.path` | Comme en sécurité locale ; facultatif en sécurité partagée. | chemin | `data/audit.jsonl` en sécurité partagée | |
+
+- **Démarrage** : sur le cache s'il est valide, puis la console envoie sa part à la connexion. Sans cache valide, loom attend la première part 10 s : faute de quoi, il refuse de démarrer en profil `prod`, et démarre sans aucun utilisateur en `dev` (toute action refusée jusqu'à la première part). Les commandes qui agissent au nom d'un utilisateur (`loom run`, `resume`, `approve`, `answer`, `mcp`) lisent le cache, ou attendent la première part de la même façon.
+- **Part refusée** (rôle cité par un agent et absent, passerelle absente, aucune clé avec `server.mcp.http`…) : la précédente reste appliquée et la console reçoit le motif. Un rôle borné à un agent que l'instance n'a pas est accepté : le référentiel sert plusieurs instances.
+- **Cache refusé** (illisible, autre clé d'instance, autre instance, autre contrat) : traité comme absent, avec un avertissement.
+- `loom keys create` est refusée : les clés se créent dans la console, qui n'en garde que l'empreinte. `loom console listen --sync part.yaml` joue la console pour éprouver une instance.
+
 **Le fichier des refus** (`audit.path`) : une ligne par refus — `ts` (UTC), puis ce qui est connu parmi `access` (`sdk`, `rest`, `mcp`, `cli`), `action`, `user`, `via`, `key` (son id, jamais son secret), `permission`, `agent`, `tenant_id`, `run_id`, `call_id`, et `reason`, le message dit à l'appelant. Les actions réussies n'y sont pas : elles sont au journal de session. Le fichier s'écrit sous verrou `flock` ; s'il ne peut pas l'être, le refus reste ce qu'il est et une ligne ERROR le dit.
 
 ```json

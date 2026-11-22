@@ -86,9 +86,10 @@ from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
+from loom_ia.config.console import ConsoleConfig
 from loom_ia.config.models import Permission, TriggerSpec
 from loom_ia.config.references import Registry
-from loom_ia.console.contract import CONTRACTS, AckPayload, CommandPayload, Envelope, HelloPayload
+from loom_ia.console.contract import CONTRACTS, AckPayload, CommandPayload, Envelope, ErrorPayload, HelloPayload, SecurityPayload, SecuritySyncPayload
 from loom_ia.console.contract import Payload as ConsolePayload
 from loom_ia.console.security import security_payload
 from loom_ia.core import tool_threads
@@ -243,6 +244,7 @@ from loom_ia.runtime import (
     key_warnings,
     load_registry,
     model_warnings,
+    shared_security,
     storage_warnings,
 )
 from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
@@ -267,6 +269,7 @@ if TYPE_CHECKING:
     from loom_ia.console.commands import CommandExecutor
     from loom_ia.console.cursor import ConsoleCursor
     from loom_ia.console.exporter import ConsoleExporter
+    from loom_ia.console.shared import Received, SecurityCache
 
 logger = logging.getLogger(__name__)
 
@@ -1724,6 +1727,15 @@ class Loom:
         # ``None`` quand chaque run se sert de son journal.
         self._idempotency = create_idempotency_store(config)
         self._environ = environ
+        # Sécurité partagée (``security.source: console``) : la dernière part appliquée,
+        # relue de son cache ; la console enverra la sienne à la connexion (console/shared.py).
+        shared = shared_security(config, environ)
+        self._config = shared.config
+        self._security_part: SecuritySyncPayload | None = shared.part
+        self._security_cache: SecurityCache | None = shared.cache
+        self._security_ready = asyncio.Event()
+        if shared.part is not None:
+            self._security_ready.set()
         # Un agent monté par client : ses modèles, ses secrets et ses
         # connexions MCP ne sont pas ceux du voisin.
         self._built: dict[tuple[str, TenantId], Agent] = {}
@@ -1865,8 +1877,8 @@ class Loom:
             return False
         announce(self._config, console_warnings(self._config, self._environ))
         announce(self._config, console_advice(self._config), refuse=False)
-        tenant = self._tenants.get(console.tenant)
-        served = tuple(spec for spec in self.agents if tenant.allows(spec.name))
+        served = self._console_agents(console)
+        shared = self._config.security.source == "console"
         hello = HelloPayload(
             instance_id=console_instance_id(self._config),
             worker_id=self._worker_id,
@@ -1876,6 +1888,8 @@ class Loom:
             agents=tuple(spec.name for spec in served),
             commands=console.commands.user is not None,
             export_mode=console_export_mode(self._config),
+            security_source="console" if shared else "file",
+            gateway_user=console.commands.user if shared else None,
         )
         channel = create_console(
             self._config,
@@ -1884,9 +1898,12 @@ class Loom:
             on_message=self._console_message,
             on_connected=self._console_connected,
             retry_level=logging.WARNING if grace is None else logging.INFO,
-            security=security_payload(self._config.security, served, console),
+            # En sécurité partagée, ``security`` confirme chaque part appliquée (``_console_sync``).
+            security=None if shared else security_payload(self._config.security, served, console),
         )
         if channel is None:
+            if shared and self._security_part is None:
+                logger.warning("Sécurité partagée : ni cache, ni canal vers la console — aucun utilisateur, toute action est refusée")
             return False
         from loom_ia.console.commands import CommandExecutor
         from loom_ia.console.exporter import ConsoleExporter
@@ -1913,7 +1930,105 @@ class Loom:
             asyncio.create_task(exporter.run(), name="loom-console-export"),
             asyncio.create_task(channel.run(), name="loom-console"),
         ]
+        if shared:
+            await self._first_part(console.url or "")
         return True
+
+    async def _first_part(self, url: str) -> None:
+        """Sans cache valide, attend la première part de la console (décisions RU-4 et Q-4 du référentiel).
+
+        Raises:
+            ConfigError: Aucune part dans le délai, en profil ``prod``.
+        """
+        if self._security_ready.is_set():
+            return
+        from loom_ia.console.shared import FIRST_PART_TIMEOUT
+
+        try:
+            async with asyncio.timeout(FIRST_PART_TIMEOUT):
+                await self._security_ready.wait()
+        except TimeoutError:
+            if self._config.strict:
+                raise ConfigError(
+                    f"Sécurité partagée : ni cache, ni part reçue de la console ({url}) en {FIRST_PART_TIMEOUT:g} s — "
+                    "loom ne démarre pas en profil prod ; vérifier que la console est joignable et la clé d'instance"
+                ) from None
+            logger.warning(
+                "Sécurité partagée : ni cache, ni part reçue de la console (%s) en %g s — aucun utilisateur, toute action est refusée jusqu'à la première part",
+                url,
+                FIRST_PART_TIMEOUT,
+            )
+
+    def _console_agents(self, console: ConsoleConfig) -> tuple[AgentSpec, ...]:
+        """Les agents du client de la console."""
+        tenant = self._tenants.get(console.tenant)
+        return tuple(spec for spec in self.agents if tenant.allows(spec.name))
+
+    @property
+    def security_part(self) -> SecuritySyncPayload | None:
+        """La part de la console appliquée, en sécurité partagée ; ``None`` sinon, ou avant la première."""
+        return self._security_part
+
+    def apply_security(self, part: SecuritySyncPayload) -> Received:
+        """Applique à chaud une part de la console : chaque accès s'en sert dès l'appel suivant.
+
+        La part est contrôlée comme une section ``security`` de ``loom.yaml``,
+        puis gardée dans le cache. Une part identique à celle appliquée n'est
+        ni réappliquée ni réécrite ; une version plus basse, ou une même version
+        au contenu différent, est appliquée avec un avertissement (décision Q-13
+        du référentiel).
+
+        Args:
+            part: La part reçue.
+
+        Returns:
+            Ce qu'elle est au regard de la précédente.
+
+        Raises:
+            PartRefused: Instance en sécurité locale, empreinte fausse, autre
+                client, ou contrôle manqué ; la précédente reste appliquée.
+        """
+        from loom_ia.console.shared import applied, compared
+
+        previous = self._security_part
+        received = compared(previous, part)
+        if received == "same":
+            return received
+        self._config = applied(self._config, part)
+        if previous is not None and received == "older":
+            logger.warning(
+                "Sécurité partagée : version %d reçue, plus basse que la %d appliquée (contenu %s) — appliquée, la console fait foi",
+                part.version,
+                previous.version,
+                "identique" if part.fingerprint == previous.fingerprint else "différent",
+            )
+        elif previous is not None and received == "rewritten":
+            logger.warning("Sécurité partagée : version %d reçue avec un autre contenu que celle appliquée — appliquée, la console fait foi", part.version)
+        self._security_part = part
+        if self._security_cache is not None:
+            self._security_cache.write(part)
+        self._security_ready.set()
+        logger.info("Sécurité partagée : version %d appliquée (%d utilisateurs)", part.version, len(part.users))
+        return received
+
+    async def _console_sync(self, envelope: Envelope, part: SecuritySyncPayload) -> None:
+        """Une part de la console : appliquée et confirmée par ``security`` ; refusée, ``error`` et la précédente reste."""
+        from loom_ia.console.shared import PartRefused
+
+        channel, console = self._console, console_enabled(self._config)
+        try:
+            self.apply_security(part)
+        except PartRefused as error:
+            logger.warning("Sécurité partagée : part version %d refusée, la précédente reste appliquée — %s", part.version, error)
+            if channel is not None:
+                await channel.send(ErrorPayload(code="invalid_message", message=str(error), about=envelope.id))
+            return
+        if channel is not None and console is not None:
+            await channel.send(self._confirmation(console, part))
+
+    def _confirmation(self, console: ConsoleConfig, part: SecuritySyncPayload) -> SecurityPayload:
+        """Le message ``security`` qui confirme une part appliquée."""
+        return security_payload(self._config.security, self._console_agents(console), console, version=part.version, part_fingerprint=part.fingerprint)
 
     def _console_connected(self) -> None:
         """Une connexion neuve vers la console : l'exportateur rattrape ce qui n'est pas acquitté."""
@@ -1928,6 +2043,9 @@ class Loom:
             return
         if isinstance(payload, CommandPayload) and self._console_commands is not None:
             self._console_commands.receive(payload)
+            return
+        if isinstance(payload, SecuritySyncPayload):
+            await self._console_sync(envelope, payload)
             return
         logger.debug("Console : message %s ignoré", envelope.type)
 

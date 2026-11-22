@@ -2,7 +2,20 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.24 - non publiée
+## 2.0.25 - publiée
+
+### Console d'administration : sécurité partagée (référentiel des utilisateurs de Heddlo, lot 1)
+- ⚠ **`security.source: console`** : les rôles, les utilisateurs et les clés d'API viennent de la console, qui envoie à l'instance sa part de son référentiel (`security.sync`), par le canal et avec la clé d'instance existante. `roles`, `users`, `api_keys` et `server.http.user` sont alors refusés dans `loom.yaml`, comme plusieurs clients dans `tenants` ; `console.enable: true` est exigé ; `audit.path` vaut `data/audit.jsonl` par défaut. Sans `source`, rien ne change.
+- **Application à chaud** : une part est contrôlée comme une section `security` (`LoomConfig.check`), puis appliquée par `Loom.apply_security` : REST, MCP (HTTP compris), CLI et commandes de la console s'en servent dès l'appel suivant. Une part refusée laisse la précédente et répond `error` (`about` : le message de la part). Une version plus basse, ou une même version au contenu différent, est appliquée avec un avertissement ; une part identique n'est ni réappliquée ni réécrite.
+- **Cache** `<workpath>/.loom/security.json` : la dernière part, scellée en AES-256-GCM (`AesGcmCipher`) par une clé tirée de la clé d'instance (HKDF-SHA256) ; l'en-tête (contrat, instance, version) est authentifié. Illisible, d'une autre clé, d'une autre instance ou d'un autre contrat : traité comme absent.
+- **Premier démarrage** sans cache : `start_console` attend la première part 10 s ; faute de quoi, `ConfigError` en profil `prod`, démarrage sans utilisateur en `dev`. Les commandes qui agissent au nom d'un utilisateur lisent le cache ou attendent de même.
+- **Contrat 1 complété**, sans nouveau numéro : `hello` annonce `security_source` et `gateway_user` (ignorés par une console plus ancienne) ; nouveau message `security.sync` (`SecuritySyncPayload`, clés avec leur empreinte) ; `security` porte `version` et `part_fingerprint`, seulement en sécurité partagée. Schémas de `console/schemas/v1/` régénérés.
+- **Pour la console** : `check_security_references` et `check_gateway` (`config/models.py`), sortis de `LoomConfig.check` ; `console/shared.py` (`make_part`, `part_fingerprint`, `check_part`, `access_of`, `applied`, `compared`, `SecurityCache`) : la console contrôle une modification avec les règles de loom avant de l'enregistrer.
+- **CLI** : `loom validate` dit la source de la sécurité et l'état du cache ; `loom keys create` est refusée en sécurité partagée ; `loom console listen --sync part.yaml` envoie une part et la renvoie à chaque modification du fichier. `FakeConsole` sert une part (`security`, `sync`).
+- **Extra `console`** : `cryptography>=50.0.1` s'y ajoute (scellement du cache).
+- Essais : `tests/unit/test_console_shared.py` ; `test_console_contract.py`, `test_console_security.py` étendus.
+
+## 2.0.24 - publiée
 
 ### Console d'administration : sécurité de l'instance (`docs/analyse-securite-hello.md`, lot 1)
 - ⚠ **Le contrat 1 est complété**, sans nouveau numéro : 2.0.24 en est la référence tant que la console n'a pas d'utilisateurs (décision du 22/11). Il porte le message `security` et la commande `sessions.list`, que loom 2.0.23 ne connaissait pas. Les schémas de `console/schemas/v1/` sont régénérés.

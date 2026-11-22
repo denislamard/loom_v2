@@ -926,7 +926,7 @@ wheels = [
 
 [[package]]
 name = "loom-ia"
-version = "2.0.24"
+version = "2.0.25"
 source = { editable = "." }
 dependencies = [
     { name = "httpx2" },
@@ -971,6 +971,7 @@ anthropic = [
     { name = "httpx2" },
 ]
 console = [
+    { name = "cryptography" },
     { name = "websockets" },
 ]
 crypto = [
@@ -1057,6 +1058,7 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.31.0" },
     { name = "asyncpg", marker = "extra == 'sql'", specifier = ">=0.31.0" },
     { name = "beautifulsoup4", marker = "extra == 'memory-web'", specifier = ">=4.13.0,<5" },
+    { name = "cryptography", marker = "extra == 'console'", specifier = ">=50.0.1" },
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=50.0.1" },
     { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.141.1,<1" },
     { name = "httpx", marker = "extra == 'mcp'", specifier = ">=0.27.1,<1" },

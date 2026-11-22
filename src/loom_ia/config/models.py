@@ -16,6 +16,7 @@ l'éditeur.
 
 import logging
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Final, Literal, Self, cast
@@ -30,7 +31,7 @@ from pydantic import (
 )
 from pydantic.json_schema import SkipJsonSchema
 
-from loom_ia.agents.spec import AGENT_NAME_PATTERN, AgentSpec
+from loom_ia.agents.spec import AGENT_NAME_PATTERN, AgentAccess, AgentSpec
 from loom_ia.config.compaction import COMPACTION_AGENT, CompactionConfig, compaction_agent
 from loom_ia.config.console import ConsoleConfig
 from loom_ia.config.keys import ALGORITHM, FINGERPRINT, matches
@@ -1031,6 +1032,10 @@ MINIMAL_SECURITY: Final = f"""security:
 """Ce que le message d'une config sans rôle ni utilisateur donne à recopier (décision D-1 des utilisateurs et rôles)."""
 
 
+SHARED_AUDIT: Final = Path("data/audit.jsonl")
+"""Fichier des refus par défaut d'une sécurité partagée (``security.source: console``)."""
+
+
 class SecurityConfig(DomainModel):
     """Qui agit sur loom, et ce que chacun peut faire (``security`` ; décisions D-1 à D-5 des utilisateurs et rôles).
 
@@ -1038,6 +1043,13 @@ class SecurityConfig(DomainModel):
     des refus (décision D-9) : le contrôle est fait par ``LoomConfig.check``,
     pour que le message donne la config minimale plutôt que l'erreur générique
     d'un champ manquant.
+
+    **Sécurité partagée** (``source: console``, analyse_referentiel_utilisateurs.md
+    de Heddlo) : les rôles, les utilisateurs et les clés viennent de la console,
+    par le canal (``security.sync``) ; ils sont refusés dans ``loom.yaml``, et
+    ``audit.path`` vaut ``data/audit.jsonl`` par défaut. La part reçue est
+    posée par ``Loom.apply_security`` (``console/shared.py``), sans repasser par
+    ce validateur.
 
     Exemple ::
 
@@ -1052,16 +1064,56 @@ class SecurityConfig(DomainModel):
             path: .loom/audit.jsonl
 
     Attributes:
+        source: ``console`` : sécurité partagée, reçue de la console ; absente :
+            sécurité locale, déclarée ici.
         roles: Rôles d'accès.
         users: Utilisateurs.
         api_keys: Clés d'API, par leur empreinte.
         audit: Fichier des refus d'accès.
     """
 
+    source: Literal["console"] | None = None
     roles: tuple[AccessRole, ...] = ()
     users: tuple[UserSpec, ...] = ()
     api_keys: tuple[ApiKey, ...] = ()
     audit: AuditConfig | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _shared_audit(cls, data: object) -> object:
+        """Sécurité partagée sans ``audit`` : ``data/audit.jsonl``."""
+        if not isinstance(data, dict):
+            return data
+        fields = cast("dict[str, object]", data)
+        if fields.get("source") == "console" and fields.get("audit") is None:
+            return {**fields, "audit": {"path": str(SHARED_AUDIT)}}
+        return fields
+
+    @model_validator(mode="after")
+    def _one_source(self) -> Self:
+        """Sécurité partagée : rien de ce qu'envoie la console n'est déclaré ici.
+
+        Raises:
+            ValueError: ``roles``, ``users`` ou ``api_keys`` avec ``source: console``.
+        """
+        if self.source == "console":
+            declared = [name for name, given in (("roles", self.roles), ("users", self.users), ("api_keys", self.api_keys)) if given]
+            if declared:
+                raise ValueError(
+                    f"security.source: console : {', '.join(declared)} viennent de la console — les retirer de loom.yaml "
+                    "(ou retirer 'source' pour une sécurité locale)"
+                )
+        return self
+
+    @property
+    def received(self) -> bool:
+        """Vrai si la sécurité déclare quelqu'un : toujours en local, après une part qui a des utilisateurs en partagé.
+
+        Une part sans utilisateur (les rôles partent toujours) est acceptée telle
+        quelle : personne ne peut rien faire, et rien de ce qui cite un
+        utilisateur ou une clé n'est contrôlé.
+        """
+        return bool(self.users)
 
     def role(self, role_id: str) -> AccessRole:
         """Rôle d'accès déclaré, par son identifiant.
@@ -1541,7 +1593,7 @@ class LoomConfig(DomainModel):
         self._check_security()
         self._check_triggers()
         self._check_telemetry()
-        if self.server.mcp.http and not self.security.api_keys:
+        if self.server.mcp.http and not self.security.api_keys and (self.security.source is None or self.security.received):
             # Le MCP publie des outils à un LLM tiers, sur le réseau : sans
             # clé, n'importe qui les appellerait. Le stdio, lui, n'a pas de
             # clé, mais c'est le process qui l'a lancé qui décide.
@@ -1648,9 +1700,16 @@ class LoomConfig(DomainModel):
 
         Comme pour les clients, les agents ne sont contrôlés que lorsqu'il y en
         a : la première validation ne connaît pas encore ``agents_dir``.
+
+        En sécurité partagée, rien n'est exigé tant qu'aucune part n'est
+        reçue ; une part reçue passe les mêmes contrôles, sauf la borne d'un
+        rôle à un agent que l'instance n'a pas (``check_security_references``).
         """
         security = self.security
-        if not security.roles or not security.users:
+        shared = security.source == "console"
+        if shared:
+            self._check_shared()
+        elif not security.roles or not security.users:
             missing = " ni ".join(
                 name
                 for name, given in (
@@ -1661,47 +1720,28 @@ class LoomConfig(DomainModel):
             )
             raise ValueError(f"Aucun {missing} : loom exige au moins un rôle d'accès et un utilisateur. Configuration minimale :\n{MINIMAL_SECURITY}")
         self._check_audit(security.audit)
-        _reject_doubles("Rôle d'accès", [role.id for role in security.roles])
-        _reject_doubles("Utilisateur", [user.id for user in security.users])
-        _reject_doubles("Clé", [key.id for key in security.api_keys])
-        roles = {role.id: role for role in security.roles}
-        agents = {agent.name for agent in self.agents}
+        if shared and not security.received:
+            return
+        check_security_references(security, {agent.name: agent.access for agent in self.agents}, shared=shared)
+        self._check_local_user({user.id for user in security.users})
 
-        def declared(label: str, role: str) -> AccessRole:
-            found = roles.get(role)
-            if found is None:
-                raise ValueError(f"{label} : rôle d'accès {role!r} non déclaré dans security.roles (rôles : {', '.join(roles)})")
-            return found
+    def _check_shared(self) -> None:
+        """Sécurité partagée : une console activée, un seul client, pas d'utilisateur local (décisions Q-9 et Q-10 du référentiel).
 
-        for role in security.roles:
-            label = f"Rôle d'accès {role.id!r}"
-            for agent in role.agents if agents else ():
-                if agent not in agents:
-                    raise ValueError(f"{label} : agent {agent!r} non déclaré (agents : {', '.join(sorted(agents)) or 'aucun'})")
-            for endorsed in role.act_as_roles:
-                if "act_as" in declared(f"{label}, act_as_roles", endorsed).permissions:
-                    # Endosser un rôle qui endosse à son tour : une passerelle
-                    # agirait au nom de quelqu'un au nom de quelqu'un d'autre.
-                    raise ValueError(f"{label}, act_as_roles : {endorsed!r} a lui-même 'act_as' — on n'agit pas au nom d'autrui en chaîne")
-        for user in security.users:
-            for role in user.roles:
-                declared(f"Utilisateur {user.id!r}", role)
-        users = {user.id for user in security.users}
-        for key in security.api_keys:
-            if key.user not in users:
-                raise ValueError(f"Clé {key.id!r} : utilisateur {key.user!r} non déclaré dans security.users (utilisateurs : {', '.join(sorted(users))})")
-        self._check_local_user(users)
-        for agent in self.agents:
-            for permission, cited in agent.access.listed():
-                for role_id in cited:
-                    label = f"Agent {agent.name!r}, access"
-                    role = declared(label, role_id)
-                    if permission not in role.permissions:
-                        # Une liste ne donne rien : elle restreint ceux qui ont
-                        # déjà la permission. Un rôle sans elle n'y ferait rien.
-                        raise ValueError(f"{label} : le rôle {role_id!r} est cité pour {permission!r}, permission qu'il n'a pas")
-                    if not role.allows(agent.name):
-                        raise ValueError(f"{label} : le rôle {role_id!r} est borné à d'autres agents ({', '.join(role.agents)})")
+        Raises:
+            ValueError: Pas de section ``console`` activée ; plusieurs clients
+                déclarés ; ``server.http.user`` posé.
+        """
+        console = self.console
+        if console is None or not console.enable:
+            raise ValueError("security.source: console : la sécurité vient de la console — déclarer une section 'console' avec 'enable: true'")
+        if len(self.tenants) > 1:
+            raise ValueError(
+                f"security.source: console : {len(self.tenants)} clients déclarés ({', '.join(tenant.id for tenant in self.tenants)}) — "
+                "la console n'en sert qu'un, les utilisateurs des autres ne pourraient être déclarés nulle part : garder une sécurité locale"
+            )
+        if self.server.http.user is not None:
+            raise ValueError("security.source: console : 'server.http.user' est refusé — les utilisateurs viennent de la console, chacun présente sa clé")
 
     def _check_audit(self, audit: AuditConfig | None) -> None:
         """Le fichier des refus : obligatoire, et hors des dossiers de clients du journal."""
@@ -1788,14 +1828,10 @@ class LoomConfig(DomainModel):
         gateway = console.commands.user
         if gateway is None:
             return
-        label = f"console.commands.user ({gateway!r})"
-        users = {user.id: user for user in self.security.users}
-        if gateway not in users:
-            raise ValueError(f"{label} : utilisateur non déclaré dans security.users (utilisateurs : {', '.join(sorted(users)) or 'aucun'})")
-        if users[gateway].tenant != console.tenant:
-            raise ValueError(f"{label} : il est chez le client {users[gateway].tenant!r}, la console sert {console.tenant!r}")
-        if not any("act_as" in role.permissions for role in self.security.roles_of(gateway)):
-            raise ValueError(f"{label} : aucun de ses rôles n'a 'act_as' — la passerelle agit au nom des utilisateurs de la console (act_as_roles)")
+        if self.security.source == "console" and not self.security.received:
+            # La passerelle viendra avec la part de la console, contrôlée à sa réception.
+            return
+        check_gateway(self.security, gateway, console.tenant)
 
     def _check_tenants(self) -> None:
         """Clients déclarés une fois, sur des agents et des modèles qui existent (fonctions L1 et M5).
@@ -1968,3 +2004,85 @@ def _reject_doubles(kind: str, names: list[str]) -> None:
     doubles = sorted({name for name in names if names.count(name) > 1})
     if doubles:
         raise ValueError(f"{kind} déclaré deux fois : {', '.join(doubles)}")
+
+
+def check_security_references(security: SecurityConfig, agents: Mapping[str, AgentAccess], *, shared: bool = False) -> None:
+    """Tout ce que la sécurité cite est déclaré, et ses règles tiennent (décisions D-3 à D-5b des utilisateurs et rôles).
+
+    Appelé par ``LoomConfig.check`` sur la section ``security``, et sur une part
+    de la console avant de l'appliquer (``console/shared.py``) — la console
+    l'appelle aussi avant d'enregistrer une modification, avec les blocs
+    ``access`` qu'elle a reçus de chaque instance.
+
+    Args:
+        security: La sécurité à contrôler.
+        agents: Le bloc ``access`` de chaque agent de l'instance ; vide :
+            agents pas encore lus, leurs contrôles sont sautés.
+        shared: Sécurité partagée : un rôle borné à un agent que l'instance
+            n'a pas est accepté (le référentiel sert plusieurs instances).
+
+    Raises:
+        ValueError: Doublon ; rôle, utilisateur ou agent cité mais non déclaré ;
+            endossement en chaîne ; liste ``access`` qui cite un rôle sans la
+            permission, ou borné à d'autres agents.
+    """
+    _reject_doubles("Rôle d'accès", [role.id for role in security.roles])
+    _reject_doubles("Utilisateur", [user.id for user in security.users])
+    _reject_doubles("Clé", [key.id for key in security.api_keys])
+    roles = {role.id: role for role in security.roles}
+
+    def declared(label: str, role: str) -> AccessRole:
+        found = roles.get(role)
+        if found is None:
+            raise ValueError(f"{label} : rôle d'accès {role!r} non déclaré dans security.roles (rôles : {', '.join(roles)})")
+        return found
+
+    for role in security.roles:
+        label = f"Rôle d'accès {role.id!r}"
+        for agent in role.agents if agents and not shared else ():
+            if agent not in agents:
+                raise ValueError(f"{label} : agent {agent!r} non déclaré (agents : {', '.join(sorted(agents)) or 'aucun'})")
+        for endorsed in role.act_as_roles:
+            if "act_as" in declared(f"{label}, act_as_roles", endorsed).permissions:
+                # Endosser un rôle qui endosse à son tour : une passerelle
+                # agirait au nom de quelqu'un au nom de quelqu'un d'autre.
+                raise ValueError(f"{label}, act_as_roles : {endorsed!r} a lui-même 'act_as' — on n'agit pas au nom d'autrui en chaîne")
+    for user in security.users:
+        for role in user.roles:
+            declared(f"Utilisateur {user.id!r}", role)
+    users = {user.id for user in security.users}
+    for key in security.api_keys:
+        if key.user not in users:
+            raise ValueError(f"Clé {key.id!r} : utilisateur {key.user!r} non déclaré dans security.users (utilisateurs : {', '.join(sorted(users))})")
+    for name, access in agents.items():
+        for permission, cited in access.listed():
+            for role_id in cited:
+                label = f"Agent {name!r}, access"
+                role = declared(label, role_id)
+                if permission not in role.permissions:
+                    # Une liste ne donne rien : elle restreint ceux qui ont
+                    # déjà la permission. Un rôle sans elle n'y ferait rien.
+                    raise ValueError(f"{label} : le rôle {role_id!r} est cité pour {permission!r}, permission qu'il n'a pas")
+                if not role.allows(name):
+                    raise ValueError(f"{label} : le rôle {role_id!r} est borné à d'autres agents ({', '.join(role.agents)})")
+
+
+def check_gateway(security: SecurityConfig, gateway: str, tenant: str) -> None:
+    """La passerelle des commandes (``console.commands.user``) : déclarée, du client de la console, avec ``act_as``.
+
+    Args:
+        security: La sécurité qui doit la déclarer.
+        gateway: Son identifiant.
+        tenant: Le client que la console sert.
+
+    Raises:
+        ValueError: Utilisateur non déclaré, d'un autre client, ou sans rôle qui a ``act_as``.
+    """
+    label = f"console.commands.user ({gateway!r})"
+    users = {user.id: user for user in security.users}
+    if gateway not in users:
+        raise ValueError(f"{label} : utilisateur non déclaré dans security.users (utilisateurs : {', '.join(sorted(users)) or 'aucun'})")
+    if users[gateway].tenant != tenant:
+        raise ValueError(f"{label} : il est chez le client {users[gateway].tenant!r}, la console sert {tenant!r}")
+    if not any("act_as" in role.permissions for role in security.roles_of(gateway)):
+        raise ValueError(f"{label} : aucun de ses rôles n'a 'act_as' — la passerelle agit au nom des utilisateurs de la console (act_as_roles)")

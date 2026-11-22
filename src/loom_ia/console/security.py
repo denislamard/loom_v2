@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """La sécurité de l'instance, telle qu'elle part vers la console (message ``security``, docs/analyse-securite-hello.md).
 
-loom reste le référentiel des utilisateurs et des rôles : la console la lit, et
-n'en renvoie rien. Seul le client que la console sert part — ses utilisateurs,
+En sécurité locale, loom reste le référentiel des utilisateurs et des rôles :
+la console la lit, et n'en renvoie rien. En sécurité partagée
+(``security.source: console``), le message confirme la part appliquée : il
+porte sa version et son empreinte. Seul le client que la console sert part — ses utilisateurs,
 les rôles qu'ils portent ou endossent, leurs clés, ses agents —, et jamais un
 secret : ni l'empreinte d'une clé d'API, ni la clé de la console.
 
@@ -29,16 +31,26 @@ from loom_ia.console.contract import (
 )
 
 
-def security_payload(security: SecurityConfig, agents: Sequence[AgentSpec], console: ConsoleConfig) -> SecurityPayload:
+def security_payload(
+    security: SecurityConfig,
+    agents: Sequence[AgentSpec],
+    console: ConsoleConfig,
+    *,
+    version: int | None = None,
+    part_fingerprint: str | None = None,
+) -> SecurityPayload:
     """Le message ``security`` pour le client de la console.
 
     Args:
         security: La section ``security`` de la config.
         agents: Les agents du client de la console.
         console: La section ``console`` : son client et sa passerelle.
+        version: Version de la part appliquée, en sécurité partagée.
+        part_fingerprint: Empreinte de la part appliquée, en sécurité partagée.
 
     Returns:
-        Le document, avec son empreinte.
+        Le document, avec son empreinte, calculée sans ``version`` ni
+        ``part_fingerprint``.
     """
     users = [user for user in security.users if user.tenant == console.tenant]
     carried = {role for user in users for role in user.roles}
@@ -57,7 +69,8 @@ def security_payload(security: SecurityConfig, agents: Sequence[AgentSpec], cons
         "agents": [_agent(spec).model_dump(mode="json") for spec in agents],
         "gateway": _gateway(security, console),
     }
-    return SecurityPayload.model_validate({**document, "fingerprint": fingerprint(document)})
+    confirmed = {"version": version, "part_fingerprint": part_fingerprint} if version is not None else {}
+    return SecurityPayload.model_validate({**document, "fingerprint": fingerprint(document), **confirmed})
 
 
 def fingerprint(document: Mapping[str, Any]) -> str:

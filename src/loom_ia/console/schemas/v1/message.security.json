@@ -279,7 +279,7 @@
   "$id": "loom-console/v1/message.security.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "``security`` (loom → console) : la sécurité de l'instance pour le client de la console, en lecture seule.\n\nloom reste le référentiel : la console la lit et n'en renvoie rien. Aucun\nsecret n'y figure, ni empreinte de clé, ni clé de la console.\n\nAttributes:\n    tenant: Client que la console sert.\n    roles: Les rôles que ses utilisateurs portent, et ceux qu'ils endossent.\n    users: Les utilisateurs du client.\n    api_keys: Leurs clés d'API, sans empreinte.\n    agents: Les agents du client et leur bloc ``access``.\n    gateway: La passerelle des commandes ; absente, les commandes sont refusées.\n    fingerprint: ``sha256:`` et l'empreinte du reste du document (JSON\n        canonique) : deux process de configs différentes en ont deux.",
+  "description": "``security`` (loom → console) : la sécurité de l'instance pour le client de la console, telle que loom l'applique.\n\nEn sécurité locale, loom reste le référentiel : la console la lit et n'en\nrenvoie rien. En sécurité partagée, loom l'envoie après chaque part\nappliquée : ``version`` et ``part_fingerprint`` disent laquelle. Aucun\nsecret n'y figure, ni empreinte de clé, ni clé de la console.\n\nAttributes:\n    tenant: Client que la console sert.\n    roles: Les rôles que ses utilisateurs portent, et ceux qu'ils endossent.\n    users: Les utilisateurs du client.\n    api_keys: Leurs clés d'API, sans empreinte.\n    agents: Les agents du client et leur bloc ``access``.\n    gateway: La passerelle des commandes ; absente, les commandes sont refusées.\n    fingerprint: ``sha256:`` et l'empreinte du reste du document (JSON\n        canonique), sans ``version`` ni ``part_fingerprint`` : deux process\n        de configs différentes en ont deux.\n    version: Version de la part appliquée ; absente en sécurité locale.\n    part_fingerprint: Empreinte de la part appliquée\n        (``SecuritySyncPayload.fingerprint``) ; absente en sécurité locale.",
   "properties": {
     "agents": {
       "default": [],
@@ -313,6 +313,19 @@
       ],
       "default": null
     },
+    "part_fingerprint": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Part Fingerprint"
+    },
     "roles": {
       "items": {
         "$ref": "#/$defs/SecurityRole"
@@ -330,6 +343,19 @@
       },
       "title": "Users",
       "type": "array"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Version"
     }
   },
   "required": [

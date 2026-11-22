@@ -100,7 +100,7 @@ class McpHttp:
     def __init__(self, loom: Loom, *, name: str = SERVER_NAME, rates: RateWindow | None = None) -> None:
         config = loom.config
         self.config = config
-        self.security: SecurityConfig = config.security
+        self._loom = loom
         # Fenêtre du débit des clés : celle de l'application REST qui le monte,
         # pour qu'une clé soit bridée sur toutes ses requêtes, quel qu'en soit l'accès.
         self.rates = rates if rates is not None else RateWindow()
@@ -110,6 +110,11 @@ class McpHttp:
             stateless=True,
             security_settings=transport_security(config.server.mcp, config.server.http),
         )
+
+    @property
+    def security(self) -> SecurityConfig:
+        """La sécurité de l'instance, relue à chaque requête : une part de la console s'applique à chaud."""
+        return self._loom.config.security
 
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:

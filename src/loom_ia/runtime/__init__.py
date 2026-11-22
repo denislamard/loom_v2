@@ -13,6 +13,7 @@ La façade ``Loom`` (``access/api.py``) assemble une instance à partir d'ici.
 from loom_ia.runtime.wiring import (
     CONSOLE_DIR,
     Agent,
+    SharedSecurity,
     announce,
     apply_logging,
     budget_warnings,
@@ -49,6 +50,7 @@ from loom_ia.runtime.wiring import (
     postgres_ddl,
     prompt_text,
     role_definition,
+    shared_security,
     skill_warnings,
     storage_warnings,
     stream_output,
@@ -58,6 +60,7 @@ from loom_ia.runtime.wiring import (
 __all__ = [
     "CONSOLE_DIR",
     "Agent",
+    "SharedSecurity",
     "announce",
     "apply_logging",
     "budget_warnings",
@@ -94,6 +97,7 @@ __all__ = [
     "postgres_ddl",
     "prompt_text",
     "role_definition",
+    "shared_security",
     "skill_warnings",
     "storage_warnings",
     "stream_output",
