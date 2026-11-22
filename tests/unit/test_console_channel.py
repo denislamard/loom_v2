@@ -15,7 +15,7 @@ pytest.importorskip("websockets", reason="extra 'console' absent")
 from loom_ia.config.console import ConsoleConfig
 from loom_ia.console import channel as channel_module
 from loom_ia.console.channel import ChannelSettings, ConsoleChannel, retry_delay, tls_context
-from loom_ia.console.contract import CONTRACTS, CommandPayload, CommandResultPayload, HelloPayload, decode
+from loom_ia.console.contract import CONTRACTS, CommandPayload, CommandResultPayload, EventsPayload, HelloPayload, SecurityPayload, SecurityUser, decode
 from loom_ia.testing.console_server import FakeConsole
 
 KEY = "s3cret"
@@ -54,9 +54,59 @@ async def test_loom_says_hello_and_gets_the_contract(console: FakeConsole) -> No
     channel = ConsoleChannel(ChannelSettings(url=console.url, key=KEY, hello=HELLO))
     task = await started(channel)
     assert channel.state == "connected"
-    assert channel.contract == 1
+    assert channel.contract == 2
     hello = console.of("hello")[0]
     assert hello.payload == HELLO
+    await stopped(channel, task)
+
+
+SECURITY = SecurityPayload(tenant="default", roles=(), users=(SecurityUser(id="dev", roles=("owner",)),), fingerprint="sha256:" + "0" * 64)
+
+
+async def test_contract_2_pushes_the_security_before_anything_else(console: FakeConsole) -> None:
+    channel = ConsoleChannel(ChannelSettings(url=console.url, key=KEY, hello=HELLO, security=SECURITY))
+    task = await started(channel)
+    assert await channel.send(EventsPayload(batch_id="b1", events=({"type": "run.started"},)))
+    async with asyncio.timeout(5):
+        await console.wait_for("events")
+    kinds = [item.kind for item in console.received if item.kind in ("connected", "security", "events")]
+    assert kinds == ["connected", "security", "events"]
+    assert console.of("security")[0].payload == SECURITY
+    envelope = console.of("security")[0].envelope
+    assert envelope is not None and envelope.contract == 2
+    await stopped(channel, task)
+
+
+async def test_contract_1_gets_no_security() -> None:
+    async with FakeConsole(key=KEY, contracts=(1,)) as fake:
+        channel = ConsoleChannel(ChannelSettings(url=fake.url, key=KEY, hello=HELLO, security=SECURITY))
+        task = await started(channel)
+        assert channel.contract == 1
+        assert await channel.send(EventsPayload(batch_id="b1", events=({"type": "run.started"},)))
+        async with asyncio.timeout(5):
+            await fake.wait_for("events")
+        assert fake.of("security") == []
+        await stopped(channel, task)
+
+
+async def test_each_connection_gets_the_security_again(console: FakeConsole) -> None:
+    channel = ConsoleChannel(ChannelSettings(url=console.url, key=KEY, hello=HELLO, security=SECURITY))
+    task = await started(channel)
+    async with asyncio.timeout(5):
+        await console.wait_for("security")
+    await console.drop()
+    async with asyncio.timeout(5):
+        await console.wait_for("security", 2)
+    await stopped(channel, task)
+
+
+async def test_without_security_nothing_is_pushed(console: FakeConsole) -> None:
+    channel = ConsoleChannel(ChannelSettings(url=console.url, key=KEY, hello=HELLO))
+    task = await started(channel)
+    assert await channel.send(EventsPayload(batch_id="b1", events=({"type": "run.started"},)))
+    async with asyncio.timeout(5):
+        await console.wait_for("events")
+    assert console.of("security") == []
     await stopped(channel, task)
 
 
@@ -82,7 +132,7 @@ async def test_a_wrong_key_is_refused_and_never_retried_quickly(console: FakeCon
 
 
 async def test_no_common_contract_is_said_clearly(caplog: pytest.LogCaptureFixture) -> None:
-    async with FakeConsole(key=KEY, contracts=(2,)) as fake:
+    async with FakeConsole(key=KEY, contracts=(3,)) as fake:
         channel = ConsoleChannel(ChannelSettings(url=fake.url, key=KEY, hello=HELLO))
         task = asyncio.create_task(channel.run())
         async with asyncio.timeout(5):
@@ -128,7 +178,7 @@ async def test_commands_are_refused_until_they_are_served(console: FakeConsole) 
 async def test_a_message_outside_the_contract_gets_an_error(console: FakeConsole) -> None:
     channel = ConsoleChannel(ChannelSettings(url=console.url, key=KEY, hello=HELLO))
     task = await started(channel)
-    connection = console._connections[0]  # pyright: ignore[reportPrivateUsage]
+    (connection,) = console._connections  # pyright: ignore[reportPrivateUsage]
     await connection.send('{"type": "teleport", "payload": {}}')
     async with asyncio.timeout(5):
         errors = await console.wait_for("error")

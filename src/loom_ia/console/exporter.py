@@ -14,7 +14,10 @@ lots. La console acquitte chaque lot ; les positions acquittées vont au curseur
   sur le journal sont relues après leur dernier ``seq`` acquitté ; celles
   qu'un arrêt brutal aurait empêché de noter, d'après ``flushed_at`` moins une
   marge (Q-6) ; au premier démarrage, le curseur part de la position actuelle
-  de chaque session, sans rien envoyer (Q-11).
+  de chaque session, sans rien envoyer (Q-11) — sauf pour une session qui a un
+  run racine non terminé : elle part du premier événement du plus ancien, pour
+  que la console voie dès le branchement ce qui attend (L-1,
+  docs/analyse-securite-hello.md).
 - **Ni perte ni doublon côté console** : un lot non acquitté avant une coupure
   est renvoyé ; la console écarte ce qu'elle a déjà par ``(client, session,
   seq)`` (D-3). En direct, un événement déjà parti par le rattrapage est écarté.
@@ -30,6 +33,8 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
+from pydantic import ValidationError
+
 from loom_ia.config.console import ExportMode
 from loom_ia.console.channel import ConsoleChannel
 from loom_ia.console.contract import AckPayload, EventsPayload, SessionDeletedPayload
@@ -38,6 +43,9 @@ from loom_ia.console.translate import public_event
 from loom_ia.core.events import Event
 from loom_ia.core.model import SessionId, TenantId, new_id
 from loom_ia.core.ports import EventStore
+from loom_ia.core.ports.cipher import SealError
+from loom_ia.core.ports.event_store import JournalCorrupted, SessionRecord
+from loom_ia.core.projections import ProjectionError, unfinished_roots
 from loom_ia.telemetry.redaction import Redactor
 
 logger = logging.getLogger(__name__)
@@ -57,6 +65,9 @@ MAX_IN_FLIGHT: Final = 32
 
 ACK_WAIT: Final = 5.0
 """Attente d'un acquittement quand trop de lots sont en vol, en secondes."""
+
+_UNREADABLE: Final = (JournalCorrupted, SealError, ValidationError, ProjectionError)
+"""Ce que lève un journal de session illisible : le premier démarrage passe cette session, comme ``recover()``."""
 
 
 class ConsoleExporter:
@@ -245,7 +256,7 @@ class ConsoleExporter:
     # --- Le travail ------------------------------------------------------------------
 
     async def _load(self) -> None:
-        """Lit le curseur une fois ; au premier démarrage, le pose à la position actuelle du journal (Q-11)."""
+        """Lit le curseur une fois ; au premier démarrage, le pose à la position actuelle du journal (Q-11), avant les runs en cours (L-1)."""
         if self._loaded:
             return
         state = await self._cursor.load(self._tenant)
@@ -257,18 +268,38 @@ class ConsoleExporter:
             for event in self._queue:
                 offered.setdefault(event.session_id, event.seq)
             start = {record.session_id: min(record.last_seq, offered.get(record.session_id, record.last_seq + 1) - 1) for record in records}
+            running = await self._unfinished_starts(records)
+            for session, seq in running.items():
+                start[session] = min(start[session], seq)
             for session, seq in start.items():
                 self._acked[session] = max(self._acked.get(session, 0), seq)
             now = datetime.now(UTC)
             await self._cursor.advance(self._tenant, start, flushed_at=now)
             self._flushed_at = now
-            self._resync = False
+            # Les runs en cours partent par le rattrapage, relu après ces positions.
+            self._resync = bool(running)
         else:
             for session, seq in state.acked.items():
                 self._acked[session] = max(self._acked.get(session, 0), seq)
             self._deleted |= set(state.deleted)
             self._flushed_at = state.flushed_at
         self._loaded = True
+
+    async def _unfinished_starts(self, records: Iterable[SessionRecord]) -> dict[SessionId, int]:
+        """Pour chaque session qui a un run racine non terminé, la position juste avant le premier événement du plus ancien (L-1)."""
+        starts: dict[SessionId, int] = {}
+        for record in records:
+            try:
+                events = await self._store.read(self._tenant, record.session_id)
+                running = {state.run_id for state in unfinished_roots(events)}
+            except _UNREADABLE as error:
+                logger.warning("Console : session %s illisible, ses runs en cours ne partent pas (%s : %s)", record.session_id, type(error).__name__, error)
+                continue
+            if running:
+                starts[record.session_id] = min(event.seq for event in events if event.run_id in running) - 1
+        if starts:
+            logger.info("Console : premier branchement, %d session(s) avec un run en cours envoyée(s) depuis son début", len(starts))
+        return starts
 
     async def _wait_for_work(self) -> None:
         """Attend du travail : un événement, une connexion, ou le terme de l'écriture du curseur."""

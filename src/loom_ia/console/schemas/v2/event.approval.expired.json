@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "ExpiryAction": {
+      "enum": [
+        "deny",
+        "fail"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v2/event.approval.expired.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Demande d'approbation laissée sans réponse jusqu'à son ``expire_at`` (point 17).\n\n``action`` dit ce qu'il advient du run : ``deny``, l'appel est refusé et\nle modèle continue ; ``fail``, le run échoue. C'est un « non » prudent par\ndéfaut : personne n'a dit oui. L'action vient d'``approval.on_expiry`` de\nl'agent.\n\nCatégorie ``approval``. Facettes : ``tool_name`` et ``action``. Aucun\ncontenu. Statut ``warning``.\n\nAttributes:\n    type: ``approval.expired``.\n    call_id: Appel dont la demande expire.\n    tool_name: Nom de l'outil.\n    action: ``deny`` ou ``fail``. Défaut : ``deny``.\n    expire_at: Échéance qui était celle de la demande.",
+  "properties": {
+    "action": {
+      "$ref": "#/$defs/ExpiryAction",
+      "default": "deny"
+    },
+    "call_id": {
+      "title": "Call Id",
+      "type": "string"
+    },
+    "expire_at": {
+      "format": "date-time",
+      "title": "Expire At",
+      "type": "string"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tool_name": {
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "type": {
+      "const": "approval.expired",
+      "default": "approval.expired",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "call_id",
+    "tool_name",
+    "expire_at"
+  ],
+  "title": "ApprovalExpired",
+  "type": "object"
+}

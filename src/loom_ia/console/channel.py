@@ -38,6 +38,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketExce
 from loom_ia.config.console import ConsoleConfig
 from loom_ia.console.contract import (
     CONTRACTS,
+    SECURITY_CONTRACT,
     ByePayload,
     CommandPayload,
     CommandResultPayload,
@@ -46,6 +47,7 @@ from loom_ia.console.contract import (
     ErrorPayload,
     HelloPayload,
     Payload,
+    SecurityPayload,
     WelcomePayload,
     decode,
     encode,
@@ -87,19 +89,22 @@ class ChannelRefused(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ChannelSettings:
-    """Ce qu'il faut pour se connecter : adresse, clé, TLS, et le ``hello`` à présenter.
+    """Ce qu'il faut pour se connecter : adresse, clé, TLS, le ``hello`` à présenter et la sécurité à pousser.
 
     Attributes:
         url: Adresse de la console (``wss://…``, ou ``ws://`` en dev).
         key: Clé de l'instance ; jamais journalisée.
         hello: Ce que loom dit de lui à chaque connexion.
         ssl_context: Contexte TLS ; ``None`` pour ``ws://``.
+        security: Poussée juste après ``welcome`` quand la console retient un
+            contrat qui la porte (2 et au-delà) ; ``None`` : rien n'est poussé.
     """
 
     url: str
     key: str
     hello: HelloPayload
     ssl_context: ssl.SSLContext | None = None
+    security: SecurityPayload | None = None
 
     def __repr__(self) -> str:
         """Sans la clé : un repr finit souvent dans un log."""
@@ -325,6 +330,9 @@ class ConsoleChannel:
         async with connection:
             self._connection = connection
             self._contract = await self._handshake(connection)
+            if settings.security is not None and self._contract >= SECURITY_CONTRACT:
+                # Avant tout lot : la console sait qui est qui avant de recevoir quoi que ce soit.
+                await connection.send(encode(settings.security, contract=self._contract))
             self._state = "connected"
             self._connected.set()
             logger.info("Console %s : connectée, contrat %d", settings.url, self._contract)

@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "JsonValue": {},
+    "MessageType": {
+      "enum": [
+        "hello",
+        "welcome",
+        "events",
+        "ack",
+        "session.deleted",
+        "command",
+        "command.result",
+        "file.data",
+        "error",
+        "bye",
+        "security"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v2/envelope.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Un message du canal : son type, son identifiant, le contrat, sa charge.\n\nAttributes:\n    type: Type du message.\n    id: Identifiant unique (UUIDv7).\n    contract: Contrat négocié ; absent du ``hello``, qui propose.\n    payload: La charge, propre au type.",
+  "properties": {
+    "contract": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Contract"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Payload",
+      "type": "object"
+    },
+    "type": {
+      "$ref": "#/$defs/MessageType"
+    }
+  },
+  "required": [
+    "type"
+  ],
+  "title": "Envelope",
+  "type": "object"
+}

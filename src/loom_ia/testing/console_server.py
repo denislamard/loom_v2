@@ -25,6 +25,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 
 from loom_ia.console.contract import (
+    CONTRACTS,
     AckPayload,
     ContractError,
     Envelope,
@@ -69,7 +70,8 @@ class FakeConsole:
 
     Args:
         key: Clé d'instance attendue ; ``None`` accepte toute connexion.
-        contracts: Contrats qu'elle sait servir ; le plus récent commun est retenu.
+        contracts: Contrats qu'elle sait servir ; le plus récent commun est
+            retenu. Par défaut, ceux de loom.
         host: Adresse d'écoute.
         port: Port d'écoute ; 0 en tire un libre.
         ssl_context: Contexte TLS serveur, pour éprouver ``wss://`` et le mTLS.
@@ -78,7 +80,7 @@ class FakeConsole:
     """
 
     key: str | None = None
-    contracts: Sequence[int] = (1,)
+    contracts: Sequence[int] = CONTRACTS
     host: str = "127.0.0.1"
     port: int = 0
     ssl_context: ssl.SSLContext | None = None
@@ -86,7 +88,7 @@ class FakeConsole:
     watcher: Watcher | None = None
     received: list[Received] = field(default_factory=list[Received])
     _server: Server | None = None
-    _connections: list[ServerConnection] = field(default_factory=list[ServerConnection])
+    _connections: dict[ServerConnection, int] = field(default_factory=dict[ServerConnection, int])
     _arrived: asyncio.Condition = field(default_factory=asyncio.Condition)
     _tasks: set[asyncio.Task[None]] = field(default_factory=set[asyncio.Task[None]])
 
@@ -145,11 +147,11 @@ class FakeConsole:
         async with self._arrived:
             await self._arrived.wait_for(check)
 
-    async def send(self, payload: Payload, *, contract: int = 1) -> None:
-        """Envoie un message à chaque instance connectée."""
-        for connection in tuple(self._connections):
+    async def send(self, payload: Payload, *, contract: int | None = None) -> None:
+        """Envoie un message à chaque instance connectée, sous le contrat de sa connexion (ou ``contract``)."""
+        for connection, retained in tuple(self._connections.items()):
             try:
-                await connection.send(encode(payload, contract=contract))
+                await connection.send(encode(payload, contract=retained if contract is None else contract))
             except ConnectionClosed:
                 continue
 
@@ -176,14 +178,14 @@ class FakeConsole:
             contract = await self._handshake(connection, peer)
             if contract is None:
                 return
-            self._connections.append(connection)
+            self._connections[connection] = contract
             async for frame in connection:
                 await self._received(connection, frame, peer, contract)
         except ConnectionClosed:
             pass
         finally:
             if connection in self._connections:
-                self._connections.remove(connection)
+                del self._connections[connection]
                 self._note(Received("closed", peer=peer, detail=connection.close_reason or ""))
 
     async def _handshake(self, connection: ServerConnection, peer: str) -> int | None:
@@ -226,9 +228,9 @@ class FakeConsole:
 
     async def ack(self, batch_id: str) -> None:
         """Acquitte un lot (ou un ``session.deleted``, par son identifiant de message), comme la console une fois enregistré."""
-        for connection in tuple(self._connections):
+        for connection, contract in tuple(self._connections.items()):
             try:
-                await connection.send(encode(AckPayload(batch_id=batch_id)))
+                await connection.send(encode(AckPayload(batch_id=batch_id), contract=contract))
             except ConnectionClosed:
                 continue
         self._note(Received("ack", detail=batch_id))

@@ -4,6 +4,7 @@
     loom console listen                 écoute sur ws://127.0.0.1:8766/loom
     loom console listen --raw           chaque message en JSON complet
     loom console listen --port 9000 --key-env MA_CLE
+    loom console listen --contract 1    ne sert que le contrat 1 (sans ``security``)
 
 Elle contrôle la clé de l'instance (``--key-env``, ``LOOM_CONSOLE_KEY`` par
 défaut), répond à la poignée de main et acquitte les lots d'événements, comme
@@ -14,6 +15,11 @@ la console. Dans la config de l'instance à observer, en profil ``dev`` :
       url: ws://127.0.0.1:8766/loom
       key_env: LOOM_CONSOLE_KEY
 
+Elle sert les contrats de loom et retient le plus récent : en contrat 2, la
+sécurité de l'instance (``security``) s'affiche juste après ``welcome``.
+``--contract`` la borne à un seul contrat, pour voir ce que voit une console
+plus ancienne.
+
 ``--certfile`` et ``--keyfile`` la servent en ``wss://`` (certificat du
 serveur, en PEM), pour éprouver le TLS. Elle demande l'extra ``console``.
 
@@ -23,6 +29,7 @@ pour elle :
 
     {"name": "run.cancel", "as_user": "dev", "args": {"run_id": "01a1…"}}
     {"name": "events.query", "as_user": "dev", "args": {"session_id": "s1", "limit": 5}}
+    {"name": "sessions.list", "as_user": "dev", "args": {"limit": 2}}     (contrat 2)
 """
 
 import argparse
@@ -38,7 +45,7 @@ from typing import TYPE_CHECKING, Final, cast
 
 from pydantic import JsonValue, ValidationError
 
-from loom_ia.console.contract import CommandPayload
+from loom_ia.console.contract import CONTRACTS, CommandPayload
 from loom_ia.core.model import new_id
 
 if TYPE_CHECKING:
@@ -68,6 +75,7 @@ def add_actions(console: argparse.ArgumentParser, handler: Callable[[argparse.Na
     listen.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port d'écoute ({DEFAULT_PORT} par défaut)")
     listen.add_argument("--key-env", default=DEFAULT_KEY_ENV, help=f"variable qui porte la clé attendue ({DEFAULT_KEY_ENV} par défaut)")
     listen.add_argument("--raw", action="store_true", help="affiche chaque message en JSON complet")
+    listen.add_argument("--contract", type=int, choices=CONTRACTS, help="ne sert que ce contrat (par défaut : tous ceux de loom, le plus récent retenu)")
     listen.add_argument("--certfile", type=Path, help="certificat du serveur (PEM) : écoute en wss://")
     listen.add_argument("--keyfile", type=Path, help="clé privée du certificat du serveur (PEM)")
     listen.set_defaults(handler=handler)
@@ -102,7 +110,8 @@ def run(args: argparse.Namespace, environ: Mapping[str, str] | None = None) -> i
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certfile=args.certfile, keyfile=args.keyfile)
     printer = _Printer(raw=args.raw)
-    fake = FakeConsole(key=key, host=args.host, port=args.port, ssl_context=context, watcher=printer)
+    contracts = CONTRACTS if args.contract is None else (args.contract,)
+    fake = FakeConsole(key=key, contracts=contracts, host=args.host, port=args.port, ssl_context=context, watcher=printer)
 
     async def listen() -> None:
         try:
@@ -221,12 +230,28 @@ class _Printer:
                 return [self._line(now, "fichier", f"{data['command_id']}{name} · {part}")]
             case "bye":
                 return [self._line(now, "bye", str(data.get("reason", "")))]
+            case "security":
+                return self._security(now, data)
             case "error":
                 return [self._line(now, "erreur", f"{data['code']} — {data['message']}")]
             case "invalid":
                 return [self._line(now, "invalide", item.detail)]
             case _:
                 return [self._line(now, item.kind, json.dumps(data, ensure_ascii=False))]
+
+    def _security(self, now: str, data: dict[str, JsonValue]) -> list[str]:
+        """La sécurité reçue : client, utilisateurs et leurs rôles, rôles, clés, passerelle, empreinte."""
+        users = cast("list[dict[str, JsonValue]]", data.get("users") or [])
+        roles = cast("list[dict[str, JsonValue]]", data.get("roles") or [])
+        keys = cast("list[dict[str, JsonValue]]", data.get("api_keys") or [])
+        gateway = cast("dict[str, JsonValue] | None", data.get("gateway"))
+        said = [f"{user['id']} ({', '.join(cast('list[str]', user.get('roles') or []))})" for user in users]
+        through = "aucune" if gateway is None else f"{gateway['user']} (endosse {', '.join(cast('list[str]', gateway.get('act_as_roles') or []))})"
+        return [
+            self._line(now, "security", f"client {data['tenant']} · empreinte {str(data['fingerprint'])[:19]}…"),
+            self._line("", "", f"utilisateurs : {', '.join(said) or 'aucun'}"),
+            self._line("", "", f"rôles : {', '.join(str(role['id']) for role in roles) or 'aucun'} · clés : {len(keys)} · passerelle : {through}"),
+        ]
 
     def _event(self, event: dict[str, JsonValue]) -> str:
         """Un événement sur une ligne : heure, type, agent, statut, run, session, facettes."""

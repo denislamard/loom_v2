@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Contrat du canal entre loom et la console : enveloppe, messages, schémas (contrat 1).
+"""Contrat du canal entre loom et la console : enveloppe, messages, schémas (contrats 2 et 1).
 
 Le numéro de contrat est indépendant de la version du paquet. Il couvre
 l'enveloppe, la poignée de main, le format des événements exportés, les
@@ -14,9 +14,16 @@ Chaque message est un objet JSON, une trame texte : ``{type, id, contract,
 payload}``. ``hello`` n'a pas de ``contract`` : il propose ceux que loom sait
 servir (``contracts``), et ``welcome`` dit celui que la console retient.
 
+Le contrat 2 (docs/analyse-securite-hello.md) ajoute la commande
+``sessions.list`` et le message ``security`` :
+loom le pousse juste après ``welcome``, quand la console retient le contrat 2.
+Il ne peut pas aller dans le ``hello``, qui part avant la négociation et que
+les consoles du contrat 1 valident sans champ inconnu. Les schémas du contrat 1
+(``schemas/v1/``) sont figés ; ceux du contrat 2 sont tirés des modèles.
+
 Les événements partent au format des événements du REST (``GET /v1/events``,
-décision D-11) : voir ``translate``. Les schémas JSON publiés
-(``schemas/v1/``) sont tirés de ces modèles par ``contract_schemas`` ; un essai
+décision D-11) : voir ``translate``. Les schémas JSON publiés du contrat le
+plus récent (``schemas/v2/``) sont tirés de ces modèles par ``contract_schemas`` ; un essai
 de la CI vérifie que les fichiers commités sont à jour, si bien qu'un
 changement de charge interne ne passe pas sans qu'on décide de son sort
 (traduire, ou ouvrir le contrat suivant).
@@ -29,18 +36,25 @@ from typing import Any, Final, Literal, cast
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
+from loom_ia.config.models import Permission
 from loom_ia.core.events import DURABLE_PAYLOADS, Event
 from loom_ia.core.events.redaction import MARK
 from loom_ia.core.model import DomainModel, new_id
 
-CONTRACT: Final = 1
+CONTRACT: Final = 2
 """Contrat que loom propose en premier."""
 
-CONTRACTS: Final = (1,)
+CONTRACTS: Final = (2, 1)
 """Contrats que loom sait servir, du plus récent au plus ancien."""
 
 SCHEMAS_DIR: Final = Path(__file__).parent / "schemas" / f"v{CONTRACT}"
-"""Dossier des schémas JSON publiés du contrat."""
+"""Dossier des schémas JSON publiés du contrat le plus récent, tirés des modèles."""
+
+FROZEN_SCHEMAS_DIR: Final = Path(__file__).parent / "schemas" / "v1"
+"""Dossier des schémas du contrat 1, figés : plus rien ne les régénère."""
+
+SECURITY_CONTRACT: Final = 2
+"""Premier contrat qui porte le message ``security``."""
 
 type MessageType = Literal[
     "hello",
@@ -53,8 +67,9 @@ type MessageType = Literal[
     "file.data",
     "error",
     "bye",
+    "security",
 ]
-"""Types de message du contrat 1."""
+"""Types de message ; ``security`` n'existe qu'à partir du contrat 2."""
 
 type CommandName = Literal[
     "run.start",
@@ -66,8 +81,12 @@ type CommandName = Literal[
     "file.get",
     "approval.file",
     "approval.preview",
+    "sessions.list",
 ]
-"""Commandes du contrat 1."""
+"""Commandes de la console ; ``sessions.list`` n'existe qu'à partir du contrat 2."""
+
+COMMAND_SINCE: Final[Mapping[str, int]] = {"sessions.list": 2}
+"""Premier contrat qui porte une commande, pour celles qui n'existent pas en contrat 1 : loom refuse les autres (``unsupported_command``)."""
 
 type Outcome = Literal["accepted", "refused", "error"]
 """Issue d'une commande : acceptée, refusée avec un motif, ou en erreur."""
@@ -113,6 +132,123 @@ class HelloPayload(DomainModel):
     agents: tuple[str, ...] = ()
     commands: bool = False
     export_mode: Literal["push", "on_demand"] = "on_demand"
+
+
+class SecurityRole(DomainModel):
+    """Un rôle d'accès, tel que ``security.roles`` le déclare.
+
+    Attributes:
+        id: Identifiant du rôle.
+        description: Libellé.
+        permissions: Ses permissions.
+        agents: Agents auxquels il est borné ; vide signifie tous.
+        act_as_roles: Rôles qu'une passerelle de ce rôle peut endosser.
+    """
+
+    id: str
+    description: str = ""
+    permissions: tuple[Permission, ...]
+    agents: tuple[str, ...] = ()
+    act_as_roles: tuple[str, ...] = ()
+
+
+class SecurityUser(DomainModel):
+    """Un utilisateur du client de la console.
+
+    Attributes:
+        id: Identifiant, écrit au journal.
+        name: Nom affiché ; absent, l'identifiant.
+        roles: Ses rôles d'accès.
+    """
+
+    id: str
+    name: str | None = None
+    roles: tuple[str, ...]
+
+
+class SecurityKey(DomainModel):
+    """Une clé d'API d'un utilisateur du client, **sans son empreinte**.
+
+    Attributes:
+        id: Identifiant de la clé.
+        user: Utilisateur qu'elle identifie.
+        scopes: Permissions qu'elle garde ; absent : toutes celles de l'utilisateur.
+        agents: Agents qu'elle ouvre ; vide signifie tous.
+        expires: Fin de validité ; absente, elle ne périme pas.
+    """
+
+    id: str
+    user: str
+    scopes: tuple[Permission, ...] | None = None
+    agents: tuple[str, ...] = ()
+    expires: AwareDatetime | None = None
+
+
+class SecurityAgent(DomainModel):
+    """Le bloc ``access`` d'un agent du client : qui peut agir sur lui.
+
+    Une liste absente laisse décider les permissions des rôles ; une liste
+    présente restreint.
+
+    Attributes:
+        name: L'agent.
+        run: Rôles qui le lancent.
+        answer: Rôles qui répondent à ses questions.
+        cancel: Rôles qui arrêtent ses runs.
+        approve_default: Approbateurs de ses demandes, à défaut d'une liste par outil.
+        approve_tools: Approbateurs par outil.
+        self_approval: Faux si l'agent interdit l'auto-approbation.
+    """
+
+    name: str
+    run: tuple[str, ...] | None = None
+    answer: tuple[str, ...] | None = None
+    cancel: tuple[str, ...] | None = None
+    approve_default: tuple[str, ...] | None = None
+    approve_tools: dict[str, tuple[str, ...]] = Field(default_factory=dict[str, tuple[str, ...]])
+    self_approval: bool = True
+
+
+class SecurityGateway(DomainModel):
+    """La passerelle des commandes (``console.commands``).
+
+    Attributes:
+        user: Utilisateur loom de la passerelle.
+        act_as_roles: Rôles qu'elle peut endosser, ceux de ses rôles qui ont ``act_as``.
+        rate: Commandes acceptées par minute, au plus.
+        max_ttl: Horizon maximal de l'échéance d'une commande, en secondes.
+    """
+
+    user: str
+    act_as_roles: tuple[str, ...]
+    rate: PositiveInt
+    max_ttl: PositiveInt
+
+
+class SecurityPayload(DomainModel):
+    """``security`` (loom → console, contrat 2) : la sécurité de l'instance pour le client de la console, en lecture seule.
+
+    loom reste le référentiel : la console la lit et n'en renvoie rien. Aucun
+    secret n'y figure, ni empreinte de clé, ni clé de la console.
+
+    Attributes:
+        tenant: Client que la console sert.
+        roles: Les rôles que ses utilisateurs portent, et ceux qu'ils endossent.
+        users: Les utilisateurs du client.
+        api_keys: Leurs clés d'API, sans empreinte.
+        agents: Les agents du client et leur bloc ``access``.
+        gateway: La passerelle des commandes ; absente, les commandes sont refusées.
+        fingerprint: ``sha256:`` et l'empreinte du reste du document (JSON
+            canonique) : deux process de configs différentes en ont deux.
+    """
+
+    tenant: str
+    roles: tuple[SecurityRole, ...]
+    users: tuple[SecurityUser, ...]
+    api_keys: tuple[SecurityKey, ...] = ()
+    agents: tuple[SecurityAgent, ...] = ()
+    gateway: SecurityGateway | None = None
+    fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class WelcomePayload(DomainModel):
@@ -256,6 +392,7 @@ type Payload = (
     | FileDataPayload
     | ErrorPayload
     | ByePayload
+    | SecurityPayload
 )
 """Une charge de message."""
 
@@ -270,6 +407,7 @@ PAYLOADS: Final[Mapping[MessageType, type[Payload]]] = {
     "file.data": FileDataPayload,
     "error": ErrorPayload,
     "bye": ByePayload,
+    "security": SecurityPayload,
 }
 """Le modèle de charge de chaque type de message."""
 
@@ -349,7 +487,7 @@ def decode(text: str | bytes) -> tuple[Envelope, Payload]:
 
 
 def contract_schemas() -> dict[str, dict[str, Any]]:
-    """Les schémas JSON du contrat, par nom de fichier : ce que ``schemas/v1/`` doit contenir.
+    """Les schémas JSON du contrat, par nom de fichier : ce que ``schemas/v2/`` doit contenir.
 
     - ``envelope.json`` : l'enveloppe commune ;
     - ``message.<type>.json`` : la charge de chaque type de message ;

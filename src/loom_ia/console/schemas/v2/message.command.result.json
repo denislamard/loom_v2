@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "JsonValue": {},
+    "Outcome": {
+      "enum": [
+        "accepted",
+        "refused",
+        "error"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v2/message.command.result.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``command.result`` (loom → console) : l'issue d'une commande ; son déroulé remonte par les événements.\n\nAttributes:\n    command_id: La commande.\n    outcome: ``accepted``, ``refused`` ou ``error``.\n    reason: Motif d'un refus ou d'une erreur.\n    result: Ce que la commande rend (le ``run_id`` d'un run lancé…).",
+  "properties": {
+    "command_id": {
+      "title": "Command Id",
+      "type": "string"
+    },
+    "outcome": {
+      "$ref": "#/$defs/Outcome"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "result": {
+      "$ref": "#/$defs/JsonValue",
+      "default": null
+    }
+  },
+  "required": [
+    "command_id",
+    "outcome"
+  ],
+  "title": "CommandResultPayload",
+  "type": "object"
+}

@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "RunStatus": {
+      "description": "Statut d'un run dans la machine à états de la boucle (point 3).\n\nValeurs : ``ready_for_model`` (prochain pas : appeler l'orchestrateur),\n``awaiting_tools`` (des appels d'outils attendent), ``waiting_child`` (un\nsous-agent tourne), ``paused`` (une approbation ou une question attend un\nhumain), ``finalizing`` (réponse forcée sans outils : ``max_iterations``,\nbudget, ``Stop``), puis les états finals ``completed``, ``failed`` et\n``cancelled``. Chaque changement écrit un ``run.transitioned``.",
+      "enum": [
+        "ready_for_model",
+        "awaiting_tools",
+        "waiting_child",
+        "paused",
+        "finalizing",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v2/event.run.transitioned.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Changement de statut d'un run dans la machine à états de la boucle (point 3).\n\nCatégorie ``run``. Facettes : ``from_state`` et ``to_state``. Aucun\ncontenu. Statuts possibles : ``ready_for_model``, ``awaiting_tools``,\n``waiting_child``, ``paused``, ``finalizing``, ``completed``, ``failed``,\n``cancelled``.\n\nAttributes:\n    type: ``run.transitioned``.\n    from_state: Statut quitté.\n    to_state: Statut atteint.\n    step_no: Étape pendant laquelle la transition a lieu ; 0 avant la\n        première. Défaut : 0.\n    cause_type: Type de l'événement qui a déclenché la transition\n        (``model.responded``, ``tool.completed``…), point 3.\n    cause_event_id: Identifiant de cet événement.",
+  "properties": {
+    "cause_event_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cause Event Id"
+    },
+    "cause_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cause Type"
+    },
+    "from_state": {
+      "$ref": "#/$defs/RunStatus"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "step_no": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Step No",
+      "type": "integer"
+    },
+    "to_state": {
+      "$ref": "#/$defs/RunStatus"
+    },
+    "type": {
+      "const": "run.transitioned",
+      "default": "run.transitioned",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "from_state",
+    "to_state"
+  ],
+  "title": "RunTransitioned",
+  "type": "object"
+}

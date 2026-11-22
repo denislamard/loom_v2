@@ -1,0 +1,343 @@
+{
+  "$defs": {
+    "Permission": {
+      "enum": [
+        "run",
+        "answer",
+        "cancel",
+        "approve",
+        "self_approve",
+        "amend",
+        "read",
+        "read_content",
+        "admin",
+        "act_as"
+      ],
+      "type": "string"
+    },
+    "SecurityAgent": {
+      "additionalProperties": false,
+      "description": "Le bloc ``access`` d'un agent du client : qui peut agir sur lui.\n\nUne liste absente laisse décider les permissions des rôles ; une liste\nprésente restreint.\n\nAttributes:\n    name: L'agent.\n    run: Rôles qui le lancent.\n    answer: Rôles qui répondent à ses questions.\n    cancel: Rôles qui arrêtent ses runs.\n    approve_default: Approbateurs de ses demandes, à défaut d'une liste par outil.\n    approve_tools: Approbateurs par outil.\n    self_approval: Faux si l'agent interdit l'auto-approbation.",
+      "properties": {
+        "answer": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Answer"
+        },
+        "approve_default": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approve Default"
+        },
+        "approve_tools": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Approve Tools",
+          "type": "object"
+        },
+        "cancel": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cancel"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run"
+        },
+        "self_approval": {
+          "default": true,
+          "title": "Self Approval",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "SecurityAgent",
+      "type": "object"
+    },
+    "SecurityGateway": {
+      "additionalProperties": false,
+      "description": "La passerelle des commandes (``console.commands``).\n\nAttributes:\n    user: Utilisateur loom de la passerelle.\n    act_as_roles: Rôles qu'elle peut endosser, ceux de ses rôles qui ont ``act_as``.\n    rate: Commandes acceptées par minute, au plus.\n    max_ttl: Horizon maximal de l'échéance d'une commande, en secondes.",
+      "properties": {
+        "act_as_roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Act As Roles",
+          "type": "array"
+        },
+        "max_ttl": {
+          "exclusiveMinimum": 0,
+          "title": "Max Ttl",
+          "type": "integer"
+        },
+        "rate": {
+          "exclusiveMinimum": 0,
+          "title": "Rate",
+          "type": "integer"
+        },
+        "user": {
+          "title": "User",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user",
+        "act_as_roles",
+        "rate",
+        "max_ttl"
+      ],
+      "title": "SecurityGateway",
+      "type": "object"
+    },
+    "SecurityKey": {
+      "additionalProperties": false,
+      "description": "Une clé d'API d'un utilisateur du client, **sans son empreinte**.\n\nAttributes:\n    id: Identifiant de la clé.\n    user: Utilisateur qu'elle identifie.\n    scopes: Permissions qu'elle garde ; absent : toutes celles de l'utilisateur.\n    agents: Agents qu'elle ouvre ; vide signifie tous.\n    expires: Fin de validité ; absente, elle ne périme pas.",
+      "properties": {
+        "agents": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Agents",
+          "type": "array"
+        },
+        "expires": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "scopes": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Permission"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scopes"
+        },
+        "user": {
+          "title": "User",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "user"
+      ],
+      "title": "SecurityKey",
+      "type": "object"
+    },
+    "SecurityRole": {
+      "additionalProperties": false,
+      "description": "Un rôle d'accès, tel que ``security.roles`` le déclare.\n\nAttributes:\n    id: Identifiant du rôle.\n    description: Libellé.\n    permissions: Ses permissions.\n    agents: Agents auxquels il est borné ; vide signifie tous.\n    act_as_roles: Rôles qu'une passerelle de ce rôle peut endosser.",
+      "properties": {
+        "act_as_roles": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Act As Roles",
+          "type": "array"
+        },
+        "agents": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Agents",
+          "type": "array"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/Permission"
+          },
+          "title": "Permissions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "permissions"
+      ],
+      "title": "SecurityRole",
+      "type": "object"
+    },
+    "SecurityUser": {
+      "additionalProperties": false,
+      "description": "Un utilisateur du client de la console.\n\nAttributes:\n    id: Identifiant, écrit au journal.\n    name: Nom affiché ; absent, l'identifiant.\n    roles: Ses rôles d'accès.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Roles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "roles"
+      ],
+      "title": "SecurityUser",
+      "type": "object"
+    }
+  },
+  "$id": "loom-console/v2/message.security.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``security`` (loom → console, contrat 2) : la sécurité de l'instance pour le client de la console, en lecture seule.\n\nloom reste le référentiel : la console la lit et n'en renvoie rien. Aucun\nsecret n'y figure, ni empreinte de clé, ni clé de la console.\n\nAttributes:\n    tenant: Client que la console sert.\n    roles: Les rôles que ses utilisateurs portent, et ceux qu'ils endossent.\n    users: Les utilisateurs du client.\n    api_keys: Leurs clés d'API, sans empreinte.\n    agents: Les agents du client et leur bloc ``access``.\n    gateway: La passerelle des commandes ; absente, les commandes sont refusées.\n    fingerprint: ``sha256:`` et l'empreinte du reste du document (JSON\n        canonique) : deux process de configs différentes en ont deux.",
+  "properties": {
+    "agents": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SecurityAgent"
+      },
+      "title": "Agents",
+      "type": "array"
+    },
+    "api_keys": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SecurityKey"
+      },
+      "title": "Api Keys",
+      "type": "array"
+    },
+    "fingerprint": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Fingerprint",
+      "type": "string"
+    },
+    "gateway": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SecurityGateway"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "roles": {
+      "items": {
+        "$ref": "#/$defs/SecurityRole"
+      },
+      "title": "Roles",
+      "type": "array"
+    },
+    "tenant": {
+      "title": "Tenant",
+      "type": "string"
+    },
+    "users": {
+      "items": {
+        "$ref": "#/$defs/SecurityUser"
+      },
+      "title": "Users",
+      "type": "array"
+    }
+  },
+  "required": [
+    "tenant",
+    "roles",
+    "users",
+    "fingerprint"
+  ],
+  "title": "SecurityPayload",
+  "type": "object"
+}

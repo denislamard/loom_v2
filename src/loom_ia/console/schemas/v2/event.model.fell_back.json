@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "FallbackReason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModelErrorKind"
+        },
+        {
+          "const": "circuit_open",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelErrorKind": {
+      "enum": [
+        "transient",
+        "overloaded",
+        "quota_exhausted",
+        "context_overflow",
+        "auth",
+        "invalid_request",
+        "content_filtered",
+        "truncated",
+        "unavailable"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v2/event.model.fell_back.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Bascule vers le modèle suivant de la chaîne de secours (fonction B4, point 10).\n\nLe modèle qui a échoué après ses nouvelles tentatives, ou qu'écarte son\ndisjoncteur (``circuit_open``), passe la main au suivant. Adhérence : le\nreste du run garde le secours pour cet emplacement. Écrit dans le span de\nl'appel, avant les tentatives du secours.\n\nCatégorie ``model``. Facettes : ``slot``, ``from_model``, ``to_model`` et\n``reason``, plus ``judge`` quand il est connu. Contenu : ``error``. Statut\n``warning``.\n\nAttributes:\n    type: ``model.fell_back``.\n    slot: Emplacement qui bascule : ``main``, le nom d'un rôle ou\n        ``judge:<nom>``.\n    from_model: Identifiant, dans la config, du modèle quitté.\n    to_model: Identifiant, dans la config, du secours appelé.\n    reason: Genre de l'erreur du modèle quitté, ou ``circuit_open`` si son\n        disjoncteur l'a écarté.\n    error: Message de l'erreur, ou la durée restante du disjoncteur.\n    call_id: Appel d'outil servi (rôle délégué).\n    judge: Juge qui a fait cet appel (point 21).",
+  "properties": {
+    "call_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Call Id"
+    },
+    "error": {
+      "default": "",
+      "title": "Error",
+      "type": "string"
+    },
+    "from_model": {
+      "title": "From Model",
+      "type": "string"
+    },
+    "judge": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Judge"
+    },
+    "reason": {
+      "$ref": "#/$defs/FallbackReason"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "slot": {
+      "title": "Slot",
+      "type": "string"
+    },
+    "to_model": {
+      "title": "To Model",
+      "type": "string"
+    },
+    "type": {
+      "const": "model.fell_back",
+      "default": "model.fell_back",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "slot",
+    "from_model",
+    "to_model",
+    "reason"
+  ],
+  "title": "ModelFellBack",
+  "type": "object"
+}

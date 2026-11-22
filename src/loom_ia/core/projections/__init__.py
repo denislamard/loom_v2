@@ -31,6 +31,7 @@ from loom_ia.core.projections.run_state import (
     awaiting_in_session,
     fold,
     fold_all,
+    unfinished_roots,
 )
 from loom_ia.core.projections.state import session_state, state_of_run
 from loom_ia.core.projections.tree import OpeningSummaries, RunTree
@@ -55,4 +56,5 @@ __all__ = [
     "spent",
     "state_of_run",
     "turns",
+    "unfinished_roots",
 ]

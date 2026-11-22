@@ -1,0 +1,208 @@
+{
+  "$defs": {
+    "EventCategory": {
+      "enum": [
+        "run",
+        "message",
+        "model",
+        "tool",
+        "guard",
+        "policy",
+        "approval",
+        "question",
+        "idempotency",
+        "artifact",
+        "session",
+        "circuit"
+      ],
+      "type": "string"
+    },
+    "EventStatus": {
+      "enum": [
+        "ok",
+        "warning",
+        "error"
+      ],
+      "type": "string"
+    },
+    "FacetValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$id": "loom-console/v2/event.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Événement écrit dans le journal d'une session : une enveloppe et sa charge.\n\nLe journal fait foi : l'historique, l'état d'un run, les traces, la\nconsommation et le rejeu en sont déduits (point 22).\n\nAttributes:\n    event_id: Identifiant unique de l'événement.\n    ts: Horodatage de création, avec fuseau (UTC à la création).\n    schema_version: Version du schéma ; seule ``1`` est acceptée.\n    tenant_id: Client (espace isolé, fonction L1).\n    session_id: Session dont le journal porte l'événement.\n    run_id: Run qui l'a écrit.\n    root_run_id: Run racine de l'arbre : lui-même pour un run racine,\n        l'ancêtre commun pour un sous-run.\n    span_id: Span de l'événement : celui du run, d'une étape ou d'un\n        appel.\n    parent_span_id: Span parent ; ``None`` pour le span d'un run racine.\n    type: Type de la charge (``model.responded``…), recopié pour la\n        recherche.\n    category: Catégorie de la charge, recopiée.\n    status: Statut de la charge (``ok``, ``warning``, ``error``),\n        recopié.\n    agent: Agent du run.\n    role: Rôle LLM délégué qui a fait l'appel de modèle, ou\n        ``judge:<nom>`` pour l'appel d'un juge ; ``None`` pour\n        l'orchestrateur.\n    facets: Champs de recherche tirés de la charge (``facets()``).\n    payload: La charge, discriminée par ``type``.\n    seq: Numéro d'ordre dans le journal de la session, à partir de 1 ;\n        attribué par le store.",
+  "properties": {
+    "agent": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent"
+    },
+    "category": {
+      "$ref": "#/$defs/EventCategory"
+    },
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "facets": {
+      "additionalProperties": {
+        "$ref": "#/$defs/FacetValue"
+      },
+      "title": "Facets",
+      "type": "object"
+    },
+    "parent_span_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Span Id"
+    },
+    "payload": {
+      "description": "La charge, décrite par event.<type>.json.",
+      "properties": {
+        "type": {
+          "enum": [
+            "approval.expired",
+            "approval.granted",
+            "approval.rejected",
+            "approval.requested",
+            "artifact.stored",
+            "budget.exceeded",
+            "circuit.opened",
+            "guard.checked",
+            "idempotency.recorded",
+            "idempotency.reused",
+            "judge.evaluated",
+            "message.user",
+            "model.exchanged",
+            "model.fell_back",
+            "model.responded",
+            "model.retried",
+            "policy.decided",
+            "question.answered",
+            "question.asked",
+            "question.expired",
+            "run.cancelled",
+            "run.claimed",
+            "run.completed",
+            "run.failed",
+            "run.started",
+            "run.transitioned",
+            "session.compacted",
+            "session.snapshot",
+            "session.trimmed",
+            "step.completed",
+            "step.started",
+            "tool.called",
+            "tool.completed",
+            "tool.source_unavailable"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "role": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Role"
+    },
+    "root_run_id": {
+      "title": "Root Run Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "seq": {
+      "exclusiveMinimum": 0,
+      "title": "Seq",
+      "type": "integer"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "span_id": {
+      "title": "Span Id",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/EventStatus"
+    },
+    "tenant_id": {
+      "title": "Tenant Id",
+      "type": "string"
+    },
+    "ts": {
+      "format": "date-time",
+      "title": "Ts",
+      "type": "string"
+    },
+    "type": {
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tenant_id",
+    "session_id",
+    "run_id",
+    "root_run_id",
+    "span_id",
+    "type",
+    "category",
+    "status",
+    "payload",
+    "seq"
+  ],
+  "title": "Event",
+  "type": "object"
+}

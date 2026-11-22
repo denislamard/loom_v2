@@ -1,0 +1,31 @@
+{
+  "$defs": {
+    "JsonValue": {}
+  },
+  "$id": "loom-console/v2/message.events.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``events`` (loom → console) : un lot d'événements, dans l'ordre du journal de chaque session.\n\nAttributes:\n    batch_id: Identifiant du lot, que la console acquitte.\n    events: Les événements, au format du REST (``translate.public_event``).",
+  "properties": {
+    "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "events": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "type": "object"
+      },
+      "title": "Events",
+      "type": "array"
+    }
+  },
+  "required": [
+    "batch_id",
+    "events"
+  ],
+  "title": "EventsPayload",
+  "type": "object"
+}

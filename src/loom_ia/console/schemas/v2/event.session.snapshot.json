@@ -1,0 +1,619 @@
+{
+  "$defs": {
+    "AnthropicMeta": {
+      "additionalProperties": false,
+      "description": "Données d'un bloc propres à Anthropic, à renvoyer telles quelles au fournisseur (point 8).\n\nAttributes:\n    provider: ``anthropic``.\n    signature: Signature d'un bloc de raisonnement.\n    redacted_data: Raisonnement masqué par le fournisseur, opaque.",
+      "properties": {
+        "provider": {
+          "const": "anthropic",
+          "default": "anthropic",
+          "title": "Provider",
+          "type": "string"
+        },
+        "redacted_data": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Redacted Data"
+        },
+        "signature": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signature"
+        }
+      },
+      "title": "AnthropicMeta",
+      "type": "object"
+    },
+    "ArtifactRefBlock": {
+      "additionalProperties": false,
+      "description": "Référence vers un fichier du stockage d'artefacts, jamais ses octets.\n\nLe moteur résout les références en octets (``InlineDataBlock``) au moment\nd'appeler un modèle qui sait lire le fichier (point 14).\n\nAttributes:\n    type: ``artifact``.\n    uri: Référence du fichier (``artifact://…``).\n    media_type: Type MIME.\n    size: Taille en octets, si elle est connue.\n    name: Nom du fichier, tel que le modèle le voit.",
+      "properties": {
+        "cache_breakpoint": {
+          "default": false,
+          "title": "Cache Breakpoint",
+          "type": "boolean"
+        },
+        "media_type": {
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "provider_meta": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ProviderMeta"
+          },
+          "title": "Provider Meta",
+          "type": "object"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        },
+        "type": {
+          "const": "artifact",
+          "default": "artifact",
+          "title": "Type",
+          "type": "string"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri",
+        "media_type"
+      ],
+      "title": "ArtifactRefBlock",
+      "type": "object"
+    },
+    "ContentBlock": {
+      "discriminator": {
+        "mapping": {
+          "artifact": "#/$defs/ArtifactRefBlock",
+          "inline_data": "#/$defs/InlineDataBlock",
+          "json": "#/$defs/JsonBlock",
+          "reasoning": "#/$defs/ReasoningBlock",
+          "text": "#/$defs/TextBlock",
+          "tool_call": "#/$defs/ToolCallBlock",
+          "tool_result": "#/$defs/ToolResultBlock"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextBlock"
+        },
+        {
+          "$ref": "#/$defs/JsonBlock"
+        },
+        {
+          "$ref": "#/$defs/ArtifactRefBlock"
+        },
+        {
+          "$ref": "#/$defs/InlineDataBlock"
+        },
+        {
+          "$ref": "#/$defs/ReasoningBlock"
+        },
+        {
+          "$ref": "#/$defs/ToolCallBlock"
+        },
+        {
+          "$ref": "#/$defs/ToolResultBlock"
+        }
+      ]
+    },
+    "InlineDataBlock": {
+      "additionalProperties": false,
+      "description": "Octets d'un fichier, de passage : jamais écrits dans le journal.\n\nDeux usages : le résultat d'un outil avant son stockage (le moteur le\nremplace par un ``ArtifactRefBlock``), et une requête au modèle après la\nrésolution des références (point 14). Un événement qui en porterait est\nrefusé.\n\nAttributes:\n    type: ``inline_data``.\n    media_type: Type MIME.\n    data: Les octets ; en base64 dans le JSON.\n    name: Nom du fichier.",
+      "properties": {
+        "cache_breakpoint": {
+          "default": false,
+          "title": "Cache Breakpoint",
+          "type": "boolean"
+        },
+        "data": {
+          "format": "base64url",
+          "title": "Data",
+          "type": "string"
+        },
+        "media_type": {
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "provider_meta": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ProviderMeta"
+          },
+          "title": "Provider Meta",
+          "type": "object"
+        },
+        "type": {
+          "const": "inline_data",
+          "default": "inline_data",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "media_type",
+        "data"
+      ],
+      "title": "InlineDataBlock",
+      "type": "object"
+    },
+    "JsonBlock": {
+      "additionalProperties": false,
+      "description": "Bloc de données JSON, dans un résultat d'outil.\n\nAttributes:\n    type: ``json``.\n    data: Les données.",
+      "properties": {
+        "cache_breakpoint": {
+          "default": false,
+          "title": "Cache Breakpoint",
+          "type": "boolean"
+        },
+        "data": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "provider_meta": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ProviderMeta"
+          },
+          "title": "Provider Meta",
+          "type": "object"
+        },
+        "type": {
+          "const": "json",
+          "default": "json",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "JsonBlock",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "Message": {
+      "additionalProperties": false,
+      "description": "Un message de la conversation, neutre vis-à-vis du fournisseur.\n\nAttributes:\n    role: ``user``, ``assistant`` ou ``tool``.\n    blocks: Ses blocs, au moins un.\n\nRaises:\n    ValueError: Message sans bloc ; résultat d'outil hors d'un message\n        ``tool`` (ou message ``tool`` qui porte autre chose) ; appel\n        d'outil ou raisonnement hors d'un message ``assistant``.",
+      "properties": {
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          },
+          "title": "Blocks",
+          "type": "array"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        }
+      },
+      "required": [
+        "role",
+        "blocks"
+      ],
+      "title": "Message",
+      "type": "object"
+    },
+    "OpenAIMeta": {
+      "additionalProperties": false,
+      "description": "Données d'un bloc propres aux API OpenAI et compatibles, à renvoyer au fournisseur (point 8).\n\nAttributes:\n    provider: ``openai``.\n    item_id: API Responses : identifiant de l'élément de raisonnement.\n    encrypted_content: API Responses : son contenu chiffré, à renvoyer.\n    reasoning_field: API Chat : champ où le fournisseur a donné le\n        raisonnement (``reasoning``, ``reasoning_content``) ; il y est\n        renvoyé (point 7, backlog #015).",
+      "properties": {
+        "encrypted_content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Encrypted Content"
+        },
+        "item_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Item Id"
+        },
+        "provider": {
+          "const": "openai",
+          "default": "openai",
+          "title": "Provider",
+          "type": "string"
+        },
+        "reasoning_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoning Field"
+        }
+      },
+      "title": "OpenAIMeta",
+      "type": "object"
+    },
+    "OutputBlock": {
+      "discriminator": {
+        "mapping": {
+          "artifact": "#/$defs/ArtifactRefBlock",
+          "inline_data": "#/$defs/InlineDataBlock",
+          "json": "#/$defs/JsonBlock",
+          "text": "#/$defs/TextBlock"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextBlock"
+        },
+        {
+          "$ref": "#/$defs/JsonBlock"
+        },
+        {
+          "$ref": "#/$defs/ArtifactRefBlock"
+        },
+        {
+          "$ref": "#/$defs/InlineDataBlock"
+        }
+      ]
+    },
+    "ProviderMeta": {
+      "discriminator": {
+        "mapping": {
+          "anthropic": "#/$defs/AnthropicMeta",
+          "openai": "#/$defs/OpenAIMeta"
+        },
+        "propertyName": "provider"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AnthropicMeta"
+        },
+        {
+          "$ref": "#/$defs/OpenAIMeta"
+        }
+      ]
+    },
+    "ReasoningBlock": {
+      "additionalProperties": false,
+      "description": "Raisonnement du modèle, neutre vis-à-vis du fournisseur (point 7).\n\nRenvoyé au même modèle pendant ses tours d'outils (``thinking``), retiré\nde l'historique de session.\n\nAttributes:\n    type: ``reasoning``.\n    text: Texte du raisonnement ; vide s'il est chiffré ou masqué.\n    model_id: Modèle qui l'a produit : après une bascule de modèle, le\n        raisonnement d'un autre modèle est écarté.",
+      "properties": {
+        "cache_breakpoint": {
+          "default": false,
+          "title": "Cache Breakpoint",
+          "type": "boolean"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Id"
+        },
+        "provider_meta": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ProviderMeta"
+          },
+          "title": "Provider Meta",
+          "type": "object"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "reasoning",
+          "default": "reasoning",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "ReasoningBlock",
+      "type": "object"
+    },
+    "Role": {
+      "enum": [
+        "user",
+        "assistant",
+        "tool"
+      ],
+      "type": "string"
+    },
+    "TextBlock": {
+      "additionalProperties": false,
+      "description": "Bloc de texte.\n\nAttributes:\n    type: ``text``.\n    text: Le texte.",
+      "properties": {
+        "cache_breakpoint": {
+          "default": false,
+          "title": "Cache Breakpoint",
+          "type": "boolean"
+        },
+        "provider_meta": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ProviderMeta"
+          },
+          "title": "Provider Meta",
+          "type": "object"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TextBlock",
+      "type": "object"
+    },
+    "ToolCallBlock": {
+      "additionalProperties": false,
+      "description": "Appel d'outil demandé par le modèle, dans un message ``assistant``.\n\nAttributes:\n    type: ``tool_call``.\n    call_id: Identifiant de l'appel, donné par le modèle.\n    name: Nom de l'outil.\n    arguments: Arguments de l'appel ; quand une politique ou un\n        approbateur les remplace, la conversation montre ceux qui partent.",
+      "properties": {
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Arguments",
+          "type": "object"
+        },
+        "cache_breakpoint": {
+          "default": false,
+          "title": "Cache Breakpoint",
+          "type": "boolean"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "provider_meta": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ProviderMeta"
+          },
+          "title": "Provider Meta",
+          "type": "object"
+        },
+        "type": {
+          "const": "tool_call",
+          "default": "tool_call",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "name"
+      ],
+      "title": "ToolCallBlock",
+      "type": "object"
+    },
+    "ToolOutput": {
+      "additionalProperties": false,
+      "description": "Résultat d'un outil, rendu au modèle et journalisé dans ``tool.completed`` (point 15, fonction D8).\n\nAttributes:\n    blocks: Ce que le modèle lit : texte, JSON, références de fichiers.\n    data: Données structurées, pour les références ``$ref`` d'un appel\n        suivant, la réponse structurée et l'interface.\n    is_error: Vrai pour un résultat en erreur (``ToolError``, délai,\n        refus) ; le modèle le lit comme tel.\n    artifacts: URI des fichiers produits par l'appel (fonction G3).\n    offloaded: URI du contenu complet quand il a été déporté (au-delà de\n        ``offload_over``) ; les blocs n'en montrent alors qu'un aperçu\n        (point 16).\n    unverified: Sortie gardée bien qu'elle ne respecte pas son contrat\n        (``on_failure: unverified``).\n    fallback: Sortie remplacée par le message de repli d'un contrat ou\n        d'un juge (``on_failure: fallback``) ; omis du journal quand il\n        est faux.\n    state: Écritures du state de la session : ``{clé: valeur}``, ``None``\n        efface la clé. Le journal les garde dans ``tool.completed``, que le\n        rejeu ressert tel quel ; la projection les retire du résultat\n        montré au modèle. Omis quand il est vide : un résultat sans state\n        se sérialise comme avant, et les empreintes des requêtes ne\n        changent pas.\n    state_refused: Écritures du state refusées (décision D8 du state de\n        session) : une ligne par clé, avec le motif. Le résultat reste un\n        succès — l'outil a pu produire son effet — et le modèle lit ces\n        lignes à la suite du résultat (``state_note``). Omis quand il est\n        vide.",
+      "properties": {
+        "artifacts": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "blocks": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/OutputBlock"
+          },
+          "title": "Blocks",
+          "type": "array"
+        },
+        "data": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "fallback": {
+          "default": false,
+          "title": "Fallback",
+          "type": "boolean"
+        },
+        "is_error": {
+          "default": false,
+          "title": "Is Error",
+          "type": "boolean"
+        },
+        "offloaded": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offloaded"
+        },
+        "state": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "State",
+          "type": "object"
+        },
+        "state_refused": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "State Refused",
+          "type": "array"
+        },
+        "unverified": {
+          "default": false,
+          "title": "Unverified",
+          "type": "boolean"
+        }
+      },
+      "title": "ToolOutput",
+      "type": "object"
+    },
+    "ToolResultBlock": {
+      "additionalProperties": false,
+      "description": "Résultat d'un appel d'outil, dans un message ``tool``.\n\nAttributes:\n    type: ``tool_result``.\n    call_id: Identifiant de l'appel servi.\n    output: Le résultat.",
+      "properties": {
+        "cache_breakpoint": {
+          "default": false,
+          "title": "Cache Breakpoint",
+          "type": "boolean"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "output": {
+          "$ref": "#/$defs/ToolOutput"
+        },
+        "provider_meta": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ProviderMeta"
+          },
+          "title": "Provider Meta",
+          "type": "object"
+        },
+        "type": {
+          "const": "tool_result",
+          "default": "tool_result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "output"
+      ],
+      "title": "ToolResultBlock",
+      "type": "object"
+    }
+  },
+  "$id": "loom-console/v2/event.session.snapshot.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Historique de la session matérialisé à la fin d'un run (point 22).\n\nLe journal reste la source : le snapshot n'est qu'une vue déjà calculée,\npour ne pas relire toute la session à chaque run. ``messages`` est\nexactement ce que rend la projection d'historique pour les événements\njusqu'à ``up_to_seq``, résumé de compaction compris. Un lecteur qui\nl'ignore obtient le même historique, plus lentement. Sa fréquence se règle\npar ``sessions.snapshot_every`` (50 événements par défaut).\n\n``up_to_seq`` s'arrête avant le premier événement d'un run encore en\ncours : sinon la relecture reprendrait un run au milieu.\n\nCatégorie ``session`` : l'événement parle de la session, pas du run qui\nl'écrit. Facettes : ``up_to_seq``, ``messages`` (leur nombre) et\n``tokens``. Contenu : ``messages``.\n\nAttributes:\n    type: ``session.snapshot``.\n    up_to_seq: Dernier ``seq`` couvert par le snapshot.\n    messages: L'historique, sans octets de fichier.\n    tokens: Estimation de la taille de l'historique, pour les seuils de\n        compaction (point 23).",
+  "properties": {
+    "messages": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Message"
+      },
+      "title": "Messages",
+      "type": "array"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Tokens",
+      "type": "integer"
+    },
+    "type": {
+      "const": "session.snapshot",
+      "default": "session.snapshot",
+      "title": "Type",
+      "type": "string"
+    },
+    "up_to_seq": {
+      "minimum": 0,
+      "title": "Up To Seq",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "up_to_seq"
+  ],
+  "title": "SessionSnapshot",
+  "type": "object"
+}

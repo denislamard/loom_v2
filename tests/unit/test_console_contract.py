@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Contrat du canal : messages, schémas figés, format des événements exportés (docs/analyse-exortateur-loom.md, lot 1)."""
 
+import hashlib
 import json
 from datetime import UTC, datetime
 
@@ -9,6 +10,7 @@ import pytest
 
 from loom_ia.console.contract import (
     CONTRACTS,
+    FROZEN_SCHEMAS_DIR,
     PAYLOADS,
     SCHEMAS_DIR,
     AckPayload,
@@ -21,6 +23,12 @@ from loom_ia.console.contract import (
     FileDataPayload,
     HelloPayload,
     Payload,
+    SecurityAgent,
+    SecurityGateway,
+    SecurityKey,
+    SecurityPayload,
+    SecurityRole,
+    SecurityUser,
     SessionDeletedPayload,
     WelcomePayload,
     contract_schemas,
@@ -49,6 +57,15 @@ SAMPLES: list[Payload] = [
     FileDataPayload(command_id="c1", part=0, last=True, data="aGVsbG8=", name="devis.docx", size=5, sha256="00"),
     ErrorPayload(code="unknown_type", message="type inconnu"),
     ByePayload(reason="shutdown"),
+    SecurityPayload(
+        tenant="default",
+        roles=(SecurityRole(id="owner", permissions=("run", "read")), SecurityRole(id="console", permissions=("act_as",), act_as_roles=("owner",))),
+        users=(SecurityUser(id="dev", name="Denis", roles=("owner",)), SecurityUser(id="console-gateway", roles=("console",))),
+        api_keys=(SecurityKey(id="k1", user="dev", scopes=("read",), expires=NOW),),
+        agents=(SecurityAgent(name="devis", approve_default=("owner",), approve_tools={"envoyer": ("owner",)}, self_approval=False),),
+        gateway=SecurityGateway(user="console-gateway", act_as_roles=("owner",), rate=60, max_ttl=300),
+        fingerprint="sha256:" + "a" * 64,
+    ),
 ]
 
 
@@ -62,7 +79,7 @@ def test_a_message_reads_back_as_it_was_written(payload: Payload) -> None:
     envelope, read = decode(text)
     assert read == payload
     assert envelope.id == "m1"
-    assert envelope.contract == (None if isinstance(payload, HelloPayload) else 1)
+    assert envelope.contract == (None if isinstance(payload, HelloPayload) else 2)
 
 
 def test_hello_proposes_rather_than_declares_a_contract() -> None:
@@ -95,6 +112,21 @@ def test_the_published_schemas_are_up_to_date() -> None:
     assert sorted(found) == sorted(expected), "schémas en trop ou manquants dans " + str(SCHEMAS_DIR)
     stale = [name for name, schema in expected.items() if found[name] != dumped(schema)]
     assert not stale, f"schémas périmés : {', '.join(stale)}"
+
+
+FROZEN_V1_DIGEST = "4199b510db263cb7270d6ccbd18fd83a9b9026bb2f434a010155f7489e63f1c4"
+"""Empreinte des 46 schémas du contrat 1, lus dans l'ordre de leur nom : ils ne changent plus."""
+
+
+def test_the_schemas_of_contract_1_are_frozen() -> None:
+    files = sorted(FROZEN_SCHEMAS_DIR.glob("*.json"))
+    assert len(files) == 46
+    assert hashlib.sha256(b"".join(path.read_bytes() for path in files)).hexdigest() == FROZEN_V1_DIGEST
+
+
+def test_a_fingerprint_is_required_in_its_form() -> None:
+    with pytest.raises(ValueError, match="fingerprint"):
+        SecurityPayload(tenant="default", roles=(), users=(), fingerprint="md5:00")
 
 
 def journal() -> list[Event]:

@@ -1,0 +1,36 @@
+{
+  "$id": "loom-console/v2/event.run.claimed.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Concession prise sur un run : un seul pilote à la fois (point 27).\n\nLa durabilité vient du journal, pas de la file : une livraison en double\nest sans risque puisque l'état se reconstruit. Mais deux pilotes en même\ntemps écriraient deux fois les mêmes effets. La concession les départage :\nqui la tient pilote, et elle expire si son porteur meurt. Sa durée se règle\npar ``execution.lease`` (60 s par défaut).\n\nCatégorie ``run``. Facette : ``worker_id``. Aucun contenu.\n\nAttributes:\n    type: ``run.claimed``.\n    worker_id: Instance qui pilote ; engendré à sa construction, pas\n        configuré.\n    lease_until: Échéance de la concession. Passée, un autre pilote peut\n        reprendre le run.",
+  "properties": {
+    "lease_until": {
+      "format": "date-time",
+      "title": "Lease Until",
+      "type": "string"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "type": {
+      "const": "run.claimed",
+      "default": "run.claimed",
+      "title": "Type",
+      "type": "string"
+    },
+    "worker_id": {
+      "title": "Worker Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "worker_id",
+    "lease_until"
+  ],
+  "title": "RunClaimed",
+  "type": "object"
+}

@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "CancelReason": {
+      "enum": [
+        "requested",
+        "parent"
+      ],
+      "type": "string"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "description": "Tokens consommés par un appel de modèle, ou cumulés sur un run (fonction J1).\n\nDeux ``Usage`` s'additionnent avec ``+``.\n\nAttributes:\n    input_tokens: Tokens d'entrée hors cache.\n    output_tokens: Tokens de sortie, raisonnement compris.\n    cache_read_tokens: Tokens d'entrée lus dans le cache de prompt.\n    cache_write_tokens: Tokens d'entrée écrits dans le cache de prompt.\n    reasoning_tokens: Tokens de raisonnement, quand le fournisseur les\n        distingue ; déjà comptés dans ``output_tokens``.",
+      "properties": {
+        "cache_read_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Read Tokens",
+          "type": "integer"
+        },
+        "cache_write_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Write Tokens",
+          "type": "integer"
+        },
+        "input_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "$id": "loom-console/v2/event.run.cancelled.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Run arrêté avant sa fin, à la demande (fonction A5).\n\nIl est terminal : un run annulé ne se reprend pas. L'état reconstruit\nreste juste — les étapes déjà écrites sont dans le journal —, mais plus\naucun événement n'est accepté après lui.\n\nCatégorie ``run``. Facette : ``reason``, plus ``via`` quand une passerelle\na porté la demande. Aucun contenu. Statut ``warning``.\n\nAttributes:\n    type: ``run.cancelled``.\n    reason: ``requested`` (demande d'un appelant) ou ``parent`` (le run\n        parent a été arrêté). Défaut : ``requested``.\n    by: Auteur de la demande, quand on le connaît : ``user_id`` de\n        l'appelant, identifiant du worker, run parent.\n    via: Passerelle qui a porté la demande (``as_user``, décision D-5 des\n        utilisateurs et rôles) ; absente sans passerelle.\n    iterations: Appels de l'orchestrateur faits avant l'arrêt.\n    usage: Consommation du run jusqu'à l'arrêt.\n    cost_usd: Coût du run jusqu'à l'arrêt, en dollars.\n    withdrawn: Demandes d'approbation encore ouvertes que l'annulation\n        clôt, par ``call_id``. Sans elles, un audit qui lit le journal brut\n        voyait une demande jamais tranchée (essai de la fonction N2 du\n        23/10). Absent des journaux antérieurs.",
+  "properties": {
+    "by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "By"
+    },
+    "cost_usd": {
+      "default": 0.0,
+      "minimum": 0,
+      "title": "Cost Usd",
+      "type": "number"
+    },
+    "iterations": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Iterations",
+      "type": "integer"
+    },
+    "reason": {
+      "$ref": "#/$defs/CancelReason",
+      "default": "requested"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "type": {
+      "const": "run.cancelled",
+      "default": "run.cancelled",
+      "title": "Type",
+      "type": "string"
+    },
+    "usage": {
+      "$ref": "#/$defs/Usage",
+      "default": {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0
+      }
+    },
+    "via": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Via"
+    },
+    "withdrawn": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Withdrawn",
+      "type": "array"
+    }
+  },
+  "title": "RunCancelled",
+  "type": "object"
+}

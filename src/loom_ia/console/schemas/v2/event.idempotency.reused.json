@@ -1,0 +1,40 @@
+{
+  "$id": "loom-console/v2/event.idempotency.reused.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Appel qui n'a rien fait : son effet était déjà mémorisé sous sa clé (points 18 et 49).\n\nÉcrit par le moteur, quel que soit le magasin — c'est l'outil décoré qui\nle lui signale, puisque lui seul connaît sa clé. Sans cet événement, un\nrun dont l'effet a été dédoublonné ne le raconte pas : on y lit un appel,\npuis un résultat venu d'ailleurs, et rien qui l'explique. Le magasin\n``journal`` laissait au moins son ``idempotency.recorded`` ; un magasin\npartagé, lui, ne laisse rien dans le journal du run.\n\nIl ne porte pas le résultat : celui-ci est dans le ``tool.completed`` de\nl'appel, et le redire ne dirait rien de plus.\n\nCatégorie ``idempotency``. Facettes : ``tool_name`` et ``key``. Aucun\ncontenu.\n\nAttributes:\n    type: ``idempotency.reused``.\n    key: Clé d'idempotence sous laquelle l'effet était mémorisé.\n    call_id: Appel qui n'a rien refait.\n    tool_name: Nom de l'outil.",
+  "properties": {
+    "call_id": {
+      "title": "Call Id",
+      "type": "string"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tool_name": {
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "type": {
+      "const": "idempotency.reused",
+      "default": "idempotency.reused",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "key",
+    "call_id",
+    "tool_name"
+  ],
+  "title": "IdempotencyReused",
+  "type": "object"
+}

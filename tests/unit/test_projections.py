@@ -40,6 +40,7 @@ from loom_ia.core.projections import (
     fold_all,
     history,
     session_state,
+    unfinished_roots,
 )
 from loom_ia.testing import RunJournal, tool_call_message
 
@@ -601,3 +602,16 @@ def test_concurrent_runs_write_in_the_order_they_finish() -> None:
     events = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
     assert session_state(events[: len(opened) + len(finished)]) == {"k": "rapide"}
     assert session_state(events) == {"k": "lent"}
+
+
+def test_unfinished_roots_keeps_the_open_root_runs_only() -> None:
+    """Ce que reprend ``recover()`` et ce que la console reçoit au premier branchement (L-1)."""
+    session = SessionId("s1")
+    done = RunJournal(session_id=session)
+    done.start("Fini ?").model_turn(Message.assistant("Oui.")).complete()
+    root = RunJournal(session_id=session)
+    root.start("Délègue.").model_turn(tool_call_message(("c1", "verifier", {})))
+    child = RunJournal(session_id=session, root_run_id=root.run_id)
+    child.start("Vérifie.", parent_run_id=root.run_id, parent_call_id="c1", depth=1)
+    assert [state.run_id for state in unfinished_roots(numbered(done, root, child))] == [root.run_id]
+    assert unfinished_roots(numbered(done)) == []

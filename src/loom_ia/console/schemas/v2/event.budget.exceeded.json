@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "BudgetLimit": {
+      "enum": [
+        "max_cost",
+        "max_tokens",
+        "max_calls"
+      ],
+      "type": "string"
+    },
+    "BudgetScope": {
+      "enum": [
+        "run",
+        "session"
+      ],
+      "type": "string"
+    },
+    "OnExceed": {
+      "enum": [
+        "warn",
+        "stop"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "loom-console/v2/event.budget.exceeded.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Limite d'un budget atteinte, vue avant un appel de l'orchestrateur (fonction J4).\n\nÉcrit une fois par limite et par run ; avec ``action: stop``, il précède le\n``policy.decided`` qui fait passer le run en ``FINALIZING``.\n\nCatégorie ``policy``. Facettes : ``scope``, ``limit`` et ``action``.\nAucun contenu. Statut ``warning``.\n\nAttributes:\n    type: ``budget.exceeded``.\n    scope: Portée du budget : ``run`` ou ``session``.\n    limit: Limite atteinte : ``max_cost``, ``max_tokens`` ou\n        ``max_calls``.\n    value: Plafond déclaré, dans l'unité de la limite (dollars, tokens ou\n        appels).\n    spent: Consommation au moment du contrôle, dans la même unité.\n    action: ``warn`` (le run continue) ou ``stop`` (réponse forcée).\n    policy: Politique de budget qui a fait le contrôle (``loom.budget``).",
+  "properties": {
+    "action": {
+      "$ref": "#/$defs/OnExceed"
+    },
+    "limit": {
+      "$ref": "#/$defs/BudgetLimit"
+    },
+    "policy": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Policy"
+    },
+    "redacted": {
+      "description": "Chemins des champs de contenu retirés (mode on_demand).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "scope": {
+      "$ref": "#/$defs/BudgetScope"
+    },
+    "spent": {
+      "minimum": 0,
+      "title": "Spent",
+      "type": "number"
+    },
+    "type": {
+      "const": "budget.exceeded",
+      "default": "budget.exceeded",
+      "title": "Type",
+      "type": "string"
+    },
+    "value": {
+      "minimum": 0,
+      "title": "Value",
+      "type": "number"
+    }
+  },
+  "required": [
+    "scope",
+    "limit",
+    "value",
+    "spent",
+    "action"
+  ],
+  "title": "BudgetExceeded",
+  "type": "object"
+}

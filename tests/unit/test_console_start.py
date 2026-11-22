@@ -11,14 +11,22 @@ import pytest
 
 pytest.importorskip("websockets", reason="extra 'console' absent")
 
-from conftest import DEV, OWNER, QUESTION, ConfigFactory
+from conftest import DEV, OWNER, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import console as console_cli
 from loom_ia.access.cli.main import main
 from loom_ia.config import ConfigError
-from loom_ia.console.contract import ByePayload, EventsPayload, HelloPayload, SessionDeletedPayload
-from loom_ia.core.model import SessionId
+from loom_ia.console.contract import (
+    ByePayload,
+    EventsPayload,
+    HelloPayload,
+    SecurityGateway,
+    SecurityPayload,
+    SecurityUser,
+    SessionDeletedPayload,
+)
+from loom_ia.core.model import RunStatus, SessionId
 from loom_ia.testing.console_server import FakeConsole, Received
 
 KEY = "s3cret"
@@ -62,6 +70,31 @@ async def test_start_console_says_hello_then_bye(demo: ConfigFactory) -> None:
             bye = (await fake.wait_for("bye"))[0].payload
         assert bye == ByePayload(reason="shutdown")
         assert len(fake.of("hello")) == 1
+
+
+async def test_start_console_pushes_the_security_in_contract_2(demo: ConfigFactory) -> None:
+    async with FakeConsole(key=KEY) as fake:
+        config = demo(profile="dev", security=SECURITY, console=section(fake.url, commands={"user": "console-gateway"}))
+        async with Loom.from_config(config, environ=ENV) as loom:
+            assert await loom.start_console()
+            async with asyncio.timeout(5):
+                (item,) = await fake.wait_for("security")
+        sent = item.payload
+        assert isinstance(sent, SecurityPayload)
+        assert sent.users == (SecurityUser(id=DEV, roles=("owner",)), SecurityUser(id="console-gateway", roles=("gateway",)))
+        assert sent.gateway == SecurityGateway(user="console-gateway", act_as_roles=("owner",), rate=60, max_ttl=300)
+        assert [agent.name for agent in sent.agents] == ["demo"]
+
+
+async def test_a_console_of_contract_1_gets_no_security(demo: ConfigFactory) -> None:
+    async with FakeConsole(key=KEY, contracts=(1,)) as fake:
+        async with Loom.from_config(demo(profile="dev", console=section(fake.url)), environ=ENV) as loom:
+            assert await loom.start_console()
+            assert loom.console is not None
+            async with asyncio.timeout(5):
+                await loom.console.wait_connected()
+            assert loom.console.contract == 1
+        assert fake.of("security") == []
 
 
 async def test_a_disabled_console_opens_nothing(demo: ConfigFactory) -> None:
@@ -111,7 +144,16 @@ def test_validate_shows_a_disabled_console(demo: ConfigFactory, capsys: pytest.C
 
 
 def listen_args(**changes: Any) -> argparse.Namespace:
-    values: dict[str, Any] = {"host": "127.0.0.1", "port": 0, "key_env": "LOOM_CONSOLE_KEY", "raw": False, "certfile": None, "keyfile": None, **changes}
+    values: dict[str, Any] = {
+        "host": "127.0.0.1",
+        "port": 0,
+        "key_env": "LOOM_CONSOLE_KEY",
+        "raw": False,
+        "certfile": None,
+        "keyfile": None,
+        "contract": None,
+        **changes,
+    }
     return argparse.Namespace(**values)
 
 
@@ -144,6 +186,36 @@ def test_listen_shows_one_line_per_thing() -> None:
     (line,) = printer.lines(Received("events", payload=EventsPayload(batch_id="b", events=(event,))))
     assert "approval.requested demo  warning  run 0193f2a0…  s1#17  tool_name=loom.word" in line
     assert printer.lines(Received("refused", peer="127.0.0.1:5", detail="clé refusée"))[0].endswith("refus              127.0.0.1:5 : clé refusée")
+    security = SecurityPayload(
+        tenant="default",
+        roles=(),
+        users=(SecurityUser(id="dev", roles=("owner",)), SecurityUser(id="console-gateway", roles=("gateway",))),
+        gateway=SecurityGateway(user="console-gateway", act_as_roles=("owner",), rate=60, max_ttl=300),
+        fingerprint="sha256:" + "0123456789abcdef" * 4,
+    )
+    lines = printer.lines(Received("security", payload=security))
+    assert lines[0].endswith("security           client default · empreinte sha256:0123456789ab…")
+    assert lines[1].strip() == "utilisateurs : dev (owner), console-gateway (gateway)"
+    assert lines[2].strip() == "rôles : aucun · clés : 0 · passerelle : console-gateway (endosse owner)"
+
+
+def test_listen_can_serve_a_single_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    built: list[FakeConsole] = []
+
+    class Stop(Exception):
+        pass
+
+    def fake_console(**kwargs: Any) -> FakeConsole:
+        fake = FakeConsole(**kwargs)
+        built.append(fake)
+        raise Stop
+
+    monkeypatch.setattr("loom_ia.testing.console_server.FakeConsole", fake_console)
+    with pytest.raises(Stop):
+        console_cli.run(listen_args(contract=1), environ=ENV)
+    with pytest.raises(Stop):
+        console_cli.run(listen_args(), environ=ENV)
+    assert [tuple(fake.contracts) for fake in built] == [(1,), (2, 1)]
 
 
 JOURNAL: dict[str, Any] = {"events": {"backend": "jsonl", "path": "data/journal"}}
@@ -240,3 +312,18 @@ async def test_a_command_waits_no_longer_than_its_grace_for_an_absent_console(de
     began = time.monotonic()
     assert await asyncio.to_thread(main, ["--config", str(config), "run", "demo", QUESTION, "--session", "cli"]) == 0
     assert time.monotonic() - began < 5, "une console injoignable ne retient pas la commande au-delà de son délai"
+
+
+async def test_a_run_waiting_before_the_first_connection_reaches_the_console(demo: ConfigFactory) -> None:
+    """L-1 : une approbation en attente avant le premier branchement apparaît dès ce branchement, avec le run depuis son début."""
+    agent = demo_agent(tools=[{"python": "calculer", "approval": "always"}])
+    async with FakeConsole(key=KEY) as fake:
+        config = demo(profile="dev", storage=JOURNAL, agents=[agent], console=section(fake.url))
+        async with Loom.from_config(config, environ=ENV) as loom:
+            waiting = await loom.run("demo", QUESTION, session_id=SessionId("attente"), user=DEV)
+            assert waiting.status is RunStatus.PAUSED
+            assert await loom.start_console()
+            async with asyncio.timeout(5):
+                await fake.wait_until(lambda: any(kind == "approval.requested" for _, kind in sent(fake)))
+        kinds = [kind for session, kind in sent(fake) if session == "attente"]
+        assert kinds[0] == "run.started" and "approval.requested" in kinds

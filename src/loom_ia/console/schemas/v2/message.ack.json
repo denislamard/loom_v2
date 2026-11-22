@@ -1,0 +1,17 @@
+{
+  "$id": "loom-console/v2/message.ack.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``ack`` (console → loom) : le lot est enregistré de façon durable, ou la session effacée.\n\nAttributes:\n    batch_id: Le lot acquitté, ou l'identifiant du message ``session.deleted``\n        dont l'effacement est fait.",
+  "properties": {
+    "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "batch_id"
+  ],
+  "title": "AckPayload",
+  "type": "object"
+}
