@@ -70,7 +70,9 @@ server:
 
 console:
   enable: true
-  url: ws://127.0.0.1:8766/loom   # ws:// seulement vers la boucle locale, en profil dev
+  url: ws://127.0.0.1:8766/loom  
   key_env: LOOM_CONSOLE_KEY
   commands: { user: console-gateway }
-  export: { mode: on_demand }      # la console lit le contenu à la demande (events.query, approval.get)
+  export: { mode: on_demand }
+  instance_id: atelier-1
+  

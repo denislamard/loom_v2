@@ -14,6 +14,8 @@ la console. Dans la config de l'instance à observer, en profil ``dev`` :
       url: ws://127.0.0.1:8766/loom
       key_env: LOOM_CONSOLE_KEY
 
+La sécurité de l'instance (``security``) s'affiche juste après ``welcome``.
+
 ``--certfile`` et ``--keyfile`` la servent en ``wss://`` (certificat du
 serveur, en PEM), pour éprouver le TLS. Elle demande l'extra ``console``.
 
@@ -23,6 +25,7 @@ pour elle :
 
     {"name": "run.cancel", "as_user": "dev", "args": {"run_id": "01a1…"}}
     {"name": "events.query", "as_user": "dev", "args": {"session_id": "s1", "limit": 5}}
+    {"name": "sessions.list", "as_user": "dev", "args": {"limit": 2}}
 """
 
 import argparse
@@ -221,12 +224,28 @@ class _Printer:
                 return [self._line(now, "fichier", f"{data['command_id']}{name} · {part}")]
             case "bye":
                 return [self._line(now, "bye", str(data.get("reason", "")))]
+            case "security":
+                return self._security(now, data)
             case "error":
                 return [self._line(now, "erreur", f"{data['code']} — {data['message']}")]
             case "invalid":
                 return [self._line(now, "invalide", item.detail)]
             case _:
                 return [self._line(now, item.kind, json.dumps(data, ensure_ascii=False))]
+
+    def _security(self, now: str, data: dict[str, JsonValue]) -> list[str]:
+        """La sécurité reçue : client, utilisateurs et leurs rôles, rôles, clés, passerelle, empreinte."""
+        users = cast("list[dict[str, JsonValue]]", data.get("users") or [])
+        roles = cast("list[dict[str, JsonValue]]", data.get("roles") or [])
+        keys = cast("list[dict[str, JsonValue]]", data.get("api_keys") or [])
+        gateway = cast("dict[str, JsonValue] | None", data.get("gateway"))
+        said = [f"{user['id']} ({', '.join(cast('list[str]', user.get('roles') or []))})" for user in users]
+        through = "aucune" if gateway is None else f"{gateway['user']} (endosse {', '.join(cast('list[str]', gateway.get('act_as_roles') or []))})"
+        return [
+            self._line(now, "security", f"client {data['tenant']} · empreinte {str(data['fingerprint'])[:19]}…"),
+            self._line("", "", f"utilisateurs : {', '.join(said) or 'aucun'}"),
+            self._line("", "", f"rôles : {', '.join(str(role['id']) for role in roles) or 'aucun'} · clés : {len(keys)} · passerelle : {through}"),
+        ]
 
     def _event(self, event: dict[str, JsonValue]) -> str:
         """Un événement sur une ligne : heure, type, agent, statut, run, session, facettes."""

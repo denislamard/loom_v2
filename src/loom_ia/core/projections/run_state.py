@@ -595,6 +595,28 @@ def fold_all(events: Iterable[Event]) -> dict[RunId, RunState]:
     return states
 
 
+def unfinished_roots(events: Iterable[Event]) -> list[RunState]:
+    """Runs racine d'un journal qui peuvent encore avancer (point 27, fonction H3).
+
+    Un sous-run n'y est pas : son parent le reprend en rejouant l'appel
+    d'outil qui l'a lancé. Un run de compaction non plus — il sera refait si
+    la session en a besoin. Les marqueurs de session sont écartés.
+
+    Sert à la reprise (``Loom.recover``) et à la console, qui reçoit ces runs
+    dès son premier branchement.
+
+    Args:
+        events: Le journal de la session, dans l'ordre.
+
+    Returns:
+        Les runs racine ni finis ni de compaction, dans l'ordre de leur démarrage.
+
+    Raises:
+        ProjectionError: Journal incohérent.
+    """
+    return [state for state in fold_all(events).values() if state.parent_run_id is None and state.kind == "normal" and not state.finished]
+
+
 def awaiting_in_session(events: Iterable[Event]) -> tuple[PendingApproval, ...]:
     """Demandes d'approbation sans réponse des runs racine encore ouverts d'un journal.
 

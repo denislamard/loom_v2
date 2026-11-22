@@ -53,7 +53,13 @@ logger = logging.getLogger(__name__)
 QUERY_MAX: Final = 1_000
 """Événements rendus par ``events.query``, au plus : la réponse tient en un message."""
 
-_READS: Final = frozenset({"events.query", "approval.get", "file.get", "approval.file", "approval.preview"})
+SESSIONS_LIMIT: Final = 1_000
+"""Sessions rendues par ``sessions.list`` sans ``limit``."""
+
+SESSIONS_MAX: Final = 5_000
+"""Sessions rendues par ``sessions.list``, au plus : la réponse tient en un message."""
+
+_READS: Final = frozenset({"events.query", "approval.get", "file.get", "approval.file", "approval.preview", "sessions.list"})
 """Les lectures : rejouées, elles se refont (rien n'est à protéger d'un double effet)."""
 
 _REFUSALS: Final = (AccessDenied, Unknown, LookupError, ValueError, BudgetExhausted, QuotaExceeded, PermissionError)
@@ -125,6 +131,18 @@ class EventsQueryArgs(_Args):
     until: AwareDatetime | None = None
     after: EventId | None = None
     limit: int = Field(default=EVENTS_LIMIT, ge=1, le=QUERY_MAX)
+
+
+class SessionsListArgs(_Args):
+    """``sessions.list`` : les sessions du client, de la plus récemment écrite à la plus ancienne, comme ``GET /v1/sessions``.
+
+    Attributes:
+        limit: Sessions rendues, au plus.
+        after: Le jeton ``next`` de la page précédente ; absent, la première page.
+    """
+
+    limit: int = Field(default=SESSIONS_LIMIT, ge=1, le=SESSIONS_MAX)
+    after: str | None = None
 
 
 class ApprovalGetArgs(_Args):
@@ -317,6 +335,8 @@ class CommandExecutor:
                 return {"cancelled": await loom.cancel(cancel.run_id, session_id=cancel.session_id, tenant_id=tenant, user=actor)}
             case "events.query":
                 return await self._query(EventsQueryArgs.model_validate(command.args), actor)
+            case "sessions.list":
+                return await self._sessions(SessionsListArgs.model_validate(command.args), actor)
             case "approval.get":
                 return await self._approvals(ApprovalGetArgs.model_validate(command.args), actor)
             case "file.get":
@@ -355,6 +375,24 @@ class CommandExecutor:
         mode = "on_demand" if caller.masks else "push"
         found: list[JsonValue] = [public_event(event, mode=mode) for event in events]
         return {"events": found, "next": events[-1].event_id if len(events) == args.limit else None}
+
+    async def _sessions(self, args: SessionsListArgs, actor: Actor) -> JsonValue:
+        """Une page de sessions ; le jeton ``next`` est la position de la dernière, ``None`` quand il n'y en a plus."""
+        caller = Caller(actor=actor)
+        _require(caller, "read")
+        if actor.key is not None and actor.key.agents:
+            # Comme le REST : la liste ne dit pas de quels agents sont les runs d'une session.
+            raise AccessDenied(
+                f"La clé {actor.key.id} est bornée à certains agents : la liste des sessions ne peut pas être filtrée", actor=actor, permission="read"
+            )
+        after = None if args.after is None else _position(args.after)
+        records = sorted(await self._loom.sessions(tenant_id=actor.tenant), key=lambda record: (record.updated_at, record.session_id), reverse=True)
+        remaining = [record for record in records if after is None or (record.updated_at, record.session_id) < after]
+        page = remaining[: args.limit]
+        found: list[JsonValue] = [record.model_dump(mode="json") for record in page]
+        last = page[-1] if page else None
+        more = last is not None and len(remaining) > len(page)
+        return {"sessions": found, "next": f"{last.updated_at.isoformat()}|{last.session_id}" if more and last is not None else None}
 
     async def _approvals(self, args: ApprovalGetArgs, actor: Actor) -> JsonValue:
         details = await self._loom.approval_details(args.run_id, call_id=args.call_id, session_id=args.session_id, tenant_id=actor.tenant, user=actor)
@@ -408,6 +446,24 @@ class CommandExecutor:
         now = self._clock()
         for identifier in [identifier for identifier, (expires, _) in self._seen.items() if expires <= now]:
             del self._seen[identifier]
+
+
+def _position(token: str) -> tuple[datetime, str]:
+    """La position d'un jeton ``next`` de ``sessions.list`` : l'heure de la dernière écriture et la session.
+
+    Raises:
+        ValueError: Jeton illisible.
+    """
+    stamp, separator, session = token.partition("|")
+    if not separator or not session:
+        raise ValueError(f"jeton de page illisible : {token!r}")
+    try:
+        written = datetime.fromisoformat(stamp)
+    except ValueError:
+        raise ValueError(f"jeton de page illisible : {token!r}") from None
+    if written.tzinfo is None:
+        raise ValueError(f"jeton de page illisible : {token!r}")
+    return written, session
 
 
 def _require(caller: Caller, permission: Permission, agent: str | None = None) -> None:

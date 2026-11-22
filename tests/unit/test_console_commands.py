@@ -29,6 +29,7 @@ KEY = "s3cret"
 ENV = {"LOOM_CONSOLE_KEY": KEY}
 GATEWAY = "console-gateway"
 READER = "paul"
+LAUNCHER = "lea"
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(40))
 
 OUTILS = f'''
@@ -72,7 +73,7 @@ type Build = Callable[..., Path]
 
 @pytest.fixture
 def atelier(tmp_path: Path) -> Build:
-    """Quatre agents (calcul, approbation, question, fichier) ; ``dev`` est propriétaire, ``paul`` lecteur sans contenu."""
+    """Quatre agents (calcul, approbation, question, fichier) ; ``dev`` est propriétaire, ``paul`` lecteur sans contenu, ``lea`` lance sans lire."""
 
     def build(*, commands: dict[str, Any] | None = None, **console: Any) -> Path:
         (tmp_path / "agents").mkdir(exist_ok=True)
@@ -88,9 +89,15 @@ def atelier(tmp_path: Path) -> Build:
                 "roles": [
                     OWNER,
                     {"id": "lecteur", "permissions": ["read"]},
-                    {"id": "gateway", "permissions": ["act_as"], "act_as_roles": ["owner", "lecteur"]},
+                    {"id": "lanceur", "permissions": ["run"]},
+                    {"id": "gateway", "permissions": ["act_as"], "act_as_roles": ["owner", "lecteur", "lanceur"]},
                 ],
-                "users": [{"id": DEV, "roles": ["owner"]}, {"id": READER, "roles": ["lecteur"]}, {"id": GATEWAY, "roles": ["gateway"]}],
+                "users": [
+                    {"id": DEV, "roles": ["owner"]},
+                    {"id": READER, "roles": ["lecteur"]},
+                    {"id": LAUNCHER, "roles": ["lanceur"]},
+                    {"id": GATEWAY, "roles": ["gateway"]},
+                ],
             },
             "console": {
                 "enable": True,
@@ -347,3 +354,58 @@ def test_the_listener_fills_id_and_deadline() -> None:
         console_cli.command_of("[1]")
     with pytest.raises(ValueError, match="as_user"):
         console_cli.command_of('{"name": "run.cancel", "args": {}}')
+
+
+# --- sessions.list (docs/analyse-securite-hello.md, lot 2) ----------------------------
+
+
+async def listed(executor: CommandExecutor, clock: Clock, **args: Any) -> tuple[list[str], str | None]:
+    result = await executor.execute(command("sessions.list", args, now=clock.now))
+    assert result.outcome == "accepted", result
+    page = cast("dict[str, Any]", result.result)
+    return [str(session["session_id"]) for session in page["sessions"]], page["next"]
+
+
+async def test_sessions_list_pages_through_every_session(atelier: Build) -> None:
+    async with mounted(atelier()) as (loom, executor, _, clock):
+        for name in ("s1", "s2", "s3", "s4", "s5"):
+            assert (await loom.run("demo", "12 fois 7 ?", session_id=SessionId(name), user=DEV)).ok
+        newest_first = [record.session_id for record in sorted(await loom.sessions(), key=lambda r: (r.updated_at, r.session_id), reverse=True)]
+        first, token = await listed(executor, clock, limit=2)
+        assert first == newest_first[:2] and token is not None
+        second, token = await listed(executor, clock, limit=2, after=token)
+        third, token = await listed(executor, clock, limit=2, after=token)
+        assert first + second + third == newest_first and token is None
+        everything, token = await listed(executor, clock)
+        assert everything == newest_first and token is None
+        result = await executor.execute(command("sessions.list", {"limit": 1}, now=clock.now))
+        (session,) = cast("dict[str, Any]", result.result)["sessions"]
+        assert set(session) == {"session_id", "last_seq", "updated_at"}
+
+
+async def test_sessions_list_with_no_session_is_one_empty_page(atelier: Build) -> None:
+    async with mounted(atelier()) as (_, executor, _, clock):
+        assert await listed(executor, clock) == ([], None)
+
+
+async def test_sessions_list_checks_its_arguments(atelier: Build) -> None:
+    async with mounted(atelier()) as (_, executor, _, clock):
+        refused(await executor.execute(command("sessions.list", {"limit": 5001}, now=clock.now)), "invalid_args : limit")
+        refused(await executor.execute(command("sessions.list", {"limit": 0}, now=clock.now)), "invalid_args : limit")
+        refused(await executor.execute(command("sessions.list", {"page": 2}, now=clock.now)), "invalid_args : page")
+        for token in ("pas-un-jeton", "hier|s1", "2026-11-22T07:00:00|s1", "2026-11-22T07:00:00+00:00|"):
+            refused(await executor.execute(command("sessions.list", {"after": token}, now=clock.now)), "ValueError")
+
+
+async def test_sessions_list_needs_read_and_is_audited(atelier: Build) -> None:
+    config = atelier()
+    async with mounted(config) as (_, executor, _, clock):
+        refused(await executor.execute(command("sessions.list", {}, as_user=LAUNCHER, now=clock.now)), "AccessDenied")
+        assert (await executor.execute(command("sessions.list", {}, as_user=READER, now=clock.now))).outcome == "accepted"
+    (line,) = audited(config)
+    assert (line["access"], line["user"], line["via"], line["permission"]) == ("console", LAUNCHER, GATEWAY, "read")
+
+
+def test_sessions_list_can_be_typed_in_the_listener() -> None:
+    typed = console_cli.command_of('{"name": "sessions.list", "as_user": "dev", "args": {"limit": 2}}')
+    assert (typed.name, typed.args) == ("sessions.list", {"limit": 2})

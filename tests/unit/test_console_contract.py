@@ -21,6 +21,12 @@ from loom_ia.console.contract import (
     FileDataPayload,
     HelloPayload,
     Payload,
+    SecurityAgent,
+    SecurityGateway,
+    SecurityKey,
+    SecurityPayload,
+    SecurityRole,
+    SecurityUser,
     SessionDeletedPayload,
     WelcomePayload,
     contract_schemas,
@@ -49,6 +55,15 @@ SAMPLES: list[Payload] = [
     FileDataPayload(command_id="c1", part=0, last=True, data="aGVsbG8=", name="devis.docx", size=5, sha256="00"),
     ErrorPayload(code="unknown_type", message="type inconnu"),
     ByePayload(reason="shutdown"),
+    SecurityPayload(
+        tenant="default",
+        roles=(SecurityRole(id="owner", permissions=("run", "read")), SecurityRole(id="console", permissions=("act_as",), act_as_roles=("owner",))),
+        users=(SecurityUser(id="dev", name="Denis", roles=("owner",)), SecurityUser(id="console-gateway", roles=("console",))),
+        api_keys=(SecurityKey(id="k1", user="dev", scopes=("read",), expires=NOW),),
+        agents=(SecurityAgent(name="devis", approve_default=("owner",), approve_tools={"envoyer": ("owner",)}, self_approval=False),),
+        gateway=SecurityGateway(user="console-gateway", act_as_roles=("owner",), rate=60, max_ttl=300),
+        fingerprint="sha256:" + "a" * 64,
+    ),
 ]
 
 
@@ -95,6 +110,50 @@ def test_the_published_schemas_are_up_to_date() -> None:
     assert sorted(found) == sorted(expected), "schémas en trop ou manquants dans " + str(SCHEMAS_DIR)
     stale = [name for name, schema in expected.items() if found[name] != dumped(schema)]
     assert not stale, f"schémas périmés : {', '.join(stale)}"
+
+
+def test_a_hello_from_a_newer_loom_is_read_without_its_unknown_fields() -> None:
+    """Le hello précède la négociation : un champ ajouté par un loom plus récent n'y bloque pas la connexion."""
+    newer = json.loads(encode(SAMPLES[0]))
+    newer["payload"]["capabilities"] = {"files": True}
+    envelope, read = decode(json.dumps(newer))
+    assert read == SAMPLES[0] and envelope.type == "hello"
+    assert "capabilities" not in read.model_dump()
+
+
+def test_a_known_field_of_the_hello_is_still_checked() -> None:
+    wrong = json.loads(encode(SAMPLES[0]))
+    wrong["payload"]["export_mode"] = "tout"
+    with pytest.raises(ContractError) as refused:
+        decode(json.dumps(wrong))
+    assert refused.value.code == "invalid_message"
+
+
+def test_the_hello_model_stays_strict_for_the_code_that_builds_it() -> None:
+    with pytest.raises(ValueError, match="comands"):
+        HelloPayload.model_validate({**SAMPLES[0].model_dump(), "comands": True})
+
+
+@pytest.mark.parametrize("payload", [sample for sample in SAMPLES if not isinstance(sample, HelloPayload)], ids=lambda payload: type(payload).__name__)
+def test_every_other_message_still_refuses_unknown_fields(payload: Payload) -> None:
+    extended = json.loads(encode(payload))
+    extended["payload"]["surprise"] = 1
+    with pytest.raises(ContractError) as refused:
+        decode(json.dumps(extended))
+    assert refused.value.code == "invalid_message"
+
+
+def test_the_published_hello_schema_accepts_more_fields() -> None:
+    schemas = contract_schemas()
+    assert "additionalProperties" not in schemas["message.hello.json"]
+    assert schemas["message.ack.json"]["additionalProperties"] is False
+    newer = {**SAMPLES[0].model_dump(mode="json"), "capabilities": {"files": True}}
+    jsonschema.validate(newer, schemas["message.hello.json"])
+
+
+def test_a_fingerprint_is_required_in_its_form() -> None:
+    with pytest.raises(ValueError, match="fingerprint"):
+        SecurityPayload(tenant="default", roles=(), users=(), fingerprint="md5:00")
 
 
 def journal() -> list[Event]:

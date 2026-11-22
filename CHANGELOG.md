@@ -4,6 +4,22 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.24 - non publiée
 
+### Console d'administration : sécurité de l'instance (`docs/analyse-securite-hello.md`, lot 1)
+- ⚠ **Le contrat 1 est complété**, sans nouveau numéro : 2.0.24 en est la référence tant que la console n'a pas d'utilisateurs (décision du 22/11). Il porte le message `security` et la commande `sessions.list`, que loom 2.0.23 ne connaissait pas. Les schémas de `console/schemas/v1/` sont régénérés.
+- **Message `security`** (loom → console), poussé juste après `welcome`, avant tout lot, à chaque connexion : la sécurité de l'instance pour le client de la console, en lecture seule — ses utilisateurs, les rôles qu'ils portent ou endossent, leurs clés d'API **sans empreinte**, le bloc `access` de ses agents, la passerelle (`console.commands` : utilisateur, rôles endossés, débit, échéance maximale) et une empreinte `sha256:` du tout. Construit par `console/security.py` (`security_payload`).
+- **Le `hello` se lit en ignorant les champs inconnus** (`decode`) : il part avant la négociation du contrat, et un loom plus récent pourra y annoncer de nouvelles capacités sans faire refuser sa connexion par une console plus ancienne. Un champ connu reste contrôlé, le modèle `HelloPayload` reste strict pour le code qui le construit, et tous les autres messages refusent toujours les champs inconnus. `message.hello.json` n'a plus `additionalProperties: false`.
+- **`loom console listen`** affiche `security`. `FakeConsole` sert par défaut les contrats de loom et répond à chaque connexion sous son contrat.
+- Essais : `tests/unit/test_console_security.py` ; `test_console_contract.py`, `test_console_channel.py`, `test_console_start.py` étendus.
+
+### Console d'administration : commande `sessions.list` (`docs/analyse-securite-hello.md`, lot 2)
+- **`sessions.list`** : les sessions du client de la console, de la plus récemment écrite à la plus ancienne, comme `GET /v1/sessions` (`session_id`, `last_seq`, `updated_at`). Paginée : `limit` (1 000 par défaut, 5 000 au plus) et `after`, le jeton `next` de la page précédente (`next` vaut `null` sur la dernière). Il faut `read`, et une clé bornée à des agents est refusée, comme en REST ; un refus de droits est audité.
+- Essais : `tests/unit/test_console_commands.py` étendu.
+
+### Console d'administration : les runs en cours partent au premier branchement (`docs/analyse-securite-hello.md`, lot 3)
+- ⚠ **Premier démarrage du curseur** : une session qui a un run racine non terminé (en pause sur une approbation ou une question, ou laissé en plan par un process mort) part du premier événement du plus ancien de ces runs, au lieu de sa position actuelle. La console voit dès le branchement ce qui attend. Les autres sessions partent toujours de leur position actuelle (Q-11), et les démarrages suivants ne changent pas. Toutes les sessions du client sont lues une fois, comme `recover()` ; une session illisible est journalisée et passée. Les exclusions (`console.export.exclude_events`) et le mode d'export s'appliquent.
+- `unfinished_roots` (`core/projections`) : la règle des runs racine qui peuvent encore avancer, partagée par `recover()` et l'exportateur (elle remplace `_unfinished` d'`access/api.py`).
+- Essais : `tests/unit/test_console_exporter.py`, `test_console_start.py` et `test_projections.py` étendus.
+
 
 ## 2.0.23 - publiée
 

@@ -14,6 +14,11 @@ Chaque message est un objet JSON, une trame texte : ``{type, id, contract,
 payload}``. ``hello`` n'a pas de ``contract`` : il propose ceux que loom sait
 servir (``contracts``), et ``welcome`` dit celui que la console retient.
 
+Le contrat 1 est celui de loom 2.0.24, la référence tant que la console n'a pas
+d'utilisateurs (docs/analyse-securite-hello.md, décision du 22/11) : il porte la
+commande ``sessions.list`` et le message ``security``, que loom pousse juste
+après ``welcome``, à chaque connexion. loom 2.0.23 parlait un contrat 1 sans eux.
+
 Les événements partent au format des événements du REST (``GET /v1/events``,
 décision D-11) : voir ``translate``. Les schémas JSON publiés
 (``schemas/v1/``) sont tirés de ces modèles par ``contract_schemas`` ; un essai
@@ -29,6 +34,7 @@ from typing import Any, Final, Literal, cast
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
+from loom_ia.config.models import Permission
 from loom_ia.core.events import DURABLE_PAYLOADS, Event
 from loom_ia.core.events.redaction import MARK
 from loom_ia.core.model import DomainModel, new_id
@@ -53,6 +59,7 @@ type MessageType = Literal[
     "file.data",
     "error",
     "bye",
+    "security",
 ]
 """Types de message du contrat 1."""
 
@@ -66,6 +73,7 @@ type CommandName = Literal[
     "file.get",
     "approval.file",
     "approval.preview",
+    "sessions.list",
 ]
 """Commandes du contrat 1."""
 
@@ -94,6 +102,15 @@ class ContractError(ValueError):
 class HelloPayload(DomainModel):
     """``hello`` (loom → console) : qui se connecte, et ce qu'il sait servir.
 
+    Le seul message dont la **lecture** ignore les champs inconnus (``decode``,
+    décision du 22/11) : il part avant la négociation du contrat, si bien qu'un
+    loom plus récent ne pourrait rien y annoncer de neuf sans faire refuser sa
+    connexion par une console qui ne le connaît pas. Un champ ajouté plus tard y
+    est simplement ignoré par les consoles plus anciennes ; un champ connu reste
+    contrôlé comme ailleurs. Le modèle, lui, reste strict : le code qui le
+    construit ne peut pas y glisser une faute de frappe. Tous les autres
+    messages refusent les champs inconnus.
+
     Attributes:
         instance_id: Identifiant stable de l'instance.
         worker_id: Process qui ouvre cette connexion (une connexion par process).
@@ -113,6 +130,123 @@ class HelloPayload(DomainModel):
     agents: tuple[str, ...] = ()
     commands: bool = False
     export_mode: Literal["push", "on_demand"] = "on_demand"
+
+
+class SecurityRole(DomainModel):
+    """Un rôle d'accès, tel que ``security.roles`` le déclare.
+
+    Attributes:
+        id: Identifiant du rôle.
+        description: Libellé.
+        permissions: Ses permissions.
+        agents: Agents auxquels il est borné ; vide signifie tous.
+        act_as_roles: Rôles qu'une passerelle de ce rôle peut endosser.
+    """
+
+    id: str
+    description: str = ""
+    permissions: tuple[Permission, ...]
+    agents: tuple[str, ...] = ()
+    act_as_roles: tuple[str, ...] = ()
+
+
+class SecurityUser(DomainModel):
+    """Un utilisateur du client de la console.
+
+    Attributes:
+        id: Identifiant, écrit au journal.
+        name: Nom affiché ; absent, l'identifiant.
+        roles: Ses rôles d'accès.
+    """
+
+    id: str
+    name: str | None = None
+    roles: tuple[str, ...]
+
+
+class SecurityKey(DomainModel):
+    """Une clé d'API d'un utilisateur du client, **sans son empreinte**.
+
+    Attributes:
+        id: Identifiant de la clé.
+        user: Utilisateur qu'elle identifie.
+        scopes: Permissions qu'elle garde ; absent : toutes celles de l'utilisateur.
+        agents: Agents qu'elle ouvre ; vide signifie tous.
+        expires: Fin de validité ; absente, elle ne périme pas.
+    """
+
+    id: str
+    user: str
+    scopes: tuple[Permission, ...] | None = None
+    agents: tuple[str, ...] = ()
+    expires: AwareDatetime | None = None
+
+
+class SecurityAgent(DomainModel):
+    """Le bloc ``access`` d'un agent du client : qui peut agir sur lui.
+
+    Une liste absente laisse décider les permissions des rôles ; une liste
+    présente restreint.
+
+    Attributes:
+        name: L'agent.
+        run: Rôles qui le lancent.
+        answer: Rôles qui répondent à ses questions.
+        cancel: Rôles qui arrêtent ses runs.
+        approve_default: Approbateurs de ses demandes, à défaut d'une liste par outil.
+        approve_tools: Approbateurs par outil.
+        self_approval: Faux si l'agent interdit l'auto-approbation.
+    """
+
+    name: str
+    run: tuple[str, ...] | None = None
+    answer: tuple[str, ...] | None = None
+    cancel: tuple[str, ...] | None = None
+    approve_default: tuple[str, ...] | None = None
+    approve_tools: dict[str, tuple[str, ...]] = Field(default_factory=dict[str, tuple[str, ...]])
+    self_approval: bool = True
+
+
+class SecurityGateway(DomainModel):
+    """La passerelle des commandes (``console.commands``).
+
+    Attributes:
+        user: Utilisateur loom de la passerelle.
+        act_as_roles: Rôles qu'elle peut endosser, ceux de ses rôles qui ont ``act_as``.
+        rate: Commandes acceptées par minute, au plus.
+        max_ttl: Horizon maximal de l'échéance d'une commande, en secondes.
+    """
+
+    user: str
+    act_as_roles: tuple[str, ...]
+    rate: PositiveInt
+    max_ttl: PositiveInt
+
+
+class SecurityPayload(DomainModel):
+    """``security`` (loom → console) : la sécurité de l'instance pour le client de la console, en lecture seule.
+
+    loom reste le référentiel : la console la lit et n'en renvoie rien. Aucun
+    secret n'y figure, ni empreinte de clé, ni clé de la console.
+
+    Attributes:
+        tenant: Client que la console sert.
+        roles: Les rôles que ses utilisateurs portent, et ceux qu'ils endossent.
+        users: Les utilisateurs du client.
+        api_keys: Leurs clés d'API, sans empreinte.
+        agents: Les agents du client et leur bloc ``access``.
+        gateway: La passerelle des commandes ; absente, les commandes sont refusées.
+        fingerprint: ``sha256:`` et l'empreinte du reste du document (JSON
+            canonique) : deux process de configs différentes en ont deux.
+    """
+
+    tenant: str
+    roles: tuple[SecurityRole, ...]
+    users: tuple[SecurityUser, ...]
+    api_keys: tuple[SecurityKey, ...] = ()
+    agents: tuple[SecurityAgent, ...] = ()
+    gateway: SecurityGateway | None = None
+    fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class WelcomePayload(DomainModel):
@@ -256,6 +390,7 @@ type Payload = (
     | FileDataPayload
     | ErrorPayload
     | ByePayload
+    | SecurityPayload
 )
 """Une charge de message."""
 
@@ -270,6 +405,7 @@ PAYLOADS: Final[Mapping[MessageType, type[Payload]]] = {
     "file.data": FileDataPayload,
     "error": ErrorPayload,
     "bye": ByePayload,
+    "security": SecurityPayload,
 }
 """Le modèle de charge de chaque type de message."""
 
@@ -339,7 +475,11 @@ def decode(text: str | bytes) -> tuple[Envelope, Payload]:
         raise ContractError("unknown_type", f"type de message inconnu : {kind!r}")
     try:
         envelope = Envelope.model_validate(data)
-        payload = PAYLOADS[envelope.type].model_validate(envelope.payload)
+        fields = envelope.payload
+        if envelope.type == "hello":
+            # Le hello précède la négociation : un champ qu'un loom plus récent y ajoute est ignoré (HelloPayload).
+            fields = {name: value for name, value in fields.items() if name in HelloPayload.model_fields}
+        payload = PAYLOADS[envelope.type].model_validate(fields)
     except ValidationError as error:
         raise ContractError("invalid_message", f"message {kind!r} non conforme : {error.errors()[0]['msg']}") from None
     return envelope, payload
@@ -363,7 +503,10 @@ def contract_schemas() -> dict[str, dict[str, Any]]:
     """
     schemas: dict[str, dict[str, Any]] = {"envelope.json": _titled(Envelope.model_json_schema(mode="serialization"), "envelope")}
     for kind, model in PAYLOADS.items():
-        schemas[f"message.{kind}.json"] = _titled(model.model_json_schema(mode="serialization"), f"message.{kind}")
+        schema = model.model_json_schema(mode="serialization")
+        if kind == "hello":
+            schema.pop("additionalProperties", None)  # lu en ignorant les champs inconnus (HelloPayload)
+        schemas[f"message.{kind}.json"] = _titled(schema, f"message.{kind}")
     types = sorted(_event_type(payload) for payload in DURABLE_PAYLOADS)
     envelope = Event.model_json_schema(mode="serialization")
     envelope["properties"]["payload"] = {

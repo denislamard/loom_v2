@@ -12,7 +12,8 @@
         "command.result",
         "file.data",
         "error",
-        "bye"
+        "bye",
+        "security"
       ],
       "type": "string"
     }

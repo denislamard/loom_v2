@@ -23,6 +23,7 @@ from loom_ia.core.events import Event
 from loom_ia.core.events.payloads import ApprovalRequested
 from loom_ia.core.model import DEFAULT_TENANT, Message, SessionId, TenantId, ToolOutput
 from loom_ia.core.ports import EventStore
+from loom_ia.core.ports.event_store import JournalCorrupted
 from loom_ia.telemetry.redaction import Redactor
 from loom_ia.testing import RunJournal, tool_call_message
 from loom_ia.testing.console_server import FakeConsole
@@ -175,6 +176,82 @@ async def test_the_first_start_sends_nothing_of_the_history(console: FakeConsole
     await rig.stop()
     assert {session for session, _ in positions(console)} == {"nouvelle"}
     assert await acked(rig.cursor, "ancienne") == before[-1].seq, "le curseur part de la position actuelle (Q-11)"
+
+
+async def write_unfinished(store: EventStore, session: str) -> list[Event]:
+    """Un run qui attend le résultat de son outil : démarré, jamais fini."""
+    journal = RunJournal(agent="demo", session_id=SessionId(session))
+    journal.start("Combien font 3 + 3 ?").model_turn(tool_call_message(("c1", "calculer", {"expr": "3+3"})))
+    last = await store.last_seq(DEFAULT_TENANT, SessionId(session))
+    return await store.append(journal.take(), expected_seq=last)
+
+
+async def test_the_first_start_sends_the_runs_still_open(console: FakeConsole) -> None:
+    """L-1 : une session qui a un run en cours part du premier événement de ce run ; les autres, de leur position actuelle."""
+    store = InMemoryEventStore()
+    done = await write(store, "finie")
+    history = await write(store, "melee")
+    open_run = await write_unfinished(store, "melee")
+    alone = await write_unfinished(store, "seule")
+    rig = Rig(store, InMemoryCursor(), console)
+    await rig.start()
+    expected = [("melee", event.seq) for event in open_run] + [("seule", event.seq) for event in alone]
+    await until(lambda: sorted(set(positions(console))) == sorted(expected))
+    await rig.stop()
+    assert {session for session, _ in positions(console)} == {"melee", "seule"}
+    assert min(seq for session, seq in positions(console) if session == "melee") == history[-1].seq + 1, "rien d'avant le run en cours"
+    assert await acked(rig.cursor, "finie") == done[-1].seq
+    assert await acked(rig.cursor, "melee") == open_run[-1].seq
+    assert await acked(rig.cursor, "seule") == alone[-1].seq
+
+
+async def test_the_open_runs_are_sent_once_then_never_again(console: FakeConsole) -> None:
+    store, cursor = InMemoryEventStore(), InMemoryCursor()
+    open_run = await write_unfinished(store, "s1")
+    rig = Rig(store, cursor, console)
+    await rig.start()
+    await until(lambda: len(positions(console)) == len(open_run))
+    await rig.stop()
+    again = Rig(store, cursor, console)
+    await again.start()
+    await until(lambda: len(console.of("hello")) == 2)
+    await asyncio.sleep(0.1)
+    await again.stop()
+    assert len(positions(console)) == len(open_run), "le curseur existe : le second démarrage ne renvoie rien"
+
+
+async def test_an_unreadable_session_is_skipped_at_the_first_start(
+    console: FakeConsole, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = InMemoryEventStore()
+    broken = await write_unfinished(store, "cassee")
+    sound = await write_unfinished(store, "saine")
+    read = store.read
+
+    async def failing(tenant: TenantId, session: SessionId, **kwargs: Any) -> list[Event]:
+        if session == "cassee" and not kwargs:
+            raise JournalCorrupted("ligne 3 illisible")
+        return await read(tenant, session, **kwargs)
+
+    monkeypatch.setattr(store, "read", failing)
+    rig = Rig(store, InMemoryCursor(), console)
+    await rig.start()
+    await until(lambda: len(positions(console)) == len(sound))
+    await rig.stop()
+    assert {session for session, _ in positions(console)} == {"saine"}
+    assert await acked(rig.cursor, "cassee") == broken[-1].seq, "passée, elle part de sa position actuelle"
+    assert "session cassee illisible" in caplog.text
+
+
+async def test_the_open_runs_follow_the_exclusions(console: FakeConsole) -> None:
+    store = InMemoryEventStore()
+    open_run = await write_unfinished(store, "s1")
+    rig = Rig(store, InMemoryCursor(), console, options={"exclude": ("message.user",)})
+    await rig.start()
+    kept = [event for event in open_run if event.type != "message.user"]
+    await until(lambda: len(positions(console)) == len(kept))
+    await rig.stop()
+    assert positions(console) == [("s1", event.seq) for event in kept]
 
 
 async def test_a_full_queue_loses_nothing(console: FakeConsole) -> None:

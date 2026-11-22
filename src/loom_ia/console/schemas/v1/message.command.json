@@ -10,7 +10,8 @@
         "approval.get",
         "file.get",
         "approval.file",
-        "approval.preview"
+        "approval.preview",
+        "sessions.list"
       ],
       "type": "string"
     },

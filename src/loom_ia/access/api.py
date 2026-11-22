@@ -90,6 +90,7 @@ from loom_ia.config.models import Permission, TriggerSpec
 from loom_ia.config.references import Registry
 from loom_ia.console.contract import CONTRACTS, AckPayload, CommandPayload, Envelope, HelloPayload
 from loom_ia.console.contract import Payload as ConsolePayload
+from loom_ia.console.security import security_payload
 from loom_ia.core import tool_threads
 from loom_ia.core.closing import Closing
 from loom_ia.core.events import (
@@ -177,6 +178,7 @@ from loom_ia.core.projections import (
     asking_in_session,
     fold,
     session_state,
+    unfinished_roots,
 )
 from loom_ia.core.template import Template
 from loom_ia.engine import (
@@ -1420,19 +1422,6 @@ def _unreadable(what: str, tenant: TenantId, session: SessionId, error: Exceptio
     )
 
 
-def _unfinished(events: Sequence[Event]) -> list[RunState]:
-    """Runs racine d'un journal qui peuvent encore avancer (point 27, fonction H3).
-
-    Un sous-run n'y est pas : son parent le reprend en rejouant l'appel
-    d'outil qui l'a lancé. Un run de compaction non plus — il sera refait si
-    la session en a besoin.
-
-    Les marqueurs de session sont écartés : ils portent l'identifiant de leur
-    session, pas celui d'un run, et une session résumée en a.
-    """
-    return [state for state in _run_states(events) if state.parent_run_id is None and state.kind == "normal" and not state.finished]
-
-
 def traced_agents(trace: Trace) -> list[str]:
     """Les agents d'une trace — celui du run, puis ceux de ses sous-runs —, chacun une fois.
 
@@ -1877,13 +1866,14 @@ class Loom:
         announce(self._config, console_warnings(self._config, self._environ))
         announce(self._config, console_advice(self._config), refuse=False)
         tenant = self._tenants.get(console.tenant)
+        served = tuple(spec for spec in self.agents if tenant.allows(spec.name))
         hello = HelloPayload(
             instance_id=console_instance_id(self._config),
             worker_id=self._worker_id,
             loom_version=__version__,
             contracts=CONTRACTS,
             tenant=console.tenant,
-            agents=tuple(spec.name for spec in self.agents if tenant.allows(spec.name)),
+            agents=tuple(spec.name for spec in served),
             commands=console.commands.user is not None,
             export_mode=console_export_mode(self._config),
         )
@@ -1894,6 +1884,7 @@ class Loom:
             on_message=self._console_message,
             on_connected=self._console_connected,
             retry_level=logging.WARNING if grace is None else logging.INFO,
+            security=security_payload(self._config.security, served, console),
         )
         if channel is None:
             return False
@@ -4168,7 +4159,7 @@ class Loom:
         for session in sessions:
             try:
                 events = await self._store.read(tenant, session)
-                unfinished = _unfinished(events)
+                unfinished = unfinished_roots(events)
             except _UNREADABLE as error:
                 if session_id is not None:
                     raise
