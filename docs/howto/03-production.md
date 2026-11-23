@@ -3667,7 +3667,7 @@ Jusqu'ici, l'agent se pilotait depuis un terminal ou un script Python. Une appli
 | `GET /v1/events`, `GET /v1/traces/{run_id}` | Recherche dans le journal, trace d'un run | `read` |
 | `POST /v1/hooks/{nom}` | Webhook entrant (chapitre 23) | `run` |
 
-Trois réglages de la section `server` de `loom.yaml` : `http.host` (`127.0.0.1` par défaut), `http.port` (8000), `http.base_path` (préfixe commun, par exemple `/loom`). Les options `--host` et `--port` de la commande les surchargent.
+Trois réglages de la section `server` de `loom.yaml` : `http.host` (`127.0.0.1` par défaut), `http.port` (8760), `http.base_path` (préfixe commun, par exemple `/loom`). Les options `--host` et `--port` de la commande les surchargent.
 
 Quelques règles à connaître :
 
@@ -3818,7 +3818,7 @@ server:
   http: {host: 127.0.0.1, port: 18301}
 ```
 
-(Le port 18301 évite de heurter un autre service sur votre machine ; omis, le port est 8000.) Le journal est en SQLite : sur un service, c'est lui qui permet de relire les runs après un redémarrage.
+(Le port 18301 évite de heurter un autre service sur votre machine ; omis, le port est 8760.) Le journal est en SQLite : sur un service, c'est lui qui permet de relire les runs après un redémarrage.
 
 **Exécution.** Dans un premier terminal :
 
@@ -5553,7 +5553,7 @@ réponse : Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau) s'él
 - Loom n'a **pas de cron**. `relance-matinale` attend qu'un planificateur extérieur l'appelle. Sur le serveur, une ligne de crontab suffit :
 
   ```text
-  30 7 * * 1-5  curl -fsS -X POST http://127.0.0.1:8000/v1/hooks/relance-matinale -H "Authorization: Bearer $LOOM_PLAN_KEY" -H 'content-type: application/json' -d '{}'
+  30 7 * * 1-5  curl -fsS -X POST http://127.0.0.1:8760/v1/hooks/relance-matinale -H "Authorization: Bearer $LOOM_PLAN_KEY" -H 'content-type: application/json' -d '{}'
   ```
 
   Non exécuté ici (il aurait fallu attendre 7 h 30) : la commande `curl` est celle qu'on vient de jouer à la main. Retenez la règle : ce qui se déclenche à heure fixe se met à l'heure par la plateforme (cron, planificateur de tâches du cloud, GitHub Actions), jamais par Loom.

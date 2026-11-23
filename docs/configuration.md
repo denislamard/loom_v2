@@ -542,7 +542,7 @@ security:
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
 | `http.host` | Adresse d'écoute de `loom serve` (`--host` l'emporte). | adresse | `127.0.0.1` | `host: 0.0.0.0` |
-| `http.port` | Port d'écoute (`--port` l'emporte). | 1 à 65535 | `8000` | `port: 8080` |
+| `http.port` | Port d'écoute (`--port` l'emporte). | 1 à 65535 | `8760` (suite des ports de loom : 876x loom, 877x Heddlo, `docs/analyse_ports.md`) | `port: 8761` |
 | `http.base_path` | Préfixe commun des routes ; commence par `/`. | chemin | `""` | `base_path: /loom` |
 | `http.max_body_bytes` | Plafond d'un corps de requête ; au-delà, 413. Par MCP, le SDK plafonne déjà à 4 Mio. | entier > 0 | `134217728` (128 Mio) | |
 | `http.user` | Utilisateur au nom duquel une instance **sans clé** répond à toute requête : un usage local qui nomme quelqu'un au journal. Refusé hors de la boucle locale (`127.0.0.1`, `localhost`, `::1` ; `loom serve --host` est jugé aussi), avec des clés, avec `mcp.http` et en profil `prod`. Sans clé ni `http.user`, `loom serve` refuse de démarrer. | id d'utilisateur | `null` | `http: {user: denis}` |

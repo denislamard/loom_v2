@@ -812,7 +812,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-URL = "http://127.0.0.1:8000/mcp/"
+URL = "http://127.0.0.1:8760/mcp/"
 CLE = os.environ["CLE"]  # la clé d'API, lue dans une variable d'environnement
 
 
@@ -920,40 +920,40 @@ ACCÈS
 <pre><code><span class="p">$ </span>loom serve
 Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
 Env        : aucun (/home/jean/plomberie-dupont/.env)
-API REST   : http://127.0.0.1:8000/v1
-Docs       : http://127.0.0.1:8000/docs (sans clé)
+API REST   : http://127.0.0.1:8760/v1
+Docs       : http://127.0.0.1:8760/docs (sans clé)
 Agents     : assistant
-MCP HTTP   : http://127.0.0.1:8000/mcp
+MCP HTTP   : http://127.0.0.1:8760/mcp
 Outils MCP : assistant
 Ressources : loom://runs, loom://sessions, et 6 gabarits
-Porte      : POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer</code></pre>
+Porte      : POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer</code></pre>
 <p>Dans le second terminal, jouez le CRM. Gardez sa clé dans une variable (la vôtre sera différente), puis envoyez l'alerte :</p>
 <pre><code><span class="p">$ </span>CRM=lk_SuBsOAVIlymXo7fHQwD_fpczzz3syOCqK23GYM76oIs
-<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer \
     -H "Authorization: Bearer $CRM" -H 'Content-Type: application/json' \
     -H 'X-Delivery-Id: crm-0001' \
     -d '{"numero":"D-2026-042","client":"Mme Martin"}'
 HTTP/1.1 202 Accepted
 {"trigger":"devis-a-relancer","run_id":"crm-0001","session_id":"devis-D-2026-042","status":"ready_for_model","repeated":false}</code></pre>
 <p><code>202 Accepted</code> : le run est pris en charge et tourne en arrière-plan, sous l'identifiant <code>crm-0001</code> fourni par le CRM, dans la session <code>devis-D-2026-042</code>. Le CRM n'a pas reçu la réponse (une coupure réseau) : il renvoie la même alerte.</p>
-<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer \
     -H "Authorization: Bearer $CRM" -H 'Content-Type: application/json' \
     -H 'X-Delivery-Id: crm-0001' \
     -d '{"numero":"D-2026-042","client":"Mme Martin"}'
 HTTP/1.1 200 OK
 {"trigger":"devis-a-relancer","run_id":"crm-0001","session_id":"devis-D-2026-042","status":"paused","repeated":true}</code></pre>
 <p><code>200</code> et <code>"repeated": true</code> : la livraison est reconnue, aucun second run n'est ouvert, et la réponse donne l'état du run existant, en pause sur l'envoi de l'e-mail. Un identifiant déjà utilisé avec une <em>autre</em> charge est refusé, pour que deux alertes différentes ne se confondent pas :</p>
-<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer \
     -H "Authorization: Bearer $CRM" -H 'Content-Type: application/json' \
     -H 'X-Delivery-Id: crm-0001' \
     -d '{"numero":"D-2026-050","client":"M. Bernard"}'
 HTTP/1.1 422 Unprocessable Content
 {"detail":"Identifiant de livraison 'crm-0001' déjà utilisé par un run du déclencheur 'devis-a-relancer' (session devis-D-2026-042) : une même livraison doit donner la même session, et celle-ci donnerait devis-D-2026-050"}</code></pre>
 <p>La clé du CRM ne sert qu'à cela. Elle ne lit rien, et une porte inconnue est signalée avec la liste des portes déclarées :</p>
-<pre><code><span class="p">$ </span>curl -s -i http://127.0.0.1:8000/v1/agents -H "Authorization: Bearer $CRM"
+<pre><code><span class="p">$ </span>curl -s -i http://127.0.0.1:8760/v1/agents -H "Authorization: Bearer $CRM"
 HTTP/1.1 403 Forbidden
 {"detail":"Clé sans la portée 'read'"}
-<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/hooks/devis-signe -H "Authorization: Bearer $CRM" -H 'Content-Type: application/json' -d '{}'
+<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8760/v1/hooks/devis-signe -H "Authorization: Bearer $CRM" -H 'Content-Type: application/json' -d '{}'
 HTTP/1.1 404 Not Found
 {"detail":"Déclencheur 'devis-signe' non déclaré (déclencheurs : devis-a-relancer)"}</code></pre>
 
@@ -984,7 +984,7 @@ Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 1 — a
 
 <div class="encadre piege"><p class="encadre-titre">Piège : un champ absent devient un texte vide</p>
 <p>Si le CRM oublie un champ, le gabarit ne bloque pas : la variable devient une chaîne vide, et le run part avec une phrase trouée.</p>
-<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer \
     -H "Authorization: Bearer $CRM" -H 'Content-Type: application/json' \
     -H 'X-Delivery-Id: crm-0002' -d '{"numero":"D-2026-099"}'
 {"trigger":"devis-a-relancer","run_id":"crm-0002","session_id":"devis-D-2026-099","status":"ready_for_model","repeated":false}
@@ -1014,7 +1014,7 @@ Relance  pour le devis D-2026-099, sur un ton cordial.</code></pre>
 # La tournée du matin : demande la relance du devis D-2026-050 par la porte du CRM.
 # L'identifiant de livraison porte la date du jour : lancée deux fois le même jour,
 # la tournée ne produit qu'un run.
-curl -s -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+curl -s -X POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer \
   -H "Authorization: Bearer $LOOM_CRM_CLE" \
   -H 'Content-Type: application/json' \
   -H "X-Delivery-Id: tournee-$(date +%F)" \
@@ -1174,25 +1174,25 @@ Erreur d'entrée-sortie : [Errno 111] Connect call failed ('127.0.0.1', 5672)</c
 <p>Avec plusieurs process, l'application peut être branchée sur un serveur pendant que le run est mené par un autre (un autre <code>loom serve</code>, un worker). Pour que son flux d'événements (SSE, module 10) reste en direct, il faut que le process qui écrit prévienne les autres. C'est le rôle du <strong>bus</strong>. Il ne transporte pas les événements : il dit « du neuf dans tel journal », et ceux qui écoutent relisent le journal.</p>
 
 <h4>Exécution</h4>
-<p>Pour le voir sur une seule machine, on lance deux serveurs sur le même projet : A sur le port 8000, B sur le port 8001. Ils partagent le journal (le dossier <code>data/</code>). Dans deux terminaux :</p>
+<p>Pour le voir sur une seule machine, on lance deux serveurs sur le même projet : A sur le port 8760, B sur le port 8761. Ils partagent le journal (le dossier <code>data/</code>). Dans deux terminaux :</p>
 <pre><code><span class="p">$ </span>loom serve
-<span class="p">$ </span>loom serve --port 8001</code></pre>
+<span class="p">$ </span>loom serve --port 8761</code></pre>
 <p>Dans un troisième terminal, on lance une relance de M. Bernard sur A, en arrière-plan. Elle s'arrête sur l'approbation. On ouvre le flux SSE du run sur B, en tâche de fond (<code>&amp;</code> en fin de ligne), puis on approuve sur A :</p>
-<pre><code><span class="p">$ </span>R=$(curl -s -X POST http://127.0.0.1:8000/v1/agents/assistant/runs \
+<pre><code><span class="p">$ </span>R=$(curl -s -X POST http://127.0.0.1:8760/v1/agents/assistant/runs \
     -H "Authorization: Bearer $CLE" -H 'Content-Type: application/json' \
     -d '{"message":"Relance M. Bernard pour le devis D-2026-050.","session_id":"bus-memoire","background":true}' \
     | jq -r .run_id)
 <span class="p">$ </span>curl -s -N --max-time 15 -H "Authorization: Bearer $CLE" \
-    "http://127.0.0.1:8001/v1/runs/$R/events?session_id=bus-memoire&amp;after_seq=35" \
+    "http://127.0.0.1:8761/v1/runs/$R/events?session_id=bus-memoire&amp;after_seq=35" \
     | grep -E "^(id|event):" | paste - - &amp;
-<span class="p">$ </span>curl -s -X POST "http://127.0.0.1:8000/v1/runs/$R/approve?session_id=bus-memoire" \
+<span class="p">$ </span>curl -s -X POST "http://127.0.0.1:8760/v1/runs/$R/approve?session_id=bus-memoire" \
     -H "Authorization: Bearer $CLE" -H 'Content-Type: application/json' -d '{"by":"jean"}'
 {"run_id":"01a16e72-2781-7605-b637-a4d7839caa40","calls":["fake_2_0"]}
 <span class="c">(le flux de B, quinze secondes plus tard)</span>
 id: 36
 	event: run.claimed
 (flux fermé après 15 s)
-<span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8001/v1/runs/$R?session_id=bus-memoire" | jq -c '{status}'
+<span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8761/v1/runs/$R?session_id=bus-memoire" | jq -c '{status}'
 {"status":"completed"}</code></pre>
 <p>(<code>R=$(…)</code> range dans la variable <code>R</code> ce que la commande affiche : ici l'identifiant du run. <code>after_seq=35</code> saute ce que le run avait écrit avant sa pause.) Le run s'est bien terminé, mais le flux de B est resté figé : il a montré ce qui était déjà écrit à la connexion, puis plus rien, jusqu'à la coupure. Avec le bus par défaut, <code>memory</code>, les nouvelles ne sortent pas du process qui écrit, comme le dit <code>loom validate</code> depuis le module 1 (« Bus : memory (les nouvelles ne sortent pas de ce process) »).</p>
 
@@ -1220,13 +1220,13 @@ id: 36
 <pre><code><span class="p">$ </span>loom serve
 Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
 Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : REDIS_URL
-API REST   : http://127.0.0.1:8000/v1
-Docs       : http://127.0.0.1:8000/docs (sans clé)
+API REST   : http://127.0.0.1:8760/v1
+Docs       : http://127.0.0.1:8760/docs (sans clé)
 Agents     : assistant
-MCP HTTP   : http://127.0.0.1:8000/mcp
+MCP HTTP   : http://127.0.0.1:8760/mcp
 Outils MCP : assistant
 Ressources : loom://runs, loom://sessions, et 6 gabarits
-Porte      : POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer
+Porte      : POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer
 (heure) WARNING  loom_ia.runtime.wiring — Stockage : bus partagé entre process et artefacts 'local' (/home/jean/plomberie-dupont/data/.artifacts) — les process doivent partager ce dossier, sinon un run repris ailleurs ne retrouvera ni ses pièces jointes ni ses résultats déportés</code></pre>
 <p>Puis la même manœuvre, dans une session <code>bus-redis</code> :</p>
 <pre><code><span class="c">(le flux de B)</span>

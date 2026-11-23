@@ -567,7 +567,7 @@ if __name__ == "__main__":
 # La tournée du matin : demande la relance du devis D-2026-050 par la porte du CRM.
 # L'identifiant de livraison porte la date du jour : lancée deux fois le même jour,
 # la tournée ne produit qu'un run.
-curl -s -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+curl -s -X POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer \
   -H "Authorization: Bearer $LOOM_CRM_CLE" \
   -H 'Content-Type: application/json' \
   -H "X-Delivery-Id: tournee-$(date +%F)" \
@@ -834,7 +834,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-URL = "http://127.0.0.1:8000/mcp/"
+URL = "http://127.0.0.1:8760/mcp/"
 CLE = os.environ["CLE"]  # la clé d'API, lue dans une variable d'environnement
 
 
@@ -1318,7 +1318,7 @@ security:
                app-martin : client martin-chauffage, portées run, read, read_content
                app-dupont : client default, portées run, read, read_content, approve
 <span class="p">$ </span>loom serve &amp;
-<span class="p">$ </span>curl -s -X POST http://127.0.0.1:8000/v1/agents/assistant/runs -H "Authorization: Bearer $CLE_MARTIN" -H 'Content-Type: application/json' -d '{"message":"Quel est le montant du devis M-2026-017 ?","session_id":"api-martin"}' | jq '{session_id, status, text}'
+<span class="p">$ </span>curl -s -X POST http://127.0.0.1:8760/v1/agents/assistant/runs -H "Authorization: Bearer $CLE_MARTIN" -H 'Content-Type: application/json' -d '{"message":"Quel est le montant du devis M-2026-017 ?","session_id":"api-martin"}' | jq '{session_id, status, text}'
 {
   "session_id": "api-martin",
   "status": "completed",
@@ -1333,12 +1333,12 @@ essai-martin-2.jsonl
 essai-martin.jsonl
 outils-martin.jsonl</code></pre>
 <p>La requête ne disait rien du client : le run est quand même chez Martin. Avec la clé de Dupont, la session de Martin n'existe pas :</p>
-<pre><code><span class="p">$ </span>curl -s http://127.0.0.1:8000/v1/sessions -H "Authorization: Bearer $CLE" | jq -r '.[].session_id' | grep -c api-martin
+<pre><code><span class="p">$ </span>curl -s http://127.0.0.1:8760/v1/sessions -H "Authorization: Bearer $CLE" | jq -r '.[].session_id' | grep -c api-martin
 0
-<span class="p">$ </span>curl -s -i http://127.0.0.1:8000/v1/sessions/api-martin -H "Authorization: Bearer $CLE" | sed -n '1p;$p'
+<span class="p">$ </span>curl -s -i http://127.0.0.1:8760/v1/sessions/api-martin -H "Authorization: Bearer $CLE" | sed -n '1p;$p'
 HTTP/1.1 404 Not Found
 {"detail":"Session api-martin inconnue"}
-<span class="p">$ </span>curl -s http://127.0.0.1:8000/v1/sessions/api-martin -H "Authorization: Bearer $CLE_MARTIN" | jq '{session_id, runs: [.runs[] | {agent, status}]}'
+<span class="p">$ </span>curl -s http://127.0.0.1:8760/v1/sessions/api-martin -H "Authorization: Bearer $CLE_MARTIN" | jq '{session_id, runs: [.runs[] | {agent, status}]}'
 {
   "session_id": "api-martin",
   "runs": [
@@ -1403,7 +1403,7 @@ HTTP/1.1 404 Not Found
 <h4>Exécution</h4>
 <p>Relancez le serveur, puis envoyez quatre demandes de suite avec la clé de Martin. On n'affiche que le code HTTP et le statut, ou le motif du refus :</p>
 <pre><code><span class="p">$ </span>loom serve &amp;
-<span class="p">$ </span>for i in 1 2 3 4; do C=$(curl -s -o rep.json -w '%{http_code}' -X POST http://127.0.0.1:8000/v1/agents/assistant/runs -H "Authorization: Bearer $CLE_MARTIN" -H 'Content-Type: application/json' -d '{"message":"Quel est le montant du devis M-2026-017 ?","session_id":"quota-martin"}'); echo "$C $(jq -c 'if .detail then {detail} else {status} end' rep.json)"; done
+<span class="p">$ </span>for i in 1 2 3 4; do C=$(curl -s -o rep.json -w '%{http_code}' -X POST http://127.0.0.1:8760/v1/agents/assistant/runs -H "Authorization: Bearer $CLE_MARTIN" -H 'Content-Type: application/json' -d '{"message":"Quel est le montant du devis M-2026-017 ?","session_id":"quota-martin"}'); echo "$C $(jq -c 'if .detail then {detail} else {status} end' rep.json)"; done
 201 {"status":"completed"}
 201 {"status":"completed"}
 429 {"detail":"Client 'martin-chauffage' : 2 par minute dépassé, réessayer dans 58.9 s"}

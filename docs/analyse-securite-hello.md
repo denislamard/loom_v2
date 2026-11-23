@@ -46,7 +46,7 @@ Le `hello` part **avant** la négociation : il ne peut pas changer selon le cont
 |---|---|---|
 | `tenant` | Le client de la console | `console.tenant` |
 | `users` | `id`, `name`, `roles` des utilisateurs de ce client | `security.users` |
-| `roles` | `id`, `description`, `permissions`, `agents`, `act_as_roles` des rôles que ces utilisateurs portent | `security.roles` |
+| `roles` | `id`, `description`, `permissions`, `agents`, `act_as_roles` de tous les rôles déclarés, portés ou non (depuis 2.0.26) | `security.roles` |
 | `api_keys` | `id`, `user`, `scopes`, `agents`, `expires` des clés de ces utilisateurs. **Jamais l'empreinte (`hash`).** | `security.api_keys` |
 | `agents` | Pour chaque agent du client : `name` et son bloc `access` (`run`, `answer`, `cancel`, `approve.default`, `approve.tools`, `self_approval`) | `agent.yaml` (`AgentAccess`) |
 | `gateway` | `user`, `act_as_roles` (ceux de ses rôles qui ont `act_as`), `rate`, `max_ttl` ; `null` sans passerelle | `console.commands` |
@@ -211,7 +211,7 @@ Aucune nouvelle.
 | Niveau | Contenu |
 |---|---|
 | Unitaires contrat | Modèles `Security*` ; `decode` de `security` ; refus des champs inconnus ; schémas v2 à jour (essai existant, étendu) |
-| Unitaires sécurité | Seuls les utilisateurs du client ; rôles portés ; aucun `hash` ; empreinte stable et sensible ; passerelle absente → `null` |
+| Unitaires sécurité | Seuls les utilisateurs du client ; tous les rôles déclarés ; aucun `hash` ; empreinte stable et sensible ; passerelle absente → `null` |
 | Canal | `FakeConsole` contrat 2 : `security` avant le premier lot ; contrat 1 : pas de `security` ; reconnexion : `security` renvoyé |
 | Commandes | `sessions.list` : pages, `next`, `limit` bornée, `after` invalide refusé, droits (`read`), audit, refus en contrat 1 |
 | Exportateur | Premier démarrage : run en pause → envoyé depuis son premier événement ; runs finis → rien ; session illisible → passée ; démarrage suivant inchangé ; avec journal mémoire, JSONL et SQLite |

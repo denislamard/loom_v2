@@ -1139,12 +1139,12 @@ Installed 3 packages in 7ms
 <pre><code><span class="p">$ </span>loom serve
 Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
 Env        : aucun (/home/jean/plomberie-dupont/.env)
-API REST   : http://127.0.0.1:8000/v1
-Docs       : http://127.0.0.1:8000/docs (sans clé)
+API REST   : http://127.0.0.1:8760/v1
+Docs       : http://127.0.0.1:8760/docs (sans clé)
 Agents     : assistant, traducteur
 (heure) WARNING  loom_ia.runtime.wiring — API REST sans clé déclarée alors que la config nomme des clients (default) : tout passera par 'default', puisque c'est la clé qui dit au nom de qui elle agit</code></pre>
-<p>Il écoute sur <code>http://127.0.0.1:8000</code>, c'est-à-dire sur votre machine seulement. L'avertissement rappelle que l'API est ouverte à qui la contacte : l'exercice 10.8 y met des clés. Dans un second terminal (environnement activé, dans le dossier du projet), interrogez-la avec <code>curl</code>, l'outil en ligne de commande qui envoie des requêtes HTTP, et <code>jq</code> pour mettre le JSON en forme :</p>
-<pre><code><span class="p">$ </span>curl -s http://127.0.0.1:8000/v1/agents | jq .
+<p>Il écoute sur <code>http://127.0.0.1:8760</code>, c'est-à-dire sur votre machine seulement. L'avertissement rappelle que l'API est ouverte à qui la contacte : l'exercice 10.8 y met des clés. Dans un second terminal (environnement activé, dans le dossier du projet), interrogez-la avec <code>curl</code>, l'outil en ligne de commande qui envoie des requêtes HTTP, et <code>jq</code> pour mettre le JSON en forme :</p>
+<pre><code><span class="p">$ </span>curl -s http://127.0.0.1:8760/v1/agents | jq .
 [
   {
     "name": "assistant",
@@ -1267,7 +1267,7 @@ max_iterations: 1
 </tbody>
 </table></div>
 <p>Arrêtez le serveur (<kbd>Ctrl</kbd>+<kbd>C</kbd> dans son terminal), relancez <code>loom serve</code>, puis :</p>
-<pre><code><span class="p">$ </span>curl -s http://127.0.0.1:8000/v1/agents | jq .
+<pre><code><span class="p">$ </span>curl -s http://127.0.0.1:8760/v1/agents | jq .
 [
   {
     "name": "assistant",
@@ -1275,7 +1275,7 @@ max_iterations: 1
   }
 ]</code></pre>
 <p>Lancer un run, c'est envoyer un <code>POST</code> sur la route de l'agent, avec la demande en JSON :</p>
-<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8000/v1/agents/assistant/runs \
+<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8760/v1/agents/assistant/runs \
     -H 'Content-Type: application/json' \
     -d '{"message":"Quel est le montant du devis D-2026-042 ?","session_id":"rest-montant"}' \
     | jq '{run_id, session_id, status, text, iterations, cost_usd}'
@@ -1298,12 +1298,12 @@ max_iterations: 1
 <p>La requête attend la fin du run et rend le même résultat qu'en Python ; <code>jq</code> n'en garde ici que six champs. Le résultat complet a tous ceux-ci :</p>
 <pre><code>agent, artifacts, cost_usd, data, error, error_type, fallback, iterations, output, pending_approvals, redacted, report, run_id, session_id, skipped_judges, status, text, unverified, usage, verdicts</code></pre>
 <p>Une erreur est un code HTTP ordinaire, avec un message lisible :</p>
-<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/agents/plombier/runs -H 'Content-Type: application/json' -d '{"message":"Bonjour"}'
+<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8760/v1/agents/plombier/runs -H 'Content-Type: application/json' -d '{"message":"Bonjour"}'
 HTTP/1.1 404 Not Found
 {"detail":"Agent 'plombier' inconnu (agents : assistant)"}</code></pre>
 <p>(<code>-i</code> affiche aussi la ligne de statut de la réponse ; les en-têtes sont omis ici.)</p>
 
-<p>Ouvrez enfin <code>http://127.0.0.1:8000/docs</code> dans un navigateur : c'est la documentation interactive de l'API, générée par le serveur. Chaque route y est décrite, avec ses paramètres, et un bouton « Try it out » l'essaie. Les principales :</p>
+<p>Ouvrez enfin <code>http://127.0.0.1:8760/docs</code> dans un navigateur : c'est la documentation interactive de l'API, générée par le serveur. Chaque route y est décrite, avec ses paramètres, et un bouton « Try it out » l'essaie. Les principales :</p>
 <div class="tableau"><table>
 <thead><tr><th>Route</th><th>Rôle</th></tr></thead>
 <tbody>
@@ -1322,7 +1322,7 @@ HTTP/1.1 404 Not Found
 
 <h4>À retenir</h4>
 <ul>
-<li>L'adresse et le port se règlent dans <code>loom.yaml</code> (<code>server: {http: {host: …, port: …}}</code>) ou par les options <code>--host</code> et <code>--port</code> de <code>loom serve</code>. Par défaut : <code>127.0.0.1</code> et <code>8000</code>.</li>
+<li>L'adresse et le port se règlent dans <code>loom.yaml</code> (<code>server: {http: {host: …, port: …}}</code>) ou par les options <code>--host</code> et <code>--port</code> de <code>loom serve</code>. Par défaut : <code>127.0.0.1</code> et <code>8760</code>.</li>
 <li>Un run lancé par l'API est écrit dans le même journal : <code>loom inspect &lt;run&gt; --session rest-montant</code> le relit.</li>
 </ul>
 </section>
@@ -1337,19 +1337,19 @@ HTTP/1.1 404 Not Found
 
 <h4>Exécution</h4>
 <p>Le serveur de l'exercice précédent tourne toujours. Avec <code>"background": true</code>, la réponse arrive tout de suite, avec le code <code>202 Accepted</code> et l'identifiant du run :</p>
-<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/agents/assistant/runs \
+<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8760/v1/agents/assistant/runs \
     -H 'Content-Type: application/json' \
     -d '{"message":"Relance Mme Martin pour le devis D-2026-042, sur un ton cordial.","session_id":"rest-martin","background":true}'
 HTTP/1.1 202 Accepted
 {"run_id":"01a16e63-853a-76ac-a64a-a38e61344ff2","session_id":"rest-martin","status":"ready_for_model"}</code></pre>
 <p>Gardez l'identifiant dans une variable du terminal, puis lisez le statut du run :</p>
 <pre><code><span class="p">$ </span>R=01a16e63-853a-76ac-a64a-a38e61344ff2
-<span class="p">$ </span>curl -s -i http://127.0.0.1:8000/v1/runs/$R
+<span class="p">$ </span>curl -s -i http://127.0.0.1:8760/v1/runs/$R
 HTTP/1.1 404 Not Found
 {"detail":"Run 01a16e63-853a-76ac-a64a-a38e61344ff2 inconnu"}</code></pre>
 <div class="encadre piege"><p class="encadre-titre">Piège : le run « inconnu »</p>
 <p>Le run existe bien. Mais il appartient à la session nommée <code>rest-martin</code>, et loom range les runs par session : sans le nom de la session, il le cherche dans une session qui porterait son propre identifiant. Pour un run de session nommée, toutes les routes <code>/v1/runs/{id}…</code> veulent aussi <code>?session_id=…</code>.</p></div>
-<pre><code><span class="p">$ </span>curl -s "http://127.0.0.1:8000/v1/runs/$R?session_id=rest-martin" | jq '{status, pending: [.pending_approvals[] | {call_id, tool_name, reason}]}'
+<pre><code><span class="p">$ </span>curl -s "http://127.0.0.1:8760/v1/runs/$R?session_id=rest-martin" | jq '{status, pending: [.pending_approvals[] | {call_id, tool_name, reason}]}'
 {
   "status": "paused",
   "pending": [
@@ -1361,7 +1361,7 @@ HTTP/1.1 404 Not Found
   ]
 }</code></pre>
 <p>Le run est en pause, sur l'envoi de l'e-mail. Pour suivre un run en direct, l'API utilise <strong>SSE</strong> (<em>Server-Sent Events</em>) : une connexion HTTP qui reste ouverte et sur laquelle le serveur pousse les événements, un par un. Chacun arrive en quelques lignes, dont <code>id:</code> (son numéro) et <code>event:</code> (son type). Le filtre ci-dessous n'en garde que ces deux lignes, sans les événements de fonctionnement interne :</p>
-<pre><code><span class="p">$ </span>curl -s -N --max-time 2 "http://127.0.0.1:8000/v1/runs/$R/events?session_id=rest-martin" \
+<pre><code><span class="p">$ </span>curl -s -N --max-time 2 "http://127.0.0.1:8760/v1/runs/$R/events?session_id=rest-martin" \
     | grep -E "^(id|event):" | paste - - | grep -vE "step\.|transitioned|claimed"
 id: 1
 	event: run.started
@@ -1396,7 +1396,7 @@ id: 29
 id: 33
 	event: approval.requested</code></pre>
 <p><code>-N</code> affiche les données dès leur arrivée ; <code>--max-time 2</code> coupe la connexion au bout de 2 secondes, car le flux reste ouvert tant que le run n'est pas clos, et un run en pause ne l'est pas. Après une coupure (un téléphone qui perd le réseau), le client rouvre le flux en disant où il en était, avec <code>after_seq</code> (ou l'en-tête <code>Last-Event-ID</code>) : il ne reçoit que la suite.</p>
-<pre><code><span class="p">$ </span>curl -s -N --max-time 2 "http://127.0.0.1:8000/v1/runs/$R/events?session_id=rest-martin&amp;after_seq=33" \
+<pre><code><span class="p">$ </span>curl -s -N --max-time 2 "http://127.0.0.1:8760/v1/runs/$R/events?session_id=rest-martin&amp;after_seq=33" \
     | grep -E "^(id|event):" | paste - -
 id: 34
 	event: step.completed
@@ -1405,10 +1405,10 @@ id: 35
 id: 36
 	event: run.claimed</code></pre>
 <p>Jean approuve, depuis l'application :</p>
-<pre><code><span class="p">$ </span>curl -s -X POST "http://127.0.0.1:8000/v1/runs/$R/approve?session_id=rest-martin" \
+<pre><code><span class="p">$ </span>curl -s -X POST "http://127.0.0.1:8760/v1/runs/$R/approve?session_id=rest-martin" \
     -H 'Content-Type: application/json' -d '{"by":"jean"}'
 {"run_id":"01a16e63-853a-76ac-a64a-a38e61344ff2","calls":["fake_2_0"]}
-<span class="p">$ </span>curl -s "http://127.0.0.1:8000/v1/runs/$R?session_id=rest-martin" | jq '{status, text}'
+<span class="p">$ </span>curl -s "http://127.0.0.1:8760/v1/runs/$R?session_id=rest-martin" | jq '{status, text}'
 {
   "status": "completed",
   "text": "L'e-mail de relance est parti chez Mme Martin."
@@ -1422,14 +1422,14 @@ id: 36
 {"key":"default:envoyer_email:email:martin@example.fr:Votre devis D-2026-042","call_id":"fake_2_0","tool_name":"envoyer_email"}</code></pre>
 
 <p>Enfin, annuler un run. On lance une relance de M. Bernard, qui s'arrête elle aussi sur l'envoi, et on l'annule pendant sa pause :</p>
-<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8000/v1/agents/assistant/runs -H 'Content-Type: application/json' \
+<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8760/v1/agents/assistant/runs -H 'Content-Type: application/json' \
     -d '{"message":"Relance M. Bernard pour le devis D-2026-050.","session_id":"rest-annule","background":true}'
 {"run_id":"01a16e63-b8e0-710a-8514-d37fed35f9b9","session_id":"rest-annule","status":"ready_for_model"}
 <span class="p">$ </span>A=01a16e63-b8e0-710a-8514-d37fed35f9b9
-<span class="p">$ </span>curl -s -X POST "http://127.0.0.1:8000/v1/runs/$A/cancel?session_id=rest-annule" \
+<span class="p">$ </span>curl -s -X POST "http://127.0.0.1:8760/v1/runs/$A/cancel?session_id=rest-annule" \
     -H 'Content-Type: application/json' -d '{"by":"jean"}'
 {"run_id":"01a16e63-b8e0-710a-8514-d37fed35f9b9","cancelled":true}
-<span class="p">$ </span>curl -s "http://127.0.0.1:8000/v1/runs/$A?session_id=rest-annule" | jq -c '{status}'
+<span class="p">$ </span>curl -s "http://127.0.0.1:8760/v1/runs/$A?session_id=rest-annule" | jq -c '{status}'
 {"status":"cancelled"}</code></pre>
 <p>C'est la route qui manquait à la CLI au module 8. Le corps est facultatif ; sans <code>by</code>, c'est le nom de la clé d'API (exercice 10.8) qui signe l'annulation au journal. Annuler un run déjà terminé ne fait rien : <code>"cancelled": false</code>.</p>
 
@@ -1522,19 +1522,19 @@ ACCÈS
 <pre><code><span class="p">$ </span>CLE=lk_l8dMJTafbBDywRn4EdLbhwqRiE_Dar3hGRuW7LgLT-M
 <span class="p">$ </span>LECTURE=lk_1bAK2_yEKsywcV4J04x8UnXiwyXbSd7a3TYOHMNqmao</code></pre>
 <p>Sans clé, l'API refuse tout (code 401) :</p>
-<pre><code><span class="p">$ </span>curl -s -i http://127.0.0.1:8000/v1/agents
+<pre><code><span class="p">$ </span>curl -s -i http://127.0.0.1:8760/v1/agents
 HTTP/1.1 401 Unauthorized
 {"detail":"Clé d'API absente : en-tête 'Authorization: Bearer …' ou 'X-API-Key'"}</code></pre>
 <p>La clé se donne dans l'en-tête <code>Authorization: Bearer &lt;clé&gt;</code> (ou <code>X-API-Key: &lt;clé&gt;</code>). La clé de consultation lit, mais ne lance pas de run (code 403) :</p>
-<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $LECTURE" http://127.0.0.1:8000/v1/agents | jq -c '.[].name'
+<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $LECTURE" http://127.0.0.1:8760/v1/agents | jq -c '.[].name'
 "assistant"
-<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/agents/assistant/runs \
+<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8760/v1/agents/assistant/runs \
     -H "Authorization: Bearer $LECTURE" -H 'Content-Type: application/json' \
     -d '{"message":"Quel est le montant du devis D-2026-042 ?"}'
 HTTP/1.1 403 Forbidden
 {"detail":"Clé sans la portée 'run'"}</code></pre>
 <p>La clé de l'application peut lancer le run :</p>
-<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8000/v1/agents/assistant/runs \
+<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8760/v1/agents/assistant/runs \
     -H "Authorization: Bearer $CLE" -H 'Content-Type: application/json' \
     -d '{"message":"Quel est le montant du devis D-2026-042 ?","session_id":"rest-cle"}' | jq -c '{status, text}'
 {"status":"completed","text":"Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT)."}</code></pre>
@@ -1661,10 +1661,10 @@ security:
 <pre><code><span class="p">$ </span>loom serve
 Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
 Env        : aucun (/home/jean/plomberie-dupont/.env)
-API REST   : http://127.0.0.1:8000/v1
-Docs       : http://127.0.0.1:8000/docs (sans clé)
+API REST   : http://127.0.0.1:8760/v1
+Docs       : http://127.0.0.1:8760/docs (sans clé)
 Agents     : assistant
-MCP HTTP   : http://127.0.0.1:8000/mcp
+MCP HTTP   : http://127.0.0.1:8760/mcp
 Outils MCP : assistant
 Ressources : loom://runs, loom://sessions, et 6 gabarits</code></pre>
 <p>Le client HTTP passe la clé dans l'en-tête <code>Authorization</code>, comme <code>curl</code> :</p>
@@ -1676,7 +1676,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-URL = "http://127.0.0.1:8000/mcp/"
+URL = "http://127.0.0.1:8760/mcp/"
 CLE = os.environ["CLE"]  # la clé d'API, lue dans une variable d'environnement
 
 
@@ -1698,10 +1698,10 @@ asyncio.run(main())</code></pre></figure>
 <pre><code><span class="p">$ </span>CLE=$CLE python client_mcp_http.py
 outils  : ['assistant', 'run_status', 'run_report', 'cancel']
 réponse : Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
-<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/mcp/
+<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8760/mcp/
 HTTP/1.1 401 Unauthorized
 {"detail":"Clé d'API absente : en-tête 'Authorization: Bearer …' ou 'X-API-Key'"}</code></pre>
-<p>(<code>CLE=$CLE python …</code> transmet la variable du terminal au script, qui la lit avec <code>os.environ</code>.) Pour Claude Code : <code>claude mcp add --transport http plomberie-http http://127.0.0.1:8000/mcp/ --header "Authorization: Bearer lk_…"</code>.</p>
+<p>(<code>CLE=$CLE python …</code> transmet la variable du terminal au script, qui la lit avec <code>os.environ</code>.) Pour Claude Code : <code>claude mcp add --transport http plomberie-http http://127.0.0.1:8760/mcp/ --header "Authorization: Bearer lk_…"</code>.</p>
 
 <h4>À retenir</h4>
 <ul>
@@ -1724,20 +1724,20 @@ HTTP/1.1 401 Unauthorized
 <pre><code><span class="p">$ </span>loom serve --reload
 Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
 Env        : aucun (/home/jean/plomberie-dupont/.env)
-API REST   : http://127.0.0.1:8000/v1
-Docs       : http://127.0.0.1:8000/docs (sans clé)
+API REST   : http://127.0.0.1:8760/v1
+Docs       : http://127.0.0.1:8760/docs (sans clé)
 Agents     : assistant
-MCP HTTP   : http://127.0.0.1:8000/mcp
+MCP HTTP   : http://127.0.0.1:8760/mcp
 Outils MCP : assistant
 Ressources : loom://runs, loom://sessions, et 6 gabarits
 Rechargement : surveille /home/jean/plomberie-dupont (sauf data/)
 Rechargement : prompts/system.md modifié
 Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
 Env        : aucun (/home/jean/plomberie-dupont/.env)
-API REST   : http://127.0.0.1:8000/v1
-Docs       : http://127.0.0.1:8000/docs (sans clé)
+API REST   : http://127.0.0.1:8760/v1
+Docs       : http://127.0.0.1:8760/docs (sans clé)
 Agents     : assistant
-MCP HTTP   : http://127.0.0.1:8000/mcp
+MCP HTTP   : http://127.0.0.1:8760/mcp
 Outils MCP : assistant
 Ressources : loom://runs, loom://sessions, et 6 gabarits
 Rechargé : le nouveau process sert ; l'ancien finit ce qu'il a en cours.
@@ -1751,10 +1751,10 @@ Rechargement refusé : l'ancien process continue de servir.
 Rechargement : agents/assistant.yaml modifié
 Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
 Env        : aucun (/home/jean/plomberie-dupont/.env)
-API REST   : http://127.0.0.1:8000/v1
-Docs       : http://127.0.0.1:8000/docs (sans clé)
+API REST   : http://127.0.0.1:8760/v1
+Docs       : http://127.0.0.1:8760/docs (sans clé)
 Agents     : assistant
-MCP HTTP   : http://127.0.0.1:8000/mcp
+MCP HTTP   : http://127.0.0.1:8760/mcp
 Outils MCP : assistant
 Ressources : loom://runs, loom://sessions, et 6 gabarits
 Rechargé : le nouveau process sert ; l'ancien finit ce qu'il a en cours.</code></pre>

@@ -39,7 +39,7 @@ def security_payload(
     version: int | None = None,
     part_fingerprint: str | None = None,
 ) -> SecurityPayload:
-    """Le message ``security`` pour le client de la console.
+    """Le message ``security`` pour le client de la console : tous les rôles déclarés, ses utilisateurs et leurs clés.
 
     Args:
         security: La section ``security`` de la config.
@@ -53,9 +53,9 @@ def security_payload(
         ``part_fingerprint``.
     """
     users = [user for user in security.users if user.tenant == console.tenant]
-    carried = {role for user in users for role in user.roles}
-    endorsed = {endorsable for role in security.roles if role.id in carried for endorsable in role.act_as_roles}
-    roles = [role for role in security.roles if role.id in carried | endorsed]
+    # Tous les rôles déclarés, portés ou non : le bloc access d'un agent peut citer
+    # un rôle que personne ne porte, et la console les reprend tous dans son référentiel.
+    roles = security.roles
     names = {user.id for user in users}
     document: dict[str, Any] = {
         "tenant": console.tenant,

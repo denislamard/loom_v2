@@ -902,7 +902,7 @@ async def test_le_journal_du_banc_devient_une_reference(tmp_path: Path) -&gt; No
 # La tournée du matin : demande la relance du devis D-2026-050 par la porte du CRM.
 # L'identifiant de livraison porte la date du jour : lancée deux fois le même jour,
 # la tournée ne produit qu'un run.
-curl -s -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+curl -s -X POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer \
   -H "Authorization: Bearer $LOOM_CRM_CLE" \
   -H 'Content-Type: application/json' \
   -H "X-Delivery-Id: tournee-$(date +%F)" \
@@ -1169,7 +1169,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-URL = "http://127.0.0.1:8000/mcp/"
+URL = "http://127.0.0.1:8760/mcp/"
 CLE = os.environ["CLE"]  # la clé d'API, lue dans une variable d'environnement
 
 

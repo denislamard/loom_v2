@@ -206,7 +206,7 @@ loom reject  RUN_ID [--call CALL_ID] [--by NOM] [--reason MOTIF] [--session SESS
 <p>Sert l'API REST (extra <code>http</code>), et le serveur MCP en HTTP si <code>server.mcp.http</code> est activé. Vu au <a href="module-10.html#ex-10-6">module 10</a>.</p>
 <pre><code>loom serve [--host HOTE] [--port PORT] [--reload]</code></pre>
 <div class="tableau"><table><tbody>
-<tr><td><code>--host</code>, <code>--port</code></td><td>Adresse et port d'écoute ; l'emportent sur <code>server.http</code>. Défaut : <code>127.0.0.1:8000</code>.</td></tr>
+<tr><td><code>--host</code>, <code>--port</code></td><td>Adresse et port d'écoute ; l'emportent sur <code>server.http</code>. Défaut : <code>127.0.0.1:8760</code>.</td></tr>
 <tr><td><code>--reload</code></td><td>Relance le serveur quand un fichier de la config change (développement ; refusé en profil <code>prod</code>). Une config cassée est refusée et l'ancien process continue de servir. Vu au <a href="module-10.html#ex-10-10">module 10</a>.</td></tr>
 </tbody></table></div>
 
@@ -472,7 +472,7 @@ loom reject  RUN_ID [--call CALL_ID] [--by NOM] [--reason MOTIF] [--session SESS
 <div class="tableau"><table>
 <thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
 <tbody>
-<tr><td><code>http.host</code> / <code>port</code></td><td>Adresse et port de <code>loom serve</code> (<code>--host</code> et <code>--port</code> l'emportent).</td><td>adresse / 1 à 65535</td><td><code>127.0.0.1</code> / <code>8000</code></td></tr>
+<tr><td><code>http.host</code> / <code>port</code></td><td>Adresse et port de <code>loom serve</code> (<code>--host</code> et <code>--port</code> l'emportent).</td><td>adresse / 1 à 65535</td><td><code>127.0.0.1</code> / <code>8760</code></td></tr>
 <tr><td><code>http.base_path</code></td><td>Préfixe commun des routes.</td><td>chemin commençant par <code>/</code></td><td><code>""</code></td></tr>
 <tr><td><code>http.max_body_bytes</code></td><td>Taille maximale d'un corps de requête ; au-delà, 413.</td><td>entier &gt; 0</td><td>128 Mio</td></tr>
 <tr><td><code>http.docs</code></td><td>Sert <code>/docs</code>, <code>/redoc</code> et <code>/openapi.json</code> (lisibles sans clé).</td><td>booléen, <code>null</code></td><td><code>null</code> : servis, sauf en <code>prod</code></td></tr>

@@ -52,7 +52,7 @@ def test_only_the_console_tenant_leaves() -> None:
         SecurityUser(id="paul", roles=("lecteur",)),
         SecurityUser(id="console-gateway", roles=("console",)),
     )
-    assert [role.id for role in sent.roles] == ["owner", "lecteur", "console"]
+    assert [role.id for role in sent.roles] == ["owner", "lecteur", "console", "client-acme"]
     assert sent.roles[1] == SecurityRole(id="lecteur", description="Lit seulement", permissions=("read",), agents=("devis",))
     assert sent.api_keys == (SecurityKey(id="k-dev", user="dev", scopes=("read",), agents=("devis",), expires=EXPIRES),)
 
@@ -71,15 +71,16 @@ def test_without_a_gateway_there_is_none() -> None:
     assert security_payload(security(), (), console(user=None)).gateway is None
 
 
-def test_an_endorsable_role_nobody_carries_still_leaves() -> None:
+def test_every_declared_role_leaves_carried_or_not() -> None:
     roles = (
         AccessRole(id="owner", permissions=("run",)),
         AccessRole(id="assistant", permissions=("read",)),
         AccessRole(id="console", permissions=("act_as",), act_as_roles=("assistant",)),
+        AccessRole(id="superviseur", permissions=("approve", "read")),
     )
     users = (UserSpec(id="dev", roles=("owner",)), UserSpec(id="console-gateway", roles=("console",)))
     sent = security_payload(security(roles=roles, users=users, api_keys=()), (), console())
-    assert [role.id for role in sent.roles] == ["owner", "assistant", "console"]
+    assert [role.id for role in sent.roles] == ["owner", "assistant", "console", "superviseur"]
 
 
 def test_the_fingerprint_is_the_digest_of_the_rest() -> None:

@@ -1588,7 +1588,7 @@ security:                             # obligatoire depuis 2.0.17 (§16.4)
     retention_days: 365               # loom retention efface au-delà ; absent : tout est gardé
 
 server:
-  http: {host: 127.0.0.1, port: 8000, base_path: /loom, max_body_bytes: 134217728}  # plafond d'un corps (413)
+  http: {host: 127.0.0.1, port: 8760, base_path: /loom, max_body_bytes: 134217728}  # plafond d'un corps (413)
   # http: {user: denis}             # sans clé : instance locale au nom de denis (2.0.17)
   mcp:
     http: true                      # monte le MCP sous <base_path>/mcp (exige des clés)

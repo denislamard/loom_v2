@@ -2,7 +2,13 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.26 - non publiée
+## 2.0.26 - publiée
+
+### Suite de ports des applications loom (`docs/analyse_ports.md`)
+- ⚠ **Changement de défaut : `loom serve` écoute sur 8760**, et non plus sur 8000, port de nombreux outils (uvicorn, Django, vLLM) et de l'interface web de Heddlo, qui empêchait de lancer les deux sur la même machine. Suite : 876x pour loom (API REST et MCP HTTP 8760, loom-mem-gpu 8765, canal de la console 8766), 877x pour Heddlo (web 8770). Pour garder 8000 : `server: {http: {port: 8000}}` dans `loom.yaml`, ou `loom serve --port 8000`. Docs, formation et exemples suivent ; une deuxième instance sur la même machine prend 8761.
+
+### Console : tous les rôles dans le message `security`
+- ⚠ **Le message `security` porte tous les rôles déclarés**, portés ou non, et plus seulement ceux que les utilisateurs du client portent ou endossent : le bloc `access` d'un agent peut citer un rôle que personne ne porte, et la console reprend la sécurité entière dans son référentiel (import de Heddlo). Son empreinte change donc pour une config qui déclare un rôle inutilisé. Schéma `message.security.json` régénéré.
 
 ### Sécurité partagée : clients qui choisissent leur utilisateur avant d'ouvrir l'instance
 - **`with_shared_security(config)`** (`loom_ia.access`) : la config avec la sécurité au nom de laquelle agir. En sécurité partagée, celle du cache ; sans cache valide, l'instance se connecte à la console et attend sa première part (refus en profil `prod` faute de part). En sécurité locale, la config telle quelle. La CLI s'en sert pour `--user`.

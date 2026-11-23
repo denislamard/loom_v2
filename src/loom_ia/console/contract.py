@@ -252,7 +252,7 @@ class SecurityPayload(DomainModel):
 
     Attributes:
         tenant: Client que la console sert.
-        roles: Les rôles que ses utilisateurs portent, et ceux qu'ils endossent.
+        roles: Tous les rôles déclarés, portés ou non (un agent peut citer un rôle que personne ne porte).
         users: Les utilisateurs du client.
         api_keys: Leurs clés d'API, sans empreinte.
         agents: Les agents du client et leur bloc ``access``.

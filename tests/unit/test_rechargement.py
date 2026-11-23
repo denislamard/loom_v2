@@ -796,7 +796,7 @@ def test_reload_hands_the_config_to_the_supervisor(demo: ConfigFactory, monkeypa
         "path": config,
         "profile": "dev",
         "host": "127.0.0.1",
-        "port": 8000,
+        "port": 8760,
         "banner": serving_banner,
         # La lecture du superviseur : chaque process neuf retire ce qu'elle a posé, et relit.
         "env": EnvFileReport(path=config.resolve().parent / ".env", source="défaut"),

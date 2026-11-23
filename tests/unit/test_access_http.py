@@ -1186,6 +1186,12 @@ async def test_a_json_body_over_the_limit_is_refused_before_it_is_read(
     assert fits.status_code == 201
 
 
+def test_the_api_listens_on_the_port_of_the_loom_suite_by_default(demo: ConfigFactory) -> None:
+    """8760, pas 8000 : celui de Heddlo et de nombreux outils (``docs/analyse_ports.md``)."""
+    assert (load_config(demo()).server.http.host, load_config(demo()).server.http.port) == ("127.0.0.1", 8760)
+    assert load_config(demo(server={"http": {"port": 8000}})).server.http.port == 8000
+
+
 def test_the_body_limit_is_an_optional_key_with_a_generous_default(demo: ConfigFactory) -> None:
     assert load_config(demo()).server.http.max_body_bytes == 128 * 1024 * 1024
     assert load_config(demo(server={"http": {"max_body_bytes": 1000}})).server.http.max_body_bytes == 1000

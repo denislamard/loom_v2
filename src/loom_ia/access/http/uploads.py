@@ -9,7 +9,7 @@ La route ``POST /v1/agents/{name}/runs`` accepte deux formes :
   formulaire sans fichier (``application/x-www-form-urlencoded``) passe aussi.
 
     curl -F message='Que montre la photo ?' -F attachments=@photo.jpg \
-         http://127.0.0.1:8000/v1/agents/assistant/runs
+         http://127.0.0.1:8760/v1/agents/assistant/runs
 
 Les limites viennent de ``execution.attachments`` : un envoi plus gros que
 ``max_files`` fichiers de ``max_bytes`` est refusé sur son en-tête (413), avant

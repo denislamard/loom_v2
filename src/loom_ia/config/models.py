@@ -1165,7 +1165,7 @@ class HttpServer(DomainModel):
 
     Attributes:
         host: Adresse d'écoute (``127.0.0.1`` par défaut).
-        port: Port d'écoute (8000 par défaut).
+        port: Port d'écoute (8760 par défaut : suite des ports de loom, ``docs/analyse_ports.md``).
         base_path: Préfixe commun des routes, par exemple ``/loom`` ; commence
             par ``/``.
         max_body_bytes: Plafond du corps d'une requête (JSON, déclencheurs,
@@ -1188,7 +1188,7 @@ class HttpServer(DomainModel):
     """
 
     host: str = "127.0.0.1"
-    port: int = Field(default=8000, ge=1, le=65535)
+    port: int = Field(default=8760, ge=1, le=65535)
     base_path: str = ""
     max_body_bytes: PositiveInt = 128 * 1024 * 1024
     docs: bool | None = None

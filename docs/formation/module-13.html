@@ -630,7 +630,7 @@ if __name__ == "__main__":
 # La tournée du matin : demande la relance du devis D-2026-050 par la porte du CRM.
 # L'identifiant de livraison porte la date du jour : lancée deux fois le même jour,
 # la tournée ne produit qu'un run.
-curl -s -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+curl -s -X POST http://127.0.0.1:8760/v1/hooks/devis-a-relancer \
   -H "Authorization: Bearer $LOOM_CRM_CLE" \
   -H 'Content-Type: application/json' \
   -H "X-Delivery-Id: tournee-$(date +%F)" \
@@ -897,7 +897,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-URL = "http://127.0.0.1:8000/mcp/"
+URL = "http://127.0.0.1:8760/mcp/"
 CLE = os.environ["CLE"]  # la clé d'API, lue dans une variable d'environnement
 
 
@@ -1314,13 +1314,13 @@ security:
 
 <h4>Exécution</h4>
 <p>Démarrez le serveur dans un second terminal (<code>loom serve</code>), puis lisez le même run avec les deux clés :</p>
-<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8000/v1/runs/01a16e9f-6717-7584-8d1f-7299b5fc8af3?session_id=trace-martin" | jq '{status, text, redacted}'
+<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8760/v1/runs/01a16e9f-6717-7584-8d1f-7299b5fc8af3?session_id=trace-martin" | jq '{status, text, redacted}'
 {
   "status": "completed",
   "text": "L'e-mail de relance est parti chez Mme Martin.",
   "redacted": []
 }
-<span class="p">$ </span>curl -s -H "Authorization: Bearer $LEC" "http://127.0.0.1:8000/v1/runs/01a16e9f-6717-7584-8d1f-7299b5fc8af3?session_id=trace-martin" | jq '{status, text, redacted}'
+<span class="p">$ </span>curl -s -H "Authorization: Bearer $LEC" "http://127.0.0.1:8760/v1/runs/01a16e9f-6717-7584-8d1f-7299b5fc8af3?session_id=trace-martin" | jq '{status, text, redacted}'
 {
   "status": "completed",
   "text": "",
@@ -1330,7 +1330,7 @@ security:
     "verdicts[].criteria[].reason"
   ]
 }
-<span class="p">$ </span>curl -s -H "Authorization: Bearer $LEC" "http://127.0.0.1:8000/v1/traces/01a16e9f-6717-7584-8d1f-7299b5fc8af3?session_id=trace-martin" | jq '{agent, status, content, output, nb_spans: (.spans | length)}'
+<span class="p">$ </span>curl -s -H "Authorization: Bearer $LEC" "http://127.0.0.1:8760/v1/traces/01a16e9f-6717-7584-8d1f-7299b5fc8af3?session_id=trace-martin" | jq '{agent, status, content, output, nb_spans: (.spans | length)}'
 {
   "agent": "assistant",
   "status": "completed",
@@ -1360,12 +1360,12 @@ security:
 
 <h4>Exécution</h4>
 <p>Par l'API REST, avec le serveur de l'exercice précédent. Les trois derniers runs terminés de l'agent :</p>
-<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8000/v1/runs?agent=assistant&amp;status=completed&amp;limit=3" | jq -r '.runs[] | [.run_id, .session_id, .iterations, .cost_usd] | @tsv'
+<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8760/v1/runs?agent=assistant&amp;status=completed&amp;limit=3" | jq -r '.runs[] | [.run_id, .session_id, .iterations, .cost_usd] | @tsv'
 01a16e9f-6717-7584-8d1f-7299b5fc8af3	trace-martin	4	0.037038999999999996
 01a16e86-db6d-73c2-beb6-323abf9870a9	cle-dupont	2	0.013512
 01a16e86-c001-7151-8679-d8bc653f9865	outils-dupont	2	0.013512</code></pre>
 <p>Tous les appels de l'outil <code>envoyer_email</code> terminés, dans tout le journal du client :</p>
-<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8000/v1/events?type=tool.completed&amp;tool_name=envoyer_email" | jq -r '.[] | [.ts[0:19], .session_id, .facets.tool_name, .status] | @tsv'
+<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8760/v1/events?type=tool.completed&amp;tool_name=envoyer_email" | jq -r '.[] | [.ts[0:19], .session_id, .facets.tool_name, .status] | @tsv'
 2026-10-24T14:49:12	relance-python	envoyer_email	ok
 2026-10-24T14:49:17	relance-bernard	envoyer_email	ok
 2026-10-24T14:49:46	rest-martin	envoyer_email	ok
@@ -1374,7 +1374,7 @@ security:
 2026-10-24T15:06:28	bus-redis	envoyer_email	ok
 2026-10-24T15:07:11	bus-pg	envoyer_email	ok
 2026-10-24T15:55:07	trace-martin	envoyer_email	ok
-<span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8000/v1/events?type=tool.completed&amp;tool_name=envoyer_email&amp;limit=1" | jq '.[0] | {type, category, status, session_id, run_id, facets}'
+<span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8760/v1/events?type=tool.completed&amp;tool_name=envoyer_email&amp;limit=1" | jq '.[0] | {type, category, status, session_id, run_id, facets}'
 {
   "type": "tool.completed",
   "category": "tool",
@@ -1389,7 +1389,7 @@ security:
   }
 }</code></pre>
 <p>La trace d'un run, celle de <code>loom inspect --json</code> (début) :</p>
-<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8000/v1/traces/01a16e9f-6717-7584-8d1f-7299b5fc8af3?session_id=trace-martin" | jq -r '.spans[] | .kind + "\t" + .name' | head -8
+<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $CLE" "http://127.0.0.1:8760/v1/traces/01a16e9f-6717-7584-8d1f-7299b5fc8af3?session_id=trace-martin" | jq -r '.spans[] | .kind + "\t" + .name' | head -8
 run	invoke_agent assistant
 step	step 1
 chat	chat fake-1
