@@ -39,11 +39,12 @@ changement de charge interne ne passe pas sans qu'on décide de son sort
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, Self, cast
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
-from loom_ia.config.models import Permission
+from loom_ia.agents.spec import AgentAccess, ApproveAccess
+from loom_ia.config.models import AccessRole, Permission
 from loom_ia.core.events import DURABLE_PAYLOADS, Event
 from loom_ia.core.events.redaction import MARK
 from loom_ia.core.model import DomainModel, RateLimit, new_id
@@ -168,6 +169,33 @@ class SecurityRole(DomainModel):
     agents: tuple[str, ...] = ()
     act_as_roles: tuple[str, ...] = ()
 
+    @classmethod
+    def of(cls, role: AccessRole) -> Self:
+        """Le rôle de la config, tel qu'il part, champ pour champ.
+
+        Un champ que le rôle de la config aurait et pas le message lève au lieu
+        d'être perdu (``extra="forbid"``).
+
+        Args:
+            role: Le rôle déclaré dans ``security.roles``.
+
+        Returns:
+            Le rôle du message.
+        """
+        return cls.model_validate(role.model_dump())
+
+    def access_role(self) -> AccessRole:
+        """Le rôle de la config, champ pour champ, avec ses contrôles (``AccessRole``).
+
+        Returns:
+            Le rôle d'accès.
+
+        Raises:
+            pydantic.ValidationError: Un champ que ``AccessRole`` n'a pas, ou une
+                règle d'``AccessRole`` enfreinte.
+        """
+        return AccessRole.model_validate(self.model_dump())
+
 
 class SecurityUser(DomainModel):
     """Un utilisateur du client de la console.
@@ -224,6 +252,44 @@ class SecurityAgent(DomainModel):
     approve_default: tuple[str, ...] | None = None
     approve_tools: dict[str, tuple[str, ...]] = Field(default_factory=dict[str, tuple[str, ...]])
     self_approval: bool = True
+
+    @classmethod
+    def of(cls, name: str, access: AgentAccess) -> Self:
+        """Le bloc ``access`` d'un agent, tel qu'il part.
+
+        Args:
+            name: L'agent.
+            access: Son bloc ``access``.
+
+        Returns:
+            Le bloc du message.
+        """
+        return cls(
+            name=name,
+            run=access.run,
+            answer=access.answer,
+            cancel=access.cancel,
+            approve_default=access.approve.default,
+            approve_tools=dict(access.approve.tools),
+            self_approval=access.self_approval,
+        )
+
+    def access(self) -> AgentAccess:
+        """Le bloc ``access`` de l'agent, tel que la config le déclare, avec ses contrôles.
+
+        Returns:
+            Le bloc ``access``.
+
+        Raises:
+            pydantic.ValidationError: Une liste invalide (vide, doublon, identifiant).
+        """
+        return AgentAccess(
+            run=self.run,
+            answer=self.answer,
+            cancel=self.cancel,
+            approve=ApproveAccess(default=self.approve_default, tools=self.approve_tools),
+            self_approval=self.self_approval,
+        )
 
 
 class SecurityGateway(DomainModel):

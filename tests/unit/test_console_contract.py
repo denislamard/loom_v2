@@ -6,7 +6,10 @@ from datetime import UTC, datetime
 
 import jsonschema
 import pytest
+from pydantic import ValidationError
 
+from loom_ia.agents.spec import AgentAccess, ApproveAccess
+from loom_ia.config.models import AccessRole, ApiKey, UserSpec
 from loom_ia.console.contract import (
     CONTRACTS,
     PAYLOADS,
@@ -261,3 +264,66 @@ def test_security_carries_the_applied_part_only_when_given() -> None:
     _, read = decode(encode(shared))
     assert isinstance(read, SecurityPayload)
     assert (read.version, read.part_fingerprint) == (13, "sha256:" + "c" * 64)
+
+
+# --- Conversions entre la config et le contrat (point 2 des fonctions communes avec Heddlo) ---
+
+
+def test_a_role_and_its_message_have_the_same_fields() -> None:
+    """Un champ ajouté au rôle de la config, et pas au message (ou l'inverse), se perdrait en route."""
+    assert set(AccessRole.model_fields) == set(SecurityRole.model_fields)
+
+
+def test_a_user_and_its_message_have_the_same_fields_but_the_tenant() -> None:
+    """Le client d'un utilisateur est celui du message, pas un champ de l'utilisateur."""
+    assert set(UserSpec.model_fields) - {"tenant"} == set(SecurityUser.model_fields)
+
+
+def test_a_key_of_a_part_has_the_fields_of_a_key_of_the_config() -> None:
+    assert set(ApiKey.model_fields) == set(SecuritySyncKey.model_fields)
+
+
+ACCESS_SENT = {
+    "run": "run",
+    "answer": "answer",
+    "cancel": "cancel",
+    "approve.default": "approve_default",
+    "approve.tools": "approve_tools",
+    "self_approval": "self_approval",
+}
+"""Chaque champ du bloc ``access`` d'un agent, et celui de ``SecurityAgent`` qui le porte."""
+
+
+def test_the_access_block_of_an_agent_and_its_message_carry_the_same_fields() -> None:
+    """Une liste ajoutée au bloc ``access`` (``access.read``…) doit l'être à ``SecurityAgent``, ``of`` et ``access``."""
+    declared = {name for name in AgentAccess.model_fields if name != "approve"} | {f"approve.{name}" for name in ApproveAccess.model_fields}
+    assert declared == set(ACCESS_SENT), "champ nouveau : le mettre dans SecurityAgent, SecurityAgent.of, SecurityAgent.access et ACCESS_SENT"
+    assert set(SecurityAgent.model_fields) == {"name", *ACCESS_SENT.values()}
+
+
+def test_a_role_goes_and_comes_back_unchanged() -> None:
+    role = AccessRole(id="passerelle", description="Console", permissions=("run", "act_as"), agents=("devis",), act_as_roles=("lecteur",))
+    sent = SecurityRole.of(role)
+    assert sent.model_dump() == role.model_dump()
+    assert sent.access_role() == role
+
+
+def test_a_role_the_config_refuses_is_refused_on_its_way_back() -> None:
+    with pytest.raises(ValidationError, match="'self_approve' sans 'approve'"):
+        SecurityRole(id="pont", permissions=("self_approve",)).access_role()
+
+
+def test_an_access_block_goes_and_comes_back_unchanged() -> None:
+    access = AgentAccess.model_validate(
+        {
+            "run": ["owner"],
+            "answer": ["owner", "assistante"],
+            "cancel": ["owner"],
+            "approve": {"default": ["superviseur"], "tools": {"send_mail": ["owner"]}},
+            "self_approval": False,
+        }
+    )
+    sent = SecurityAgent.of("devis", access)
+    assert sent.name == "devis"
+    assert sent.access() == access
+    assert SecurityAgent.of("relance", AgentAccess()) == SecurityAgent(name="relance")

@@ -5,7 +5,9 @@ Un **acteur** est l'utilisateur au nom duquel une opération est faite, une
 fois résolu : par sa clé d'API, par ``--user`` ou ``user=``, ou endossé par une
 passerelle (``as_user``). Ce module dit s'il peut faire une action sur un agent,
 et s'il peut trancher une demande d'approbation. Les accès (SDK, CLI, REST,
-MCP) l'appellent tous : c'est ce qui fait qu'aucun n'y échappe.
+MCP) l'appellent tous : c'est ce qui fait qu'aucun n'y échappe. ``grants``
+rend, avec les mêmes règles, ce qu'il peut faire agent par agent : c'est ce
+qu'une console affiche, sans réécrire la matrice.
 
 Le code ne teste jamais un nom de rôle, seulement des permissions : les rôles
 restent de la configuration. Et pour trancher une approbation, **un même rôle**
@@ -18,13 +20,19 @@ L'identité, elle, n'est pas vérifiée ici : la clé d'API l'a été par l'acc�
 la confronter à la matrice des droits.
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Self
+from typing import Final, Self
 
-from loom_ia.agents.spec import AgentSpec
-from loom_ia.config.models import AccessRole, ApiKey, Permission, SecurityConfig
+from loom_ia.agents.spec import AgentAccess, AgentSpec
+from loom_ia.config.models import PERMISSIONS, AccessRole, ApiKey, Permission, SecurityConfig
 from loom_ia.core.model import TenantId
+
+type Coverage = frozenset[str] | None
+"""Agents couverts par une permission ; ``None`` : tous, y compris ceux qui ne sont pas déclarés."""
+
+_DECIDING: Final[frozenset[Permission]] = frozenset({"approve", "self_approve", "amend"})
+"""Permissions qui servent à trancher une demande d'approbation (``require_decision``, § 4.4)."""
 
 
 class AccessDenied(PermissionError):
@@ -220,7 +228,7 @@ def require(
     holding = [role for role in holding if _covers(role, name)]
     if not holding:
         raise denied("ses rôles qui la portent sont bornés à des agents")
-    listed = _listed_for(agent, permission)
+    listed = _listed_for(agent.access if agent is not None else None, permission)
     if listed is not None:
         holding = [role for role in holding if role.id in listed]
         if not holding:
@@ -300,6 +308,37 @@ def can_decide(actor: Actor, asked: Approvable, *, tenant: TenantId | None = Non
     return True
 
 
+def grants(actor: Actor, agents: Mapping[str, AgentAccess]) -> dict[Permission, Coverage]:
+    """Les permissions que l'acteur exerce, chacune avec les agents qu'elle couvre.
+
+    Mêmes règles que ``require`` (2 à 4 du § 4.3) pour run, answer, cancel,
+    read, read_content, admin et act_as. Pour approve, self_approve et amend,
+    un même rôle qui peut être approbateur d'au moins une demande de l'agent
+    (``require_decision``, règles 5 à 8, hors lanceur) : c'est « où regarder »,
+    la décision d'une demande précise restant ``can_decide``. Le client
+    (règle 1) n'est pas contrôlé : ``agents`` sont ceux du client de l'acteur.
+
+    Un agent absent de ``agents`` n'a pas de liste : un rôle qui porte la
+    permission et vaut pour lui le couvre ; un rôle borné à des agents absents
+    les couvre nommément. ``None`` n'est rendu que si tous les agents sont
+    couverts, déclarés ou non.
+
+    Args:
+        actor: L'acteur, endossé par la passerelle s'il y a lieu.
+        agents: Le bloc ``access`` de chaque agent déclaré du client de l'acteur, par nom.
+
+    Returns:
+        Chaque permission tenue, dans l'ordre de ``PERMISSIONS``, avec ses
+        agents ; une permission absente n'est tenue sur aucun agent.
+    """
+    found: dict[Permission, Coverage] = {}
+    for permission in PERMISSIONS:
+        coverage = _coverage(actor, permission, agents)
+        if coverage is None or coverage:
+            found[permission] = coverage
+    return found
+
+
 def _same_tenant(actor: Actor, tenant: TenantId | None, permission: Permission, agent: str | None) -> None:
     """Règle 1 : l'acteur n'agit que chez son client."""
     if tenant is not None and tenant != actor.tenant:
@@ -316,11 +355,10 @@ def _covers(role: AccessRole, agent: str | None) -> bool:
     return role.allows(agent) if agent is not None else not role.agents
 
 
-def _listed_for(agent: AgentSpec | None, permission: Permission) -> tuple[str, ...] | None:
+def _listed_for(access: AgentAccess | None, permission: Permission) -> tuple[str, ...] | None:
     """La liste ``access`` de l'agent pour cette permission, s'il en déclare une (règle 3)."""
-    if agent is None:
+    if access is None:
         return None
-    access = agent.access
     match permission:
         case "run":
             return access.run
@@ -330,6 +368,55 @@ def _listed_for(agent: AgentSpec | None, permission: Permission) -> tuple[str, .
             return access.cancel
         case _:
             return None
+
+
+def _coverage(actor: Actor, permission: Permission, agents: Mapping[str, AgentAccess]) -> Coverage:
+    """Les agents sur lesquels l'acteur a la permission (``grants``) ; ``None`` : tous ; vide : aucun."""
+    # self_approve et amend ne valent que dans le même rôle qu'approve (§ 4.4).
+    needed: tuple[Permission, ...] = ("approve", permission) if permission in ("self_approve", "amend") else (permission,)
+    key = actor.key
+    if not all(_kept_by_key(key, wanted) for wanted in needed):
+        return frozenset()
+    holding = [role for role in actor.roles if all(wanted in role.permissions for wanted in needed)]
+    if not holding:
+        return frozenset()
+
+    def covered(agent: str) -> bool:
+        access = agents.get(agent)
+        return any(_holds_on(role, agent, access, permission) for role in holding)
+
+    if key is not None and key.agents:
+        return frozenset(agent for agent in key.agents if covered(agent))
+    declared = frozenset(agent for agent in agents if covered(agent))
+    if any(not role.agents for role in holding) and len(declared) == len(agents):
+        return None
+    named = frozenset(agent for role in holding for agent in role.agents if agent not in agents)
+    return declared | named
+
+
+def _holds_on(role: AccessRole, agent: str, access: AgentAccess | None, permission: Permission) -> bool:
+    """Le rôle, qui porte la permission, l'exerce-t-il sur l'agent ? ``access`` : son bloc, ``None`` s'il n'est pas déclaré."""
+    if not role.allows(agent):
+        return False
+    if permission in _DECIDING:
+        return access is None or _approver_on(role, access, permission)
+    listed = _listed_for(access, permission)
+    return listed is None or role.id in listed
+
+
+def _approver_on(role: AccessRole, access: AgentAccess, permission: Permission) -> bool:
+    """Le rôle peut-il être approbateur d'au moins une demande de l'agent (règles 6 et 7, hors lanceur) ?
+
+    Les approbateurs d'une demande sont ceux de son outil, à défaut ceux de
+    l'agent, à défaut tout rôle qui a ``approve`` (``Approvers.of``) : sans
+    ``default``, les outils sans liste vont à tout approbateur.
+    """
+    if permission == "self_approve" and not access.self_approval:
+        return False
+    approve = access.approve
+    if approve.default is None or role.id in approve.default:
+        return True
+    return any(role.id in roles for roles in approve.tools.values())
 
 
 def _kept_by_key(key: ApiKey | None, permission: Permission) -> bool:

@@ -25,6 +25,7 @@ from loom_ia.console.contract import (
     ErrorPayload,
     HelloPayload,
     SecurityAgent,
+    SecurityKey,
     SecurityPayload,
     SecurityRole,
     SecuritySyncKey,
@@ -41,7 +42,10 @@ from loom_ia.console.shared import (
     compared,
     make_part,
     part_fingerprint,
+    security_config_of,
+    security_of,
 )
+from loom_ia.core.model import RateLimit
 from loom_ia.testing.console_server import FakeConsole
 
 KEY = "s3cret"
@@ -151,6 +155,41 @@ def test_a_part_is_compared_with_the_previous(previous: int | None, received: in
 
 def test_a_rewritten_part_keeps_its_version_and_changes_its_content() -> None:
     assert compared(part(3), part(3, users=())) == "rewritten"
+
+
+def test_the_security_a_console_reads_is_rebuilt_without_keys() -> None:
+    """``security_config_of`` d'un message ``security`` : rôles, utilisateurs du client du message, aucune clé."""
+    users = (SecurityUser(id="paul", name="Paul", roles=("lecteur",)),)
+    document = SecurityPayload(
+        tenant="martin",
+        roles=ROLES,
+        users=users,
+        api_keys=(SecurityKey(id="k-paul", user="paul"),),
+        fingerprint="sha256:" + "0" * 64,
+    )
+    security = security_config_of(document)
+    assert [role.id for role in security.roles] == ["owner", "lecteur", "console"]
+    assert [(user.id, user.name, user.roles, user.tenant) for user in security.users] == [("paul", "Paul", ("lecteur",), "martin")]
+    assert security.api_keys == () and security.audit is None and security.source is None
+
+
+def test_the_security_of_a_part_keeps_its_keys() -> None:
+    key = SecuritySyncKey(id="k-paul", user="paul", hash=fingerprint(API_KEY), scopes=("read",), rate_limit=RateLimit(per_minute=60))
+    security = security_config_of(part(keys=(key,)))
+    assert [(found.id, found.hash, found.scopes, found.rate_limit) for found in security.api_keys] == [
+        ("k-paul", fingerprint(API_KEY), ("read",), RateLimit(per_minute=60))
+    ]
+    assert security.source is None
+    assert security_of(part(keys=(key,)), None) == security.model_copy(update={"source": "console"})
+
+
+def test_a_security_with_a_role_loom_refuses_is_refused() -> None:
+    roles = (*ROLES, SecurityRole(id="pont", permissions=("self_approve",)))
+    with pytest.raises(PartRefused, match=r"^part refusée : .*'self_approve' sans 'approve'"):
+        security_config_of(part(roles=roles))
+    document = SecurityPayload(tenant="default", roles=roles, users=(), fingerprint="sha256:" + "0" * 64)
+    with pytest.raises(PartRefused, match=r"^sécurité refusée : .*'self_approve' sans 'approve'"):
+        security_config_of(document)
 
 
 def test_check_part_passes_what_loom_would_apply() -> None:

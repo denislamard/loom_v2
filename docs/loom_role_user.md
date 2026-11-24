@@ -189,6 +189,20 @@ Les conditions 5 à 8 portent sur **le même rôle**. Sinon, un rôle annexe qui
 
 **Exemple de `self_approval: false`.** Deux associés, Denis et Paul, tous deux `gerant` (avec `self_approve`). Sur `secretariat`, chacun lance et approuve ses relances. Sur `paiements`, l'agent déclare `self_approval: false` : un virement lancé par Denis ne peut être approuvé que par Paul, et inversement. Sans ce réglage, il faudrait un rôle `gerant_paiements` sans `self_approve`, et borner `gerant` à tous les autres agents.
 
+### 4.5 Ce qu'un acteur peut faire, agent par agent (`grants`)
+
+Une console affiche, pour un compte, ce qu'il peut faire sur chaque agent : les blocs de son tableau de bord, sa file des demandes. Elle ne réécrit pas les règles 1 à 8 : `grants(actor, agents)` (`access/authz.py`) les applique en une fois, à partir du bloc `access` de chaque agent (`AgentAccess`, `access_of` pour ceux d'un message `security`).
+
+- **Sortie** : chaque permission tenue, dans l'ordre de `PERMISSIONS`, avec les agents qu'elle couvre (`Coverage`) ; `None` : tous, y compris ceux qui ne sont pas déclarés. Une permission sans agent n'y figure pas.
+- **`run`, `answer`, `cancel`, `read`, `read_content`, `admin`, `act_as`** : un agent est couvert si et seulement si `require` l'accepterait (règles 2 à 4).
+- **`approve`** : un même rôle porte `approve`, vaut pour l'agent, et peut être approbateur d'au moins une demande de l'agent : `approve.default` absent (les outils sans liste vont à tout approbateur), ou le rôle est cité dans `approve.default` ou dans la liste d'un outil. C'est « où regarder » ; une demande précise se tranche avec `can_decide`, et ses approbateurs figés.
+- **`self_approve`, `amend`** : comme `approve`, avec la permission dans le même rôle ; pour `self_approve`, l'agent n'a pas `self_approval: false`.
+- **Agent absent** de `agents` (retiré de la config) : pas de liste ; un rôle qui porte la permission et vaut pour lui le couvre, et un rôle borné à des agents absents les couvre nommément.
+- **`None`** : un rôle non borné tient la permission, la clé n'est bornée à aucun agent, et chaque agent déclaré est couvert.
+- **Clé** : ses `scopes` retirent, ses `agents` bornent (jamais `None`). Le client (règle 1) n'est pas contrôlé : on passe les agents du client de l'acteur.
+
+Exemple : `owner` (toutes les permissions) et `superviseur` (`approve`, `read`), `devis` déclare `approve: {default: [superviseur]}`, `relance` n'a pas de bloc `access`. Pour denis (`owner`) : `approve` couvre `{relance}`, tout le reste `None` ; pour jean (`superviseur`) : `approve` et `read` `None`.
+
 ---
 
 ## 5. Configuration

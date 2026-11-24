@@ -20,7 +20,7 @@ from typing import Any
 
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config.console import ConsoleConfig
-from loom_ia.config.models import AccessRole, SecurityConfig
+from loom_ia.config.models import SecurityConfig
 from loom_ia.console.contract import (
     SecurityAgent,
     SecurityGateway,
@@ -59,14 +59,14 @@ def security_payload(
     names = {user.id for user in users}
     document: dict[str, Any] = {
         "tenant": console.tenant,
-        "roles": [_role(role).model_dump(mode="json") for role in roles],
+        "roles": [SecurityRole.of(role).model_dump(mode="json") for role in roles],
         "users": [SecurityUser(id=user.id, name=user.name, roles=user.roles).model_dump(mode="json") for user in users],
         "api_keys": [
             SecurityKey(id=key.id, user=key.user, scopes=key.scopes, agents=key.agents, expires=key.expires).model_dump(mode="json")
             for key in security.api_keys
             if key.user in names
         ],
-        "agents": [_agent(spec).model_dump(mode="json") for spec in agents],
+        "agents": [SecurityAgent.of(spec.name, spec.access).model_dump(mode="json") for spec in agents],
         "gateway": _gateway(security, console),
     }
     confirmed = {"version": version, "part_fingerprint": part_fingerprint} if version is not None else {}
@@ -84,25 +84,6 @@ def fingerprint(document: Mapping[str, Any]) -> str:
     """
     canonical = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def _role(role: AccessRole) -> SecurityRole:
-    """Un rôle d'accès, tel qu'il part."""
-    return SecurityRole(id=role.id, description=role.description, permissions=role.permissions, agents=role.agents, act_as_roles=role.act_as_roles)
-
-
-def _agent(spec: AgentSpec) -> SecurityAgent:
-    """Le bloc ``access`` d'un agent, tel qu'il part."""
-    access = spec.access
-    return SecurityAgent(
-        name=spec.name,
-        run=access.run,
-        answer=access.answer,
-        cancel=access.cancel,
-        approve_default=access.approve.default,
-        approve_tools=dict(access.approve.tools),
-        self_approval=access.self_approval,
-    )
 
 
 def _gateway(security: SecurityConfig, console: ConsoleConfig) -> dict[str, Any] | None:

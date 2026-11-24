@@ -32,9 +32,8 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from pydantic import ValidationError
 
-from loom_ia.agents.spec import AgentAccess, ApproveAccess
+from loom_ia.agents.spec import AgentAccess
 from loom_ia.config.models import (
-    AccessRole,
     ApiKey,
     AuditConfig,
     LoomConfig,
@@ -43,7 +42,15 @@ from loom_ia.config.models import (
     check_gateway,
     check_security_references,
 )
-from loom_ia.console.contract import CONTRACT, SecurityAgent, SecurityRole, SecuritySyncKey, SecuritySyncPayload, SecurityUser
+from loom_ia.console.contract import (
+    CONTRACT,
+    SecurityAgent,
+    SecurityPayload,
+    SecurityRole,
+    SecuritySyncKey,
+    SecuritySyncPayload,
+    SecurityUser,
+)
 from loom_ia.console.security import fingerprint
 from loom_ia.core.model import TenantId, new_id
 
@@ -107,12 +114,40 @@ def make_part(
     return draft.model_copy(update={"fingerprint": part_fingerprint(draft)})
 
 
+def security_config_of(document: SecurityPayload | SecuritySyncPayload) -> SecurityConfig:
+    """La section ``security`` qu'un message déclare : ce que la console lit d'une instance, ou ce qu'une part pose.
+
+    Les rôles, les utilisateurs (du client du message) et, pour une part, les
+    clés avec leur empreinte, champ pour champ ; chacun passe les contrôles de
+    son modèle. Le message ``security`` ne porte pas l'empreinte des clés : il
+    n'en donne aucune. La section, sans ``audit`` ni ``source``, est posée sans
+    repasser par les contrôles d'ensemble (``check_security_references``).
+
+    Args:
+        document: Le message ``security`` d'une instance, ou une part (``security.sync``).
+
+    Returns:
+        La section ``security``.
+
+    Raises:
+        PartRefused: Un rôle, un utilisateur ou une clé invalide.
+    """
+    try:
+        roles = tuple(role.access_role() for role in document.roles)
+        users = tuple(UserSpec.model_validate({**user.model_dump(), "tenant": TenantId(document.tenant)}) for user in document.users)
+        keys = tuple(ApiKey.model_validate(key.model_dump()) for key in document.api_keys) if isinstance(document, SecuritySyncPayload) else ()
+    except ValidationError as error:
+        said = "part refusée" if isinstance(document, SecuritySyncPayload) else "sécurité refusée"
+        raise PartRefused(f"{said} : {error.errors()[0]['msg']}") from None
+    return SecurityConfig(roles=roles, users=users, api_keys=keys)
+
+
 def security_of(part: SecuritySyncPayload, audit: AuditConfig | None) -> SecurityConfig:
     """La section ``security`` que la part déclare, avec le fichier des refus de l'instance.
 
-    Chaque rôle, utilisateur et clé passe les contrôles de son modèle ; la
-    section, elle, est posée sans repasser par le sien, qui refuse ce qu'une
-    sécurité partagée déclare dans ``loom.yaml``.
+    Chaque rôle, utilisateur et clé passe les contrôles de son modèle
+    (``security_config_of``) ; la section, elle, est posée sans repasser par le
+    sien, qui refuse ce qu'une sécurité partagée déclare dans ``loom.yaml``.
 
     Args:
         part: La part reçue.
@@ -124,20 +159,7 @@ def security_of(part: SecuritySyncPayload, audit: AuditConfig | None) -> Securit
     Raises:
         PartRefused: Un rôle, un utilisateur ou une clé invalide.
     """
-    try:
-        roles = tuple(
-            AccessRole(id=role.id, description=role.description, permissions=role.permissions, agents=role.agents, act_as_roles=role.act_as_roles)
-            for role in part.roles
-        )
-        users = tuple(UserSpec(id=user.id, name=user.name, roles=user.roles, tenant=TenantId(part.tenant)) for user in part.users)
-        keys = tuple(
-            ApiKey(id=key.id, hash=key.hash, user=key.user, rate_limit=key.rate_limit, expires=key.expires, scopes=key.scopes, agents=key.agents)
-            for key in part.api_keys
-        )
-    except ValidationError as error:
-        raise PartRefused(f"part refusée : {error.errors()[0]['msg']}") from None
-    local = SecurityConfig(roles=roles, users=users, api_keys=keys, audit=audit)
-    return local.model_copy(update={"source": "console"})
+    return security_config_of(part).model_copy(update={"audit": audit, "source": "console"})
 
 
 def access_of(agents: Sequence[SecurityAgent]) -> dict[str, AgentAccess]:
@@ -149,16 +171,7 @@ def access_of(agents: Sequence[SecurityAgent]) -> dict[str, AgentAccess]:
     Returns:
         Le bloc ``access`` de chaque agent, par nom.
     """
-    return {
-        agent.name: AgentAccess(
-            run=agent.run,
-            answer=agent.answer,
-            cancel=agent.cancel,
-            approve=ApproveAccess(default=agent.approve_default, tools=agent.approve_tools),
-            self_approval=agent.self_approval,
-        )
-        for agent in agents
-    }
+    return {agent.name: agent.access() for agent in agents}
 
 
 def check_part(

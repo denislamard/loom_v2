@@ -42,15 +42,16 @@ from loom_ia.access.authz import (
     Approvable,
     can,
     can_decide,
+    grants,
     require,
     require_decision,
 )
 from loom_ia.access.caller import Caller
 from loom_ia.access.cli import main
-from loom_ia.agents.spec import AgentSpec
+from loom_ia.agents.spec import AgentAccess, AgentSpec
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, matches, new_api_key
-from loom_ia.config.models import AccessRole, ApiKey, SecurityConfig
+from loom_ia.config.models import PERMISSIONS, AccessRole, ApiKey, Permission, SecurityConfig
 from loom_ia.core.events import (
     DURABLE_PAYLOADS,
     DurablePayload,
@@ -1289,6 +1290,158 @@ def test_the_approvers_of_a_tool_fall_back_on_those_of_the_agent() -> None:
     assert access.approvers().of("autre") == ("gerant",)
     assert SECRETARIAT.access.approvers().of("envoyer") is None
     assert not agent_named("y", self_approval=False).access.approvers().self_approval
+
+
+# --- Ce qu'un acteur peut faire, agent par agent (grants, § 4.5) ------------------------
+
+JEU = (
+    SECRETARIAT,
+    PAIEMENTS,
+    # Sans approbateurs par défaut : les outils sans liste vont à tout approbateur.
+    agent_named("courrier", approve={"tools": {"envoyer": ["approbateur"]}}),
+    agent_named("caisse", approve={"default": ["gerant"], "tools": {"rembourser": ["solo"]}}, self_approval=False),
+    agent_named("relances", answer=["gerant"], cancel=["passerelle"]),
+)
+"""Des agents aux listes variées ; ``assistante`` est bornée à ``secretariat``."""
+
+JAMAIS_VU = agent_named("jamais-vu")
+"""Un agent que l'instance n'a pas et qu'aucun rôle ne cite : il dit si une permission vaut partout."""
+
+OUTIL_SANS_LISTE = "outil-sans-liste"
+
+
+def acteurs() -> list[Actor]:
+    """Les acteurs de la matrice, endossés ou non, avec ou sans clé qui restreint."""
+    crm = acteur("app-crm")
+    return [
+        *(acteur(user.id) for user in MATRICE.users),
+        crm.endorse(MATRICE, "marie"),
+        crm.endorse(MATRICE, "alice"),
+        crm.endorse(MATRICE, "paul"),
+        acteur("denis", scopes=("read", "approve", "amend")),
+        acteur("denis", agents=("paiements", "archives")),
+        acteur("mixte", agents=("caisse",)),
+    ]
+
+
+def loom_permet(actor: Actor, permission: Permission, agent: AgentSpec) -> bool:
+    """L'oracle de ``grants`` : ``can``, ou ``can_decide`` sur une demande de chaque outil de l'agent, hors lanceur."""
+    if permission not in ("approve", "self_approve", "amend"):
+        return can(actor, permission, agent=agent)
+    access = agent.access
+    launcher = actor.user if permission == "self_approve" else None
+    return any(
+        can_decide(
+            actor,
+            Approvable(agent=agent.name, tool=tool, approvers=access.approvers().of(tool), self_approval=access.self_approval, launcher=launcher),
+            amend=permission == "amend",
+        )
+        for tool in (*access.approve.tools, OUTIL_SANS_LISTE)
+    )
+
+
+@pytest.mark.parametrize("declared", [JEU, JEU[1:]], ids=["tous", "sans-secretariat"])
+def test_grants_says_what_require_and_require_decision_say(declared: tuple[AgentSpec, ...]) -> None:
+    """Agent déclaré : ``grants`` ⇔ loom ; ``None`` ⇔ partout ; agent absent : jamais plus que loom."""
+    agents = {spec.name: spec.access for spec in declared}
+    absent = [*(spec for spec in JEU if spec.name not in agents), JAMAIS_VU, agent_named("archives")]
+    for actor in acteurs():
+        found = grants(actor, agents)
+        assert list(found) == [permission for permission in PERMISSIONS if permission in found]
+        assert all(coverage is None or coverage for coverage in found.values()), actor.signature
+        for permission in PERMISSIONS:
+            coverage = found.get(permission, frozenset())
+            where = (actor.signature, permission)
+            for spec in declared:
+                assert (coverage is None or spec.name in coverage) == loom_permet(actor, permission, spec), (*where, spec.name)
+            everywhere = loom_permet(actor, permission, JAMAIS_VU) and all(loom_permet(actor, permission, spec) for spec in declared)
+            assert (coverage is None) == everywhere, where
+            for spec in absent:
+                if coverage is None or spec.name in coverage:
+                    assert loom_permet(actor, permission, spec), (*where, spec.name)
+
+
+ATELIER = SecurityConfig.model_validate(
+    {
+        "roles": [
+            {"id": "owner", "permissions": ["run", "answer", "cancel", "approve", "read", "read_content", "admin"]},
+            {"id": "superviseur", "permissions": ["approve", "read"]},
+            {"id": "lecteur", "permissions": ["read"], "agents": ["devis"]},
+            {"id": "console", "permissions": ["act_as"], "act_as_roles": ["owner", "superviseur", "lecteur"]},
+        ],
+        "users": [
+            {"id": "denis", "roles": ["owner"]},
+            {"id": "jean", "roles": ["superviseur"]},
+            {"id": "paul", "roles": ["lecteur"]},
+            {"id": "console-gateway", "roles": ["console"]},
+        ],
+    }
+)
+"""La configuration des exemples (analyse_fonctions_communes.md de Heddlo, § 7.1.3)."""
+
+DEVIS_RELANCE = {"devis": AgentAccess.model_validate({"approve": {"default": ["superviseur"]}}), "relance": AgentAccess()}
+
+
+def par_la_console(user: str) -> Actor:
+    """``user`` tel que la passerelle de la console l'endosse."""
+    return Actor.of(ATELIER, "console-gateway").endorse(ATELIER, user)
+
+
+def test_grants_follow_the_approvers_of_each_agent() -> None:
+    """Exemple 2.3 : denis (owner) n'est pas parmi les approbateurs de devis ; jean l'est partout."""
+    every: dict[Permission, frozenset[str] | None] = {"run": None, "answer": None, "cancel": None, "read": None, "read_content": None, "admin": None}
+    assert grants(par_la_console("denis"), DEVIS_RELANCE) == {**every, "approve": frozenset({"relance"})}
+    assert grants(par_la_console("jean"), DEVIS_RELANCE) == {"approve": None, "read": None}
+    assert grants(par_la_console("paul"), DEVIS_RELANCE) == {"read": frozenset({"devis"})}
+    # Sans passerelle, les mêmes rôles : la passerelle les endosse tous.
+    assert grants(Actor.of(ATELIER, "denis"), DEVIS_RELANCE) == grants(par_la_console("denis"), DEVIS_RELANCE)
+
+
+def test_an_approver_of_one_tool_has_approve_on_its_agent() -> None:
+    """G-3 : cité pour un outil, ou sans approbateurs par défaut, le rôle est approbateur de l'agent."""
+    for_a_tool = {"devis": AgentAccess.model_validate({"approve": {"default": ["superviseur"], "tools": {"send_mail": ["owner"]}}})}
+    assert grants(par_la_console("denis"), for_a_tool)["approve"] is None
+    tools_only = {"devis": AgentAccess.model_validate({"approve": {"tools": {"send_mail": ["superviseur"]}}})}
+    assert grants(par_la_console("denis"), tools_only)["approve"] is None
+
+
+def test_self_approve_and_amend_need_an_approver_role_that_has_them() -> None:
+    """G-4, G-5 : dans le même rôle qu'approve, approbateur de l'agent ; l'agent peut interdire l'auto-approbation."""
+    security = SecurityConfig.model_validate(
+        {
+            "roles": [
+                {"id": "superviseur", "permissions": ["approve", "amend", "read"]},
+                # Il s'approuve, mais n'est pas parmi les approbateurs de devis.
+                {"id": "solo", "permissions": ["approve", "self_approve"]},
+            ],
+            "users": [{"id": "jean", "roles": ["superviseur", "solo"]}],
+        }
+    )
+    jean = Actor.of(security, "jean")
+    found = grants(jean, {"devis": AgentAccess.model_validate({"approve": {"default": ["superviseur"]}}), "relance": AgentAccess()})
+    assert (found["approve"], found["self_approve"], found["amend"]) == (None, frozenset({"relance"}), None)
+    forbidden = grants(jean, {"devis": AgentAccess.model_validate({"approve": {"default": ["superviseur"]}}), "relance": AgentAccess(self_approval=False)})
+    assert "self_approve" not in forbidden
+
+
+def test_an_agent_the_instance_lacks_is_covered_by_name() -> None:
+    """G-6 : un rôle borné à un agent retiré le couvre encore ; l'historique reste lisible."""
+    security = SecurityConfig.model_validate(
+        {"roles": [{"id": "archiviste", "permissions": ["read"], "agents": ["facture"]}], "users": [{"id": "lea", "roles": ["archiviste"]}]}
+    )
+    assert grants(Actor.of(security, "lea"), DEVIS_RELANCE) == {"read": frozenset({"facture"})}
+
+
+def test_the_key_restricts_what_grants_say() -> None:
+    """G-8 : ses scopes retirent, ses agents bornent ; jamais ``None`` avec une clé bornée."""
+    cle = ApiKey(id="k-denis", user="denis", hash="sha256:" + "0" * 64, scopes=("read", "approve"), agents=("devis",))
+    found = grants(Actor.of(ATELIER, "denis", key=cle), DEVIS_RELANCE)
+    assert found == {"read": frozenset({"devis"})}
+
+
+def test_without_any_agent_an_unbounded_role_covers_everything() -> None:
+    assert grants(Actor.of(ATELIER, "jean"), {}) == {"approve": None, "read": None}
+    assert grants(Actor.of(ATELIER, "paul"), {}) == {"read": frozenset({"devis"})}
 
 
 # --- Le SDK contrôle l'utilisateur qu'on lui donne (user=, § 6.3, lot 3) -----------------

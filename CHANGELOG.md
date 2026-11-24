@@ -4,6 +4,10 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.27 - non publiée
 
+### Fonctions communes avec la console (analyse_fonctions_communes.md de Heddlo, lot 1)
+- **`grants(actor, agents)`** (`access/authz.py`) : les permissions d'un acteur, agent par agent (`Coverage` : les agents couverts, `None` pour tous), avec les règles de `require` et de `require_decision` ; pour `approve`, `self_approve` et `amend`, les agents dont un même rôle peut être approbateur d'au moins une demande. La console calcule ainsi les droits qu'elle affiche sans réécrire la matrice (`docs/loom_role_user.md` § 4.5).
+- **Conversions du contrat** : `SecurityRole.of(role)` et `SecurityRole.access_role()`, `SecurityAgent.of(name, access)` et `SecurityAgent.access()`, champ pour champ ; `security_config_of(message)` (`console/shared.py`) rend la section `security` d'un message `security` ou d'une part. `security_payload`, `security_of` et `access_of` s'en servent ; messages, schémas et empreintes inchangés. Des essais font échouer le CI quand un champ n'existe que d'un côté (rôle, utilisateur, clé, bloc `access`).
+
 ## 2.0.26 - publiée
 
 ### Suite de ports des applications loom (`docs/analyse_ports.md`)
