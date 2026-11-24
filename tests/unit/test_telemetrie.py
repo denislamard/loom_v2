@@ -342,28 +342,6 @@ def test_keys_masked_alike_keep_every_entry() -> None:
     assert masque.json(table) == {"[email]": 1, "[email]#2": 2, "[email]#3": 3, "x": {"[email]": 4}}
 
 
-def test_masked_keys_name_what_masking_changes() -> None:
-    """Une valeur, un nom de clé ou un masque imbriqué désignent leur clé de premier niveau, dans l'ordre."""
-    masque = Redactor.of(["email", ("devis", r"D-\d{4}-\d{3}")])
-    arguments: dict[str, Any] = {
-        "path": "sortie/devis.txt",
-        "content": "Écrire à jeanne@exemple.fr",
-        "a@b.fr": "nom de clé",
-        "blocks": [{"type": "paragraph", "text": "Devis D-2026-042"}],
-        "count": 3,
-    }
-    assert masque.masked_keys(arguments) == ("content", "a@b.fr", "blocks")
-    assert masque.masked_keys({"path": "sortie/devis.txt", "count": 3, "blocks": [None, True]}) == ()
-    assert masque.masked_keys({}) == ()
-
-
-@pytest.mark.usefixtures("short_timeout")
-def test_a_pattern_that_does_not_finish_names_its_key() -> None:
-    """Un motif hors délai masque tout le texte : sa clé est masquée, en fermé."""
-    masque = Redactor.of([("lent", "^(a|aa)+$")])
-    assert masque.masked_keys({"texte": "a" * 34 + "!", "court": "b"}) == ("texte",)
-
-
 def test_the_provided_patterns_always_apply_those_not_named_first() -> None:
     """Ses motifs s'ajoutent aux fournis ; ceux que la liste ne cite pas passent avant elle."""
     devis = {"name": "devis", "regex": r"D-\d{4}-\d{3}"}

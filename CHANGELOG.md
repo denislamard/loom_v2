@@ -15,11 +15,10 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 ### Les clés d'API d'un projet (analyse_fonctions_communes.md de Heddlo, lot 4)
 - **`security_keys_of(path, *, profile=None)`** (`loom_ia.config`) : les clés de `security.api_keys` d'un projet, lues comme `load_config` les lit : l'amorce, la config qu'elle désigne, les surcharges du profil (l'argument, `LOOM_PROFILE`, puis `profile:` de l'amorce). Une config donnée à la place de l'amorce est lue telle quelle, surcharges du profil comprises. Ni les agents ni le reste de la config ne sont lus ou exigés ; une clé invalide est refusée avec le fichier et sa place dans le YAML (`security.api_keys[k-crm].rate_limit.per_minute`). Une console reprend ainsi les clés d'un projet à partir du fichier que l'administrateur connaît, `loom-boot.yaml`.
 
-### Console d'administration : clés masquées d'une demande (analyse_approbation.md de Heddlo, lot 1)
-- **`ApprovalDetail.masked`** (`access/api.py`) : les clés de premier niveau des `arguments` d'une demande que le masquage par motifs (`telemetry.redaction`) a changées, dans leur nom ou dans leur valeur, dans l'ordre des arguments. Rendu par `Loom.approval_details`, la commande `approval.get` et `GET /v1/runs/{run_id}/approvals`. Corriger un appel (`amend`) avec des arguments masqués renverrait `[email]` à la place de l'adresse : une console n'offre pas la correction tant que ce champ n'est pas vide. Les motifs fournis (`secret`, `email`, `phone`, `iban`) s'appliquent toujours.
-- **`Redactor.masked_keys(value)`** (`telemetry/redaction.py`) : ces clés pour un objet JSON ; un masque imbriqué désigne sa clé de premier niveau, et un motif hors délai aussi (en fermé).
-- Contrat 1, schémas et loom-chat inchangés : le champ s'ajoute au résultat d'`approval.get`, du JSON libre.
-- Essais : `tests/unit/test_telemetrie.py`, `test_approval_files.py` et `test_console_commands.py` étendus.
+### Console d'administration : détail d'une demande en clair (analyse_approbation.md de Heddlo, lot 3)
+- ⚠ **`Loom.approval_details`** (commande `approval.get`, `GET /v1/runs/{run_id}/approvals`) rend les `arguments` et le `reason` d'une demande **tels quels**, sans les motifs de `telemetry.redaction`. Il exige `read_content` sur l'agent de la demande, comme `events.query` et `GET /v1/events`, qui rendent déjà ce contenu en clair à qui l'a : rien ne sort vers qui ne pouvait pas le lire. L'approbateur voit ce qu'il approuve, un outil sans aperçu compris (un e-mail et son destinataire), et peut le corriger (`amend`) sans renvoyer `[email]` à la place de l'adresse. Avant, en 2.0.26, ils étaient masqués. L'export (`approval.requested`, OpenTelemetry) reste masqué.
+- Contrat 1, schémas et loom-chat inchangés.
+- Essais : `tests/unit/test_approval_files.py` (méthode et REST, e-mail et IBAN) et `test_console_commands.py`.
 
 ## 2.0.26 - publiée
 

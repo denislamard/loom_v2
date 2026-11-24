@@ -268,7 +268,7 @@ async def test_approval_get_then_decide(atelier: Build) -> None:
         assert got.outcome == "accepted", got
         approvals = cast("dict[str, list[dict[str, Any]]]", got.result)["approvals"]
         assert [approval["tool_name"] for approval in approvals] == ["envoyer_email"]
-        assert approvals[0]["masked"] == ["destinataire"], "la console sait qu'une correction renverrait [email]"
+        assert approvals[0]["arguments"] == {"destinataire": "mme.martin@example.com"}, "en clair : la console montre ce qu'elle fait approuver"
         refused(await executor.execute(command("approval.get", {"run_id": run_id, "session_id": "a1"}, as_user=READER, now=clock.now)), "AccessDenied")
         decided = await executor.execute(command("approval.decide", {"run_id": run_id, "session_id": "a1", "decision": "approve"}, now=clock.now))
         assert decided.outcome == "accepted" and decided.result == {"calls": [approvals[0]["call_id"]]}

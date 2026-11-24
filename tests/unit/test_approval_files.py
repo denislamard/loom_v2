@@ -59,7 +59,7 @@ CALLS: dict[str, tuple[str, dict[str, Any]]] = {
     "word": ("word", {"action": "write", "path": "sortie/devis.docx", **DEVIS}),
     "pdf": ("pdf", {"action": "write", "path": "sortie/devis.pdf", **DEVIS}),
     "excel": ("excel", {"path": "sortie/suivi.xlsx", "sheets": [SUIVI]}),
-    "mail": ("envoyer_email", {"destinataire": "mme.martin@example.com"}),
+    "mail": ("envoyer_email", {"destinataire": "mme.martin@example.com, IBAN FR76 3000 6000 0112 3456 7890 189"}),
     "plan": ("word", {"action": "write", "path": "sortie/plan.docx", "title": "Plan", "blocks": [{"type": "image", "path": "privees/plan.png"}]}),
 }
 FOLDERS: list[dict[str, Any]] = [
@@ -174,15 +174,14 @@ async def test_details_name_the_files_and_the_preview(bureau: Build) -> None:
     assert detail.files == ("images/logo.png",)
     assert detail.preview is True
     assert detail.arguments["title"] == "Devis D-042"
-    assert detail.masked == (), "rien de masqué : une console peut offrir la correction"
 
 
 async def test_a_tool_without_the_protocols_shows_its_arguments_only(bureau: Build) -> None:
     async with paused(bureau(), "mail") as (loom, run_id, call_id):
         (detail,) = await loom.approval_details(run_id, session_id=SessionId("mail"), user=DEV)
         assert (detail.files, detail.preview) == ((), False)
-        assert "mme.martin@example.com" not in str(detail.arguments), "masqué par les motifs de telemetry.redaction"
-        assert detail.masked == ("destinataire",), "le motif email, fourni, s'applique toujours"
+        assert detail.arguments == dict(CALLS["mail"][1]), "en clair pour qui lit le contenu : il sait ce qu'il approuve"
+        assert loom.config.telemetry.redaction.redactor().json(detail.arguments) != detail.arguments, "l'e-mail et l'IBAN seraient masqués"
         with pytest.raises(ApprovalFileRefused, match="no_preview"):
             await loom.approval_preview(run_id, call_id, session_id=SessionId("mail"), user=DEV)
         with pytest.raises(ApprovalFileRefused, match="not_cited"):
@@ -411,8 +410,24 @@ async def test_the_rest_serves_details_files_and_previews(bureau: Build) -> None
             as_lea = await http.get(f"/v1/runs/{run_id}/approvals", params={"session_id": "reecrire", "as_user": "lea"})
     assert details.status_code == 200
     ((detail,),) = [details.json()]
-    assert (detail["call_id"], detail["files"], detail["preview"], detail["masked"]) == (call_id, ["sortie/note.txt"], True, [])
+    assert (detail["call_id"], detail["files"], detail["preview"]) == (call_id, ["sortie/note.txt"], True)
+    assert detail["arguments"] == CALLS["reecrire"][1] and "masked" not in detail
     assert (cited.status_code, cited.content, cited.headers["content-type"].split(";")[0]) == (200, b"Ancien texte.", "text/plain")
     assert (rendered.status_code, rendered.content) == (200, b"Nouveau texte.")
     assert (absent.status_code, absent.json()["code"]) == (404, "not_cited")
     assert as_lea.status_code == 403, "dev n'est pas une passerelle"
+
+
+async def test_the_rest_gives_the_detail_in_clear(bureau: Build) -> None:
+    """Comme ``approval_details`` : l'e-mail et l'IBAN d'un appel reviennent tels quels à qui lit le contenu."""
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    httpx2 = pytest.importorskip("httpx2", reason="client HTTP de test absent")
+    from loom_ia.access.http import create_app
+
+    async with paused(bureau(), "mail") as (loom, run_id, call_id):
+        transport = httpx2.ASGITransport(create_app(loom))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            details = await http.get(f"/v1/runs/{run_id}/approvals", params={"session_id": "mail"})
+    assert details.status_code == 200
+    ((detail,),) = [details.json()]
+    assert (detail["call_id"], detail["arguments"]) == (call_id, CALLS["mail"][1])
