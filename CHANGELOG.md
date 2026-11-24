@@ -8,6 +8,10 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 - **`grants(actor, agents)`** (`access/authz.py`) : les permissions d'un acteur, agent par agent (`Coverage` : les agents couverts, `None` pour tous), avec les règles de `require` et de `require_decision` ; pour `approve`, `self_approve` et `amend`, les agents dont un même rôle peut être approbateur d'au moins une demande. La console calcule ainsi les droits qu'elle affiche sans réécrire la matrice (`docs/loom_role_user.md` § 4.5).
 - **Conversions du contrat** : `SecurityRole.of(role)` et `SecurityRole.access_role()`, `SecurityAgent.of(name, access)` et `SecurityAgent.access()`, champ pour champ ; `security_config_of(message)` (`console/shared.py`) rend la section `security` d'un message `security` ou d'une part. `security_payload`, `security_of` et `access_of` s'en servent ; messages, schémas et empreintes inchangés. Des essais font échouer le CI quand un champ n'existe que d'un côté (rôle, utilisateur, clé, bloc `access`).
 
+### Les règles d'un rôle en codes (analyse_fonctions_communes.md de Heddlo, lot 3)
+- **`role_problems(id, permissions, agents, act_as_roles)`** (`config/models.py`) : les règles d'un rôle d'accès enfreintes, en codes (`RoleProblem`), sur des champs bruts et dans l'ordre des contrôles, identifiant et « une permission au moins » compris. **`endorsement_problems(act_as_roles, declared)`** : les rôles endossables non déclarés ou qui ont eux-mêmes `act_as` (`EndorsementProblem`). **`user_problems(roles, declared)`** : aucun rôle, un rôle deux fois, un rôle non déclaré (`UserProblem`). Une console contrôle un formulaire avec ces règles et rédige chaque code dans sa langue.
+- `AccessRole`, `UserSpec` et `check_security_references` s'en servent ; leurs messages sont inchangés, mot pour mot.
+
 ## 2.0.26 - publiée
 
 ### Suite de ports des applications loom (`docs/analyse_ports.md`)

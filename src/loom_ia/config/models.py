@@ -16,7 +16,7 @@ l'éditeur.
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Final, Literal, Self, cast
@@ -847,6 +847,147 @@ Ils s'écrivent au journal (``by``) et sur la ligne de commande (``--user``).
 LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})
 """Adresses de la boucle locale : les seules où ``server.http.user`` est permis (décision D-1b des utilisateurs et rôles)."""
 
+type RoleProblem = Literal[
+    "id_invalid",
+    "permissions_missing",
+    "permission_twice",
+    "agent_twice",
+    "endorsed_twice",
+    "agent_invalid",
+    "self_approve_alone",
+    "act_as_without_roles",
+    "roles_without_act_as",
+    "endorses_itself",
+]
+"""Une règle d'un rôle d'accès enfreinte, en code (``role_problems``) : une console la rédige dans sa langue."""
+
+type EndorsementProblem = Literal["endorsed_undeclared", "endorses_gateway"]
+"""Un rôle endossable fautif (``endorsement_problems``) : non déclaré, ou qui a lui-même ``act_as``."""
+
+type UserProblem = Literal["roles_missing", "role_twice", "role_undeclared"]
+"""Une règle des rôles d'un utilisateur enfreinte, en code (``user_problems``)."""
+
+_ROLE_MESSAGES: Final[Mapping[RoleProblem, str]] = {
+    "id_invalid": "identifiant invalide : {detail}",
+    "permissions_missing": "une permission au moins est attendue",
+    "permission_twice": "permission déclaré deux fois : {detail}",
+    "agent_twice": "agent déclaré deux fois : {detail}",
+    "endorsed_twice": "rôle endossable déclaré deux fois : {detail}",
+    "agent_invalid": "nom d'agent invalide : {detail}",
+    "self_approve_alone": "'self_approve' sans 'approve' — elle ne vaut que dans le même rôle qu'approve",
+    "act_as_without_roles": "'act_as' demande 'act_as_roles', les rôles que ce rôle peut endosser",
+    "roles_without_act_as": "'act_as_roles' sans la permission 'act_as'",
+    "endorses_itself": "un rôle ne s'endosse pas lui-même (act_as_roles)",
+}
+"""La phrase de chaque code, après « Rôle d'accès 'id' : » ; ``{detail}`` : les doublons, ou l'agent invalide."""
+
+
+def role_problems(
+    role_id: str,
+    permissions: Sequence[Permission],
+    agents: Sequence[str] = (),
+    act_as_roles: Sequence[str] = (),
+) -> tuple[RoleProblem, ...]:
+    """Ce que les champs d'un rôle d'accès enfreignent, en codes, dans l'ordre des contrôles d'``AccessRole``.
+
+    Les règles d'``AccessRole``, contraintes de champ comprises (identifiant,
+    une permission au moins), sur des champs bruts : une console contrôle un
+    formulaire avec elles avant de pouvoir construire le rôle, et rédige chaque
+    code dans sa langue. ``AccessRole`` lève la phrase de loom du premier.
+
+    Args:
+        role_id: L'identifiant du rôle.
+        permissions: Ses permissions.
+        agents: Les agents auxquels il est borné ; vide : tous.
+        act_as_roles: Les rôles qu'il endosse.
+
+    Returns:
+        Les codes ; vide : le rôle se construit.
+    """
+    return tuple(code for code, _ in _role_findings(role_id, permissions, agents, act_as_roles))
+
+
+def endorsement_problems(act_as_roles: Sequence[str], declared: Mapping[str, Collection[Permission]]) -> tuple[tuple[EndorsementProblem, str], ...]:
+    """Les rôles endossables fautifs d'un rôle, chacun avec son code, dans l'ordre de ``act_as_roles``.
+
+    ``endorsed_undeclared`` : le rôle n'est pas déclaré ; ``endorses_gateway`` :
+    il a lui-même ``act_as`` — une passerelle agirait au nom de quelqu'un au nom
+    de quelqu'un d'autre. ``check_security_references`` lève la phrase de loom du premier.
+
+    Args:
+        act_as_roles: Les rôles qu'un rôle endosse.
+        declared: Les permissions de chaque rôle déclaré, par identifiant.
+
+    Returns:
+        Chaque rôle endossable fautif, avec son code ; vide : aucun.
+    """
+    found: list[tuple[EndorsementProblem, str]] = []
+    for endorsed in act_as_roles:
+        permissions = declared.get(endorsed)
+        if permissions is None:
+            found.append(("endorsed_undeclared", endorsed))
+        elif "act_as" in permissions:
+            found.append(("endorses_gateway", endorsed))
+    return tuple(found)
+
+
+def user_problems(roles: Sequence[str], declared: Collection[str] | None = None) -> tuple[tuple[UserProblem, str | None], ...]:
+    """Ce que les rôles d'un utilisateur enfreignent, en codes : aucun rôle, un rôle deux fois, un rôle non déclaré.
+
+    ``UserSpec`` lève la phrase de loom des doublons, ``check_security_references``
+    celle du premier rôle non déclaré.
+
+    Args:
+        roles: Les rôles de l'utilisateur.
+        declared: Les identifiants des rôles déclarés ; ``None`` : non contrôlé.
+
+    Returns:
+        Chaque problème, avec le rôle qu'il vise (``None`` pour ``roles_missing``) :
+        les doublons triés, puis les rôles non déclarés dans leur ordre.
+    """
+    found: list[tuple[UserProblem, str | None]] = []
+    if not roles:
+        found.append(("roles_missing", None))
+    found.extend(("role_twice", role) for role in _doubles(roles))
+    if declared is not None:
+        found.extend(("role_undeclared", role) for role in dict.fromkeys(roles) if role not in declared)
+    return tuple(found)
+
+
+def _role_findings(role_id: str, permissions: Sequence[Permission], agents: Sequence[str], act_as_roles: Sequence[str]) -> list[tuple[RoleProblem, str]]:
+    """Les règles d'un rôle enfreintes, chacune avec ce que sa phrase en dit (doublons, agent invalide)."""
+    found: list[tuple[RoleProblem, str]] = []
+    if re.fullmatch(ACCESS_NAME_PATTERN, role_id) is None:
+        found.append(("id_invalid", repr(role_id)))
+    if not permissions:
+        found.append(("permissions_missing", ""))
+    if doubles := _doubles(permissions):
+        found.append(("permission_twice", ", ".join(doubles)))
+    if doubles := _doubles(agents):
+        found.append(("agent_twice", ", ".join(doubles)))
+    if doubles := _doubles(act_as_roles):
+        found.append(("endorsed_twice", ", ".join(doubles)))
+    invalid = [agent for agent in agents if not re.fullmatch(AGENT_NAME_PATTERN, agent)]
+    if invalid:
+        found.append(("agent_invalid", repr(invalid[0])))
+    if "self_approve" in permissions and "approve" not in permissions:
+        # self_approve étend approve aux demandes de ses propres runs (décision D-7) :
+        # seule, elle n'ouvrirait rien, et se lirait pourtant comme un droit.
+        found.append(("self_approve_alone", ""))
+    if "act_as" in permissions and not act_as_roles:
+        # Une passerelle sans borne agirait au nom de n'importe qui, gérant compris (décision D-5b).
+        found.append(("act_as_without_roles", ""))
+    if act_as_roles and "act_as" not in permissions:
+        found.append(("roles_without_act_as", ""))
+    if role_id in act_as_roles:
+        found.append(("endorses_itself", ""))
+    return found
+
+
+def _doubles(names: Sequence[str]) -> list[str]:
+    """Les noms cités plus d'une fois, triés."""
+    return sorted({name for name in names if names.count(name) > 1})
+
 
 class AccessRole(DomainModel):
     """Rôle d'accès : des permissions, éventuellement bornées à des agents (décision D-3 des utilisateurs et rôles).
@@ -880,29 +1021,18 @@ class AccessRole(DomainModel):
     def _check(self) -> Self:
         """Permissions cohérentes, agents et rôles endossés valides.
 
+        Les règles sont celles de ``role_problems`` (codes) ; la phrase est celle
+        du premier code enfreint.
+
         Raises:
             ValueError: ``self_approve`` sans ``approve`` ; ``act_as`` sans
                 ``act_as_roles`` ou l'inverse ; un rôle qui s'endosse lui-même ; nom
                 d'agent invalide ; doublon.
         """
-        label = f"Rôle d'accès {self.id!r}"
-        _reject_doubles(f"{label} : permission", list(self.permissions))
-        _reject_doubles(f"{label} : agent", list(self.agents))
-        _reject_doubles(f"{label} : rôle endossable", list(self.act_as_roles))
-        for agent in self.agents:
-            if not re.fullmatch(AGENT_NAME_PATTERN, agent):
-                raise ValueError(f"{label} : nom d'agent invalide : {agent!r}")
-        if "self_approve" in self.permissions and "approve" not in self.permissions:
-            # self_approve étend approve aux demandes de ses propres runs (décision D-7) :
-            # seule, elle n'ouvrirait rien, et se lirait pourtant comme un droit.
-            raise ValueError(f"{label} : 'self_approve' sans 'approve' — elle ne vaut que dans le même rôle qu'approve")
-        if "act_as" in self.permissions and not self.act_as_roles:
-            # Une passerelle sans borne agirait au nom de n'importe qui, gérant compris (décision D-5b).
-            raise ValueError(f"{label} : 'act_as' demande 'act_as_roles', les rôles que ce rôle peut endosser")
-        if self.act_as_roles and "act_as" not in self.permissions:
-            raise ValueError(f"{label} : 'act_as_roles' sans la permission 'act_as'")
-        if self.id in self.act_as_roles:
-            raise ValueError(f"{label} : un rôle ne s'endosse pas lui-même (act_as_roles)")
+        found = _role_findings(self.id, self.permissions, self.agents, self.act_as_roles)
+        if found:
+            code, detail = found[0]
+            raise ValueError(f"Rôle d'accès {self.id!r} : " + _ROLE_MESSAGES[code].format(detail=detail))
         return self
 
     def allows(self, agent: str) -> bool:
@@ -935,7 +1065,9 @@ class UserSpec(DomainModel):
 
     @model_validator(mode="after")
     def _check(self) -> Self:
-        _reject_doubles(f"Utilisateur {self.id!r} : rôle", list(self.roles))
+        doubled = [role for code, role in user_problems(self.roles) if code == "role_twice" and role is not None]
+        if doubled:
+            raise ValueError(f"Utilisateur {self.id!r} : rôle déclaré deux fois : {', '.join(doubled)}")
         return self
 
 
@@ -2030,11 +2162,15 @@ def check_security_references(security: SecurityConfig, agents: Mapping[str, Age
     _reject_doubles("Utilisateur", [user.id for user in security.users])
     _reject_doubles("Clé", [key.id for key in security.api_keys])
     roles = {role.id: role for role in security.roles}
+    permissions = {role.id: role.permissions for role in security.roles}
+
+    def undeclared(label: str, role: str) -> ValueError:
+        return ValueError(f"{label} : rôle d'accès {role!r} non déclaré dans security.roles (rôles : {', '.join(roles)})")
 
     def declared(label: str, role: str) -> AccessRole:
         found = roles.get(role)
         if found is None:
-            raise ValueError(f"{label} : rôle d'accès {role!r} non déclaré dans security.roles (rôles : {', '.join(roles)})")
+            raise undeclared(label, role)
         return found
 
     for role in security.roles:
@@ -2042,14 +2178,16 @@ def check_security_references(security: SecurityConfig, agents: Mapping[str, Age
         for agent in role.agents if agents and not shared else ():
             if agent not in agents:
                 raise ValueError(f"{label} : agent {agent!r} non déclaré (agents : {', '.join(sorted(agents)) or 'aucun'})")
-        for endorsed in role.act_as_roles:
-            if "act_as" in declared(f"{label}, act_as_roles", endorsed).permissions:
-                # Endosser un rôle qui endosse à son tour : une passerelle
-                # agirait au nom de quelqu'un au nom de quelqu'un d'autre.
-                raise ValueError(f"{label}, act_as_roles : {endorsed!r} a lui-même 'act_as' — on n'agit pas au nom d'autrui en chaîne")
+        for code, endorsed in endorsement_problems(role.act_as_roles, permissions):
+            if code == "endorsed_undeclared":
+                raise undeclared(f"{label}, act_as_roles", endorsed)
+            # Endosser un rôle qui endosse à son tour : une passerelle
+            # agirait au nom de quelqu'un au nom de quelqu'un d'autre.
+            raise ValueError(f"{label}, act_as_roles : {endorsed!r} a lui-même 'act_as' — on n'agit pas au nom d'autrui en chaîne")
     for user in security.users:
-        for role in user.roles:
-            declared(f"Utilisateur {user.id!r}", role)
+        for code, role in user_problems(user.roles, permissions):
+            if code == "role_undeclared" and role is not None:
+                raise undeclared(f"Utilisateur {user.id!r}", role)
     users = {user.id for user in security.users}
     for key in security.api_keys:
         if key.user not in users:

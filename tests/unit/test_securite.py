@@ -33,6 +33,7 @@ from conftest import (
     designated,
     secured,
 )
+from pydantic import ValidationError
 
 from loom_ia.access import JudgeVerdict, Loom, RunResult, UnknownSession
 from loom_ia.access.audit import AUDIT_LOGGER
@@ -51,7 +52,18 @@ from loom_ia.access.cli import main
 from loom_ia.agents.spec import AgentAccess, AgentSpec
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, matches, new_api_key
-from loom_ia.config.models import PERMISSIONS, AccessRole, ApiKey, Permission, SecurityConfig
+from loom_ia.config.models import (
+    PERMISSIONS,
+    AccessRole,
+    ApiKey,
+    Permission,
+    SecurityConfig,
+    UserSpec,
+    check_security_references,
+    endorsement_problems,
+    role_problems,
+    user_problems,
+)
 from loom_ia.core.events import (
     DURABLE_PAYLOADS,
     DurablePayload,
@@ -883,6 +895,96 @@ def test_an_unknown_permission_is_refused(demo: ConfigFactory) -> None:
     roles = [{"id": "owner", "permissions": ["run", "delete"]}]
     with pytest.raises(ConfigError, match=r"security\.roles\[owner\]\.permissions"):
         load_config(demo(security={"roles": roles}))
+
+
+# --- Les règles d'un rôle et d'un utilisateur, en codes (fonctions communes avec Heddlo, point 3) ---
+
+
+@pytest.mark.parametrize(
+    ("fields", "codes", "message"),
+    [
+        (
+            {"id": "pont", "permissions": ["self_approve"]},
+            ("self_approve_alone",),
+            "Rôle d'accès 'pont' : 'self_approve' sans 'approve' — elle ne vaut que dans le même rôle qu'approve",
+        ),
+        (
+            {"id": "crm", "permissions": ["run", "act_as"]},
+            ("act_as_without_roles",),
+            "Rôle d'accès 'crm' : 'act_as' demande 'act_as_roles', les rôles que ce rôle peut endosser",
+        ),
+        (
+            {"id": "crm", "permissions": ["run"], "act_as_roles": ["owner"]},
+            ("roles_without_act_as",),
+            "Rôle d'accès 'crm' : 'act_as_roles' sans la permission 'act_as'",
+        ),
+        (
+            {"id": "crm", "permissions": ["act_as"], "act_as_roles": ["crm"]},
+            ("endorses_itself",),
+            "Rôle d'accès 'crm' : un rôle ne s'endosse pas lui-même (act_as_roles)",
+        ),
+        ({"id": "x", "permissions": ["run", "read", "run", "read"]}, ("permission_twice",), "Rôle d'accès 'x' : permission déclaré deux fois : read, run"),
+        ({"id": "x", "permissions": ["run"], "agents": ["devis", "devis"]}, ("agent_twice",), "Rôle d'accès 'x' : agent déclaré deux fois : devis"),
+        ({"id": "x", "permissions": ["act_as"], "act_as_roles": ["a", "a"]}, ("endorsed_twice",), "Rôle d'accès 'x' : rôle endossable déclaré deux fois : a"),
+        (
+            {"id": "x", "permissions": ["run"], "agents": ["bon", "mauvais nom", "autre nom"]},
+            ("agent_invalid",),
+            "Rôle d'accès 'x' : nom d'agent invalide : 'mauvais nom'",
+        ),
+        (
+            {"id": "x", "permissions": ["self_approve", "act_as"], "act_as_roles": ["x"]},
+            ("self_approve_alone", "endorses_itself"),
+            "Rôle d'accès 'x' : 'self_approve' sans 'approve' — elle ne vaut que dans le même rôle qu'approve",
+        ),
+    ],
+)
+def test_the_rules_of_a_role_give_codes_and_the_phrase_of_the_first(fields: dict[str, Any], codes: tuple[str, ...], message: str) -> None:
+    """``role_problems`` dit chaque règle enfreinte ; ``AccessRole`` lève, inchangée, la phrase de la première."""
+    assert role_problems(fields["id"], fields["permissions"], fields.get("agents", ()), fields.get("act_as_roles", ())) == codes
+    with pytest.raises(ValidationError) as refused:
+        AccessRole.model_validate(fields)
+    assert refused.value.errors()[0]["msg"] == f"Value error, {message}"
+
+
+def test_the_fields_of_a_role_give_codes_too() -> None:
+    """D-10 : l'identifiant et « une permission au moins », que pydantic contrôle avant ``AccessRole._check``."""
+    assert role_problems("équipe", ("read",)) == ("id_invalid",)
+    assert role_problems("", ()) == ("id_invalid", "permissions_missing")
+    assert role_problems("relance", ("run", "read"), ("relance",)) == ()
+
+
+def test_the_endorsed_roles_give_codes_and_the_phrases_of_loom() -> None:
+    declared: dict[str, tuple[Permission, ...]] = {"owner": ("run",), "console": ("act_as",)}
+    assert endorsement_problems(("owner", "console", "absent"), declared) == (("endorses_gateway", "console"), ("endorsed_undeclared", "absent"))
+    assert endorsement_problems((), declared) == ()
+    undeclared = SecurityConfig.model_validate({"roles": [OWNER, {"id": "a", "permissions": ["act_as"], "act_as_roles": ["owner", "absent"]}]})
+    with pytest.raises(
+        ValueError, match=re.escape("Rôle d'accès 'a', act_as_roles : rôle d'accès 'absent' non déclaré dans security.roles (rôles : owner, a)")
+    ):
+        check_security_references(undeclared, {})
+    chain = SecurityConfig.model_validate(
+        {
+            "roles": [
+                OWNER,
+                {"id": "a", "permissions": ["act_as"], "act_as_roles": ["b", "absent"]},
+                {"id": "b", "permissions": ["act_as"], "act_as_roles": ["owner"]},
+            ]
+        }
+    )
+    with pytest.raises(ValueError, match=re.escape("Rôle d'accès 'a', act_as_roles : 'b' a lui-même 'act_as' — on n'agit pas au nom d'autrui en chaîne")):
+        check_security_references(chain, {})
+
+
+def test_the_roles_of_a_user_give_codes_and_the_phrases_of_loom() -> None:
+    assert user_problems(()) == (("roles_missing", None),)
+    assert user_problems(("b", "a", "b", "a"), {"a"}) == (("role_twice", "a"), ("role_twice", "b"), ("role_undeclared", "b"))
+    assert user_problems(("owner",), {"owner"}) == ()
+    with pytest.raises(ValidationError) as refused:
+        UserSpec.model_validate({"id": "paul", "roles": ["b", "a", "b", "a"]})
+    assert refused.value.errors()[0]["msg"] == "Value error, Utilisateur 'paul' : rôle déclaré deux fois : a, b"
+    security = SecurityConfig.model_validate({"roles": [OWNER], "users": [{"id": "marie", "roles": ["owner", "assistante", "autre"]}]})
+    with pytest.raises(ValueError, match=re.escape("Utilisateur 'marie' : rôle d'accès 'assistante' non déclaré dans security.roles (rôles : owner)")):
+        check_security_references(security, {})
 
 
 @pytest.mark.parametrize(
