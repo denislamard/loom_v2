@@ -12,6 +12,9 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 - **`role_problems(id, permissions, agents, act_as_roles)`** (`config/models.py`) : les règles d'un rôle d'accès enfreintes, en codes (`RoleProblem`), sur des champs bruts et dans l'ordre des contrôles, identifiant et « une permission au moins » compris. **`endorsement_problems(act_as_roles, declared)`** : les rôles endossables non déclarés ou qui ont eux-mêmes `act_as` (`EndorsementProblem`). **`user_problems(roles, declared)`** : aucun rôle, un rôle deux fois, un rôle non déclaré (`UserProblem`). Une console contrôle un formulaire avec ces règles et rédige chaque code dans sa langue.
 - `AccessRole`, `UserSpec` et `check_security_references` s'en servent ; leurs messages sont inchangés, mot pour mot.
 
+### Les clés d'API d'un projet (analyse_fonctions_communes.md de Heddlo, lot 4)
+- **`security_keys_of(path, *, profile=None)`** (`loom_ia.config`) : les clés de `security.api_keys` d'un projet, lues comme `load_config` les lit : l'amorce, la config qu'elle désigne, les surcharges du profil (l'argument, `LOOM_PROFILE`, puis `profile:` de l'amorce). Une config donnée à la place de l'amorce est lue telle quelle, surcharges du profil comprises. Ni les agents ni le reste de la config ne sont lus ou exigés ; une clé invalide est refusée avec le fichier et sa place dans le YAML (`security.api_keys[k-crm].rate_limit.per_minute`). Une console reprend ainsi les clés d'un projet à partir du fichier que l'administrateur connaît, `loom-boot.yaml`.
+
 ## 2.0.26 - publiée
 
 ### Suite de ports des applications loom (`docs/analyse_ports.md`)

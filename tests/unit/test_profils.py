@@ -12,12 +12,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import DEV, MODEL, QUESTION, ConfigFactory, demo_agent
+import yaml
+from conftest import DEV, MODEL, QUESTION, ConfigFactory, boot, demo_agent, designated
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
-from loom_ia.config import ConfigError, load_config
+from loom_ia.config import ConfigError, load_config, security_keys_of
+from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.config.loader import PROFILE_ENV, chosen_profile
+from loom_ia.config.models import BOOT_FILE
 from loom_ia.core.model import JudgeWhen, TenantId
 from loom_ia.runtime import key_warnings, model_warnings, storage_warnings
 
@@ -373,3 +376,88 @@ async def test_a_missing_key_stops_prod(demo: ConfigFactory) -> None:
     with pytest.raises(ConfigError, match=r"Profil prod : .*sans api_key_env"):
         async with Loom.from_config(path, profile="prod"):
             pass
+
+
+# --- Les clés d'API d'un projet, pour une console (fonctions communes, K-1) ----------
+
+EMPREINTE = fingerprint(new_api_key())
+
+
+def cle(id_: str, **changes: Any) -> dict[str, Any]:
+    """Une clé d'API telle qu'on l'écrit dans ``security.api_keys``."""
+    return {"id": id_, "user": DEV, "hash": EMPREINTE, **changes}
+
+
+def projet(tmp_path: Path, config: dict[str, Any], **amorce: Any) -> Path:
+    """Une amorce à la racine du projet, sa config dans ``config/`` (``config.path``) ; rend l'amorce."""
+    (tmp_path / "config").mkdir()
+    fichier = tmp_path / "config" / "loom.yaml"
+    fichier.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return boot(fichier, at=tmp_path / BOOT_FILE, **amorce)
+
+
+# Ni modèle, ni agent, ni workpath : rien d'autre que les clés n'est exigé.
+CLES: dict[str, Any] = {
+    "security": {"api_keys": [cle("k-crm", rate_limit={"per_minute": 2_000_000})]},
+    "profiles": {"prod": {"security": {"api_keys": [cle("k-crm"), cle("k-planif", scopes=["run"])]}}},
+}
+
+
+def test_the_keys_of_a_project_are_read_through_its_boot_and_its_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(PROFILE_ENV, raising=False)
+    amorce = projet(tmp_path, CLES, profile="prod")
+    # Le profil de l'amorce : une liste se remplace, elle ne se fusionne pas.
+    assert [key.id for key in security_keys_of(amorce)] == ["k-crm", "k-planif"]
+    assert security_keys_of(amorce)[1].scopes == ("run",)
+    # L'option, puis LOOM_PROFILE, l'emportent sur l'amorce, comme pour load_config.
+    (crm,) = security_keys_of(amorce, profile="dev")
+    assert (crm.id, crm.hash, crm.rate_limit and crm.rate_limit.per_minute) == ("k-crm", EMPREINTE, 2_000_000)
+    monkeypatch.setenv(PROFILE_ENV, "dev")
+    assert [key.id for key in security_keys_of(str(amorce))] == ["k-crm"]
+    assert [key.id for key in security_keys_of(amorce, profile="prod")] == ["k-crm", "k-planif"]
+
+
+def test_a_config_given_in_place_of_the_boot_is_read_as_is(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(PROFILE_ENV, raising=False)
+    config = designated(projet(tmp_path, CLES, profile="prod"))
+    # Le profil de l'amorce n'est pas connu de qui ne la lit pas : celui de l'option.
+    assert [key.id for key in security_keys_of(config)] == ["k-crm"]
+    assert [key.id for key in security_keys_of(config, profile="prod")] == ["k-crm", "k-planif"]
+
+
+def test_a_project_without_keys_gives_none(tmp_path: Path) -> None:
+    assert security_keys_of(projet(tmp_path, {"workpath": "."})) == ()
+    partagee = tmp_path / "partagee.yaml"
+    partagee.write_text("security: {source: console}\n", encoding="utf-8")
+    # En sécurité partagée, les clés viennent de la console.
+    assert security_keys_of(partagee) == ()
+
+
+def test_the_keys_are_refused_with_the_file_and_the_place_in_the_yaml(tmp_path: Path) -> None:
+    amorce = projet(tmp_path, {"security": {"api_keys": [cle("k-crm", hash="sha256:court")]}})
+    with pytest.raises(ConfigError, match=r"config/loom\.yaml: security\.api_keys\[k-crm\] — Empreinte de clé attendue"):
+        security_keys_of(amorce)
+    designated(amorce).write_text(yaml.safe_dump({"security": {"api_keys": [cle("k-crm", rate_limit={"per_minute": 0})]}}), encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"security\.api_keys\[k-crm\]\.rate_limit\.per_minute — "):
+        security_keys_of(amorce)
+    designated(amorce).write_text("security: [k-crm]\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"security — "):
+        security_keys_of(amorce)
+
+
+def test_what_load_config_refuses_before_the_keys_is_refused_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(PROFILE_ENV, raising=False)
+    with pytest.raises(ConfigError, match=r"Fichier introuvable : .*absent\.yaml"):
+        security_keys_of(tmp_path / "absent.yaml")
+    amorce = projet(tmp_path, CLES)
+    with pytest.raises(ConfigError, match=r"Profil 'staging' inconnu \(option\)"):
+        security_keys_of(amorce, profile="staging")
+    designated(amorce).write_text(yaml.safe_dump({**CLES, "profile": "prod"}), encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"profile — refusé dans la config"):
+        security_keys_of(amorce)
+    designated(amorce).unlink()
+    with pytest.raises(ConfigError, match=r"loom-boot\.yaml: config — fichier de config introuvable"):
+        security_keys_of(amorce)
+    amorce.write_text("version: 1\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"loom-boot\.yaml: config — "):
+        security_keys_of(amorce)

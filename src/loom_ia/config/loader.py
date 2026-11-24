@@ -27,16 +27,16 @@ import os
 import re
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 import yaml
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, PythonTool, SourceTools, system_text
 from loom_ia.config.console import plain_text_refusal
 from loom_ia.config.env_file import ENV_FILE_KEY
 from loom_ia.config.errors import ConfigError, from_validation
-from loom_ia.config.models import BOOT_FILE, CONFIG_FILE, PROFILES, BootConfig, LoomConfig, Profile, StorageConfig, TenantSpec
+from loom_ia.config.models import BOOT_FILE, CONFIG_FILE, PROFILES, ApiKey, BootConfig, LoomConfig, Profile, StorageConfig, TenantSpec
 from loom_ia.config.yaml_source import DuplicateKey, load_yaml
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -85,6 +85,9 @@ WHOLE: Final = frozenset({"params", "llm"})
 ils sont transmis tels quels au fournisseur, et une moitié de l'un n'a pas
 de sens (décision de conception, conception §17.9).
 """
+_KEYS_IN_PLACE: Final = TypeAdapter(dict[Literal["security"], dict[Literal["api_keys"], tuple[ApiKey, ...]]])
+"""Les clés d'API validées à leur place dans le YAML : une erreur s'y nomme
+``security.api_keys[k-crm].rate_limit``, comme ``load_config`` la nomme."""
 
 
 def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
@@ -123,9 +126,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     boot_dir = boot_file.parent
     active, _ = chosen_profile(profile, boot.profile)
     config_dir = (boot_dir / boot.config.path).resolve()
-    root = config_dir / boot.config.file
-    if not root.is_file():
-        raise ConfigError(f"config — fichier de config introuvable : {root} (config.path et config.file de l'amorce)", source=boot_file)
+    root = _designated(boot, boot_file)
     data = _read_yaml(root)
     _check_boot_keys(data, source=root)
     data = _merged(data, active, source=root)
@@ -204,6 +205,54 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     return loaded
 
 
+def security_keys_of(path: str | Path, *, profile: str | None = None) -> tuple[ApiKey, ...]:
+    """Les clés d'API qu'un projet déclare, lues comme ``load_config`` les lit (fonctions communes, K-1).
+
+    Pour une console qui reprend les clés d'un projet (``heddlo security import
+    --keys-from``) : l'amorce, la config qu'elle désigne, puis les surcharges
+    du profil, choisi comme ``load_config`` le choisit (l'argument,
+    ``LOOM_PROFILE``, ``profile:`` de l'amorce). Une config donnée à la place
+    de l'amorce, reconnue à ses clés comme ``read_boot`` la reconnaît, est lue
+    telle quelle, surcharges du profil comprises (décision D-8). Ni les agents
+    ni le reste de la config ne sont lus ou exigés.
+
+    Args:
+        path: Chemin de l'amorce (``loom-boot.yaml``) ou de la config.
+        profile: Profil donné par l'appelant (``--profile``).
+
+    Returns:
+        Les clés de ``security.api_keys``, dans leur ordre ; aucune si la
+        config n'en déclare pas.
+
+    Raises:
+        ConfigError: Fichier absent ou illisible, YAML invalide, amorce
+            invalide, config désignée absente, profil inconnu, ``profile`` ou
+            ``env_file`` dans la config, clé invalide. Le message nomme le
+            fichier et le chemin dans le YAML.
+    """
+    given = Path(path).resolve()
+    if not given.is_file():
+        raise ConfigError(f"Fichier introuvable : {given} (l'amorce {BOOT_FILE} du projet, ou sa config)")
+    data = _read_yaml(given)
+    if _is_config(data):
+        root, config, in_boot = given, data, None
+    else:
+        boot = _validate(BootConfig, data, source=given)
+        root = _designated(boot, given)
+        config, in_boot = _read_yaml(root), boot.profile
+    active, _ = chosen_profile(profile, in_boot)
+    _check_boot_keys(config, source=root)
+    security: object = _merged(config, active, source=root).get("security", {})
+    if isinstance(security, dict):
+        # Seules les clés sont validées : le reste de la section n'est pas exigé.
+        security = {"api_keys": cast("dict[str, Any]", security).get("api_keys", ())}
+    declared = {"security": security}
+    try:
+        return _KEYS_IN_PLACE.validate_python(declared)["security"]["api_keys"]
+    except ValidationError as exc:
+        raise from_validation(exc, source=root, data=declared) from exc
+
+
 def read_boot(path: Path) -> BootConfig:
     """L'amorce (``loom-boot.yaml``), lue et validée.
 
@@ -225,12 +274,29 @@ def read_boot(path: Path) -> BootConfig:
     if not path.is_file():
         raise ConfigError(f"Amorce introuvable : {path}. Un projet loom commence par un {BOOT_FILE}, qui dit où lire la config :\n{BOOT_EXAMPLE}")
     data = _read_yaml(path)
-    if "config" not in data and CONFIG_KEYS & data.keys():
+    if _is_config(data):
         raise ConfigError(
             f"ce fichier est une config de loom, pas une amorce : écrire un {BOOT_FILE} qui la désigne, et le donner à --config :\n{BOOT_EXAMPLE}",
             source=path,
         )
     return _validate(BootConfig, data, source=path)
+
+
+def _designated(boot: BootConfig, boot_file: Path) -> Path:
+    """Le fichier de config que l'amorce désigne, relatif à son dossier.
+
+    Raises:
+        ConfigError: Ce fichier n'existe pas.
+    """
+    root = (boot_file.parent / boot.config.path).resolve() / boot.config.file
+    if not root.is_file():
+        raise ConfigError(f"config — fichier de config introuvable : {root} (config.path et config.file de l'amorce)", source=boot_file)
+    return root
+
+
+def _is_config(data: dict[str, Any]) -> bool:
+    """Vrai pour une config de loom, reconnue à ses clés ; faux pour une amorce, qui a ``config``."""
+    return "config" not in data and bool(CONFIG_KEYS & data.keys())
 
 
 def chosen_profile(given: str | None, in_file: object = None) -> tuple[Profile | None, str]:

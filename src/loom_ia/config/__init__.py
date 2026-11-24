@@ -5,6 +5,7 @@
   ``loom-boot.yaml`` (``BootConfig``) ;
 - ``loader`` : ``load_config``, qui lit ``loom.yaml``, les agents, les
   prompts et les skills, applique le profil et contrôle le tout ;
+  ``security_keys_of``, les seules clés d'API d'un projet, lues de même ;
 - ``env_file`` : le fichier d'environnement du projet (``.env``) ;
 - ``references`` : ``imports``, registre des outils, ``module:attr`` ;
 - ``telemetry`` : capture, masquage et collecteurs ;
@@ -17,7 +18,7 @@
 from loom_ia.config.env_file import EnvFileReport, load_env_file
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.keys import fingerprint, new_api_key
-from loom_ia.config.loader import load_config
+from loom_ia.config.loader import load_config, security_keys_of
 from loom_ia.config.models import ApiKey, AuditConfig, BootConfig, LoomConfig, SecurityConfig, TenantSpec
 from loom_ia.config.references import Registry, import_modules, resolve
 from loom_ia.config.schema import agent_json_schema, boot_json_schema, config_json_schema
@@ -41,4 +42,5 @@ __all__ = [
     "load_env_file",
     "new_api_key",
     "resolve",
+    "security_keys_of",
 ]
