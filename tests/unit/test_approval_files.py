@@ -174,6 +174,7 @@ async def test_details_name_the_files_and_the_preview(bureau: Build) -> None:
     assert detail.files == ("images/logo.png",)
     assert detail.preview is True
     assert detail.arguments["title"] == "Devis D-042"
+    assert detail.masked == (), "rien de masqué : une console peut offrir la correction"
 
 
 async def test_a_tool_without_the_protocols_shows_its_arguments_only(bureau: Build) -> None:
@@ -181,6 +182,7 @@ async def test_a_tool_without_the_protocols_shows_its_arguments_only(bureau: Bui
         (detail,) = await loom.approval_details(run_id, session_id=SessionId("mail"), user=DEV)
         assert (detail.files, detail.preview) == ((), False)
         assert "mme.martin@example.com" not in str(detail.arguments), "masqué par les motifs de telemetry.redaction"
+        assert detail.masked == ("destinataire",), "le motif email, fourni, s'applique toujours"
         with pytest.raises(ApprovalFileRefused, match="no_preview"):
             await loom.approval_preview(run_id, call_id, session_id=SessionId("mail"), user=DEV)
         with pytest.raises(ApprovalFileRefused, match="not_cited"):
@@ -409,7 +411,7 @@ async def test_the_rest_serves_details_files_and_previews(bureau: Build) -> None
             as_lea = await http.get(f"/v1/runs/{run_id}/approvals", params={"session_id": "reecrire", "as_user": "lea"})
     assert details.status_code == 200
     ((detail,),) = [details.json()]
-    assert (detail["call_id"], detail["files"], detail["preview"]) == (call_id, ["sortie/note.txt"], True)
+    assert (detail["call_id"], detail["files"], detail["preview"], detail["masked"]) == (call_id, ["sortie/note.txt"], True, [])
     assert (cited.status_code, cited.content, cited.headers["content-type"].split(";")[0]) == (200, b"Ancien texte.", "text/plain")
     assert (rendered.status_code, rendered.content) == (200, b"Nouveau texte.")
     assert (absent.status_code, absent.json()["code"]) == (404, "not_cited")

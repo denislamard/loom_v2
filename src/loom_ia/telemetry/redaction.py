@@ -147,3 +147,18 @@ class Redactor:
                 masked[unique] = self.json(item)
             return masked
         return value
+
+    def masked_keys(self, value: Mapping[str, JsonValue]) -> tuple[str, ...]:
+        """Les clés de premier niveau d'un objet JSON que le masquage change, dans leur nom ou dans leur valeur.
+
+        Un masque n'importe où dans une valeur, liste ou objet imbriqué compris,
+        désigne sa clé de premier niveau ; un motif qui ne finit pas à temps
+        aussi, puisqu'il masque tout le texte.
+
+        Args:
+            value: L'objet, tel qu'avant masquage.
+
+        Returns:
+            Ces clés, dans l'ordre de ``value`` ; vide si le masquage n'y change rien.
+        """
+        return tuple(key for key, item in value.items() if self.text(key) != key or self.json(item) != item)

@@ -754,10 +754,16 @@ class ApprovalDetail(PendingApproval):
             désigne (``CitingTool``) : ``approval_file`` les sert.
         preview: Vrai si l'outil sait rendre le fichier que l'appel écrirait
             (``PreviewingTool``) : ``approval_preview`` le sert.
+        masked: Les clés de premier niveau des ``arguments`` que le masquage a
+            changées, dans leur nom ou dans leur valeur, dans l'ordre des
+            arguments. Corriger l'appel (``amend``) avec ces arguments renverrait
+            leur valeur masquée : une console n'offre pas la correction tant que
+            ce champ n'est pas vide.
     """
 
     files: tuple[str, ...] = ()
     preview: bool = False
+    masked: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3147,10 +3153,11 @@ class Loom:
         """Les demandes en attente du run et de ses sous-runs que ``user`` peut trancher, en détail.
 
         Chacune avec ses arguments et son motif (masqués par les motifs de
-        ``telemetry.redaction``), les fichiers que l'appel désigne, et si un
-        aperçu existe. Vide si rien n'attend. Il faut ``read_content`` sur
-        l'agent de chaque demande, et pouvoir la trancher (les mêmes règles
-        qu'``approve``) : ``AccessDenied`` sinon, si aucune ne reste.
+        ``telemetry.redaction``), les clés des arguments que ce masquage a
+        changées, les fichiers que l'appel désigne, et si un aperçu existe.
+        Vide si rien n'attend. Il faut ``read_content`` sur l'agent de chaque
+        demande, et pouvoir la trancher (les mêmes règles qu'``approve``) :
+        ``AccessDenied`` sinon, si aucune ne reste.
         """
         actor = self._actor(user)
         tenant = tenant_id or actor.tenant
@@ -3168,6 +3175,7 @@ class Loom:
                         "agent": owner.agent,
                         "files": cited_files(tool, request.arguments),
                         "preview": previews(tool),
+                        "masked": redactor.masked_keys(request.arguments),
                     }
                 )
             )
