@@ -2,6 +2,8 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.27 - non publiée
+
 ## 2.0.26 - publiée
 
 ### Suite de ports des applications loom (`docs/analyse_ports.md`)
