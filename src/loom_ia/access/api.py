@@ -746,8 +746,9 @@ class ApprovalFileRefused(ValueError):
 class ApprovalDetail(PendingApproval):
     """Une demande en attente, telle que la voit qui peut la trancher (§ 6.7 de l'analyse de l'exportateur).
 
-    Ses ``arguments`` et son ``reason`` sont masqués par les motifs de
-    ``telemetry.redaction``.
+    Ses ``arguments`` et son ``reason`` sont ceux de l'appel, sans les motifs
+    de ``telemetry.redaction`` : seul qui a ``read_content`` sur l'agent les
+    obtient (``Loom.approval_details``).
 
     Attributes:
         files: Les fichiers que l'appel lit, remplace ou supprime, que l'outil
