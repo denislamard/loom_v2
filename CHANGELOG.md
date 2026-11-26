@@ -2,7 +2,9 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.27 - non publiée
+## 2.0.28 - non publiée
+
+## 2.0.27 - publiée
 
 ### Fonctions communes avec la console (analyse_fonctions_communes.md de Heddlo, lot 1)
 - **`grants(actor, agents)`** (`access/authz.py`) : les permissions d'un acteur, agent par agent (`Coverage` : les agents couverts, `None` pour tous), avec les règles de `require` et de `require_decision` ; pour `approve`, `self_approve` et `amend`, les agents dont un même rôle peut être approbateur d'au moins une demande. La console calcule ainsi les droits qu'elle affiche sans réécrire la matrice (`docs/loom_role_user.md` § 4.5).
