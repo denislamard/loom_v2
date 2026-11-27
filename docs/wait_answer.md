@@ -173,7 +173,10 @@ Le message ne devient pas une réponse, et ouvre un nouveau tour, dans ces cas :
 - des pièces jointes, ou des écritures du state ;
 - un `run_id` choisi par l'appelant ;
 - la question attend un autre agent ;
-- aucun agent du client ne déclare `loom.ask` (dans ce cas, la session n'est même pas relue).
+- aucun agent du client ne déclare `loom.ask` (dans ce cas, la session n'est même pas relue) ;
+- l'appelant ne peut pas répondre à la question (`answer` sur l'agent qui l'a posée, sous-agent compris). Depuis 2.0.28 : avant, son message levait `AccessDenied`, et il ne pouvait plus écrire dans la session tant que la question attendait. Une ligne `INFO` le dit (« Message de luc pris comme nouveau tour… »).
+
+`RunResult.answerable` et `SessionInfo.answerable` (2.0.28) disent à quelles questions en attente l'appelant peut répondre ; la CLI et le texte MCP ne proposent de répondre qu'à celles-là.
 
 Le modèle du nouveau tour reçoit alors une note : « au début de ce tour, une question posée plus tôt dans cette conversation attend encore la réponse de l'utilisateur : … Elle reste posée ; ne la repose pas. »
 

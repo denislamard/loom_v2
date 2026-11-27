@@ -23,7 +23,7 @@ classifiers = [
 # loom-chat importe des modules internes de loom-ia et suit ses versions : la même, exactement.
 # tests/test_package.py vérifie que les deux numéros restent égaux.
 dependencies = [
-    "loom-ia[anthropic,console]==2.0.27",
+    "loom-ia[anthropic,console]==2.0.28",
     "pyyaml>=6",
     "rich>=15",
     "textual>=8.2,<9",

@@ -72,14 +72,14 @@ celles du state de session.
 import asyncio
 import logging
 import time
-from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
-from contextlib import AsyncExitStack, aclosing, asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager, AsyncExitStack, aclosing, asynccontextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from types import MappingProxyType
-from typing import Final, Literal, Protocol, cast
+from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
 from jsonschema.protocols import Validator
@@ -89,11 +89,14 @@ from pydantic import JsonValue
 from loom_ia.core import tool_threads
 from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator
 from loom_ia.core.events import (
+    ApprovalExpired,
     ApprovalGranted,
     ApprovalRejected,
     ApprovalRequested,
     ArtifactStored,
     CircuitOpened,
+    DurablePayload,
+    Event,
     IdempotencyReused,
     PolicyDecided,
     QuestionAnswered,
@@ -114,6 +117,7 @@ from loom_ia.core.model import (
     Approval,
     ApprovalDecision,
     ApprovalSettings,
+    Approved,
     Approver,
     Approvers,
     ArtifactRefBlock,
@@ -190,6 +194,22 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOOL_TIMEOUT: Final = 30.0
 """Délai par défaut d'un outil ordinaire, en secondes (``execution.tools.timeout``)."""
+
+ELSEWHERE_POLL: Final = 20.0
+"""Relecture du journal, en secondes, pendant qu'un approbateur ou un répondeur en ligne a la main.
+
+Une décision écrite par ce process (``Loom.approve``, la console), ou rapportée
+par le bus, arrive tout de suite par l'écoute du journal. Celle d'un autre
+process sans bus (``loom approve`` dans un autre terminal) est vue à la
+relecture suivante : c'est le rythme du renouvellement du bail (un tiers de
+60 s).
+"""
+EXPIRY_MARGIN: Final = 0.05
+"""Marge, en secondes, ajoutée à l'échéance d'une demande avant de rendre la main.
+
+Le run qui se met en pause trouve alors la demande périmée, et l'expire
+aussitôt (``approval.on_expiry``), au lieu d'attendre un réveil différé.
+"""
 
 type CallOrder = Literal["effects", "free"]
 """Ordre des appels d'un même tour (``execution.tools.order``).
@@ -281,6 +301,29 @@ class Stored:
 
 
 @dataclass(frozen=True, slots=True)
+class Recorded:
+    """Décision ou réponse déjà au journal : le moteur l'applique sans la réécrire.
+
+    Émise quand un approbateur (ou un répondeur) en ligne avait la main : la
+    décision vient de lui, écrite par l'exécuteur sans doublon possible, ou
+    d'un autre accès (``Loom.approve``, la console, la CLI) qui a tranché
+    pendant qu'il attendait.
+
+    Attributes:
+        call_id: L'appel tranché.
+        event: L'événement écrit.
+    """
+
+    call_id: str
+    event: Event
+
+    @property
+    def payload(self) -> DurablePayload:
+        """La décision ou la réponse, telle qu'elle est au journal."""
+        return self.event.payload
+
+
+@dataclass(frozen=True, slots=True)
 class Decided:
     """Décision ou contrôle d'une politique d'outil, à écrire avant l'événement concerné.
 
@@ -308,8 +351,9 @@ type ToolEvent = (
     | QuestionAnswered
     | QuestionExpired
     | Waiting
+    | Recorded
 )
-"""Ce que ``run_batch`` émet, dans l'ordre où le moteur l'écrit (``Waiting`` n'est pas écrit)."""
+"""Ce que ``run_batch`` émet, dans l'ordre où le moteur l'écrit (``Waiting`` et ``Recorded`` ne sont pas écrits)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -819,9 +863,12 @@ class ToolExecutor:
         Une décision ``Fail`` à ``before_tool`` arrête le lot avant tout
         lancement. ``on_chunk`` : diffusion en direct, pour un rôle terminal
         seul dans son lot. ``approver`` : approbateur en ligne (point 28) — il
-        tranche ici même, et le run ne passe jamais par ``PAUSED`` ; les
-        arguments qu'il corrige sont validés comme ceux du modèle. Au rejeu,
-        c'est le rejeu qui tranche (``ToolReplay.approve``). ``session_state`` :
+        tranche ici même, sans que le run passe par ``PAUSED`` ; les
+        arguments qu'il corrige sont validés comme ceux du modèle. Une décision
+        écrite par un autre accès pendant qu'il attend l'emporte : il est
+        abandonné, et la première décision au journal vaut ; à l'échéance de
+        la demande, le run se met en pause et l'expire. Au rejeu, c'est le
+        rejeu qui tranche (``ToolReplay.approve``). ``session_state`` :
         le state de la session à l'ouverture du run ; les outils voient en plus
         ce que le run a écrit avant ce lot.
 
@@ -837,7 +884,8 @@ class ToolExecutor:
             summary: Dernier résumé de compaction.
             approver: Approbateur en ligne.
             session_state: State de la session à l'ouverture du run.
-            answerer: Répondeur en ligne aux questions (``ask``).
+            answerer: Répondeur en ligne aux questions (``ask``) ; comme
+                l'approbateur, un autre accès peut répondre à sa place.
 
         Yields:
             Les événements du lot, dans l'ordre où le moteur les écrit :
@@ -847,6 +895,13 @@ class ToolExecutor:
             ``Waiting`` pour un sous-agent qui attend.
         """
         policies = policies or Policies()
+        # Ce qu'il faut pour qu'un autre accès tranche pendant qu'un approbateur ou un
+        # répondeur en ligne attend. Le rejeu tranche à partir du journal, seul.
+        elsewhere = (
+            _Elsewhere(writer, scope, spans, step_span, ELSEWHERE_POLL)
+            if self.replay is None and writer is not None and scope is not None and spans is not None
+            else None
+        )
         if self.replay is not None:
             approver = partial(self.replay.approve, state.run_id)
             # Un rejeu écrit avant les questions n'a pas ``answer`` : personne ne
@@ -895,7 +950,7 @@ class ToolExecutor:
                 # Une question à l'utilisateur (docs/wait_answer.md) : rien ne s'exécute,
                 # ni politique ni approbation. La réponse déjà au journal part au
                 # modèle ; sinon la question s'écrit, et le run attendra.
-                async for event in self._ask(call, prepared, state, answerer, held_questions):
+                async for event in self._ask(call, prepared, state, answerer, held_questions, elsewhere):
                     yield event
                 continue
             ordered = self.order == "effects"
@@ -999,10 +1054,26 @@ class ToolExecutor:
                 continue
             # Approbateur en ligne : il décide dans la boucle. La demande et sa
             # décision sont journalisées quand même — c'est le seul endroit où
-            # l'on saura qui a validé quoi (point 17).
+            # l'on saura qui a validé quoi (point 17). Un autre accès peut
+            # trancher pendant qu'il attend : la première décision au journal vaut.
+            mark = elsewhere.mark if elsewhere is not None else 0
             yield request
-            decided = await approver(pending)
-            yield _decision(request, decided)
+            if elsewhere is None:
+                decided = await approver(pending)
+                yield _decision(request, decided)
+            else:
+                settled = await elsewhere.approval(approver, pending, request, mark)
+                if settled is None:
+                    # Échéance passée sans décision : la demande reste au journal, le
+                    # run se met en pause et l'expire (``approval.on_expiry``).
+                    blocked.hold(prepared)
+                    continue
+                yield settled
+                found = _as_decision(settled)
+                if found is None:
+                    # Expirée au journal : le lot suivant conclut l'appel.
+                    continue
+                decided = found
             if isinstance(decided, Rejected):
                 text = _refused(request.tool_name, "rejected", decided.reason, decided.by)
                 yield _completed(call, ToolOutput.error(text), started=None)
@@ -1146,10 +1217,22 @@ class ToolExecutor:
                 continue
             # L'approbateur tranche ici, mais l'appel ne peut plus repartir :
             # son lot est fini. Accordé, il repartira au tour suivant, avec
-            # la décision au journal ; refusé, il se conclut en erreur.
+            # la décision au journal ; refusé, il se conclut en erreur. Comme
+            # plus haut, un autre accès peut trancher pendant l'attente.
+            mark = elsewhere.mark if elsewhere is not None else 0
             yield request
-            decided = await approver(pending)
-            yield _decision(request, decided)
+            if elsewhere is None:
+                decided = await approver(pending)
+                yield _decision(request, decided)
+            else:
+                settled = await elsewhere.approval(approver, pending, request, mark)
+                if settled is None:
+                    continue
+                yield settled
+                found = _as_decision(settled)
+                if found is None:
+                    continue
+                decided = found
             if isinstance(decided, Rejected):
                 text = _refused(request.tool_name, "rejected", decided.reason, decided.by)
                 yield _completed(item.call, ToolOutput.error(text), started=None)
@@ -1186,12 +1269,15 @@ class ToolExecutor:
         state: RunState,
         answerer: Answerer | None,
         held: list[QuestionAsked],
+        elsewhere: _Elsewhere | None = None,
     ) -> AsyncGenerator[ToolEvent]:
         """Un appel à ``ask`` : sa réponse, ou sa question à écrire (``docs/wait_answer.md``).
 
         Une réponse déjà au journal, ou donnée en ligne par ``answerer``, part
         au modèle ; sinon la question rejoint ``held`` et le run attendra en
-        ``PAUSED``.
+        ``PAUSED``. Avec ``elsewhere``, une réponse écrite par un autre accès
+        pendant que le répondeur en ligne attend part au modèle à sa place ; à
+        l'échéance de la question, elle reste posée et le run l'expire en pause.
         """
         known = state.question(call.call_id)
         if known is not None and not known.open:
@@ -1216,8 +1302,21 @@ class ToolExecutor:
         if answerer is None:
             held.append(request)
             return
+        mark = elsewhere.mark if elsewhere is not None else 0
         yield request
-        reply = await answerer(request.as_pending(state.run_id, state.agent))
+        asked = request.as_pending(state.run_id, state.agent)
+        if elsewhere is None:
+            reply = await answerer(asked)
+        else:
+            raced = await elsewhere.race(answerer(asked), call.call_id, "question", mark, request.expire_at)
+            if raced is None:
+                # Échéance passée sans réponse : la question reste posée, le run l'expire en pause.
+                return
+            if isinstance(raced, Recorded):
+                yield raced
+                yield _completed(call, _replied(raced, asked), started=None)
+                return
+            reply = raced
         if isinstance(reply, NoAnswer):
             if reply.expired:
                 # Close sans réponse (rejeu d'une expiration, éval sans humain).
@@ -1240,7 +1339,7 @@ class ToolExecutor:
                 problem,
             )
             return
-        yield QuestionAnswered(
+        answered = QuestionAnswered(
             call_id=call.call_id,
             tool_name=call.name,
             answers=reply.answers,
@@ -1248,7 +1347,14 @@ class ToolExecutor:
             by=reply.by,
             via=reply.via,
         )
-        pending = request.as_pending(state.run_id, state.agent).model_copy(update={"reply": reply})
+        if elsewhere is not None:
+            # Écrite sans doublon : si un autre accès a répondu entre-temps, c'est sa réponse qui part.
+            recorded = await elsewhere.record(answered, call.call_id, "question", mark)
+            yield recorded
+            yield _completed(call, _replied(recorded, asked), started=None)
+            return
+        yield answered
+        pending = asked.model_copy(update={"reply": reply})
         yield _completed(call, questions.answered_output(pending), started=None)
 
     # --- Interne ---------------------------------------------------------
@@ -1928,6 +2034,237 @@ def _decision(request: ApprovalRequested, decided: ApprovalDecision) -> Approval
         roles=decided.roles,
         self_approved=decided.self_approved,
     )
+
+
+type _Kind = Literal["approval", "question"]
+"""Ce qu'un accès tranche : une demande d'approbation, ou une question à l'utilisateur."""
+
+
+@runtime_checkable
+class _Listening(Protocol):
+    """Journal qui remet à ses abonnés ce qui s'écrit (``NotifyingEventStore``)."""
+
+    def listen(
+        self,
+        sink: Callable[[Event], None],
+        run_id: RunId | None = None,
+        *,
+        accept: Callable[[Event], bool] | None = None,
+        own: bool = False,
+    ) -> AbstractContextManager[Callable[[Event], None]]:
+        """Appelle ``sink`` à chaque écriture acceptée, le temps du bloc."""
+        ...
+
+
+class _DecidedElsewhere(Exception):
+    """Une décision (ou une réponse) est déjà au journal pour cet appel : la nôtre n'est pas écrite.
+
+    Attributes:
+        event: La décision déjà écrite.
+    """
+
+    def __init__(self, event: Event) -> None:
+        super().__init__(f"{event.type} déjà écrit pour l'appel (seq {event.seq})")
+        self.event = event
+
+
+def _closes(event: Event, run_id: RunId, call_id: str, kind: _Kind) -> bool:
+    """Vrai si ``event`` tranche la demande (ou la question) ``call_id`` du run ``run_id``."""
+    if event.run_id != run_id:
+        return False
+    payload = event.payload
+    if kind == "approval":
+        return isinstance(payload, ApprovalGranted | ApprovalRejected | ApprovalExpired) and payload.call_id == call_id
+    return isinstance(payload, QuestionAnswered | QuestionExpired) and payload.call_id == call_id
+
+
+def _forget[T](task: asyncio.Future[T]) -> None:
+    """Relève l'issue d'une attente abandonnée, pour qu'asyncio ne la signale pas."""
+    if not task.cancelled():
+        task.exception()
+
+
+@dataclass(frozen=True, slots=True)
+class _Elsewhere:
+    """Attente d'un approbateur ou d'un répondeur en ligne, qu'un autre accès peut devancer.
+
+    Le run qui attend en ligne n'est pas en pause : sans cela, une décision
+    écrite ailleurs (``Loom.approve``, la console, la CLI) restait au journal
+    pendant que l'exécuteur attendait toujours, et la reprise attendait la fin
+    du pilotage. Ici, l'attente prend la première des deux, et la décision en
+    ligne s'écrit sous une garde : jamais deux décisions pour un appel.
+
+    Attributes:
+        writer: L'écrivain du pilote.
+        scope: Le run qui attend.
+        spans: Span de chaque appel du lot.
+        step_span: Span de l'étape.
+        poll: Relecture du journal, en secondes.
+    """
+
+    writer: SessionWriter
+    scope: RunScope
+    spans: Mapping[str, SpanId]
+    step_span: SpanId | None
+    poll: float
+
+    @property
+    def mark(self) -> int:
+        """Position du journal à relever avant d'écrire la demande : la décision viendra après."""
+        return self.writer.last_seq
+
+    async def approval(
+        self,
+        approver: Approver,
+        pending: PendingApproval,
+        request: ApprovalRequested,
+        mark: int,
+    ) -> Recorded | None:
+        """La décision de la demande : celle de l'approbateur en ligne, ou celle d'un autre accès.
+
+        Args:
+            approver: L'approbateur en ligne.
+            pending: La demande, telle qu'il la voit.
+            request: La demande, telle qu'elle est écrite.
+            mark: Position relevée avant d'écrire la demande.
+
+        Returns:
+            La décision au journal ; ``None`` si l'échéance de la demande est
+            passée sans décision.
+        """
+        raced = await self.race(approver(pending), request.call_id, "approval", mark, request.expire_at)
+        if raced is None or isinstance(raced, Recorded):
+            return raced
+        return await self.record(_decision(request, raced), request.call_id, "approval", mark)
+
+    async def race[T](self, local: Awaitable[T], call_id: str, kind: _Kind, mark: int, until: datetime | None) -> T | Recorded | None:
+        """Attend la réponse en ligne ou une décision écrite ailleurs, la première venue.
+
+        Si les deux sont là, le journal l'emporte. L'attente en ligne
+        abandonnée est annulée, et sa réponse tardive ignorée. Un journal
+        illisible n'interrompt pas l'attente : elle continue en ligne seule.
+
+        Args:
+            local: L'attente en ligne.
+            call_id: L'appel concerné.
+            kind: Demande d'approbation ou question.
+            mark: Position relevée avant d'écrire la demande.
+            until: Échéance de la demande ; ``None`` : aucune.
+
+        Returns:
+            La réponse en ligne ; ``Recorded`` pour une décision d'un autre
+            accès ; ``None`` si l'échéance est passée.
+        """
+        mine: asyncio.Future[T] = asyncio.ensure_future(local)
+        theirs = asyncio.ensure_future(self._seen(call_id, kind, mark))
+        waiting: set[asyncio.Future[T] | asyncio.Future[Event]] = {mine, theirs}
+        try:
+            while True:
+                left = None if until is None else max(0.0, (until - datetime.now(UTC)).total_seconds()) + EXPIRY_MARGIN
+                done, _ = await asyncio.wait(waiting, timeout=left, return_when=asyncio.FIRST_COMPLETED)
+                if not done:
+                    return None
+                if theirs in done:
+                    error = theirs.exception()
+                    if error is None:
+                        return Recorded(call_id, theirs.result())
+                    logger.warning(
+                        "Run %s : journal illisible pendant l'attente de %s (%s) — l'attente continue en ligne",
+                        self.scope.run_id,
+                        call_id,
+                        error,
+                    )
+                    waiting = {mine}
+                    if mine not in done:
+                        continue
+                return mine.result()
+        finally:
+            for task in (mine, theirs):
+                if not task.done():
+                    task.cancel()
+                    task.add_done_callback(_forget)
+
+    async def record(self, payload: ApprovalGranted | ApprovalRejected | QuestionAnswered, call_id: str, kind: _Kind, mark: int) -> Recorded:
+        """Écrit la décision en ligne, sauf si une autre est déjà au journal : c'est alors elle qui vaut.
+
+        Args:
+            payload: La décision (ou la réponse) en ligne.
+            call_id: L'appel concerné.
+            kind: Demande d'approbation ou question.
+            mark: Position relevée avant d'écrire la demande.
+
+        Returns:
+            La décision qui vaut, telle qu'elle est au journal.
+        """
+        run_id = self.scope.run_id
+
+        def undecided(landed: Sequence[Event]) -> None:
+            for event in landed:
+                if _closes(event, run_id, call_id, kind):
+                    raise _DecidedElsewhere(event)
+
+        draft = self.scope.draft(payload, span_id=self.spans.get(call_id), parent_span_id=self.step_span)
+        try:
+            written = await self.writer.append([draft], guard=undecided, since=mark)
+        except _DecidedElsewhere as found:
+            return Recorded(call_id, found.event)
+        return Recorded(call_id, written[-1])
+
+    async def _seen(self, call_id: str, kind: _Kind, mark: int) -> Event:
+        """La décision de ``call_id`` écrite ailleurs : par l'écoute du journal, ou à sa relecture."""
+        run_id = self.scope.run_id
+        found: asyncio.Future[Event] = asyncio.get_running_loop().create_future()
+
+        def matches(event: Event) -> bool:
+            return _closes(event, run_id, call_id, kind)
+
+        def sink(event: Event) -> None:
+            if not found.done():
+                found.set_result(event)
+
+        store = self.writer.store
+        listening = store.listen(sink, run_id, accept=matches) if isinstance(store, _Listening) else nullcontext(sink)
+        with listening:
+            while True:
+                for event in await store.read(self.writer.tenant_id, self.writer.session_id, after_seq=mark, run_id=run_id):
+                    if matches(event):
+                        return event
+                done, _ = await asyncio.wait({found}, timeout=self.poll)
+                if done:
+                    return found.result()
+
+
+def _as_decision(recorded: Recorded) -> ApprovalDecision | None:
+    """La décision au journal, comme si l'approbateur en ligne l'avait rendue ; ``None`` pour une expiration."""
+    match recorded.event.payload:
+        case ApprovalGranted() as granted:
+            return Approved(
+                by=granted.by,
+                reason=granted.reason,
+                arguments=granted.arguments,
+                via=granted.via,
+                roles=granted.roles,
+                self_approved=granted.self_approved,
+            )
+        case ApprovalRejected() as refused:
+            return Rejected(
+                reason=refused.reason,
+                by=refused.by,
+                via=refused.via,
+                roles=refused.roles,
+                self_approved=refused.self_approved,
+            )
+        case _:
+            return None
+
+
+def _replied(recorded: Recorded, asked: PendingQuestion) -> ToolOutput:
+    """Ce que le modèle lit d'une question tranchée au journal : la réponse, ou l'expiration."""
+    payload = recorded.event.payload
+    if isinstance(payload, QuestionAnswered):
+        reply = QuestionReply(answers=payload.answers, text=payload.text, by=payload.by, via=payload.via)
+        return questions.answered_output(asked.model_copy(update={"reply": reply}))
+    return questions.expired_output(asked)
 
 
 def _refused(tool_name: str, verdict: str, reason: str, by: str | None = None) -> str:

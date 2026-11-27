@@ -1178,10 +1178,11 @@ class SecurityConfig(DomainModel):
 
     **Sécurité partagée** (``source: console``, analyse_referentiel_utilisateurs.md
     de Heddlo) : les rôles, les utilisateurs et les clés viennent de la console,
-    par le canal (``security.sync``) ; ils sont refusés dans ``loom.yaml``, et
-    ``audit.path`` vaut ``data/audit.jsonl`` par défaut. La part reçue est
-    posée par ``Loom.apply_security`` (``console/shared.py``), sans repasser par
-    ce validateur.
+    par le canal (``security.sync``) ; ``audit.path`` vaut ``data/audit.jsonl`` par
+    défaut. ``loom.yaml`` peut en donner une amorce, utilisée seulement sans cache
+    valide et jusqu'à la première part (décision D-A) : la part la remplace, et le
+    cache la fait ignorer. La part reçue est posée par ``Loom.apply_security``
+    (``console/shared.py``), sans repasser par ce validateur.
 
     Exemple ::
 
@@ -1221,22 +1222,6 @@ class SecurityConfig(DomainModel):
             return {**fields, "audit": {"path": str(SHARED_AUDIT)}}
         return fields
 
-    @model_validator(mode="after")
-    def _one_source(self) -> Self:
-        """Sécurité partagée : rien de ce qu'envoie la console n'est déclaré ici.
-
-        Raises:
-            ValueError: ``roles``, ``users`` ou ``api_keys`` avec ``source: console``.
-        """
-        if self.source == "console":
-            declared = [name for name, given in (("roles", self.roles), ("users", self.users), ("api_keys", self.api_keys)) if given]
-            if declared:
-                raise ValueError(
-                    f"security.source: console : {', '.join(declared)} viennent de la console — les retirer de loom.yaml "
-                    "(ou retirer 'source' pour une sécurité locale)"
-                )
-        return self
-
     @property
     def received(self) -> bool:
         """Vrai si la sécurité déclare quelqu'un : toujours en local, après une part qui a des utilisateurs en partagé.
@@ -1246,6 +1231,16 @@ class SecurityConfig(DomainModel):
         utilisateur ou une clé n'est contrôlé.
         """
         return bool(self.users)
+
+    @property
+    def seeded(self) -> bool:
+        """Vrai si ``loom.yaml`` donne une amorce à la sécurité partagée : rôles, utilisateurs ou clés déclarés (décision D-A).
+
+        Une fois une part appliquée, la sécurité vient de la console, et la
+        propriété reste vraie tant que la sécurité déclare quelqu'un : c'est à
+        l'appelant de savoir si une part a été reçue.
+        """
+        return self.source == "console" and bool(self.roles or self.users or self.api_keys)
 
     def role(self, role_id: str) -> AccessRole:
         """Rôle d'accès déclaré, par son identifiant.
@@ -2219,7 +2214,7 @@ def check_gateway(security: SecurityConfig, gateway: str, tenant: str) -> None:
     label = f"console.commands.user ({gateway!r})"
     users = {user.id: user for user in security.users}
     if gateway not in users:
-        raise ValueError(f"{label} : utilisateur non déclaré dans security.users (utilisateurs : {', '.join(sorted(users)) or 'aucun'})")
+        raise ValueError(f"passerelle absente : {label} : utilisateur non déclaré dans security.users (utilisateurs : {', '.join(sorted(users)) or 'aucun'})")
     if users[gateway].tenant != tenant:
         raise ValueError(f"{label} : il est chez le client {users[gateway].tenant!r}, la console sert {tenant!r}")
     if not any("act_as" in role.permissions for role in security.roles_of(gateway)):

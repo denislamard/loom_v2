@@ -133,6 +133,10 @@ class ApprovalAsked:
         tool: Nom de l'outil.
         arguments: Arguments de l'appel.
         reason: Pourquoi l'approbation est demandée.
+        decidable: Vrai si l'utilisateur de la console peut la trancher lui-même,
+            d'après loom. Seule une demande décidable ouvre la fenêtre
+            d'approbation ; les autres attendent un approbateur habilité.
+            ``to_chat_events`` ne le sait pas : c'est le moteur qui le pose.
     """
 
     session_id: str
@@ -141,6 +145,7 @@ class ApprovalAsked:
     tool: str
     arguments: dict[str, Any]
     reason: str
+    decidable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,12 +157,18 @@ class QuestionAsked:
         run_id: Run qui a posé la question (un sous-run, le cas échéant).
         call_id: Appel de ``loom.ask``.
         questions: Les questions.
+        answerable: Vrai si l'utilisateur de la console peut y répondre, d'après
+            loom (``answer`` sur l'agent qui l'a posée). Seule une question à
+            laquelle il peut répondre ouvre la fenêtre et prend le texte tapé ;
+            les autres attendent la réponse d'un utilisateur habilité.
+            ``to_chat_events`` ne le sait pas : c'est le moteur qui le pose.
     """
 
     session_id: str
     run_id: str
     call_id: str
     questions: tuple[Question, ...]
+    answerable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,12 +177,15 @@ class RequestClosed:
 
     Attributes:
         call_id: Appel de la demande.
-        outcome: ``granted``, ``rejected``, ``answered`` ou ``expired``.
+        outcome: ``granted``, ``rejected``, ``answered`` ou ``expired`` ;
+            ``elsewhere`` quand loom a abandonné l'attente en ligne parce qu'un
+            autre accès a tranché, sans que le flux montre sa décision (autre
+            process sans bus). La suite du run dit ce qu'il en est.
         text: La réponse donnée (``answered``), ou le motif du refus (``rejected``).
     """
 
     call_id: str
-    outcome: Literal["granted", "rejected", "answered", "expired"] = "granted"
+    outcome: Literal["granted", "rejected", "answered", "expired", "elsewhere"] = "granted"
     text: str = ""
 
 
@@ -187,7 +201,10 @@ class ToolLine:
         summary: Résultat (ou réponse donnée) sur une ligne.
         detail: Résultat complet, montré quand le bloc est déplié.
         latency_ms: Durée de l'appel, une fois terminé.
-        waiting_for: Ce qu'attend l'appel en pause : ``approbation`` ou ``question``.
+        waiting_for: Ce qu'attend l'appel en pause : ``approbation`` (la décision
+            de l'utilisateur), ``approbateur`` (celle d'un autre, habilité),
+            ``question`` (la réponse de l'utilisateur) ou ``répondant`` (celle
+            d'un autre, habilité).
     """
 
     call_id: str

@@ -1694,17 +1694,119 @@ async def test_answering_needs_answer_and_is_signed(tmp_path: Path) -> None:
     assert reponse.by == "marie" and reponse.via is None
 
 
-async def test_answering_by_writing_in_the_session_needs_answer_too(tmp_path: Path) -> None:
-    """Un message qui répond à une question est une réponse : ``run`` ne suffit pas."""
+async def test_a_message_from_who_cannot_answer_is_a_new_turn(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Sans ``answer``, un message n'est pas une réponse : il ouvre un nouveau tour, et la question attend (Q-2, Q-3).
+
+    Avant 2.0.28, il levait ``AccessDenied`` : luc ne pouvait plus écrire dans la
+    session tant que la question attendait.
+    """
+    session = SessionId("w")
     async with Loom.from_config(wait_answer_config(tmp_path)) as loom:
-        await loom.run("demo", "Prépare un devis.", session_id=SessionId("w"), user="luc")
-        with pytest.raises(AccessDenied, match="'answer'"):
-            await loom.run("demo", "Dupont", session_id=SessionId("w"), user="luc")
-        done = await loom.run("demo", "Dupont", session_id=SessionId("w"), user="marie")
-        events = await loom.export_session(SessionId("w"))
-    assert done.text == "Devis préparé."
+        posee = await loom.run("demo", "Prépare un devis.", session_id=session, user="luc")
+        [question] = posee.pending_questions
+        with caplog.at_level(logging.INFO, logger="loom_ia.access.api"):
+            tour = await loom.run("demo", "Dupont", session_id=session, user="luc")
+        attend = (await loom.session(session)).pending_questions
+        done = await loom.run("demo", "Dupont", session_id=session, user="marie")
+        events = await loom.export_session(session)
+    assert tour.run_id != posee.run_id
+    # La question d'origine attend toujours (le nouveau tour, joué par le même script, repose la sienne).
+    assert (posee.run_id, question.call_id) in [(q.run_id, q.call_id) for q in attend]
+    assert any("pris comme nouveau tour" in r.getMessage() and question.call_id in r.getMessage() for r in caplog.records)
+    # marie peut répondre : son message répond, et c'est le run de la question qui reprend.
+    assert done.run_id == posee.run_id
     [reponse] = [e.payload for e in events if isinstance(e.payload, QuestionAnswered)]
     assert reponse.by == "marie"
+
+
+async def test_a_streamed_or_submitted_message_from_who_cannot_answer_is_a_new_turn_too(tmp_path: Path) -> None:
+    """Même règle pour ``stream`` et ``submit`` que pour ``run`` (Q-2) : la question de luc attend toujours."""
+    session = SessionId("f")
+    async with Loom.from_config(wait_answer_config(tmp_path)) as loom:
+        posee = await loom.run("demo", "Prépare un devis.", session_id=session, user="luc")
+        vus = {event.root_run_id async for event in loom.stream("demo", "Dupont", session_id=session, user="luc") if isinstance(event, Event)}
+        soumis = await loom.submit("demo", "Dupont", session_id=session, user="luc")
+        await loom.drain()
+        events = await loom.export_session(session)
+    assert posee.run_id not in vus
+    assert soumis != posee.run_id
+    assert not [e for e in events if isinstance(e.payload, QuestionAnswered)]
+
+
+async def test_the_result_says_which_questions_the_caller_may_answer(tmp_path: Path) -> None:
+    """``answerable`` suit ``answer`` sur l'agent qui a posé la question (Q-1, RQ1)."""
+    session = SessionId("r")
+    async with Loom.from_config(wait_answer_config(tmp_path)) as loom:
+        de_luc = await loom.run("demo", "Prépare un devis.", session_id=session, user="luc")
+        de_marie = await loom.run("demo", "Prépare un devis.", session_id=SessionId("m"), user="marie")
+        lu = {name: (await loom.result(de_luc.run_id, session_id=session, user=name)).answerable for name in ("luc", "marie", DEV)}
+        lu["personne"] = (await loom.result(de_luc.run_id, session_id=session)).answerable
+        fiche = {name: (await loom.session(session, user=name)).answerable for name in ("luc", "marie")}
+        fiche["personne"] = (await loom.session(session)).answerable
+    [question] = de_luc.pending_questions
+    assert de_luc.answerable == ()
+    assert de_marie.answerable == tuple(q.call_id for q in de_marie.pending_questions) and len(de_marie.answerable) == 1
+    assert lu == {"luc": (), "marie": (question.call_id,), DEV: (question.call_id,), "personne": ()}
+    assert fiche == {"luc": (), "marie": (question.call_id,), "personne": ()}
+
+
+async def test_through_a_gateway_only_the_endorsed_roles_answer(tmp_path: Path) -> None:
+    """Le cas de Heddlo : la passerelle n'exerce ``answer`` que si elle endosse un rôle qui l'a (QA-06)."""
+    path = wait_answer_config(tmp_path)
+    root = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
+    security = root["security"]
+    security["roles"].append({"id": "passerelle-lanceur", "permissions": ["run", "read", "act_as"], "act_as_roles": ["lanceur"]})
+    security["users"].append({"id": "paul", "roles": ["lanceur", "assistante"]})
+    security["users"].append({"id": "app-lanceur", "roles": ["passerelle-lanceur"]})
+    designated(path).write_text(yaml.safe_dump(root), encoding="utf-8")
+    async with Loom.from_config(path) as loom:
+        securite = loom.config.security
+        run = await loom.run("demo", "Prépare un devis.", session_id=SessionId("g"), user="paul")
+        etroite = Actor.of(securite, "app-lanceur").endorse(securite, "paul")
+        large = Actor.of(securite, "app-crm").endorse(securite, "paul")
+        par_etroite = (await loom.result(run.run_id, session_id=SessionId("g"), user=etroite)).answerable
+        par_large = (await loom.result(run.run_id, session_id=SessionId("g"), user=large)).answerable
+    assert len(run.answerable) == 1
+    assert par_etroite == ()
+    assert par_large == run.answerable
+
+
+async def test_a_subagent_question_follows_the_subagent_access(tmp_path: Path) -> None:
+    """La question d'un sous-agent se répond selon l'``access`` du sous-agent (QA-05)."""
+    from test_wait_answer import SCRIPT
+    from test_wait_answer import config as asking
+
+    parent = [
+        {"text": "", "tool_calls": [{"name": "aide", "arguments": {"message": "Le devis."}}]},
+        {"text": "C'est fait."},
+    ]
+    path = asking(tmp_path, parent, child=SCRIPT)
+    root = yaml.safe_load(designated(path).read_text(encoding="utf-8"))
+    root["security"] = secured({"security": BUREAU})["security"]
+    designated(path).write_text(yaml.safe_dump(root), encoding="utf-8")
+    aide = tmp_path / "agents" / "aide.yaml"
+    spec = yaml.safe_load(aide.read_text(encoding="utf-8"))
+    spec["access"] = {"answer": ["owner"]}
+    aide.write_text(yaml.safe_dump(spec), encoding="utf-8")
+    async with Loom.from_config(path) as loom:
+        run = await loom.run("demo", "Prépare un devis.", session_id=SessionId("sa"), user="marie")
+        par_dev = (await loom.result(run.run_id, session_id=SessionId("sa"), user=DEV)).answerable
+    [question] = run.pending_questions
+    assert question.run_id != run.run_id
+    # marie a `answer`, mais le sous-agent le réserve à `owner`.
+    assert run.answerable == ()
+    assert par_dev == (question.call_id,)
+
+
+def test_the_cli_offers_to_answer_only_to_who_may(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """``loom run`` ne donne la commande pour répondre qu'à qui peut répondre (QA-07)."""
+    path = wait_answer_config(tmp_path)
+    main(["--config", str(path), "run", "demo", "Prépare un devis.", "--user", "luc", "--session", "luc"])
+    luc = capsys.readouterr().err
+    main(["--config", str(path), "run", "demo", "Prépare un devis.", "--user", "marie", "--session", "marie"])
+    marie = capsys.readouterr().err
+    assert "en attente de la réponse d'un utilisateur habilité" in luc and "loom answer" not in luc
+    assert "loom answer" in marie and "utilisateur habilité" not in marie
 
 
 # --- Lot 4 : répondeur en ligne, déclencheurs, instance locale --------------------------

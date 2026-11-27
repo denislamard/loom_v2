@@ -264,6 +264,12 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
             "type": "array",
             "items": _REFS[(PendingApproval, "serialization")],
         },
+        # Les ``call_id`` de ces demandes que le lanceur peut trancher lui-même ;
+        # les autres attendent un approbateur habilité.
+        "decidable": {"type": "array", "items": {"type": "string"}},
+        # Les ``call_id`` des questions auxquelles le lanceur peut répondre ;
+        # les autres attendent la réponse d'un utilisateur habilité.
+        "answerable": {"type": "array", "items": {"type": "string"}},
         # Questions posées à l'utilisateur qui attendent sa réponse (wait_answer) :
         # rappeler l'outil de l'agent avec la même session et la réponse en message.
         "pending_questions": {
@@ -428,7 +434,7 @@ def create_server(
             if tool == REPORT_TOOL:
                 return await _report(loom, run_id, session_id, caller)
             if tool == STATUS_TOOL:
-                found = await loom.result(RunId(str(run)), session_id=session_id, tenant_id=caller.tenant)
+                found = await loom.result(RunId(str(run)), session_id=session_id, tenant_id=caller.tenant, user=caller.actor)
                 if not caller.allows(found.agent):
                     return _denied(caller, caller.lacking("read", found.agent), "read", found.agent)
                 # Relire, c'est lire le journal : sans `read_content`, le
@@ -513,7 +519,7 @@ async def _run(
             await ctx.session.send_progress_notification(token, sent, message=line, related_request_id=str(ctx.request_id))
     if run_id is None:
         raise RuntimeError("le flux du run n'a rendu aucun événement")
-    return await loom.result(run_id, session_id=session_id, tenant_id=tenant)
+    return await loom.result(run_id, session_id=session_id, tenant_id=tenant, user=user)
 
 
 def _answering(ctx: RequestContext[Any, Any, Any]) -> Answerer | None:
@@ -675,6 +681,8 @@ def structured(result: RunResult) -> dict[str, Any]:
         "verdicts": [verdict.model_dump(mode="json") for verdict in result.verdicts],
         "skipped_judges": [skip.model_dump(mode="json") for skip in result.skipped_judges],
         "pending_approvals": [approval.model_dump(mode="json") for approval in result.pending_approvals],
+        "decidable": list(result.decidable),
+        "answerable": list(result.answerable),
         "pending_questions": [question.model_dump(mode="json") for question in result.pending_questions],
         "artifacts": [artifact.model_dump(mode="json", exclude_none=True) for artifact in result.artifacts],
     }
@@ -732,7 +740,13 @@ def _asking(result: RunResult) -> str:
                 choices = ", ".join(o.label for o in question.options)
                 lines.append(question.question + (f" (choix : {choices})" if choices else ""))
     said = f"{result.text}\n\n" if result.text else ""
-    if several:
+    if not any(pending.call_id in result.answerable for pending in result.pending_questions):
+        # Un message de ce client ne répondrait pas : loom en ferait un nouveau tour.
+        tail = (
+            "\n\n[L'agent attend la réponse d'un utilisateur habilité : ce client ne peut pas "
+            "répondre à cette demande ; un message dans la session ouvrirait un nouveau tour.]"
+        )
+    elif several:
         tail = (
             f"\n\n[L'agent attend la réponse de l'utilisateur aux {total} questions : rappeler "
             f"{result.agent} avec session_id={result.session_id} et les réponses en un seul "

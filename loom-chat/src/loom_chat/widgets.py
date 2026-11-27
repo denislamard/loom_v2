@@ -119,7 +119,12 @@ class ToolCard(Static, can_focus=True):
         if not self.expanded:
             if line.summary:
                 return Text.assemble(("→ ", "bold"), line.summary)
-            waiting = {"approbation": "en attente de votre décision", "question": "en attente de votre réponse"}
+            waiting = {
+                "approbation": "en attente de votre décision",
+                "approbateur": "en attente de la décision d'un approbateur habilité",
+                "question": "en attente de votre réponse",
+                "répondant": "en attente de la réponse d'un utilisateur habilité",
+            }
             return Text(waiting.get(line.waiting_for, "…"), style="italic")
         grid = Table.grid(padding=(0, 2))
         grid.add_column(style="bold")
@@ -210,6 +215,8 @@ STATE_STYLE = {
     "inactif": "green3",
     "en cours": "deep_sky_blue1",
     "en attente d'approbation": "orange1",
+    "en attente d'un approbateur": "orange1",
+    "en attente d'un répondant": "orange1",
     "en attente de réponse": "orange1",
 }
 RUN_STYLE = {"completed": "green3", "failed": "red3", "cancelled": "grey58", "paused": "orange1"}

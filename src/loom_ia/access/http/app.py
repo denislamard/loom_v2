@@ -700,7 +700,8 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     @router.get("/runs/{run_id}", tags=["runs"], summary="Statut et résultat d'un run")
     async def result(who: Who, run_id: RunId, session_id: SessionId | None = None) -> RunResult:
         require(who, "read")
-        found = await loom.result(run_id, session_id=session_id, tenant_id=who.tenant)
+        # ``decidable`` : ce que l'utilisateur de la clé peut trancher lui-même.
+        found = await loom.result(run_id, session_id=session_id, tenant_id=who.tenant, user=who.actor)
         require(who, "read", found.agent)
         # Relire un run, c'est lire le journal : sans `read_content`, le
         # statut et les coûts passent, la correspondance non. Et le rapport ne

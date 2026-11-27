@@ -42,9 +42,10 @@ from loom_ia.core.model import (
     RunState,
     RunStatus,
     SessionId,
+    new_run_id,
 )
 from loom_ia.core.projections import ProjectionError, fold
-from loom_ia.engine import SessionWriter, run_scope
+from loom_ia.engine import SessionWriter, executor, run_scope
 from loom_ia.engine.pending import question_note
 from loom_ia.engine.questions import OFF_TOPIC
 from loom_ia.testing import RunJournal, assert_replays, tool_call_message
@@ -656,5 +657,88 @@ def test_an_answer_is_filed_where_its_question_waited(tmp_path: Path) -> None:
         asked = next(e for e in events if e.type == "question.asked")
         answered = next(e for e in events if e.type == "question.answered")
         assert (answered.span_id, answered.parent_span_id) == (asked.span_id, asked.parent_span_id)
+
+    asyncio.run(go())
+
+
+# --- Répondeur en ligne devancé par un autre accès (analyse_approbation_en_ligne.md, R5) ---
+
+
+class _Muet:
+    """Répondeur en ligne qui ne répond jamais : il dit quand il est appelé, et quand on l'abandonne."""
+
+    def __init__(self) -> None:
+        self.appele = asyncio.Event()
+        self.abandonnees: list[str] = []
+
+    async def __call__(self, question: PendingQuestion) -> QuestionReply | NoAnswer:
+        self.appele.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.abandonnees.append(question.call_id)
+            raise
+        raise AssertionError("un répondeur abandonné ne répond pas")
+
+
+def test_an_answer_given_elsewhere_releases_an_inline_answerer(tmp_path: Path) -> None:
+    async def go() -> None:
+        muet = _Muet()
+        run_id = new_run_id()
+        async with mounted(config(tmp_path)) as (loom, _):
+            lance = asyncio.create_task(loom.run("demo", "Prépare un devis.", session_id=SESSION, run_id=run_id, answerer=muet, user=DEV))
+            await asyncio.wait_for(muet.appele.wait(), 5)
+            call = await loom.answer(run_id, answers=[["Dupont"]], session_id=SESSION, user=DEV)
+            result = await asyncio.wait_for(lance, 5)
+            await loom.drain()
+            events = await loom.export_session(SESSION)
+        assert result.status is RunStatus.COMPLETED
+        assert muet.abandonnees == [call]
+        assert types(events).count("question.answered") == 1
+        assert "paused" not in [e.facets.get("to_state") for e in events]
+        assert "Dupont" in tool_text(events)
+
+    asyncio.run(go())
+
+
+def test_an_inline_answer_never_doubles_one_already_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Le répondeur en ligne répond après un autre process : c'est la réponse déjà au journal qui part."""
+    monkeypatch.setattr(executor, "ELSEWHERE_POLL", 30.0)
+
+    async def go() -> None:
+        appele, ecrit = asyncio.Event(), asyncio.Event()
+
+        async def answerer(question: PendingQuestion) -> QuestionReply | NoAnswer:
+            appele.set()
+            await ecrit.wait()
+            return QuestionReply(answers=(("Martin",),), by="script")
+
+        run_id = new_run_id()
+        async with mounted(config(tmp_path)) as (loom, store):
+            lance = asyncio.create_task(loom.run("demo", "Prépare un devis.", session_id=SESSION, run_id=run_id, answerer=answerer, user=DEV))
+            await asyncio.wait_for(appele.wait(), 5)
+            owner = fold(await store.read(DEFAULT_TENANT, SESSION, run_id=run_id), run_id)
+            await answer(store, owner, answers=(("Dupont",),))
+            ecrit.set()
+            result = await asyncio.wait_for(lance, 5)
+            events = await loom.export_session(SESSION)
+        assert result.status is RunStatus.COMPLETED
+        [answered] = [e.payload for e in events if isinstance(e.payload, QuestionAnswered)]
+        assert answered.answers == (("Dupont",),)
+        assert "Dupont" in tool_text(events) and "Martin" not in tool_text(events)
+
+    asyncio.run(go())
+
+
+def test_an_inline_answerer_gives_up_at_the_question_deadline(tmp_path: Path) -> None:
+    async def go() -> None:
+        muet = _Muet()
+        async with mounted(config(tmp_path, ask={"expires_in": 0.2})) as (loom, _):
+            result = await asyncio.wait_for(loom.run("demo", "Prépare un devis.", session_id=SESSION, answerer=muet, user=DEV), 5)
+            events = await loom.export_session(SESSION)
+        assert result.status is RunStatus.COMPLETED
+        assert len(muet.abandonnees) == 1
+        assert types(events).count("question.expired") == 1
+        assert "pas répondu dans le délai" in tool_text(events)
 
     asyncio.run(go())

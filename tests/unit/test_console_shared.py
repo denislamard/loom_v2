@@ -14,7 +14,7 @@ pytest.importorskip("cryptography", reason="extra 'console' absent")
 
 from conftest import DEV, EVERYTHING, ConfigFactory, demo_agent
 
-from loom_ia.access import Loom
+from loom_ia.access import Loom, with_shared_security
 from loom_ia.access.cli import console as console_cli
 from loom_ia.access.cli.main import main
 from loom_ia.agents.spec import AgentAccess
@@ -95,15 +95,13 @@ def test_a_shared_config_loads_without_roles_nor_users(demo: ConfigFactory) -> N
     assert config.security.audit.path == config.workpath / "data" / "audit.jsonl"
 
 
-@pytest.mark.parametrize("declared", ["roles", "users", "api_keys"])
-def test_a_shared_config_refuses_what_the_console_sends(declared: str) -> None:
-    values: dict[str, Any] = {
-        "roles": [{"id": "owner", "permissions": ["read"]}],
-        "users": [{"id": DEV, "roles": ["owner"]}],
-        "api_keys": [{"id": "k", "user": DEV, "hash": fingerprint(API_KEY)}],
-    }
-    with pytest.raises(ValueError, match=f"security.source: console : {declared} viennent de la console"):
-        SecurityConfig.model_validate({"source": "console", declared: values[declared]})
+def test_a_shared_config_takes_a_seed_from_loom_yaml() -> None:
+    seed = SecurityConfig.model_validate({"source": "console", "roles": [{"id": "owner", "permissions": ["read"]}], "users": [{"id": DEV, "roles": ["owner"]}]})
+    assert seed.seeded and seed.received
+
+
+def test_a_shared_config_without_declarations_has_no_seed() -> None:
+    assert not SecurityConfig.model_validate({"source": "console"}).seeded
 
 
 def test_a_shared_config_needs_an_enabled_console(demo: ConfigFactory) -> None:
@@ -207,7 +205,7 @@ def test_check_part_refuses_a_role_an_agent_cites_and_the_part_lacks() -> None:
 
 def test_check_part_refuses_a_part_without_the_gateway() -> None:
     users = (SecurityUser(id=DEV, roles=("owner",)),)
-    with pytest.raises(PartRefused, match=r"console\.commands\.user \('console-gateway'\) : utilisateur non déclaré"):
+    with pytest.raises(PartRefused, match=r"passerelle absente : console\.commands\.user \('console-gateway'\)"):
         check_part(part(users=users), tenant="default", agents={}, gateway_user="console-gateway")
 
 
@@ -398,6 +396,90 @@ async def test_a_key_removed_from_the_part_is_refused_at_the_next_request(demo: 
                 assert (await http.get("/v1/sessions", headers=headers)).status_code == 401
 
 
+SEED: dict[str, Any] = {
+    "source": "console",
+    "roles": [
+        {"id": "owner", "permissions": ["read"]},
+        {"id": "console", "permissions": ["act_as"], "act_as_roles": ["owner"]},
+    ],
+    "users": [{"id": "seedonly", "roles": ["owner"]}, {"id": "console-gateway", "roles": ["console"]}],
+}
+
+
+async def test_without_cache_the_seed_of_loom_yaml_is_the_security_until_the_first_part(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr("loom_ia.console.shared.FIRST_PART_TIMEOUT", 0.2)
+    async with FakeConsole(key=KEY) as fake:
+        async with Loom.from_config(demo(profile="dev", security=SEED, console=section(fake.url)), environ=ENV) as loom:
+            assert await loom.start_console()
+            assert "seedonly" in {user.id for user in loom.config.security.users}
+    assert "l'amorce de loom.yaml sert de sécurité jusqu'à la première part" in caplog.text
+
+
+async def test_production_starts_on_the_seed_when_no_part_comes(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("loom_ia.console.shared.FIRST_PART_TIMEOUT", 0.2)
+    async with FakeConsole(key=KEY) as fake:
+        config = demo(profile="dev", security=SEED, console=section(fake.url))
+        async with Loom.from_config(config, environ=ENV) as loom:
+            monkeypatch.setattr(LoomConfig, "strict", property(_strict))
+            assert await loom.start_console()
+
+
+async def test_production_says_why_the_part_is_refused(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("loom_ia.console.shared.FIRST_PART_TIMEOUT", 0.2)
+    without_gateway = (SecurityUser(id=DEV, roles=("owner",)),)
+    async with FakeConsole(key=KEY, security=part(1, users=without_gateway)) as fake:
+        async with Loom.from_config(demo(profile="dev", security=SHARED, console=section(fake.url)), environ=ENV) as loom:
+            monkeypatch.setattr(LoomConfig, "strict", property(_strict))
+            with pytest.raises(ConfigError, match="aucun cache valide, part refusée : passerelle absente"):
+                await loom.start_console()
+
+
+async def test_with_a_valid_cache_the_part_of_the_console_wins_when_it_answers(demo: ConfigFactory, tmp_path: Path) -> None:
+    async with FakeConsole(key=KEY, security=part(6)) as fake:
+        async with Loom.from_config(demo(profile="dev", security=SEED, console=section(fake.url)), environ=ENV) as loom:
+            await loom.start_console()
+            async with asyncio.timeout(5):
+                await fake.wait_for("security")
+    newer = part(
+        7, users=(SecurityUser(id=DEV, roles=("owner",)), SecurityUser(id="console-gateway", roles=("console",)), SecurityUser(id="lea", roles=("lecteur",)))
+    )
+    async with FakeConsole(key=KEY, security=newer) as fake:
+        config = load_config(demo(profile="dev", security=SEED, console=section(fake.url)))
+        result = await with_shared_security(config, environ=ENV, grace=3.0)
+    assert {user.id for user in result.security.users} == {DEV, "console-gateway", "lea"}
+
+
+async def test_with_a_valid_cache_the_cache_serves_when_the_console_does_not_answer(demo: ConfigFactory) -> None:
+    async with FakeConsole(key=KEY, security=part(6)) as fake:
+        async with Loom.from_config(demo(profile="dev", security=SEED, console=section(fake.url)), environ=ENV) as loom:
+            await loom.start_console()
+            async with asyncio.timeout(5):
+                await fake.wait_for("security")
+    config = load_config(demo(profile="dev", security=SEED, console=section("ws://127.0.0.1:9/loom")))
+    result = await with_shared_security(config, environ=ENV, grace=0.2)
+    users = {user.id for user in result.security.users}
+    assert "paul" in users and "seedonly" not in users, "le cache l'emporte sur l'amorce"
+
+
+async def test_with_a_valid_cache_a_console_refused_at_start_keeps_the_cache(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    async with FakeConsole(key=KEY, security=part(6)) as fake:
+        async with Loom.from_config(demo(profile="dev", security=SEED, console=section(fake.url)), environ=ENV) as loom:
+            await loom.start_console()
+            async with asyncio.timeout(5):
+                await fake.wait_for("security")
+
+    async def refused(self: Loom, *, grace: float | None = None) -> bool:
+        del self, grace
+        raise ConfigError("console : canal refusé")
+
+    monkeypatch.setattr(Loom, "start_console", refused)
+    config = load_config(demo(profile="dev", security=SEED, console=section("ws://127.0.0.1:9/loom")))
+    result = await with_shared_security(config, environ=ENV, grace=0.2)
+    assert "paul" in {user.id for user in result.security.users}
+
+
 # --- Ligne de commande ----------------------------------------------------------------
 
 
@@ -479,6 +561,20 @@ async def test_a_local_instance_never_receives_a_part(demo: ConfigFactory) -> No
         assert isinstance(item.payload, SecurityPayload)
         assert item.payload.version is None
         assert not fake.of("error")
+
+
+async def test_a_cache_makes_the_seed_of_loom_yaml_ignored_with_a_warning(demo: ConfigFactory, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("WARNING")
+    seed = {
+        "source": "console",
+        "roles": [{"id": "owner", "permissions": ["read"]}, {"id": "passerelle", "permissions": ["read", "act_as"], "act_as_roles": ["owner"]}],
+        "users": [{"id": DEV, "roles": ["owner"]}, {"id": "console-gateway", "roles": ["passerelle"]}],
+    }
+    path = demo(profile="dev", security=seed, console=section("ws://127.0.0.1:9/loom"))
+    SecurityCache.of(path.parent, "atelier", KEY).write(part(4))
+    config = await with_shared_security(load_config(path), ENV)
+    assert [user.id for user in config.security.users] == [DEV, "paul", "console-gateway"], "le cache l'emporte sur l'amorce"
+    assert "loom.yaml déclare des rôles, utilisateurs ou clés, ignorés : la sécurité vient du cache (version 4)" in caplog.text
 
 
 async def test_with_shared_security_gives_the_cache_or_leaves_a_local_config(demo: ConfigFactory) -> None:

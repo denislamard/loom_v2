@@ -2,16 +2,17 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
-from loom_ia.access.api import Loom, RunResult
+from loom_ia.access.api import Loom, RunResult, UnknownRun
+from loom_ia.agents.registry import UnknownAgent
 from loom_ia.core.model.ids import RunId, SessionId
 from loom_ia.core.model.question import NoAnswer, PendingQuestion, QuestionReply
 from loom_ia.core.model.run_state import ApprovalDecision, Approved, PendingApproval, Rejected
 from loom_ia.engine.writer import ClaimConflict
 
-from loom_chat.events import ApprovalAsked, ChatEvent, QuestionAsked, Seen, to_chat_events
+from loom_chat.events import ApprovalAsked, ChatEvent, QuestionAsked, RequestClosed, Seen, to_chat_events
 
 type Emit = Callable[[ChatEvent], Awaitable[None]]
 type Answer = ApprovalDecision | QuestionReply | NoAnswer
@@ -105,11 +106,16 @@ class ChatEngine:
     async def detail(self, session_id: str) -> SessionDetail:
         """Relit une session : runs, journal traduit et demandes en attente.
 
+        Chaque approbation dit si l'utilisateur peut la trancher (``decidable``),
+        et chaque question s'il peut y répondre (``answerable``), d'après loom :
+        une session rouverte n'a pas d'approbateur ni de répondeur en ligne pour
+        le dire.
+
         Args:
             session_id: La session.
         """
         sid = SessionId(session_id)
-        info = await self._loom.session(sid)
+        info = await self._loom.session(sid, user=self._user)
         journal = await self._loom.export_session(sid)
         runs = tuple(RunLine(run_id=str(r.run_id), agent=r.agent, status=str(r.status)) for r in info.runs)
         events = tuple(chat for event in journal for chat in to_chat_events(event))
@@ -121,16 +127,28 @@ class ChatEngine:
                 tool=a.tool_name,
                 arguments=dict(a.arguments),
                 reason=a.reason,
+                decidable=a.call_id in info.decidable,
             )
             for a in info.pending_approvals
         )
         questions = tuple(
-            QuestionAsked(session_id=session_id, run_id=str(q.run_id), call_id=q.call_id, questions=tuple(q.questions)) for q in info.pending_questions
+            QuestionAsked(
+                session_id=session_id,
+                run_id=str(q.run_id),
+                call_id=q.call_id,
+                questions=tuple(q.questions),
+                answerable=q.call_id in info.answerable,
+            )
+            for q in info.pending_questions
         )
         return SessionDetail(session_id=session_id, runs=runs, events=events, approvals=approvals, questions=questions)
 
     async def run(self, agent: str, session_id: str | None, text: str, emit: Emit) -> None:
         """Lance un run et envoie ses événements à `emit` ; attend la décision humaine quand loom la demande.
+
+        Chaque approbation dit si l'utilisateur peut la trancher (``decidable``),
+        chaque question s'il peut y répondre (``answerable``). Si loom abandonne une attente en ligne parce qu'un autre accès a tranché,
+        ``RequestClosed(outcome="elsewhere")`` le dit, avant la suite du run.
 
         Args:
             agent: Agent qui répond.
@@ -138,33 +156,55 @@ class ChatEngine:
             text: Message de l'utilisateur.
             emit: Reçoit chaque événement de l'écran.
         """
+        # Attentes en ligne que loom a abandonnées (décision prise ailleurs) : dites à l'écran
+        # au prochain élément du flux, dans l'ordre, et non depuis la tâche du run.
+        abandoned: list[str] = []
 
         async def approver(pending: PendingApproval) -> ApprovalDecision:
-            answer = await self._wait(pending.call_id)
+            try:
+                answer = await self._wait(pending.call_id)
+            except asyncio.CancelledError:
+                abandoned.append(pending.call_id)
+                raise
             if not isinstance(answer, Approved | Rejected):
                 raise TypeError(f"Approbation {pending.call_id} : décision attendue, reçu {type(answer).__name__}")
             return answer
 
         async def answerer(pending: PendingQuestion) -> QuestionReply | NoAnswer:
-            answer = await self._wait(pending.call_id)
+            try:
+                answer = await self._wait(pending.call_id)
+            except asyncio.CancelledError:
+                abandoned.append(pending.call_id)
+                raise
             if not isinstance(answer, QuestionReply | NoAnswer):
                 raise TypeError(f"Question {pending.call_id} : réponse attendue, reçu {type(answer).__name__}")
             return answer
+
+        async def withdraw_abandoned() -> None:
+            while abandoned:
+                call_id = abandoned.pop(0)
+                self._live.discard(call_id)
+                self._settled.pop(call_id, None)
+                await emit(RequestClosed(call_id=call_id, outcome="elsewhere"))
 
         sid = SessionId(session_id) if session_id else None
         last_seen: Seen | None = None
         asked: set[str] = set()
         try:
             async for item in self._loom.stream(agent, text, session_id=sid, user=self._user, approver=approver, answerer=answerer):
+                await withdraw_abandoned()
                 for event in to_chat_events(item):
                     if isinstance(event, Seen):
                         if event == last_seen:
                             continue
                         last_seen = event
                     if isinstance(event, ApprovalAsked | QuestionAsked):
+                        event = await self._with_right(event)
+                    if isinstance(event, ApprovalAsked | QuestionAsked):
                         self._live.add(event.call_id)
                         asked.add(event.call_id)
                     await emit(event)
+            await withdraw_abandoned()
         finally:
             # Un run qui se termine ne reçoit plus de réponse : ses demandes ne sont plus en cours ici.
             for call_id in asked:
@@ -221,7 +261,18 @@ class ChatEngine:
         """
         async for event in self._loom.follow(RunId(run_id), session_id=SessionId(session_id), after_seq=after_seq):
             for chat in to_chat_events(event):
-                await emit(chat)
+                await emit(await self._with_right(chat) if isinstance(chat, ApprovalAsked | QuestionAsked) else chat)
+
+    async def _with_right[T: ApprovalAsked | QuestionAsked](self, ask: T) -> T:
+        """La demande, avec ce que loom dit du droit de l'utilisateur (``Loom.can``) : trancher une approbation, répondre à une question."""
+        run_id, session_id = RunId(ask.run_id), SessionId(ask.session_id)
+        try:
+            if isinstance(ask, ApprovalAsked):
+                return replace(ask, decidable=await self._loom.can(self._user, "approve", run_id=run_id, call_id=ask.call_id, session_id=session_id))
+            return replace(ask, answerable=await self._loom.can(self._user, "answer", run_id=run_id, session_id=session_id))
+        except UnknownRun, UnknownAgent:
+            # Run ou agent introuvable : personne ne peut trancher ici.
+            return ask
 
     async def decide_later(self, run_id: str, call_id: str, decision: ApprovalDecision) -> tuple[str, ...]:
         """Tranche une approbation d'un run qui n'est pas en cours dans cette console.

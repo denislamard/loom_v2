@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from loom_ia.core.model.question import Question, QuestionReply
 from textual.app import App
 from textual.pilot import Pilot
@@ -237,7 +238,7 @@ async def test_withdrawn_modal_closes_now_or_when_back_on_top() -> None:
 def test_tool_call_is_one_line_updated_in_place() -> None:
     """Un appel d'outil est un seul bloc : en attente, refusé ou terminé, à la même place."""
     view = View(key="k")
-    view.apply(ApprovalAsked(session_id="s", run_id="r", call_id="c1", tool="fetch_page", arguments={"url": "https://a"}, reason=""))
+    view.apply(ApprovalAsked(session_id="s", run_id="r", call_id="c1", tool="fetch_page", arguments={"url": "https://a"}, reason="", decidable=True))
     assert view.lines == [ToolLine(call_id="c1", name="fetch_page", arguments={"url": "https://a"}, status="waiting", waiting_for="approbation")]
     view.apply(RequestClosed(call_id="c1", outcome="rejected"))
     view.apply(ToolDone(name="fetch_page", call_id="c1", summary="refusé", detail="refusé", is_error=True, latency_ms=1))
@@ -245,6 +246,18 @@ def test_tool_call_is_one_line_updated_in_place() -> None:
     view.apply(ToolStarted(name="current_datetime", call_id="c2", arguments={}))
     view.apply(ToolDone(name="current_datetime", call_id="c2", summary="12:00", detail="{}", latency_ms=12))
     assert view.lines[1] == ToolLine(call_id="c2", name="current_datetime", arguments={}, status="done", summary="12:00", detail="{}", latency_ms=12)
+
+
+def test_a_request_closed_elsewhere_never_rewrites_a_finished_call() -> None:
+    """``elsewhere`` libère un appel en attente ; arrivé après sa fin, il ne change rien."""
+    view = View(key="k")
+    view.apply(ApprovalAsked(session_id="s", run_id="r", call_id="c1", tool="fetch_page", arguments={}, reason="", decidable=True))
+    view.apply(RequestClosed(call_id="c1", outcome="elsewhere"))
+    assert (_tool(view, "fetch_page").status, _tool(view, "fetch_page").waiting_for) == ("running", "")
+    assert view.approvals == {}
+    view.apply(ToolDone(name="fetch_page", call_id="c1", summary="ok", latency_ms=3))
+    view.apply(RequestClosed(call_id="c1", outcome="elsewhere"))
+    assert _tool(view, "fetch_page").status == "done"
 
 
 async def test_tool_card_folds_and_unfolds(tmp_path: Path) -> None:
@@ -524,3 +537,122 @@ def test_welcome_says_what_to_put_in_env(tmp_path: Path) -> None:
     present = shown("anthropic", {"ANTHROPIC_API_KEY": "sk-ant-secret"})
     assert "déjà définie" in present and "trouvé" in present and "secret" not in present
     assert "sdk: anthropic" in shown("fake", {})
+
+
+def runner_settings(folder: Path) -> ChatSettings:
+    """Les réglages de ``paul``, qui lance des runs sans pouvoir les approuver (rôle ``runner``)."""
+    if not (folder / BOOT).is_file():
+        create_project(folder, "fake")
+        path = folder / "loom.yaml"
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        config["security"]["roles"].append({"id": "runner", "permissions": ["run", "answer", "cancel", "read"]})
+        config["security"]["users"].append({"id": "paul", "roles": ["runner"]})
+        path.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    return ChatSettings(config=load(folder), user="paul")
+
+
+async def test_a_runner_gets_no_approval_window(tmp_path: Path) -> None:
+    """Pas de fenêtre pour qui ne peut pas trancher : la demande attend un approbateur habilité (AL-11)."""
+    app = ChatApp(runner_settings(tmp_path))
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.press(*"bonjour")
+        await pilot.press("enter")
+        await _until(pilot, lambda: bool(_view(app).approvals) and not _view(app).busy)
+        view = _view(app)
+        assert not isinstance(app.screen, ApprovalModal)
+        assert _tool(view, "fetch_page").waiting_for == "approbateur"
+        assert view.state() == "en attente d'un approbateur"
+        # Entrée ne rouvre rien : il n'y a rien à trancher ici.
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        assert not isinstance(app.screen, ApprovalModal)
+        # Et la session ne reste pas bloquée : un nouveau message part (décision D-5).
+        await pilot.press(*"autre chose")
+        await pilot.press("enter")
+        # Le modèle factice redonne les mêmes identifiants d'appel à chaque run : on ne compte pas les demandes.
+        await _until(pilot, lambda: ("Vous", "autre chose") in view.lines and ("loom", "Je lis la page demandée.") in view.lines[-2:] and not view.busy)
+        assert not isinstance(app.screen, ApprovalModal)
+        assert view.state() == "en attente d'un approbateur"
+        session_id = view.session_id
+    assert session_id is not None
+    # Rouverte, la session ne propose pas davantage de trancher (AL-13).
+    again = ChatApp(runner_settings(tmp_path))
+    async with again.run_test(size=(140, 45)) as pilot:
+        await again.open_session(session_id)
+        await pilot.pause(0.3)
+        assert not isinstance(again.screen, ApprovalModal)
+        assert _tool(_view(again), "fetch_page").waiting_for == "approbateur"
+
+
+async def test_a_reopened_session_offers_the_window_to_who_may_decide(tmp_path: Path) -> None:
+    """La demande de paul, rouverte par l'utilisateur de la démo, qui peut la trancher : la fenêtre s'ouvre (AL-12)."""
+    app = ChatApp(runner_settings(tmp_path))
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.press(*"bonjour")
+        await pilot.press("enter")
+        await _until(pilot, lambda: bool(_view(app).approvals) and not _view(app).busy)
+        session_id = _view(app).session_id
+    assert session_id is not None
+    other = ChatApp(settings_for(tmp_path))
+    async with other.run_test(size=(140, 45)) as pilot:
+        await other.open_session(session_id)
+        await _until(pilot, lambda: _shown(other, ApprovalModal, "#approve"))
+        assert _tool(_view(other), "fetch_page").waiting_for == "approbation"
+
+
+def settings_without_answer(folder: Path) -> ChatSettings:
+    """Les réglages de ``luc``, qui lance et approuve ses runs mais ne peut pas répondre aux questions."""
+    if not (folder / BOOT).is_file():
+        create_project(folder, "fake")
+        path = folder / "loom.yaml"
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        config["security"]["roles"].append({"id": "sans-reponse", "permissions": ["run", "cancel", "approve", "self_approve", "read"]})
+        config["security"]["users"].append({"id": "luc", "roles": ["sans-reponse"]})
+        path.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    return ChatSettings(config=load(folder), user="luc")
+
+
+async def _to_question_for_someone_else(app: ChatApp, pilot: Pilot[Any]) -> View:
+    """Luc envoie « bonjour », refuse l'approbation ; la question qui suit attend quelqu'un d'autre."""
+    await pilot.press(*"bonjour")
+    await pilot.press("enter")
+    await _until(pilot, lambda: _shown(app, ApprovalModal, "#reject"))
+    await pilot.click("#reject")
+    await _until(pilot, lambda: bool(_view(app).questions) and not _view(app).busy)
+    return _view(app)
+
+
+async def test_a_user_who_cannot_answer_gets_no_question_window(tmp_path: Path) -> None:
+    """Pas de fenêtre de question pour qui ne peut pas répondre, et le texte tapé part comme message (QA-02, RQ5)."""
+    app = ChatApp(settings_without_answer(tmp_path))
+    async with app.run_test(size=(140, 45)) as pilot:
+        view = await _to_question_for_someone_else(app, pilot)
+        await pilot.pause(0.3)
+        assert not isinstance(app.screen, QuestionModal)
+        assert _tool(view, "ask").waiting_for == "répondant"
+        assert view.state() == "en attente d'un répondant"
+        assert app.query_one("#composer", Input).placeholder == "Tapez votre message…"
+        # Le texte ne pré-remplit pas la question : il part comme nouveau message (loom en fait un nouveau tour).
+        await pilot.press(*"autre chose")
+        await pilot.press("enter")
+        await _until(pilot, lambda: ("Vous", "autre chose") in view.lines)
+        assert not isinstance(app.screen, QuestionModal)
+
+
+async def test_a_reopened_question_is_offered_only_to_who_may_answer(tmp_path: Path) -> None:
+    """Rouverte, la question de luc n'ouvre rien pour lui, et s'ouvre pour l'utilisateur de la démo (QA-09)."""
+    app = ChatApp(settings_without_answer(tmp_path))
+    async with app.run_test(size=(140, 45)) as pilot:
+        session_id = (await _to_question_for_someone_else(app, pilot)).session_id
+    assert session_id is not None
+    again = ChatApp(settings_without_answer(tmp_path))
+    async with again.run_test(size=(140, 45)) as pilot:
+        await again.open_session(session_id)
+        await pilot.pause(0.3)
+        assert not isinstance(again.screen, QuestionModal)
+        assert _tool(_view(again), "ask").waiting_for == "répondant"
+    other = ChatApp(settings_for(tmp_path))
+    async with other.run_test(size=(140, 45)) as pilot:
+        await other.open_session(session_id)
+        await _until(pilot, lambda: _shown(other, QuestionModal, "#send"))
+        assert _tool(_view(other), "ask").waiting_for == "question"

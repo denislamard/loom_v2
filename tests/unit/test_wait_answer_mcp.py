@@ -251,3 +251,25 @@ def test_without_elicitation_an_approval_does_not_hide_the_question(tmp_path: Pa
     asked = said.index("Pour quel client ? (choix : Dupont)")
     assert approval < asked
     assert "rappeler demo avec session_id=s1" in said
+
+
+def test_a_client_who_cannot_answer_is_told_the_question_waits_for_someone_else(tmp_path: Path) -> None:
+    """Sans ``answer``, la consigne « rappeler avec la réponse » ne lui est pas donnée (QA-08)."""
+    from test_securite import wait_answer_config
+
+    async def go() -> None:
+        async with Loom.from_config(wait_answer_config(tmp_path)) as loom:
+            async with connected(create_server(loom, user="luc"), client_info=CLIENT) as client:
+                paused = await client.call_tool("demo", {"message": "Prépare un devis.", "session_id": "s1"})
+                relu = await client.call_tool("run_status", {"run_id": (paused.structuredContent or {})["run_id"], "session_id": "s1"})
+            async with connected(create_server(loom, user="marie"), client_info=CLIENT) as client:
+                pour_marie = await client.call_tool("demo", {"message": "Prépare un devis.", "session_id": "s2"})
+        said = _texts(paused.content)
+        assert "utilisateur habilité" in said and "rappeler demo" not in said
+        assert paused.structuredContent is not None and paused.structuredContent["answerable"] == []
+        assert relu.structuredContent is not None and relu.structuredContent["answerable"] == []
+        assert pour_marie.structuredContent is not None
+        assert pour_marie.structuredContent["answerable"] == [q["call_id"] for q in pour_marie.structuredContent["pending_questions"]]
+        assert "rappeler demo" in _texts(pour_marie.content)
+
+    asyncio.run(go())

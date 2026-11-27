@@ -2003,7 +2003,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     # Réponse remplacée par une politique après sa diffusion.
                     print(f"[Réponse retenue]\n{_for_stdout(state.output.text)}")
                 # Le résumé de l'ouverture est déjà passé dans le déroulé.
-                result = await loom.result(run_id_seen, session_id=session, tenant_id=tenant)
+                result = await loom.result(run_id_seen, session_id=session, tenant_id=tenant, user=actor)
                 return result, [], []
             result = await loom.run(
                 args.agent,
@@ -2450,7 +2450,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
                 return calls, None
             # Le travail de reprise est en file ici : on l'attend.
             await loom.drain()
-            return calls, await loom.result(run_id, session_id=session, tenant_id=tenant)
+            return calls, await loom.result(run_id, session_id=session, tenant_id=tenant, user=actor)
         finally:
             # Avec ``--no-wait``, la reprise mise en file ici ne doit ni se faire ni
             # s'attendre : la décision est au journal, le run reste à reprendre.
@@ -2524,7 +2524,7 @@ def cmd_answer(args: argparse.Namespace) -> int:
             if args.no_wait or brokered:
                 return call, None
             await loom.drain()
-            return call, await loom.result(run_id, session_id=session, tenant_id=tenant)
+            return call, await loom.result(run_id, session_id=session, tenant_id=tenant, user=actor)
         finally:
             await loom.aclose(wait=not args.no_wait)
 
@@ -3679,15 +3679,26 @@ def _report(
         if tenant is not None and tenant != DEFAULT_TENANT:
             where += f" --tenant {tenant}"
         for asked in result.pending_approvals:
-            _say(
-                f"En attente : {asked.tool_name} ({asked.call_id}) — loom approve {result.run_id} --call {asked.call_id}{where}",
-                file=sys.stderr,
-            )
+            if asked.call_id in result.decidable:
+                _say(
+                    f"En attente : {asked.tool_name} ({asked.call_id}) — loom approve {result.run_id} --call {asked.call_id}{where}",
+                    file=sys.stderr,
+                )
+            else:
+                # Ce n'est pas à lui de trancher : lui donner la commande le menait à un refus.
+                _say(
+                    f"En attente : {asked.tool_name} ({asked.call_id}) — en attente de la décision d'un approbateur habilité",
+                    file=sys.stderr,
+                )
             if asked.reason:
                 # Ce qu'il faut savoir pour trancher (essai du 01/11 : rien ne le disait).
                 _say(f"Motif      : {asked.reason}", file=sys.stderr)
         several = len(result.pending_questions) > 1
         for question in result.pending_questions:
+            if question.call_id not in result.answerable:
+                # Ni la commande ni un message ne lui répondraient : un message ouvrirait un nouveau tour.
+                _say(f"Question   : {question.call_id} — en attente de la réponse d'un utilisateur habilité", file=sys.stderr)
+                continue
             for line in _answer_hint(
                 question,
                 run_id=result.run_id,

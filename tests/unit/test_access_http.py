@@ -453,6 +453,24 @@ async def test_an_approval_is_granted_over_rest(atelier: ConfigFactory) -> None:
     assert _by(events, "approval.granted") == ["mme-durand"]
 
 
+async def test_the_result_says_what_the_key_user_may_decide(atelier: ConfigFactory) -> None:
+    """``decidable`` suit l'utilisateur et la portée de la clé : lancer sans ``approve`` n'y donne rien (AL-15)."""
+    async with serving(atelier(security=CLES)) as (_, http):
+        lance = await http.post("/v1/agents/demo/runs", json={"message": "Relance."}, headers={"Authorization": f"Bearer {CLE}"})
+        paused = lance.json()
+        relus = {
+            nom: (await http.get(f"/v1/runs/{paused['run_id']}", headers={"Authorization": f"Bearer {cle}"})).json()["decidable"]
+            for nom, cle in (("approbateur", APPROBATEUR), ("lecture", LECTEUR), ("lanceur", CLE))
+        }
+        schema = (await http.get("/openapi.json", headers={"Authorization": f"Bearer {ADMIN}"})).json()
+
+    [appel] = [a["call_id"] for a in paused["pending_approvals"]]
+    assert paused["decidable"] == []
+    assert relus == {"approbateur": [appel], "lecture": [], "lanceur": []}
+    assert "decidable" in schema["components"]["schemas"]["RunResult"]["properties"]
+    assert "answerable" in schema["components"]["schemas"]["RunResult"]["properties"]
+
+
 async def test_a_stale_approval_is_a_409(atelier: ConfigFactory) -> None:
     """Le process qui a posé la demande s'est arrêté, et son réveil avec lui."""
     path = atelier(security=CLES)

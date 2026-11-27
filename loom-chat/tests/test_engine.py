@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from loom_ia.access.api import Loom
 from loom_ia.core.events.envelope import Event
 from loom_ia.core.events.payloads import ApprovalRequested, RunCompleted
 from loom_ia.core.model.content import JsonBlock, TextBlock, ToolOutput
+from loom_ia.core.model.ids import RunId
 from loom_ia.core.model.question import NoAnswer, QuestionReply
 from loom_ia.core.model.run_state import Rejected
 from loom_ia.core.model.streaming import TextDelta
@@ -35,6 +37,8 @@ async def test_demo_run_goes_through_approval_and_question(tmp_path: Path) -> No
             seen.append(event)
             if isinstance(event, ApprovalAsked):
                 assert event.tool == "fetch_page"
+                # Le lanceur peut trancher ses propres runs (self_approve) : loom le dit.
+                assert event.decidable
                 assert engine.settle(event.call_id, Rejected(reason="test"))
             if isinstance(event, QuestionAsked):
                 assert engine.settle(event.call_id, QuestionReply(answers=(("Court",),), by=USER))
@@ -91,6 +95,9 @@ class _OneApprovalLoom:
 
     async def stream(self, agent: str, text: str, **_: Any) -> AsyncIterator[object]:
         yield object()
+
+    async def can(self, user: str, permission: str, **_: Any) -> bool:
+        return True
 
 
 async def test_run_forgets_its_calls_when_it_ends(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -151,3 +158,98 @@ def test_signature_reads_like_a_function_call() -> None:
     assert signature("fetch_page", {"url": "https://a", "n": 3}) == 'fetch_page(url="https://a", n=3)'
     long = signature("sql", {"query": "SELECT " + "x, " * 50}, width=30)
     assert len(long) == 30 and long.endswith("…)")
+
+
+RUNNER = "paul"
+
+
+def with_runner(folder: Path) -> None:
+    """Ajoute au dossier de démo ``paul``, qui lance des runs sans pouvoir les approuver (rôle ``runner``)."""
+    path = folder / "loom.yaml"
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config["security"]["roles"].append({"id": "runner", "permissions": ["run", "answer", "cancel", "read"]})
+    config["security"]["users"].append({"id": RUNNER, "roles": ["runner"]})
+    path.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+
+
+async def test_a_user_who_cannot_approve_gets_a_request_he_cannot_decide(tmp_path: Path) -> None:
+    """Paul ne peut pas trancher : la demande le dit, le run attend en pause, et loom la donne à qui peut (AL-11, AL-13)."""
+    create_project(tmp_path, "fake")
+    with_runner(tmp_path)
+    loom = Loom(load(tmp_path))
+    async with loom:
+        engine = ChatEngine(loom, user=RUNNER)
+        seen: list[object] = []
+
+        async def emit(event: object) -> None:
+            seen.append(event)
+
+        await asyncio.wait_for(engine.run(AGENT, None, "bonjour", emit), 60)
+        [asked] = [e for e in seen if isinstance(e, ApprovalAsked)]
+        assert asked.decidable is False
+        assert not [e for e in seen if isinstance(e, RunEnded)]  # en pause, pas fini
+        session_id = (await engine.sessions())[0].session_id
+        [pour_paul] = (await engine.detail(session_id)).approvals
+        [pour_local] = (await ChatEngine(loom, user=USER).detail(session_id)).approvals
+        assert (pour_paul.decidable, pour_local.decidable) == (False, True)
+
+
+async def test_an_approval_decided_elsewhere_withdraws_the_inline_wait(tmp_path: Path) -> None:
+    """Un autre accès tranche pendant que la console attend le clic : la fenêtre est retirée, le run continue."""
+    loom, engine = engine_for(tmp_path)
+    async with loom:
+        closed: list[RequestClosed] = []
+        approvals: list[str] = []
+
+        async def emit(event: object) -> None:
+            if isinstance(event, ApprovalAsked):
+                approvals.append(event.call_id)
+                # La console d'administration, par exemple : la décision ne passe pas par la fenêtre.
+                await loom.reject(RunId(event.run_id), call_id=event.call_id, reason="refusé ailleurs", user=USER)
+            if isinstance(event, RequestClosed):
+                closed.append(event)
+            if isinstance(event, QuestionAsked):
+                assert engine.settle(event.call_id, QuestionReply(answers=(("Court",),), by=USER))
+
+        await asyncio.wait_for(engine.run(AGENT, None, "bonjour", emit), 60)
+        [call_id] = approvals
+        assert [c.outcome for c in closed if c.call_id == call_id] == ["rejected", "elsewhere"]
+        # La fenêtre retirée ne prend plus de décision.
+        assert engine.settle(call_id, Rejected(reason="trop tard")) is False
+
+
+SANS_REPONSE = "luc"
+
+
+def with_user_who_cannot_answer(folder: Path) -> None:
+    """Ajoute ``luc``, qui lance et approuve ses runs mais ne peut pas répondre aux questions (sans ``answer``)."""
+    path = folder / "loom.yaml"
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config["security"]["roles"].append({"id": "sans-reponse", "permissions": ["run", "cancel", "approve", "self_approve", "read"]})
+    config["security"]["users"].append({"id": SANS_REPONSE, "roles": ["sans-reponse"]})
+    path.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+
+
+async def test_a_user_who_cannot_answer_gets_a_question_he_cannot_answer(tmp_path: Path) -> None:
+    """Luc n'a pas ``answer`` : la question le dit, le run attend en pause, et loom la donne à qui peut (QA-02, QA-09)."""
+    create_project(tmp_path, "fake")
+    with_user_who_cannot_answer(tmp_path)
+    loom = Loom(load(tmp_path))
+    async with loom:
+        engine = ChatEngine(loom, user=SANS_REPONSE)
+        seen: list[object] = []
+
+        async def emit(event: object) -> None:
+            seen.append(event)
+            if isinstance(event, ApprovalAsked):
+                assert event.decidable
+                assert engine.settle(event.call_id, Rejected(reason="test"))
+
+        await asyncio.wait_for(engine.run(AGENT, None, "bonjour", emit), 60)
+        [asked] = [e for e in seen if isinstance(e, QuestionAsked)]
+        assert asked.answerable is False
+        assert not [e for e in seen if isinstance(e, RunEnded)]  # en pause, pas fini
+        session_id = (await engine.sessions())[0].session_id
+        [pour_luc] = (await engine.detail(session_id)).questions
+        [pour_local] = (await ChatEngine(loom, user=USER).detail(session_id)).questions
+        assert (pour_luc.answerable, pour_local.answerable) == (False, True)

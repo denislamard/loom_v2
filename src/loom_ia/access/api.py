@@ -58,7 +58,7 @@ import asyncio
 import logging
 import mimetypes
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -78,11 +78,12 @@ from loom_ia.access.authz import (
     require,
     require_decision,
 )
+from loom_ia.access.authz import can as permitted
 from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.queue import Handler
 from loom_ia.adapters.stores import PLAIN, JournalCodec, NotifyingEventStore, SealingCodec
 from loom_ia.adapters.usage import InMemoryUsageCounter
-from loom_ia.agents.registry import AgentRegistry
+from loom_ia.agents.registry import AgentRegistry, UnknownAgent
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
@@ -699,6 +700,13 @@ class SessionInfo(DomainModel):
             ce qu'on lui demande.
         pending_questions: Questions posées à l'utilisateur sans réponse
             (wait_answer), tous runs confondus.
+        decidable: Les ``call_id`` des demandes de ``pending_approvals`` que
+            le lecteur (``session(user=…)``) peut trancher lui-même ; vide sans
+            lecteur. Indicatif : ``approve()`` reste le contrôle qui fait foi.
+        answerable: Les ``call_id`` des questions de ``pending_questions``
+            auxquelles le lecteur peut répondre (``answer`` sur l'agent qui
+            les a posées) ; vide sans lecteur. Indicatif : ``answer()`` reste
+            le contrôle qui fait foi.
         redacted: Ce que le masquage a retiré (clé sans ``read_content``), par
             chemin : sans lui, un champ vidé ne se distinguait pas d'un champ
             vide (essai de la fonction N2, 23/10). Même règle que pour un
@@ -711,6 +719,8 @@ class SessionInfo(DomainModel):
     runs: tuple[RunSummary, ...] = ()
     pending_approvals: tuple[PendingApproval, ...] = ()
     pending_questions: tuple[PendingQuestion, ...] = ()
+    decidable: tuple[str, ...] = ()
+    answerable: tuple[str, ...] = ()
     redacted: tuple[str, ...] = ()
 
     def masked(self) -> Self:
@@ -965,6 +975,17 @@ class RunResult(DomainModel):
         pending_questions: Questions posées à l'utilisateur qui attendent sa
             réponse (wait_answer), celles des sous-runs comprises :
             ``answer()`` y répond.
+        decidable: Les ``call_id`` des demandes de ``pending_approvals`` que
+            l'appelant (``user``) peut trancher lui-même. Une demande absente
+            attend un autre approbateur habilité. Vide sans appelant connu (run
+            de fond, ``result()`` sans ``user``). Indicatif : ``approve()``
+            reste le contrôle qui fait foi.
+        answerable: Les ``call_id`` des questions de ``pending_questions``
+            auxquelles l'appelant peut répondre : ``answer`` sur l'agent du run
+            qui les a posées, sous-agent compris. Les autres attendent la
+            réponse d'un utilisateur habilité ; un message de l'appelant n'y
+            répond pas, il ouvre un nouveau tour. Vide sans appelant connu.
+            Indicatif : ``answer()`` reste le contrôle qui fait foi.
         redacted: Ce que le masquage a retiré, par chemin (``text``,
             ``artifacts[].name``…) : un ``text`` vidé ne se distinguait pas
             d'une réponse vide (essai de la fonction N2, 23/10).
@@ -990,6 +1011,8 @@ class RunResult(DomainModel):
     skipped_judges: tuple[JudgeSkip, ...] = ()
     pending_approvals: tuple[PendingApproval, ...] = ()
     pending_questions: tuple[PendingQuestion, ...] = ()
+    decidable: tuple[str, ...] = ()
+    answerable: tuple[str, ...] = ()
     redacted: tuple[str, ...] = ()
 
     def masked(self) -> Self:
@@ -1393,6 +1416,66 @@ def _launcher(tree: Sequence[Event], state: RunState) -> str | None:
     return state.context.user_id
 
 
+def _decidable_by(actor: Actor, approvals: Sequence[PendingApproval], events: Sequence[Event], tenant: TenantId) -> tuple[str, ...]:
+    """Les ``call_id`` des demandes en attente que l'acteur peut trancher lui-même, dans leur ordre.
+
+    Mêmes règles que ``approve()`` (``_decidable``) : rôles de l'acteur (ceux
+    qu'une passerelle endosse), approbateurs figés dans la demande,
+    auto-approbation selon le lanceur du run racine. Une demande périmée n'en
+    fait pas partie : ``approve()`` la refuserait (``ApprovalStale``).
+    """
+    if not approvals:
+        return ()
+    owners = {state.run_id: state for state in _run_states(events)}
+    now = datetime.now(UTC)
+    found: list[str] = []
+    for request in approvals:
+        owner = owners.get(request.run_id) if request.run_id is not None else None
+        if owner is None or request.stale(now):
+            continue
+        approvable = Approvable(
+            agent=owner.agent,
+            tool=request.tool_name,
+            approvers=request.approvers,
+            self_approval=request.self_approval,
+            launcher=_launcher(events, owner),
+        )
+        if can_decide(actor, approvable, tenant=tenant):
+            found.append(request.call_id)
+    return tuple(found)
+
+
+def _answerable_by(
+    actor: Actor,
+    questions: Sequence[PendingQuestion],
+    events: Sequence[Event],
+    agents: AgentRegistry,
+) -> tuple[str, ...]:
+    """Les ``call_id`` des questions en attente auxquelles l'acteur peut répondre, dans leur ordre.
+
+    Même règle que ``answer()`` : ``answer`` sur l'agent du run qui a posé la
+    question (un sous-agent, s'il y en a un), chez le client de ce run. Une
+    question périmée n'en fait pas partie : ``answer()`` la refuserait.
+    """
+    if not questions:
+        return ()
+    owners = {state.run_id: state for state in _run_states(events)}
+    now = datetime.now(UTC)
+    found: list[str] = []
+    for question in questions:
+        owner = owners.get(question.run_id) if question.run_id is not None else None
+        if owner is None or question.stale(now):
+            continue
+        try:
+            spec = agents.get(owner.agent)
+        except UnknownAgent:
+            # Un agent retiré de la config depuis la question : personne ne peut y répondre ici.
+            continue
+        if permitted(actor, "answer", agent=spec, tenant=owner.context.tenant_id):
+            found.append(question.call_id)
+    return tuple(found)
+
+
 def _awaiting_runs(tree: Sequence[Event]) -> list[RunState]:
     """Runs de l'arbre qui attendent une approbation, dans l'ordre du journal."""
     return [state for state in _run_states(tree) if state.awaiting]
@@ -1737,6 +1820,8 @@ class Loom:
         self._security_ready = asyncio.Event()
         if shared.part is not None:
             self._security_ready.set()
+        self._console_part_seen = asyncio.Event()
+        self._console_refusal: str | None = None
         # Un agent monté par client : ses modèles, ses secrets et ses
         # connexions MCP ne sont pas ceux du voisin.
         self._built: dict[tuple[str, TenantId], Agent] = {}
@@ -1867,9 +1952,18 @@ class Loom:
             Vrai si le canal est lancé (ou l'était déjà) ; faux sans section
             active ou sans clé.
 
+        En sécurité partagée sans cache, cet appel attend la première part de la
+        console (au plus ``FIRST_PART_TIMEOUT`` secondes) avant de rendre la main :
+        c'est lui qui fait connaître les utilisateurs de la console. Une
+        application qui sert loom en librairie doit donc l'appeler avant
+        ``run(user=…)`` : sans lui, aucun utilisateur de la console n'est connu,
+        et toute action au nom d'un utilisateur est refusée.
+
         Raises:
             ConfigError: Clé absente en profil ``prod`` ; ``ws://`` hors profil
-                ``dev`` ; extra ``console`` absent ; TLS impossible à préparer.
+                ``dev`` ; extra ``console`` absent ; TLS impossible à préparer ;
+                en sécurité partagée, ni cache, ni amorce, ni part dans le délai
+                en profil ``prod``.
         """
         if self._console is not None:
             return True
@@ -1938,8 +2032,12 @@ class Loom:
     async def _first_part(self, url: str) -> None:
         """Sans cache valide, attend la première part de la console (décisions RU-4 et Q-4 du référentiel).
 
+        Sans part dans le délai, l'amorce de ``loom.yaml`` (décision D-A) sert de
+        sécurité, avec un avertissement, jusqu'à la première part. Sans amorce,
+        le message dit la cause : la dernière part refusée, à défaut son absence.
+
         Raises:
-            ConfigError: Aucune part dans le délai, en profil ``prod``.
+            ConfigError: Aucune part ni amorce dans le délai, en profil ``prod``.
         """
         if self._security_ready.is_set():
             return
@@ -1949,16 +2047,34 @@ class Loom:
             async with asyncio.timeout(FIRST_PART_TIMEOUT):
                 await self._security_ready.wait()
         except TimeoutError:
+            if self._config.security.seeded:
+                logger.warning(
+                    "Sécurité partagée : aucune part de la console (%s) en %g s — l'amorce de loom.yaml sert de sécurité jusqu'à la première part",
+                    url,
+                    FIRST_PART_TIMEOUT,
+                )
+                return
+            cause = (
+                f"aucun cache valide, {self._console_refusal}"
+                if self._console_refusal is not None
+                else f"ni cache, ni part reçue de la console ({url}) en {FIRST_PART_TIMEOUT:g} s"
+            )
             if self._config.strict:
                 raise ConfigError(
-                    f"Sécurité partagée : ni cache, ni part reçue de la console ({url}) en {FIRST_PART_TIMEOUT:g} s — "
-                    "loom ne démarre pas en profil prod ; vérifier que la console est joignable et la clé d'instance"
+                    f"Sécurité partagée : {cause} — "
+                    "loom ne démarre pas en profil prod ; vérifier la part de la console, ou que la console est joignable et la clé d'instance"
                 ) from None
-            logger.warning(
-                "Sécurité partagée : ni cache, ni part reçue de la console (%s) en %g s — aucun utilisateur, toute action est refusée jusqu'à la première part",
-                url,
-                FIRST_PART_TIMEOUT,
-            )
+            logger.warning("Sécurité partagée : %s — aucun utilisateur, toute action est refusée jusqu'à la première part", cause)
+
+    async def wait_for_console_part(self, seconds: float) -> None:
+        """Attend au plus ``seconds`` qu'une part de la console soit reçue ou refusée sur la connexion en cours.
+
+        Args:
+            seconds: Le délai, en secondes.
+        """
+        with suppress(TimeoutError):
+            async with asyncio.timeout(seconds):
+                await self._console_part_seen.wait()
 
     def _console_agents(self, console: ConsoleConfig) -> tuple[AgentSpec, ...]:
         """Les agents du client de la console."""
@@ -2020,10 +2136,14 @@ class Loom:
         try:
             self.apply_security(part)
         except PartRefused as error:
+            self._console_refusal = str(error)
+            self._console_part_seen.set()
             logger.warning("Sécurité partagée : part version %d refusée, la précédente reste appliquée — %s", part.version, error)
             if channel is not None:
                 await channel.send(ErrorPayload(code="invalid_message", message=str(error), about=envelope.id))
             return
+        self._console_refusal = None
+        self._console_part_seen.set()
         if channel is not None and console is not None:
             await channel.send(self._confirmation(console, part))
 
@@ -2307,9 +2427,13 @@ class Loom:
 
         ``approver`` (point 28) : un approbateur en ligne, appelé dans la boucle
         pour chaque appel qui demande une approbation. Le run ne passe alors
-        jamais en pause — c'est le mode des scripts, de la CLI et des tests.
-        Sans lui, l'approbation est asynchrone : le run s'arrête en ``PAUSED``
-        et ``approve()`` le reprend. Avec ``user``, l'approbateur en ligne agit
+        pas en pause — c'est le mode des scripts, de la CLI et des tests. Un
+        autre accès peut trancher pendant qu'il attend (``approve()``, la
+        console) : la première décision au journal vaut, et l'approbateur est
+        abandonné. À l'échéance de la demande, le run se met en pause et
+        l'expire (``approval.on_expiry``). Sans approbateur, l'approbation est
+        asynchrone : le run s'arrête en ``PAUSED`` et ``approve()`` le reprend.
+        Avec ``user``, l'approbateur en ligne agit
         pour lui (§ 6.2) : il ne tranche que ce que ses rôles lui permettent
         — ``self_approve`` compris, puisqu'il a lancé le run —, laisse le reste
         en pause, et c'est l'utilisateur qui signe. ``answerer`` de même : sans
@@ -2329,13 +2453,13 @@ class Loom:
         caller, who = await self._admitted(agent, context, tenant, actor)
         approver, answerer = self._in_line(actor, agent, approver, answerer)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver, answerer=answerer)
-        routed = await self._routed(agent, who.id, session_id, message, attachments, state, run_id)
+        routed = await self._routed(agent, who.id, session_id, message, attachments, state, run_id, actor=actor)
         if routed is not None:
             self._may_answer(actor, routed)
-            return await self._answered_run(ctx, routed, message, caller)
+            return await self._answered_run(ctx, routed, message, caller, actor)
         await self._unclaimed(run_id, session_id, who.id)
         started = await self._start(ctx, message, attachments, session_id, caller, run_id, judges, state)
-        return await self._result(started)
+        return await self._result(started, actor)
 
     async def _routed(
         self,
@@ -2346,12 +2470,18 @@ class Loom:
         attachments: Sequence[Attachment],
         state: Mapping[str, JsonValue] | None,
         run_id: RunId | None,
+        *,
+        actor: Actor | None = None,
     ) -> _Routed | None:
         """La question de cet agent qui attend une réponse dans la session, s'il y en a une.
 
         Le message ne lui est donné que s'il n'est qu'un texte : avec des pièces
         jointes, des écritures du state ou un ``run_id`` choisi, c'est un
         nouveau tour, et le modèle apprend par une note que la question attend.
+        De même quand ``actor`` ne peut pas y répondre (``answer`` sur l'agent
+        qui l'a posée) : son message n'est pas une réponse, c'est un nouveau
+        tour, et une ligne ``INFO`` le dit. Sans ``actor`` (évaluations), rien
+        n'est contrôlé ici.
         """
         if session_id is None or attachments or state or run_id is not None:
             return None
@@ -2375,6 +2505,15 @@ class Loom:
             while owner is not None and owner.parent_run_id is not None:
                 owner = states.get(owner.parent_run_id)
             if owner is not None and asker is not None and owner.agent == agent:
+                if actor is not None and not permitted(actor, "answer", agent=self._agents.get(asker.agent), tenant=owner.context.tenant_id):
+                    logger.info(
+                        "Message de %s pris comme nouveau tour : il ne peut pas répondre à la question %s (agent %s)",
+                        actor.user,
+                        question.call_id,
+                        asker.agent,
+                        extra={"run_id": owner.run_id, "tenant_id": owner.context.tenant_id},
+                    )
+                    return None
                 return _Routed(owner, question, asker.agent)
         return None
 
@@ -2430,8 +2569,12 @@ class Loom:
         routed: _Routed,
         message: str | Message,
         caller: CallerContext,
+        actor: Actor | None = None,
     ) -> RunResult:
-        """Le message devient la réponse à la question, et le run qui l'a posée reprend."""
+        """Le message devient la réponse à la question, et le run qui l'a posée reprend.
+
+        ``actor`` : l'appelant, pour qui le résultat dit ce qu'il peut trancher (``decidable``).
+        """
         root, question, _ = routed
         text = message if isinstance(message, str) else message.text
         await self._write_answer(
@@ -2443,7 +2586,7 @@ class Loom:
         )
         state = await self.state(root.run_id, session_id=root.session_id, tenant_id=root.context.tenant_id)
         writer = await self._writer(state.context.tenant_id, state.session_id)
-        return await self._result(await self._piloted(ctx, state, writer))
+        return await self._result(await self._piloted(ctx, state, writer), actor)
 
     @audited_stream
     async def stream(
@@ -2490,7 +2633,7 @@ class Loom:
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver, answerer=answerer)
         # Une question de cet agent attend dans la session : le message y répond, et
         # le flux est celui du run qui l'a posée (wait_answer).
-        routed = await self._routed(agent, who.id, session_id, message, attachments, state, chosen)
+        routed = await self._routed(agent, who.id, session_id, message, attachments, state, chosen, actor=actor)
         if routed is not None:
             self._may_answer(actor, routed)
             run_id = routed.root.run_id
@@ -2553,7 +2696,7 @@ class Loom:
         self._require_on_run(actor, "run", state)
         ctx = self.context(state.agent, state.context.tenant_id, on_chunk=on_chunk)
         writer = await self._writer(state.context.tenant_id, state.session_id)
-        return await self._result(await self._piloted(ctx, state, writer))
+        return await self._result(await self._piloted(ctx, state, writer), actor)
 
     def context(
         self,
@@ -2919,13 +3062,23 @@ class Loom:
         *,
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
+        user: str | Actor | None = None,
     ) -> RunResult:
-        """Ce qu'un run a produit, relu depuis son journal : réponse, coûts, verdicts."""
+        """Ce qu'un run a produit, relu depuis son journal : réponse, coûts, verdicts.
+
+        Avec ``user``, le résultat dit aussi quelles demandes en attente cet
+        utilisateur peut trancher (``decidable``) et à quelles questions il
+        peut répondre (``answerable``). Rien n'est contrôlé de plus qu'avant :
+        c'est une lecture. Un utilisateur inconnu lève ``AccessDenied``.
+        """
         tenant = tenant_id or DEFAULT_TENANT
         events = await self._store.read(tenant, session_id or SessionId(run_id))
         if not any(event.run_id == run_id for event in events):
             raise UnknownRun(run_id)
-        return RunResult.of(fold(events, run_id), events)
+        result = RunResult.of(fold(events, run_id), events)
+        if user is None:
+            return result
+        return self._for_caller(result, self._actor(user), events, tenant)
 
     async def consumption(
         self,
@@ -3056,23 +3209,40 @@ class Loom:
         """
         return await self._store.query(query)
 
-    async def session(self, session_id: SessionId, *, tenant_id: TenantId | None = None) -> SessionInfo:
+    async def session(
+        self,
+        session_id: SessionId,
+        *,
+        tenant_id: TenantId | None = None,
+        user: str | Actor | None = None,
+    ) -> SessionInfo:
         """Fiche d'une session : ses runs, et ce qu'il faut trancher pour qu'elle avance.
 
         Le journal est lu une fois et replié run par run. Une session inconnue
-        lève ``UnknownSession`` — un journal vide n'existe pas.
+        lève ``UnknownSession`` — un journal vide n'existe pas. Avec ``user``,
+        la fiche dit aussi quelles demandes en attente il peut trancher lui-même
+        (``decidable``) et à quelles questions il peut répondre
+        (``answerable``) : une session rouverte n'a pas d'approbateur ni de
+        répondeur en ligne pour le dire. Un utilisateur inconnu lève
+        ``AccessDenied``.
         """
-        events = await self._store.read(tenant_id or DEFAULT_TENANT, session_id)
+        tenant = tenant_id or DEFAULT_TENANT
+        events = await self._store.read(tenant, session_id)
         if not events:
             raise UnknownSession(session_id)
         states = _run_states(events)
+        approvals = tuple(approval for state in states for approval in state.awaiting)
+        questions = tuple(question for state in states for question in state.asking)
+        reader = None if user is None else self._actor(user)
         return SessionInfo(
             session_id=session_id,
             last_seq=events[-1].seq,
             updated_at=events[-1].ts,
             runs=tuple(RunSummary.of(state) for state in states),
-            pending_approvals=tuple(approval for state in states for approval in state.awaiting),
-            pending_questions=tuple(question for state in states for question in state.asking),
+            pending_approvals=approvals,
+            pending_questions=questions,
+            decidable=() if reader is None else _decidable_by(reader, approvals, events, tenant),
+            answerable=() if reader is None else _answerable_by(reader, questions, events, self._agents),
         )
 
     async def session_files(
@@ -4071,7 +4241,7 @@ class Loom:
             # Comme ``run`` : un message dans une session où une question de cet agent
             # attend y répond, et c'est le run qui l'a posée qui repart (wait_answer).
             # Une livraison de porte n'est pas une réponse de l'utilisateur.
-            routed = await self._routed(agent, who.id, session_id, message, attachments, state, run_id)
+            routed = await self._routed(agent, who.id, session_id, message, attachments, state, run_id, actor=actor)
             if routed is not None:
                 self._may_answer(actor, routed)
                 return await self._answered_later(routed, message, caller)
@@ -4375,15 +4545,33 @@ class Loom:
             delay=max(left, 0.0) + CLAIM_MARGIN,
         )
 
-    async def _result(self, state: RunState) -> RunResult:
-        """Résultat d'un run qui vient de s'arrêter, avec son rapport et ses verdicts."""
+    async def _result(self, state: RunState, actor: Actor | None = None) -> RunResult:
+        """Résultat d'un run qui vient de s'arrêter, avec son rapport et ses verdicts.
+
+        ``actor`` : l'appelant, pour qui ``decidable`` dit ce qu'il peut
+        trancher et ``answerable`` à quoi il peut répondre ; sans lui (run de
+        fond, évaluation), ils restent vides.
+        """
         events = await self._store.read(state.context.tenant_id, state.session_id)
         await self._snapshot(state, events)
         await self._schedule(state, events)
         await self._expiring(state, events)
         result = RunResult.of(state, events)
         await self._counted(state, result)
+        if actor is not None:
+            result = self._for_caller(result, actor, events, state.context.tenant_id)
         return result
+
+    def _for_caller(self, result: RunResult, actor: Actor, events: Sequence[Event], tenant: TenantId) -> RunResult:
+        """Le résultat, avec ce que l'appelant peut trancher (``decidable``) et à quoi il peut répondre (``answerable``)."""
+        if not result.pending_approvals and not result.pending_questions:
+            return result
+        return result.model_copy(
+            update={
+                "decidable": _decidable_by(actor, result.pending_approvals, events, tenant),
+                "answerable": _answerable_by(actor, result.pending_questions, events, self._agents),
+            }
+        )
 
     async def _counted(self, state: RunState, result: RunResult) -> None:
         """Porte au compteur du client ce que ce run a coûté, sous-runs compris.
@@ -4607,13 +4795,15 @@ class Loom:
 
 
 async def with_shared_security(config: LoomConfig, environ: Mapping[str, str] | None = None, *, grace: float = 5.0) -> LoomConfig:
-    """La config avec la sécurité au nom de laquelle agir : en sécurité partagée, celle du cache, sinon la première part de la console.
+    """La config avec la sécurité au nom de laquelle agir : en sécurité partagée, la part de la console si elle répond dans ``grace``, sinon le cache.
 
     Pour un client qui choisit son utilisateur avant d'ouvrir l'instance (CLI,
     ``loom-chat``). Sans cache valide, l'instance est ouverte le temps de se
     connecter à la console et d'attendre sa première part, comme ``loom
     serve`` (décision RU-4 du référentiel) ; la part reçue est gardée dans le
-    cache pour les suivants. En sécurité locale, la config telle quelle.
+    cache pour les suivants. Avec un cache valide, la console est interrogée
+    au plus ``grace`` secondes (décision D-E) : sa part du jour l'emporte, et le
+    cache sert si elle ne répond pas. En sécurité locale, la config telle quelle.
 
     Args:
         config: La config chargée.
@@ -4628,11 +4818,17 @@ async def with_shared_security(config: LoomConfig, environ: Mapping[str, str] | 
     """
     if config.security.source != "console":
         return config
-    cached = shared_security(config, environ).config
-    if cached.security.received:
-        return cached
-    async with Loom(cached, environ=environ) as loom:
-        await loom.start_console(grace=grace)
+    shared = shared_security(config, environ)
+    async with Loom(shared.config, environ=environ) as loom:
+        try:
+            started = await loom.start_console(grace=grace)
+        except ConfigError as error:
+            if shared.part is None:
+                raise
+            logger.warning("Sécurité partagée : console non interrogée, le cache reste en place — %s", error)
+            return loom.config
+        if started and shared.part is not None:
+            await loom.wait_for_console_part(grace)
         return loom.config
 
 

@@ -449,6 +449,7 @@ if loom.can("denis", "approve", run_id=result.run_id, call_id=pending.call_id):
 - Un refus lève `AccessDenied` (une `PermissionError`). Le message nomme l'utilisateur, l'action, l'agent et ce qui manque : « marie : aucun rôle parmi gerant ».
 - `can(...)` applique les mêmes règles sans rien écrire. Une interface s'en sert pour n'afficher « Approuver » qu'à qui peut s'en servir.
 - `approver=` (en ligne) reste pour les scripts et les tests. Il est soumis au § 6.2, puisqu'il agit pour le lanceur.
+- `RunResult.decidable` (2.0.28) : les demandes en attente que l'appelant peut trancher lui-même, avec les règles 5 à 8 et les rôles qu'une passerelle endosse. `result(user=…)` et `session(user=…)` le calculent pour un lecteur. C'est une indication pour l'affichage (le bouton « Approuver ») : `approve()` reste le contrôle.
 - Pas d'`as_user` : `user=` joue déjà ce rôle, l'intégrateur étant de confiance.
 
 ### 6.4 CLI
@@ -463,7 +464,7 @@ La CLI **lit et écrit le journal directement**. loom ne peut donc pas l'authent
 
 ### 6.5 Répondre en écrivant dans la session
 
-Un message envoyé dans une session où une question attend devient sa réponse (`_answered_run`, `access/api.py`). Il passe par `run` (on écrit à l'agent) **et** par `answer` (on répond), tous deux vérifiés sur l'acteur. Le `by` de la réponse est son identifiant.
+Un message envoyé dans une session où une question attend devient sa réponse (`_answered_run`, `access/api.py`). Il passe par `run` (on écrit à l'agent) **et** par `answer` (on répond), tous deux vérifiés sur l'acteur. Le `by` de la réponse est son identifiant. Depuis 2.0.28, un acteur qui n'a pas `answer` sur l'agent qui a posé la question n'est plus refusé : son message ouvre un nouveau tour, la question reste posée, et une ligne `INFO` le dit. `RunResult.answerable` (et `SessionInfo.answerable` avec `session(user=…)`) liste les questions auxquelles l'appelant peut répondre.
 
 ### 6.6 Déclencheurs
 

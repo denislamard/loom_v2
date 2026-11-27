@@ -79,12 +79,21 @@ class View:
     follower: asyncio.Task[None] | None = None
 
     def state(self) -> str:
-        """L'état affiché : demande en attente, run en cours, ou inactif."""
-        if self.approvals:
+        """L'état affiché : demande en attente, run en cours, ou inactif.
+
+        Une demande que l'utilisateur ne peut pas trancher, ou une question à laquelle
+        il ne peut pas répondre, ne l'empêche pas d'écrire : un run en cours passe
+        avant elle.
+        """
+        if any(approval.decidable for approval in self.approvals.values()):
             return "en attente d'approbation"
-        if self.questions:
+        if any(question.answerable for question in self.questions.values()):
             return "en attente de réponse"
-        return "en cours" if self.busy else "inactif"
+        if self.busy:
+            return "en cours"
+        if self.approvals:
+            return "en attente d'un approbateur"
+        return "en attente d'un répondant" if self.questions else "inactif"
 
     def is_blank(self) -> bool:
         """Nouvelle session où rien n'a encore été dit."""
@@ -153,13 +162,13 @@ class View:
                     self._tool(call_id, name, {}, status="done", detail=text, latency_ms=latency)
                 else:
                     self._tool(call_id, name, {}, status="error" if is_error else "done", summary=summary, detail=text, latency_ms=latency)
-            case ApprovalAsked(call_id=call_id, tool=tool, arguments=arguments):
+            case ApprovalAsked(call_id=call_id, tool=tool, arguments=arguments, decidable=decidable):
                 self.approvals[call_id] = event
-                self._tool(call_id, tool, arguments, status="waiting", waiting_for="approbation")
-            case QuestionAsked(call_id=call_id, questions=questions):
+                self._tool(call_id, tool, arguments, status="waiting", waiting_for="approbation" if decidable else "approbateur")
+            case QuestionAsked(call_id=call_id, questions=questions, answerable=answerable):
                 self.questions[call_id] = event
                 asked: dict[str, Any] = {"question": questions[0].question} if len(questions) == 1 else {"questions": [q.question for q in questions]}
-                self._tool(call_id, "ask", asked, status="waiting", waiting_for="question")
+                self._tool(call_id, "ask", asked, status="waiting", waiting_for="question" if answerable else "répondant")
             case RequestClosed(call_id=call_id, outcome=outcome, text=text):
                 self.approvals.pop(call_id, None)
                 self.questions.pop(call_id, None)
@@ -173,6 +182,11 @@ class View:
                             self._tool(call_id, known.name, {}, status="running", waiting_for="", summary=text)
                         case "granted":
                             self._tool(call_id, known.name, {}, status="running", waiting_for="")
+                        case "elsewhere" if known.status == "waiting":
+                            # Tranchée ailleurs sans que le flux le montre : la suite du run dira l'issue.
+                            self._tool(call_id, known.name, {}, status="running", waiting_for="")
+                        case _:
+                            pass
             case RunEnded(status=status, text=text, cost_usd=cost, error=error):
                 self.streaming = False
                 self.run_id = None
@@ -202,6 +216,13 @@ class View:
             self.agent = detail.runs[-1].agent
         self.approvals = {a.call_id: a for a in detail.approvals}
         self.questions = {q.call_id: q for q in detail.questions}
+        for approval in detail.approvals:
+            # Le journal ne dit pas qui peut trancher : c'est loom qui le dit, pour cet utilisateur.
+            if self._tool_line(approval.call_id) is not None:
+                self._tool(approval.call_id, approval.tool, {}, waiting_for="approbation" if approval.decidable else "approbateur")
+        for question in detail.questions:
+            if self._tool_line(question.call_id) is not None:
+                self._tool(question.call_id, "ask", {}, waiting_for="question" if question.answerable else "répondant")
 
 
 class ChatApp(App[None]):
@@ -555,7 +576,9 @@ class ChatApp(App[None]):
             modal.withdraw()
 
     def _show_approval(self, view: View, ask: ApprovalAsked) -> None:
-        if ask.call_id in view.shown:
+        # Une demande que l'utilisateur ne peut pas trancher n'ouvre pas de fenêtre :
+        # elle attend un approbateur habilité (la console d'administration, par exemple).
+        if not ask.decidable or ask.call_id in view.shown:
             return
         view.shown.add(ask.call_id)
         modal = ApprovalModal(ask, self._settings.user)
@@ -593,7 +616,9 @@ class ChatApp(App[None]):
         await self._paint(view)
 
     def _show_question(self, view: View, ask: QuestionAsked, prefill: str = "") -> None:
-        if ask.call_id in view.shown:
+        # Une question à laquelle l'utilisateur ne peut pas répondre n'ouvre pas de fenêtre :
+        # elle attend un utilisateur habilité, et le texte tapé part comme nouveau message.
+        if not ask.answerable or ask.call_id in view.shown:
             return
         view.shown.add(ask.call_id)
         modal = QuestionModal(ask, self._settings.user, prefill=prefill)
@@ -646,7 +671,8 @@ class ChatApp(App[None]):
         await self._paint(view)
 
     def _free_question(self, view: View) -> list[QuestionAsked]:
-        return [q for cid, q in view.questions.items() if cid not in view.shown]
+        # Seules les questions de l'utilisateur prennent le texte tapé (lot Q2) : les autres le laissent partir.
+        return [q for cid, q in view.questions.items() if cid not in view.shown and q.answerable]
 
     # --- actions ---------------------------------------------------------------
 
@@ -663,12 +689,14 @@ class ChatApp(App[None]):
             event.input.value = ""
             self._show_question(view, pending[0], prefill=text)
             return
-        if view.approvals:
+        if any(approval.decidable for approval in view.approvals.values()):
             # Une approbation attend : la rouvrir si sa fenêtre a été fermée sans décision.
             for approval in view.approvals.values():
                 self._show_approval(view, approval)
             self.notify("Une approbation attend votre décision.", severity="warning")
             return
+        # Une approbation qui attend un autre (décision D-5) ne bloque pas la session : le message
+        # part, et loom dit au modèle qu'une action attend la décision d'un humain.
         if not text:
             return
         if view.busy:

@@ -127,7 +127,7 @@ Avec plusieurs agents dans `agents/`, la console demande au démarrage avec lequ
 
 | Touche | Action |
 |---|---|
-| Entrée | Envoyer le message ; rouvre la question ou l'approbation en attente |
+| Entrée | Envoyer le message ; rouvre la question à laquelle vous pouvez répondre, ou l'approbation que vous pouvez trancher |
 | Ctrl+N | Nouvelle session |
 | Ctrl+A | Choisir l'agent |
 | Ctrl+X | Annuler le run en cours |
@@ -136,6 +136,10 @@ Avec plusieurs agents dans `agents/`, la console demande au démarrage avec lequ
 | Ctrl+Q | Quitter |
 
 Le journal fait foi : une session fermée en plein run se rouvre telle quelle au lancement suivant, avec ses demandes en attente.
+
+La fenêtre d'approbation ne s'ouvre que pour une demande que l'utilisateur peut trancher (`approve`, et `self_approve` pour ses propres runs). Les autres restent affichées « en attente de la décision d'un approbateur habilité » : elles se tranchent ailleurs (console d'administration, `loom approve`), et la session reste ouverte à de nouveaux messages pendant ce temps. La fenêtre se ferme aussi quand une demande est tranchée ailleurs pendant qu'elle est ouverte.
+
+De même, la fenêtre d'une question ne s'ouvre que si l'utilisateur peut y répondre (`answer` sur l'agent qui l'a posée). Sinon, la question est affichée « en attente de la réponse d'un utilisateur habilité », et le texte tapé part comme un nouveau message au lieu de lui répondre.
 
 ## Licence
 

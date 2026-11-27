@@ -19,6 +19,7 @@ from pydantic import JsonValue
 from loom_ia.access import AccessDenied
 from loom_ia.access.api import UNCHECKED, ApprovalStale, Loom, RunResult, UnknownApproval
 from loom_ia.access.audit import AUDIT_LOGGER
+from loom_ia.access.authz import Actor
 from loom_ia.access.cli import main
 from loom_ia.access.evals import received_arguments
 from loom_ia.access.progress import describe
@@ -39,17 +40,20 @@ from loom_ia.core.events import (
     ToolCompleted,
 )
 from loom_ia.core.model import (
+    DEFAULT_TENANT,
     Amendment,
     ApprovalDecision,
     Approved,
     PendingApproval,
     Rejected,
+    RunId,
     RunStatus,
     SessionId,
     ToolCallBlock,
+    new_run_id,
 )
 from loom_ia.core.projections import awaiting_in_session, fold
-from loom_ia.engine import cancellation
+from loom_ia.engine import SessionWriter, cancellation, executor, run_scope
 from loom_ia.replay.book import ReplayBook
 from loom_ia.runtime import build_agent
 from loom_ia.telemetry import Trace
@@ -1855,3 +1859,378 @@ def test_what_restricts_a_request_is_written_with_it(atelier: ConfigFactory, tmp
     [demande] = _written(path, "approval.requested")
     assert demande["payload"]["approvers"] == ["gerant"]
     assert demande["payload"]["self_approval"] is False
+
+
+# --- Approbateur en ligne devancé par un autre accès (analyse_approbation_en_ligne.md) ---
+
+
+class _Attente:
+    """Approbateur en ligne qui ne répond jamais : il dit quand il est appelé, et quand on l'abandonne."""
+
+    def __init__(self) -> None:
+        self.appele = asyncio.Event()
+        self.demandes: list[PendingApproval] = []
+        self.abandonnees: list[str] = []
+
+    async def __call__(self, demande: PendingApproval) -> ApprovalDecision:
+        self.demandes.append(demande)
+        self.appele.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.abandonnees.append(demande.call_id)
+            raise
+        raise AssertionError("un approbateur abandonné ne répond pas")
+
+
+async def _ailleurs(path: Path, run_id: RunId, demande: PendingApproval, decision: ApprovalGranted | ApprovalRejected) -> None:
+    """La décision écrite par un autre process sans bus : seule la relecture du journal la voit."""
+    store = JsonlEventStore(path.parent / "data")
+    owner = fold(await store.read(DEFAULT_TENANT, SESSION, run_id=run_id), run_id)
+    writer = await SessionWriter.open(store, DEFAULT_TENANT, SESSION)
+    assert demande.call_id == decision.call_id
+    await writer.append([run_scope(owner).draft(decision)])
+
+
+def test_a_decision_made_elsewhere_releases_an_inline_approver(atelier: ConfigFactory) -> None:
+    """Le blocage du 27/11 : loom-chat attend le clic de marie, qui approuve dans Heddlo.
+
+    La décision écrite par ``approve()`` débloque l'attente en ligne, abandonnée ;
+    elle n'est écrite qu'une fois, et la reprise mise en file n'écrit rien après la fin.
+    """
+
+    async def go() -> tuple[tuple[str, ...], RunStatus, list[str], list[str]]:
+        attente = _Attente()
+        run_id = new_run_id()
+        async with Loom.from_config(atelier()) as loom:
+            lance = asyncio.create_task(loom.run("demo", DEMANDE, session_id=SESSION, run_id=run_id, approver=attente, user=DEV))
+            await asyncio.wait_for(attente.appele.wait(), 5)
+            decided = await loom.approve(run_id, session_id=SESSION, user=DEV)
+            run = await asyncio.wait_for(lance, 5)
+            await loom.drain()
+            events = await loom.export_session(SESSION)
+        return decided, run.status, attente.abandonnees, [e.type for e in events]
+
+    decided, status, abandonnees, types = asyncio.run(go())
+    assert len(decided) == 1
+    assert abandonnees == list(decided)
+    assert status is RunStatus.COMPLETED
+    assert types.count("approval.granted") == 1
+    assert types.count("tool.called") == 2
+    assert types.index("approval.granted") < types.index("tool.called", types.index("approval.granted"))
+    assert types[-1] == "run.completed"
+
+
+def test_a_refusal_made_elsewhere_reaches_the_model(atelier: ConfigFactory) -> None:
+    async def go() -> tuple[RunStatus, list[Event]]:
+        attente = _Attente()
+        run_id = new_run_id()
+        async with Loom.from_config(atelier()) as loom:
+            lance = asyncio.create_task(loom.run("demo", DEMANDE, session_id=SESSION, run_id=run_id, approver=attente, user=DEV))
+            await asyncio.wait_for(attente.appele.wait(), 5)
+            await loom.reject(run_id, session_id=SESSION, reason="pas ce destinataire", user=DEV)
+            run = await asyncio.wait_for(lance, 5)
+            await loom.drain()
+            events = list(await loom.export_session(SESSION))
+        return run.status, events
+
+    status, events = asyncio.run(go())
+    types = [e.type for e in events]
+    assert status is RunStatus.COMPLETED
+    assert types.count("approval.rejected") == 1
+    assert "approval.granted" not in types
+    assert [e.facets["tool_name"] for e in events if e.type == "tool.called"] == ["chercher"]
+    [refus] = [e.payload for e in events if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "envoyer_email"]
+    assert "pas ce destinataire" in str(refus.output.blocks)
+
+
+def test_a_decision_written_by_another_process_is_seen_at_the_next_reading(atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sans bus, l'écoute ne voit pas l'autre process : la relecture du journal le rattrape (D-1)."""
+    monkeypatch.setattr(executor, "ELSEWHERE_POLL", 0.1)
+
+    async def go() -> tuple[RunStatus, list[str]]:
+        path = atelier()
+        attente = _Attente()
+        run_id = new_run_id()
+        async with Loom.from_config(path) as loom:
+            lance = asyncio.create_task(loom.run("demo", DEMANDE, session_id=SESSION, run_id=run_id, approver=attente, user=DEV))
+            await asyncio.wait_for(attente.appele.wait(), 5)
+            [demande] = attente.demandes
+            await _ailleurs(path, run_id, demande, ApprovalGranted(call_id=demande.call_id, tool_name=demande.tool_name, by=DEV))
+            run = await asyncio.wait_for(lance, 5)
+            events = await loom.export_session(SESSION)
+        return run.status, [e.type for e in events]
+
+    status, types = asyncio.run(go())
+    assert status is RunStatus.COMPLETED
+    assert types.count("approval.granted") == 1
+    assert types.count("tool.called") == 2
+
+
+def test_an_inline_decision_never_doubles_one_already_written(atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """L'approbateur en ligne répond après qu'un autre process a tranché : sa décision n'est pas écrite.
+
+    La relecture ne passe pas pendant l'essai : c'est la garde de l'écriture qui
+    voit la décision déjà au journal, et c'est elle qui vaut (R4).
+    """
+    monkeypatch.setattr(executor, "ELSEWHERE_POLL", 30.0)
+
+    async def go() -> tuple[RunStatus, list[str]]:
+        path = atelier()
+        appele, ecrit = asyncio.Event(), asyncio.Event()
+        vues: list[PendingApproval] = []
+
+        async def approbateur(demande: PendingApproval) -> ApprovalDecision:
+            vues.append(demande)
+            appele.set()
+            await ecrit.wait()
+            return Rejected(by=DEV, reason="trop tard")
+
+        run_id = new_run_id()
+        async with Loom.from_config(path) as loom:
+            lance = asyncio.create_task(loom.run("demo", DEMANDE, session_id=SESSION, run_id=run_id, approver=approbateur, user=DEV))
+            await asyncio.wait_for(appele.wait(), 5)
+            [demande] = vues
+            await _ailleurs(path, run_id, demande, ApprovalGranted(call_id=demande.call_id, tool_name=demande.tool_name, by="marie"))
+            ecrit.set()
+            run = await asyncio.wait_for(lance, 5)
+            events = await loom.export_session(SESSION)
+        return run.status, [e.type for e in events]
+
+    status, types = asyncio.run(go())
+    assert status is RunStatus.COMPLETED
+    assert types.count("approval.granted") == 1
+    assert "approval.rejected" not in types
+    assert types.count("tool.called") == 2
+
+
+def test_resumptions_queued_during_the_pilot_write_nothing_more(atelier: ConfigFactory) -> None:
+    """Deux demandes tranchées ailleurs pendant le même pilotage : deux reprises en file, sans effet (R6)."""
+    deux_envois: list[dict[str, Any]] = [
+        {"text": "J'envoie.", "tool_calls": [{"name": "envoyer_email", "arguments": {"destinataire": "a@example.com"}}]},
+        {"text": "Et la copie.", "tool_calls": [{"name": "envoyer_email", "arguments": {"destinataire": "b@example.com"}}]},
+        {"text": "C'est fait."},
+    ]
+
+    async def go() -> tuple[RunStatus, list[str]]:
+        attente = _Attente()
+        run_id = new_run_id()
+        models = [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": deux_envois}}]
+        async with Loom.from_config(atelier(models=models)) as loom:
+            lance = asyncio.create_task(loom.run("demo", DEMANDE, session_id=SESSION, run_id=run_id, approver=attente, user=DEV))
+            for _ in range(2):
+                await asyncio.wait_for(attente.appele.wait(), 5)
+                # La seconde demande ne vient qu'après la décision sur la première.
+                attente.appele.clear()
+                assert await loom.approve(run_id, session_id=SESSION, user=DEV)
+            run = await asyncio.wait_for(lance, 5)
+            await loom.drain()
+            events = await loom.export_session(SESSION)
+        return run.status, [e.type for e in events]
+
+    status, types = asyncio.run(go())
+    assert status is RunStatus.COMPLETED
+    assert types.count("approval.granted") == 2
+    assert types.count("tool.called") == 2
+    assert types.count("run.completed") == 1 and types[-1] == "run.completed"
+
+
+def test_an_inline_wait_ends_with_the_request_deadline(atelier: ConfigFactory) -> None:
+    """Personne ne répond en ligne ni ailleurs : à l'échéance, le run expire la demande (D-2)."""
+
+    async def go() -> tuple[RunStatus, list[str], list[str]]:
+        attente = _Attente()
+        async with Loom.from_config(atelier(settings={"expires_in": 0.3})) as loom:
+            run = await asyncio.wait_for(loom.run("demo", DEMANDE, session_id=SESSION, approver=attente, user=DEV), 5)
+            events = await loom.export_session(SESSION)
+        return run.status, attente.abandonnees, [e.type for e in events]
+
+    status, abandonnees, types = asyncio.run(go())
+    assert status is RunStatus.COMPLETED
+    assert len(abandonnees) == 1
+    assert types.count("approval.expired") == 1
+    assert types.count("tool.called") == 1
+    assert "approval.granted" not in types
+
+
+def test_an_inline_wait_that_expires_can_fail_the_run(atelier: ConfigFactory) -> None:
+    async def go() -> tuple[RunStatus, str | None]:
+        async with Loom.from_config(atelier(settings={"expires_in": 0.3, "on_expiry": "fail"})) as loom:
+            run = await asyncio.wait_for(loom.run("demo", DEMANDE, session_id=SESSION, approver=_Attente(), user=DEV), 5)
+        return run.status, run.error_type
+
+    assert asyncio.run(go()) == (RunStatus.FAILED, "approval.expired")
+
+
+def test_a_subrun_request_never_goes_to_the_inline_approver(delegue: ConfigFactory) -> None:
+    """Un sous-run n'a pas d'approbateur en ligne : sa demande attend en pause, comme avant (AL-08)."""
+
+    async def go() -> tuple[RunStatus, int, RunStatus, int]:
+        attente = _Attente()
+        async with Loom.from_config(delegue()) as loom:
+            run = await asyncio.wait_for(loom.run("demo", DEMANDE, session_id=SESSION, approver=attente, user=DEV), 5)
+            assert await loom.approve(run.run_id, session_id=SESSION, user=DEV)
+            await loom.drain()
+            fin = await loom.result(run.run_id, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        return run.status, len(attente.demandes), fin.status, [e.type for e in events].count("approval.granted")
+
+    status, demandes, fin, accords = asyncio.run(go())
+    assert status is RunStatus.WAITING_CHILD
+    assert demandes == 0
+    assert fin is RunStatus.COMPLETED
+    assert accords == 1
+
+
+def test_the_stream_shows_a_decision_made_elsewhere(atelier: ConfigFactory) -> None:
+    """Ce qui ferme la fenêtre de loom-chat : la décision venue d'ailleurs passe dans le flux."""
+
+    async def go() -> list[str]:
+        attente = _Attente()
+        run_id = new_run_id()
+        vus: list[str] = []
+        async with Loom.from_config(atelier()) as loom:
+
+            async def ailleurs() -> None:
+                await asyncio.wait_for(attente.appele.wait(), 5)
+                await loom.approve(run_id, session_id=SESSION, user=DEV)
+
+            decide = asyncio.create_task(ailleurs())
+            async with asyncio.timeout(5):
+                async for item in loom.stream("demo", DEMANDE, session_id=SESSION, run_id=run_id, approver=attente, user=DEV):
+                    if isinstance(item, Event):
+                        vus.append(item.type)
+            await decide
+            await loom.drain()
+        return vus
+
+    vus = asyncio.run(go())
+    assert vus.count("approval.granted") == 1
+    assert vus[-1] == "run.completed"
+
+
+def test_an_inline_approver_that_answers_still_decides_alone(atelier: ConfigFactory) -> None:
+    """Le chemin d'avant : l'approbateur en ligne répond, sa décision est écrite une fois, signée du lanceur."""
+
+    async def approbateur(demande: PendingApproval) -> ApprovalDecision:
+        return Approved(by="quelqu'un", reason="ok")
+
+    async def go() -> list[Event]:
+        async with Loom.from_config(atelier()) as loom:
+            await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur, user=DEV)
+            return list(await loom.export_session(SESSION))
+
+    events = asyncio.run(go())
+    [accord] = [e for e in events if e.type == "approval.granted"]
+    [demande] = [e for e in events if e.type == "approval.requested"]
+    assert accord.facets.get("by") == DEV
+    assert accord.span_id == demande.span_id
+
+
+# --- Ce que l'appelant peut trancher lui-même : ``decidable`` (lot 2) ---
+
+
+def test_the_result_says_which_requests_the_launcher_may_decide(atelier: ConfigFactory) -> None:
+    """Marie (sans ``approve``) attend un approbateur ; denis (``self_approve``) peut trancher le sien (AL-11, AL-12)."""
+
+    async def go() -> tuple[RunResult, RunResult]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            de_marie = await loom.run("demo", DEMANDE, session_id=SessionId("marie"), user="marie")
+            de_denis = await loom.run("demo", DEMANDE, session_id=SessionId("denis"), user="denis")
+        return de_marie, de_denis
+
+    de_marie, de_denis = asyncio.run(go())
+    assert de_marie.status is RunStatus.PAUSED and de_marie.decidable == ()
+    assert de_denis.decidable == tuple(a.call_id for a in de_denis.pending_approvals)
+    assert len(de_denis.decidable) == 1
+
+
+def test_a_reread_result_says_what_its_reader_may_decide(atelier: ConfigFactory) -> None:
+    async def go() -> dict[str, tuple[str, ...]]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            lu = {name: (await loom.result(run.run_id, session_id=SESSION, user=name)).decidable for name in ("alice", "marie", "denis")}
+            lu["personne"] = (await loom.result(run.run_id, session_id=SESSION)).decidable
+            with pytest.raises(AccessDenied):
+                await loom.result(run.run_id, session_id=SESSION, user="fantome")
+        return lu
+
+    lu = asyncio.run(go())
+    [appel] = lu["alice"]
+    assert lu == {"alice": (appel,), "marie": (), "denis": (appel,), "personne": ()}
+
+
+def test_an_agent_without_self_approval_leaves_its_launcher_nothing_to_decide(atelier: ConfigFactory, tmp_path: Path) -> None:
+    path = atelier(security=EQUIPE)
+    fichier = tmp_path / "agents" / "demo.yaml"
+    agent = yaml.safe_load(fichier.read_text(encoding="utf-8"))
+    agent["access"] = {"self_approval": False}
+    fichier.write_text(yaml.safe_dump(agent), encoding="utf-8")
+
+    async def go() -> tuple[RunResult, tuple[str, ...]]:
+        async with Loom.from_config(path) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="denis")
+            return run, (await loom.result(run.run_id, session_id=SESSION, user="alice")).decidable
+
+    run, par_alice = asyncio.run(go())
+    assert run.decidable == ()
+    assert par_alice == tuple(a.call_id for a in run.pending_approvals)
+
+
+def test_through_a_gateway_only_the_endorsed_roles_decide(atelier: ConfigFactory) -> None:
+    """Le cas de Heddlo : la passerelle n'exerce que les rôles qu'elle endosse (R7)."""
+    securite: dict[str, Any] = {
+        "roles": [
+            *EQUIPE["roles"],
+            {"id": "console", "permissions": ["act_as"], "act_as_roles": ["assistante"]},
+            {"id": "console-gerant", "permissions": ["act_as"], "act_as_roles": ["gerant", "assistante"]},
+        ],
+        "users": [
+            {"id": "denis", "roles": ["gerant", "assistante"]},
+            {"id": "console-gateway", "roles": ["console"]},
+            {"id": "console-gerant", "roles": ["console-gerant"]},
+        ],
+    }
+
+    async def go() -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+        async with Loom.from_config(atelier(security=securite)) as loom:
+            security = loom.config.security
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="denis")
+            etroite = Actor.of(security, "console-gateway").endorse(security, "denis")
+            large = Actor.of(security, "console-gerant").endorse(security, "denis")
+            return (
+                run.decidable,
+                (await loom.result(run.run_id, session_id=SESSION, user=etroite)).decidable,
+                (await loom.result(run.run_id, session_id=SESSION, user=large)).decidable,
+            )
+
+    direct, etroite, large = asyncio.run(go())
+    assert len(direct) == 1
+    assert etroite == ()
+    assert large == direct
+
+
+def test_a_reopened_session_says_what_its_reader_may_decide(atelier: ConfigFactory) -> None:
+    """Une session rouverte n'a pas d'approbateur en ligne : la fiche le dit (D-3, AL-13)."""
+
+    async def go() -> dict[str, tuple[str, ...]]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            fiches = {name: (await loom.session(SESSION, user=name)).decidable for name in ("alice", "marie")}
+            fiches["personne"] = (await loom.session(SESSION)).decidable
+        return fiches
+
+    fiches = asyncio.run(go())
+    assert len(fiches["alice"]) == 1
+    assert fiches["marie"] == () and fiches["personne"] == ()
+
+
+def test_the_cli_tells_a_launcher_who_cannot_decide_to_wait(atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
+    """La commande ``loom approve`` n'est proposée qu'à qui peut s'en servir (AL-14)."""
+    path = atelier(security=EQUIPE)
+    assert main(["--config", str(path), "run", "demo", "Relance.", "--user", "marie", "--session", "marie"]) == 1
+    marie = capsys.readouterr().err
+    assert main(["--config", str(path), "run", "demo", "Relance.", "--user", "denis", "--session", "denis"]) == 1
+    denis = capsys.readouterr().err
+    assert "En attente : envoyer_email" in marie and "approbateur habilité" in marie and "loom approve" not in marie
+    assert "En attente : envoyer_email" in denis and "loom approve" in denis

@@ -483,6 +483,8 @@ async def test_without_elicitation_the_tool_hands_back_a_paused_run(
     assert not paused.isError
     assert paused.structuredContent["status"] == "paused"
     assert [a["tool_name"] for a in paused.structuredContent["pending_approvals"]] == ["envoyer_email"]
+    # Le lanceur peut trancher sa propre demande : le résultat le dit (lot 2).
+    assert paused.structuredContent["decidable"] == [a["call_id"] for a in paused.structuredContent["pending_approvals"]]
     dit = _text(paused.content)
     assert "en attente d'approbation" in dit and run_id in dit and STATUS_TOOL in dit
     # Le motif accompagne l'appel : le client sait ce qu'un humain doit trancher.

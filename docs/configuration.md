@@ -484,6 +484,26 @@ console:
 - **Cache refusé** (illisible, autre clé d'instance, autre instance, autre contrat) : traité comme absent, avec un avertissement.
 - `loom keys create` est refusée : les clés se créent dans la console, qui n'en garde que l'empreinte. `loom console listen --sync part.yaml` joue la console pour éprouver une instance.
 
+**Passer d'un mode à l'autre** (synchro du référentiel, `docs/analyse_synchro_referentiel_conception.md` de Heddlo) : le mode vient de `security.source`, jamais de la connexion.
+
+| Mode | `security.source` | `console.enable` | Ce qui se passe |
+|---|---|---|---|
+| Local | absent | `false` | `loom.yaml` fait foi ; aucune connexion à Heddlo |
+| Local connecté | absent | `true` | loom se connecte et montre sa sécurité locale ; Heddlo n'envoie aucune part, la sécurité reste celle du `loom.yaml` |
+| Console | `console` | `true` | la part de Heddlo fait foi, par le cache scellé |
+
+- **Démarrage sans Heddlo, avec un cache** : loom démarre sur le cache. CLI et SDK attendent au plus `grace` (5 s) la part de Heddlo, puis gardent le cache.
+- **Démarrage sans Heddlo, sans cache** : si `loom.yaml` déclare une amorce (rôles, utilisateurs ou clés, en `source: console`), elle sert jusqu'à la première part reçue, avec un avertissement dans les journaux. Sinon, loom attend la première part 10 s, puis s'arrête en `prod` ou démarre sans utilisateur en `dev`.
+
+**Bascule local → console** (UC-04) :
+
+1. Sur Heddlo, voir ce que la reprise changerait : `heddlo security import <instance> --dry-run [--keys-from loom.yaml]`, qui n'écrit rien. Puis reprendre la sécurité de l'instance : `heddlo security import <instance> [--keys-from loom.yaml]`. Les empreintes des clés d'API ne sont pas reçues de loom : les clés se recréent dans Heddlo, ou s'importent depuis le `loom.yaml` d'avant la bascule.
+2. Déclarer la passerelle `console.commands.user` dans Heddlo, si l'instance en a une.
+3. Dans `loom.yaml`, mettre `security.source: console` et `console.enable: true`, puis redémarrer loom. Les blocs `roles`, `users` et `api_keys` peuvent rester en amorce ; la part de Heddlo les remplace, et loom avertit au démarrage s'ils sont ignorés parce qu'un cache existe.
+4. Heddlo passe l'instance à « à jour » une fois la part appliquée.
+
+**Retour en local** (UC-29) : copier dans `loom.yaml` la sécurité voulue (`roles`, `users`, `api_keys`), retirer `security.source`, puis redémarrer. Heddlo affiche l'instance en « Sécurité locale · à basculer », sans rien envoyer. Il n'y a pas d'outil automatique pour ce retour.
+
 **Le fichier des refus** (`audit.path`) : une ligne par refus — `ts` (UTC), puis ce qui est connu parmi `access` (`sdk`, `rest`, `mcp`, `cli`), `action`, `user`, `via`, `key` (son id, jamais son secret), `permission`, `agent`, `tenant_id`, `run_id`, `call_id`, et `reason`, le message dit à l'appelant. Les actions réussies n'y sont pas : elles sont au journal de session. Le fichier s'écrit sous verrou `flock` ; s'il ne peut pas l'être, le refus reste ce qu'il est et une ligne ERROR le dit.
 
 ```json

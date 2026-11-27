@@ -215,7 +215,7 @@ from loom_ia.core.projections import (
 from loom_ia.engine.amendments import note_amendments
 from loom_ia.engine.circuit import CircuitBreakers
 from loom_ia.engine.delegated import Waiting
-from loom_ia.engine.executor import Decided, Delegated, OpenedTools, Stored, ToolExecutor
+from loom_ia.engine.executor import Decided, Delegated, OpenedTools, Recorded, Stored, ToolExecutor
 from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.media import earlier_images
@@ -917,6 +917,12 @@ async def _driven(
                 async with limit:
                     async with aclosing(step(state, run_ctx, previous, cause=cause, session=session_spent)) as drafts:
                         async for draft in drafts:
+                            if isinstance(draft, Recorded):
+                                # Décision déjà au journal (approbateur en ligne, ou un autre
+                                # accès pendant qu'il attendait) : appliquée, pas réécrite.
+                                state = apply(state, draft.event)
+                                emitted += 1
+                                continue
                             await write(draft)
                             emitted += 1
                             stepped = stepped or isinstance(draft.payload, StepStarted)
@@ -1298,7 +1304,7 @@ async def step(
     *,
     cause: Event | None = None,
     session: Spent | None = None,
-) -> AsyncGenerator[EventDraft]:
+) -> AsyncGenerator[EventDraft | Recorded]:
     """Événements de la prochaine étape du run.
 
     ``previous`` est l'historique de la session avant ce run ; ``cause`` le
@@ -1315,7 +1321,8 @@ async def step(
     Yields:
         Les brouillons d'événements de l'étape : une décision (transition,
         clôture), ou l'effet encadré par ``step.started`` et
-        ``step.completed``.
+        ``step.completed`` ; ``Recorded`` pour une décision d'approbation ou
+        une réponse déjà écrite pendant le lot d'outils.
     """
     session = session or Spent()
     scope = run_scope(state)
@@ -2042,7 +2049,7 @@ async def _model_step(
     yield current.completed(emitted + 1)
 
 
-async def _tool_step(state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None = None) -> AsyncGenerator[EventDraft]:
+async def _tool_step(state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None = None) -> AsyncGenerator[EventDraft | Recorded]:
     """Étape ``tool_batch`` : le lot d'outils en attente, par ``ToolExecutor.run_batch``.
 
     Chaque appel a son span, choisi d'avance ; les événements des rôles, des
@@ -2083,6 +2090,11 @@ async def _tool_step(state: RunState, ctx: RunContext, scope: RunScope, cause: E
             if isinstance(item, Waiting):
                 # Rien à écrire pour cet appel : il n'a pas de résultat.
                 paused_children.append(item.run_id)
+                continue
+            if isinstance(item, Recorded):
+                # Déjà au journal : le pilote l'applique sans l'écrire.
+                yield item
+                emitted += 1
                 continue
             span = spans.setdefault(item.call_id, new_span_id())
             seen = item if isinstance(item, _BARE_EVENTS) else item.payload
