@@ -105,18 +105,17 @@ def identify(
     Sans clé déclarée, ``local_user`` (``server.http.user``, décision D-1b des utilisateurs et rôles) est
     l'appelant de toute requête : une instance locale qui sait au nom de qui
     elle agit. ``create_app`` refuse une instance qui n'a ni l'un ni l'autre ;
-    appelé quand même, c'est un 401. ``access`` dit, au journal d'audit, par
+    appelé quand même, c'est un 401 — « Clé d'API refusée » si une clé est
+    présentée (en sécurité partagée, la dernière clé vient d'être révoquée).
+    ``access`` dit, au journal d'audit, par
     où la requête est arrivée (REST, ou le MCP qu'il monte).
     """
     unauthorized = status.HTTP_401_UNAUTHORIZED
     if not security.api_keys:
         if local_user is None:
-            raise refusal(
-                unauthorized,
-                "Instance sans clé d'API ni utilisateur local : personne au nom de qui agir",
-                access=access,
-                headers=_CHALLENGE,
-            )
+            # Une clé présentée à une instance qui n'en a plus : le refus parle de la clé.
+            detail = "Clé d'API refusée" if presented(request) else "Instance sans clé d'API ni utilisateur local : personne au nom de qui agir"
+            raise refusal(unauthorized, detail, access=access, headers=_CHALLENGE)
         return Caller.acting(security, local_user)
     given = presented(request)
     if not given:

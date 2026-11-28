@@ -334,6 +334,25 @@ async def test_an_instance_without_keys_nor_local_user_is_not_served(demo: Confi
             create_app(loom)
 
 
+def test_a_key_shown_to_an_instance_without_keys_is_refused_as_a_key() -> None:
+    """La dernière clé révoquée en sécurité partagée : le refus parle de la clé présentée, pas de l'instance."""
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from loom_ia.access.http.auth import identify
+    from loom_ia.config.models import SecurityConfig
+
+    def request(*headers: tuple[bytes, bytes]) -> Request:
+        return Request({"type": "http", "method": "POST", "path": "/v1/agents/demo/runs", "headers": list(headers)})
+
+    with pytest.raises(HTTPException) as shown:
+        identify(SecurityConfig(), request((b"authorization", b"Bearer lk_revoquee")))
+    assert (shown.value.status_code, shown.value.detail) == (401, "Clé d'API refusée")
+    with pytest.raises(HTTPException) as bare:
+        identify(SecurityConfig(), request())
+    assert (bare.value.status_code, bare.value.detail) == (401, "Instance sans clé d'API ni utilisateur local : personne au nom de qui agir")
+
+
 async def test_a_local_instance_acts_for_its_user(demo: ConfigFactory) -> None:
     """D-1b : sans clé, chaque requête agit au nom de ``server.http.user``."""
     async with serving(demo()) as (loom, http):

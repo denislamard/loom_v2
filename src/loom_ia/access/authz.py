@@ -110,7 +110,8 @@ class Actor:
             declared = security.user(user)
         except KeyError:
             known = ", ".join(sorted(u.id for u in security.users))
-            raise AccessDenied(f"Utilisateur {user!r} inconnu (utilisateurs : {known})", user=user) from None
+            listed = f"utilisateurs : {known}" if known else "aucun utilisateur déclaré"
+            raise AccessDenied(f"Utilisateur {user!r} inconnu ({listed})", user=user) from None
         if key is not None and key.user != declared.id:
             raise AccessDenied(f"La clé {key.id!r} identifie {key.user!r}, pas {user!r}", user=user)
         return cls(

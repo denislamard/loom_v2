@@ -372,3 +372,49 @@ async def test_closing_waits_for_the_acks_then_writes_the_cursor(tmp_path: Path,
     await rig.stop()
     state = await JsonlCursor(tmp_path / "journal").load(DEFAULT_TENANT)
     assert state == CursorState(acked={SessionId("s1"): events[-1].seq}, flushed_at=state.flushed_at if state else None)
+
+
+async def unreachable_rig() -> Rig:
+    """Un exportateur dont la console ne répond jamais : un port libéré aussitôt réservé."""
+    async with FakeConsole(key=KEY) as probe:
+        port = probe.port
+    rig = Rig(InMemoryEventStore(), InMemoryCursor(), FakeConsole(key=KEY, port=port))
+    await rig.start()
+    await asyncio.sleep(0.05)  # le curseur est chargé, le canal tente sa connexion
+    return rig
+
+
+async def close_unreachable(rig: Rig) -> None:
+    """Ferme le canal, puis arrête ses tâches : la connexion ne vient jamais."""
+    assert rig.channel is not None
+    await rig.channel.aclose()
+    for task in rig.tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.wait(rig.tasks)
+
+
+async def test_closing_with_nothing_to_send_does_not_wait_for_an_unreachable_console(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("WARNING")
+    rig = await unreachable_rig()
+    assert rig.exporter is not None
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await rig.exporter.aclose(5.0)
+    assert loop.time() - started < 1.0, "rien à envoyer : la fermeture n'attend pas la connexion"
+    assert "injoignable à l'arrêt" not in caplog.text
+    await close_unreachable(rig)
+
+
+async def test_closing_with_events_still_waits_then_says_what_is_left(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("WARNING")
+    rig = await unreachable_rig()
+    assert rig.exporter is not None
+    events = await write(rig.store, "s1")
+    await rig.offer(events)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await rig.exporter.aclose(0.3)
+    assert loop.time() - started >= 0.3, "des événements à envoyer : la fermeture attend la connexion dans le délai"
+    assert f"Console injoignable à l'arrêt : {len(events)} événement(s) non envoyés" in caplog.text
+    await close_unreachable(rig)

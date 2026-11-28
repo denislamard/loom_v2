@@ -321,6 +321,19 @@ async def test_a_new_part_applies_at_once_and_a_refused_one_keeps_the_previous(d
         assert refused.about is not None
 
 
+async def test_a_refused_part_says_which_previous_part_stays(demo: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("WARNING")
+    async with FakeConsole(key=KEY, security=part(1)) as fake:
+        async with Loom.from_config(demo(profile="dev", security=SHARED, console=section(fake.url)), environ=ENV) as loom:
+            await loom.start_console()
+            async with asyncio.timeout(5):
+                await fake.wait_for("security")
+            await fake.sync(part(3, users=(SecurityUser(id=DEV, roles=("owner",)),)))
+            async with asyncio.timeout(5):
+                await fake.wait_for("error")
+    assert "part version 3 refusée, la version 1 reste appliquée" in caplog.text
+
+
 async def test_the_same_part_is_confirmed_without_rewriting_the_cache(demo: ConfigFactory, tmp_path: Path) -> None:
     async with FakeConsole(key=KEY, security=part(5)) as fake:
         config = demo(profile="dev", security=SHARED, console=section(fake.url))
@@ -406,6 +419,23 @@ SEED: dict[str, Any] = {
 }
 
 
+@pytest.mark.parametrize(
+    ("security", "kept"),
+    [(SHARED, "aucune sécurité appliquée : toute action est refusée"), (SEED, "la sécurité de départ de loom.yaml reste appliquée")],
+    ids=["rien", "securite-de-depart"],
+)
+async def test_a_refused_first_part_says_what_stays_without_cache(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, security: dict[str, Any], kept: str
+) -> None:
+    caplog.set_level("WARNING")
+    monkeypatch.setattr("loom_ia.console.shared.FIRST_PART_TIMEOUT", 0.2)
+    async with FakeConsole(key=KEY, security=part(1, users=(SecurityUser(id=DEV, roles=("owner",)),))) as fake:
+        async with Loom.from_config(demo(profile="dev", security=security, console=section(fake.url)), environ=ENV) as loom:
+            await loom.start_console()
+    assert f"part version 1 refusée, {kept}" in caplog.text
+    assert "la précédente reste appliquée" not in caplog.text
+
+
 async def test_without_cache_the_seed_of_loom_yaml_is_the_security_until_the_first_part(
     demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -414,7 +444,7 @@ async def test_without_cache_the_seed_of_loom_yaml_is_the_security_until_the_fir
         async with Loom.from_config(demo(profile="dev", security=SEED, console=section(fake.url)), environ=ENV) as loom:
             assert await loom.start_console()
             assert "seedonly" in {user.id for user in loom.config.security.users}
-    assert "l'amorce de loom.yaml sert de sécurité jusqu'à la première part" in caplog.text
+    assert "la sécurité de départ de loom.yaml sert jusqu'à la première part" in caplog.text
 
 
 async def test_production_starts_on_the_seed_when_no_part_comes(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -460,7 +490,7 @@ async def test_with_a_valid_cache_the_cache_serves_when_the_console_does_not_ans
     config = load_config(demo(profile="dev", security=SEED, console=section("ws://127.0.0.1:9/loom")))
     result = await with_shared_security(config, environ=ENV, grace=0.2)
     users = {user.id for user in result.security.users}
-    assert "paul" in users and "seedonly" not in users, "le cache l'emporte sur l'amorce"
+    assert "paul" in users and "seedonly" not in users, "le cache l'emporte sur la sécurité de départ"
 
 
 async def test_with_a_valid_cache_a_console_refused_at_start_keeps_the_cache(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -573,8 +603,19 @@ async def test_a_cache_makes_the_seed_of_loom_yaml_ignored_with_a_warning(demo: 
     path = demo(profile="dev", security=seed, console=section("ws://127.0.0.1:9/loom"))
     SecurityCache.of(path.parent, "atelier", KEY).write(part(4))
     config = await with_shared_security(load_config(path), ENV)
-    assert [user.id for user in config.security.users] == [DEV, "paul", "console-gateway"], "le cache l'emporte sur l'amorce"
+    assert [user.id for user in config.security.users] == [DEV, "paul", "console-gateway"], "le cache l'emporte sur la sécurité de départ"
     assert "loom.yaml déclare des rôles, utilisateurs ou clés, ignorés : la sécurité vient du cache (version 4)" in caplog.text
+
+
+async def test_a_cache_without_seed_gives_no_warning_when_the_instance_opens(demo: ConfigFactory, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("WARNING")
+    path = demo(profile="dev", security=SHARED, console=section("ws://127.0.0.1:9/loom"))
+    SecurityCache.of(path.parent, "atelier", KEY).write(part(4))
+    config = await with_shared_security(load_config(path), ENV)
+    async with Loom(config, environ=ENV):
+        pass
+    assert [user.id for user in config.security.users] == [DEV, "paul", "console-gateway"]
+    assert "ignorés : la sécurité vient du cache" not in caplog.text, "la config complétée par le cache n'est pas une sécurité de départ"
 
 
 async def test_with_shared_security_gives_the_cache_or_leaves_a_local_config(demo: ConfigFactory) -> None:

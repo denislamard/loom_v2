@@ -1962,7 +1962,7 @@ class Loom:
         Raises:
             ConfigError: Clé absente en profil ``prod`` ; ``ws://`` hors profil
                 ``dev`` ; extra ``console`` absent ; TLS impossible à préparer ;
-                en sécurité partagée, ni cache, ni amorce, ni part dans le délai
+                en sécurité partagée, ni cache, ni sécurité de départ, ni part dans le délai
                 en profil ``prod``.
         """
         if self._console is not None:
@@ -2032,12 +2032,12 @@ class Loom:
     async def _first_part(self, url: str) -> None:
         """Sans cache valide, attend la première part de la console (décisions RU-4 et Q-4 du référentiel).
 
-        Sans part dans le délai, l'amorce de ``loom.yaml`` (décision D-A) sert de
-        sécurité, avec un avertissement, jusqu'à la première part. Sans amorce,
-        le message dit la cause : la dernière part refusée, à défaut son absence.
+        Sans part dans le délai, la sécurité de départ de ``loom.yaml`` (décision D-A)
+        sert, avec un avertissement, jusqu'à la première part. Sans sécurité de
+        départ, le message dit la cause : la dernière part refusée, à défaut son absence.
 
         Raises:
-            ConfigError: Aucune part ni amorce dans le délai, en profil ``prod``.
+            ConfigError: Aucune part ni sécurité de départ dans le délai, en profil ``prod``.
         """
         if self._security_ready.is_set():
             return
@@ -2049,7 +2049,7 @@ class Loom:
         except TimeoutError:
             if self._config.security.seeded:
                 logger.warning(
-                    "Sécurité partagée : aucune part de la console (%s) en %g s — l'amorce de loom.yaml sert de sécurité jusqu'à la première part",
+                    "Sécurité partagée : aucune part de la console (%s) en %g s — la sécurité de départ de loom.yaml sert jusqu'à la première part",
                     url,
                     FIRST_PART_TIMEOUT,
                 )
@@ -2138,7 +2138,7 @@ class Loom:
         except PartRefused as error:
             self._console_refusal = str(error)
             self._console_part_seen.set()
-            logger.warning("Sécurité partagée : part version %d refusée, la précédente reste appliquée — %s", part.version, error)
+            logger.warning("Sécurité partagée : part version %d refusée, %s — %s", part.version, self._kept_security(), error)
             if channel is not None:
                 await channel.send(ErrorPayload(code="invalid_message", message=str(error), about=envelope.id))
             return
@@ -2146,6 +2146,14 @@ class Loom:
         self._console_part_seen.set()
         if channel is not None and console is not None:
             await channel.send(self._confirmation(console, part))
+
+    def _kept_security(self) -> str:
+        """Ce qui reste appliqué après une part refusée : la part d'avant, la sécurité de départ de ``loom.yaml``, ou rien."""
+        if self._security_part is not None:
+            return f"la version {self._security_part.version} reste appliquée"
+        if self._config.security.seeded:
+            return "la sécurité de départ de loom.yaml reste appliquée"
+        return "aucune sécurité appliquée : toute action est refusée"
 
     def _confirmation(self, console: ConsoleConfig, part: SecuritySyncPayload) -> SecurityPayload:
         """Le message ``security`` qui confirme une part appliquée."""

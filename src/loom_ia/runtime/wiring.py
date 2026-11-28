@@ -1551,7 +1551,9 @@ def shared_security(config: LoomConfig, environ: Mapping[str, str] | None = None
         logger.warning("Sécurité partagée : cache %s écarté, traité comme absent — %s", cache.path, error)
         return SharedSecurity(config, cache=cache)
     logger.info("Sécurité partagée : version %d relue du cache", part.version)
-    if config.security.seeded:
+    # Une config déjà complétée par ce cache (``with_shared_security`` puis ``Loom``)
+    # déclare les utilisateurs de la part, pas une sécurité de départ : rien n'est ignoré.
+    if config.security.seeded and completed.security != config.security:
         logger.warning("Sécurité partagée : loom.yaml déclare des rôles, utilisateurs ou clés, ignorés : la sécurité vient du cache (version %d)", part.version)
     return SharedSecurity(completed, part, cache)
 

@@ -1179,7 +1179,7 @@ class SecurityConfig(DomainModel):
     **Sécurité partagée** (``source: console``, analyse_referentiel_utilisateurs.md
     de Heddlo) : les rôles, les utilisateurs et les clés viennent de la console,
     par le canal (``security.sync``) ; ``audit.path`` vaut ``data/audit.jsonl`` par
-    défaut. ``loom.yaml`` peut en donner une amorce, utilisée seulement sans cache
+    défaut. ``loom.yaml`` peut en donner une sécurité de départ, utilisée seulement sans cache
     valide et jusqu'à la première part (décision D-A) : la part la remplace, et le
     cache la fait ignorer. La part reçue est posée par ``Loom.apply_security``
     (``console/shared.py``), sans repasser par ce validateur.
@@ -1234,7 +1234,7 @@ class SecurityConfig(DomainModel):
 
     @property
     def seeded(self) -> bool:
-        """Vrai si ``loom.yaml`` donne une amorce à la sécurité partagée : rôles, utilisateurs ou clés déclarés (décision D-A).
+        """Vrai si ``loom.yaml`` donne une sécurité de départ à la sécurité partagée : rôles, utilisateurs ou clés déclarés (décision D-A).
 
         Une fois une part appliquée, la sécurité vient de la console, et la
         propriété reste vraie tant que la sécurité déclare quelqu'un : c'est à

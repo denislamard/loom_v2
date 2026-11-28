@@ -1235,6 +1235,8 @@ def test_an_actor_is_a_declared_user_with_his_roles_and_his_tenant() -> None:
     assert martin.via is None and martin.signature == "martin"
     with pytest.raises(AccessDenied, match="Utilisateur 'fantome' inconnu"):
         Actor.of(MATRICE, "fantome")
+    with pytest.raises(AccessDenied, match=r"Utilisateur 'fantome' inconnu \(aucun utilisateur déclaré\)"):
+        Actor.of(SecurityConfig(), "fantome")
 
 
 def test_a_key_identifies_only_its_own_user() -> None:

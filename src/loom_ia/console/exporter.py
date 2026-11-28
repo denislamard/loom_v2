@@ -242,8 +242,14 @@ class ConsoleExporter:
 
         Une commande courte (``loom run``) finit souvent avant que la connexion ne
         soit ouverte : on l'attend, dans le délai d'``aclose``. Une console qui a
-        refusé la clé ou le contrat ne fait rien attendre.
+        refusé la clé ou le contrat ne fait rien attendre, ni une console pas encore
+        jointe quand ce process n'a rien à envoyer : l'historique non acquitté
+        sera rattrapé à la prochaine connexion, le curseur n'ayant pas avancé.
         """
+        unsaid = self._deleted - set(self._deletions.values())
+        if not self._channel.connected and not (self._queue or self._stale or self._in_flight or self._deletions or unsaid):
+            await self._flush(force=True)
+            return
         if not self._channel.connected and self._channel.state in ("idle", "connecting"):
             await self._channel.wait_connected()
         if self._channel.connected:
